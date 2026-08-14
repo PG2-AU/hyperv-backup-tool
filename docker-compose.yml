@@ -1,0 +1,24 @@
+services:
+  hvnb-backup:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: hyperv-netapp-backup:local
+    container_name: hvnb-backup
+    restart: unless-stopped
+    ports:
+      - "8443:443"
+    env_file:
+      - .env
+    environment:
+      HVNB_DATABASE_URL: sqlite:////data/app.db
+    volumes:
+      - hvnb-data:/data
+      - hvnb-certs:/etc/hvnb/certs
+      # Fuer eigene, von einer internen CA ausgestellte Zertifikate statt
+      # der obigen Named-Volume-Zeile z.B. bind-mounten:
+      # - ./certs:/etc/hvnb/certs
+
+volumes:
+  hvnb-data:
+  hvnb-certs:
