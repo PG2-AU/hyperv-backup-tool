@@ -10,6 +10,12 @@ GIT_BRANCH="${HVNB_GIT_BRANCH:-main}"
 
 log() { echo "[entrypoint] $(date -u +%FT%TZ) $*"; }
 
+# Unter rootless Podman/Docker kann der abgebildete UID-Bereich vom
+# Dateibesitzer der gemounteten/erstellten Verzeichnisse abweichen; git
+# verweigert Operationen dann mit "dubious ownership". APP_DIR ist unser
+# eigener Container, daher ist die Freigabe unbedenklich.
+git config --global --add safe.directory "${APP_DIR}"
+
 if [ -z "${GIT_REPO_URL}" ]; then
   log "FEHLER: HVNB_GIT_REPO_URL ist nicht gesetzt. Ohne Repository kann kein Code geladen werden."
   exit 1
