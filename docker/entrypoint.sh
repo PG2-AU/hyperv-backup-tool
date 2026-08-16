@@ -57,4 +57,4 @@ else
 fi
 
 log "Starte supervisord (uvicorn + nginx${HVNB_AUTO_UPDATE_ENABLED:+ + updater})..."
-exec /usr/bin/supervisord -c /etc/supervisord.conf
+exec supervisord -c /etc/supervisord.conf
