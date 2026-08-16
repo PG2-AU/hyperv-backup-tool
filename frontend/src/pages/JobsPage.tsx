@@ -1,4 +1,4 @@
-import { Badge, Button, Drawer, Group, Menu, Stack, Table, Tabs, Title } from "@mantine/core";
+import { Badge, Button, Drawer, Menu, Stack, Table, Tabs, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconEdit, IconPlayerPlay, IconTerminal2, IconTrash } from "@tabler/icons-react";

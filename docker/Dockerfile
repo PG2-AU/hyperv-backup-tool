@@ -14,7 +14,8 @@ ENV LANG=C.UTF-8 \
     HVNB_TLS_CERT_PATH=/etc/hvnb/certs/server.crt \
     HVNB_TLS_KEY_PATH=/etc/hvnb/certs/server.key
 
-RUN dnf install -y --setopt=install_weak_deps=False \
+RUN dnf install -y --setopt=install_weak_deps=False epel-release \
+    && dnf install -y --setopt=install_weak_deps=False \
         python3.12 python3.12-pip \
         git nginx supervisor openssl gettext shadow-utils \
     && dnf module -y reset nodejs \

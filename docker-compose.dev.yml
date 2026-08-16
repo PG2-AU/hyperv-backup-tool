@@ -1,0 +1,19 @@
+# Override fuer lokale Tests (z.B. via WSL/Podman), ohne echten Git-Server.
+# Der Container klont/pullt von einem lokalen Bare-Repo statt von GitHub/GitLab.
+#
+# Nutzung:
+#   podman compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Vorausgesetzt wird ein Bare-Repo im Home-Verzeichnis des Linux-Hosts
+# (WSL-Distro), auf dem podman/docker compose ausgefuehrt wird,
+# z.B. angelegt per: git clone --bare <projekt-pfad> ~/hyperv-repo.git
+# Passe HVNB_DEV_BARE_REPO an, falls der Pfad abweicht.
+services:
+  hvnb-backup:
+    volumes:
+      - ${HVNB_DEV_BARE_REPO:-/home/admin/hyperv-repo.git}:/srv/git/hyperv-netapp-backup.git:ro
+    environment:
+      HVNB_GIT_REPO_URL: file:///srv/git/hyperv-netapp-backup.git
+      HVNB_GIT_BRANCH: master
+      HVNB_AUTO_UPDATE_ENABLED: "true"
+      HVNB_AUTO_UPDATE_INTERVAL_MINUTES: "1"
