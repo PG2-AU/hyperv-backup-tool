@@ -14,15 +14,15 @@ ENV LANG=C.UTF-8 \
     HVNB_TLS_CERT_PATH=/etc/hvnb/certs/server.crt \
     HVNB_TLS_KEY_PATH=/etc/hvnb/certs/server.key
 
-RUN dnf install -y --setopt=install_weak_deps=False epel-release \
-    && dnf install -y --setopt=install_weak_deps=False \
+RUN dnf install -y --setopt=install_weak_deps=False \
         python3.12 python3.12-pip \
-        git nginx supervisor openssl gettext shadow-utils \
+        git nginx openssl gettext shadow-utils \
     && dnf module -y reset nodejs \
     && dnf module -y install nodejs:20 \
     && dnf clean all \
     && alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
-    && python3 -m pip install --upgrade pip
+    && python3 -m pip install --upgrade pip \
+    && python3 -m pip install --no-cache-dir supervisor
 
 RUN useradd --system --create-home --home-dir /home/hvnb --shell /bin/bash hvnb
 
