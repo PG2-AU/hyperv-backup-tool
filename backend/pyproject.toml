@@ -12,6 +12,7 @@ dependencies = [
     "alembic>=1.13",
     "python-jose[cryptography]>=3.3",
     "passlib[bcrypt]>=1.7",
+    "bcrypt>=4.0.1,<4.1",
     "python-multipart>=0.0.9",
     "ldap3>=2.9",
     "netapp-ontap>=9.15",
