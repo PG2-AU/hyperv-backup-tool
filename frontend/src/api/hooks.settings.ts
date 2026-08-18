@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/api/client";
 
@@ -39,10 +39,33 @@ export interface PublicSettings {
   auto_update_interval_minutes: number;
 }
 
+export interface UserCreatePayload {
+  username: string;
+  display_name?: string;
+  email?: string;
+  password: string;
+  role_id?: string | null;
+}
+
 export function useUsers() {
   return useQuery({
     queryKey: ["users"],
     queryFn: async () => (await apiClient.get<UserRead[]>("/users")).data,
+  });
+}
+
+export function useCreateUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: UserCreatePayload) => (await apiClient.post<UserRead>("/users", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+export function useUpdateUserPassword() {
+  return useMutation({
+    mutationFn: async ({ userId, password }: { userId: string; password: string }) =>
+      (await apiClient.put(`/users/${userId}/password`, { password })).data,
   });
 }
 

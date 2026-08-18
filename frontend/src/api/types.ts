@@ -5,6 +5,9 @@ export interface Vm {
   host: string;
   cluster?: string | null;
   csv_paths: string[];
+  vhdx_size_bytes?: number | null;
+  backup_policy_id?: string | null;
+  backup_policy_name?: string | null;
 }
 
 export interface Csv {
@@ -12,6 +15,10 @@ export interface Csv {
   owner_node: string;
   state: string;
   volume_path: string;
+  capacity_bytes?: number | null;
+  used_bytes?: number | null;
+  backup_policy_id?: string | null;
+  backup_policy_name?: string | null;
 }
 
 export interface SvmInfo {

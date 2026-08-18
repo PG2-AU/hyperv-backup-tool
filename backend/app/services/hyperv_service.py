@@ -30,6 +30,17 @@ class VirtualMachineInfo:
     state: str
     host: str
     csv_paths: list[str] = field(default_factory=list)
+    vhdx_size_bytes: int = 0
+
+
+@dataclass
+class ClusterSharedVolumeInfo:
+    name: str
+    owner_node: str
+    state: str
+    volume_path: str
+    capacity_bytes: int = 0
+    used_bytes: int = 0
 
 
 @dataclass
@@ -73,7 +84,10 @@ class HyperVService:
     def list_vms(self, session: winrm.Session) -> list[VirtualMachineInfo]:
         script = (
             "Get-VM | Select-Object Name, Id, State, ComputerName, "
-            "@{N='CsvPaths';E={($_.HardDrives).Path}} | ConvertTo-Json -Depth 4"
+            "@{N='CsvPaths';E={($_.HardDrives).Path}}, "
+            "@{N='VhdSizeBytes';E={"
+            "($_.HardDrives | ForEach-Object { (Get-VHD -Path $_.Path).Size } | Measure-Object -Sum).Sum"
+            "}} | ConvertTo-Json -Depth 4"
         )
         result = self._run_ps(session, script)
         if not result.success:
@@ -88,17 +102,36 @@ class HyperVService:
                 state=str(e["State"]),
                 host=e.get("ComputerName", self._target_host),
                 csv_paths=[p for p in (e.get("CsvPaths") or []) if p],
+                vhdx_size_bytes=int(e.get("VhdSizeBytes") or 0),
             )
             for e in entries
         ]
 
-    def list_csvs(self, session: winrm.Session) -> list[dict]:
-        script = "Get-ClusterSharedVolume | Select-Object Name, SharedVolumeInfo, State | ConvertTo-Json -Depth 4"
+    def list_csvs(self, session: winrm.Session) -> list[ClusterSharedVolumeInfo]:
+        script = (
+            "Get-ClusterSharedVolume | Select-Object Name, State, "
+            "@{N='OwnerNode';E={$_.OwnerNode.Name}}, "
+            "@{N='VolumePath';E={$_.SharedVolumeInfo.FriendlyVolumeName}}, "
+            "@{N='CapacityBytes';E={$_.SharedVolumeInfo.Partition.Size}}, "
+            "@{N='FreeBytes';E={$_.SharedVolumeInfo.Partition.FreeSpace}} "
+            "| ConvertTo-Json -Depth 4"
+        )
         result = self._run_ps(session, script)
         if not result.success:
             raise RuntimeError(f"Get-ClusterSharedVolume fehlgeschlagen: {result.error}")
         raw = json.loads(result.output or "[]")
-        return raw if isinstance(raw, list) else [raw]
+        entries = raw if isinstance(raw, list) else [raw]
+        return [
+            ClusterSharedVolumeInfo(
+                name=e["Name"],
+                owner_node=str(e.get("OwnerNode", "")),
+                state=str(e["State"]),
+                volume_path=e.get("VolumePath") or "",
+                capacity_bytes=int(e.get("CapacityBytes") or 0),
+                used_bytes=int(e.get("CapacityBytes") or 0) - int(e.get("FreeBytes") or 0),
+            )
+            for e in entries
+        ]
 
     def create_checkpoint(
         self,

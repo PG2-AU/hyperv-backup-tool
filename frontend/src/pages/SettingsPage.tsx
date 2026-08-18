@@ -1,8 +1,35 @@
-import { Alert, Badge, Group, Paper, Stack, Table, Tabs, Text, Title } from "@mantine/core";
-import { IconInfoCircle } from "@tabler/icons-react";
+import { useState } from "react";
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Button,
+  Group,
+  Modal,
+  Paper,
+  PasswordInput,
+  Select,
+  Stack,
+  Table,
+  Tabs,
+  Text,
+  TextInput,
+  Title,
+  Tooltip,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
+import { IconInfoCircle, IconKey, IconUserPlus } from "@tabler/icons-react";
+import axios from "axios";
 import { useSearchParams } from "react-router-dom";
 
-import { usePublicSettings, useRoles, useUsers } from "@/api/hooks.settings";
+import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useUsers, type UserRead } from "@/api/hooks.settings";
+
+function apiErrorMessage(err: unknown, fallback: string): string {
+  if (axios.isAxiosError(err) && typeof err.response?.data?.detail === "string") {
+    return err.response.data.detail;
+  }
+  return fallback;
+}
 
 function ConfigRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -17,12 +44,133 @@ function ConfigRow({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
+function CreateUserModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
+  const { data: roles } = useRoles();
+  const createUser = useCreateUser();
+  const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [roleId, setRoleId] = useState<string | null>(null);
+
+  function reset() {
+    setUsername("");
+    setDisplayName("");
+    setEmail("");
+    setPassword("");
+    setRoleId(null);
+  }
+
+  function handleClose() {
+    reset();
+    onClose();
+  }
+
+  function handleSubmit() {
+    createUser.mutate(
+      { username, display_name: displayName, email, password, role_id: roleId },
+      {
+        onSuccess: () => {
+          notifications.show({ title: "Benutzer angelegt", message: `'${username}' wurde erstellt.`, color: "green" });
+          handleClose();
+        },
+        onError: (err) => {
+          notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Benutzer konnte nicht angelegt werden."), color: "red" });
+        },
+      },
+    );
+  }
+
+  return (
+    <Modal opened={opened} onClose={handleClose} title="Benutzer hinzufügen">
+      <Stack>
+        <TextInput label="Benutzername" required value={username} onChange={(e) => setUsername(e.currentTarget.value)} />
+        <TextInput label="Anzeigename" value={displayName} onChange={(e) => setDisplayName(e.currentTarget.value)} />
+        <TextInput label="E-Mail" type="email" value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
+        <PasswordInput
+          label="Kennwort"
+          required
+          description="Mindestens 8 Zeichen"
+          value={password}
+          onChange={(e) => setPassword(e.currentTarget.value)}
+        />
+        <Select
+          label="Rolle"
+          placeholder="Keine Rolle zuweisen"
+          data={roles?.map((r) => ({ value: r.id, label: r.name })) ?? []}
+          value={roleId}
+          onChange={setRoleId}
+          clearable
+        />
+        <Group justify="flex-end" mt="sm">
+          <Button variant="default" onClick={handleClose}>
+            Abbrechen
+          </Button>
+          <Button onClick={handleSubmit} loading={createUser.isPending} disabled={!username || password.length < 8}>
+            Anlegen
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+function ChangePasswordModal({ user, onClose }: { user: UserRead | null; onClose: () => void }) {
+  const updatePassword = useUpdateUserPassword();
+  const [password, setPassword] = useState("");
+
+  function handleClose() {
+    setPassword("");
+    onClose();
+  }
+
+  function handleSubmit() {
+    if (!user) return;
+    updatePassword.mutate(
+      { userId: user.id, password },
+      {
+        onSuccess: () => {
+          notifications.show({ title: "Kennwort geändert", message: `Kennwort für '${user.username}' wurde aktualisiert.`, color: "green" });
+          handleClose();
+        },
+        onError: (err) => {
+          notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Kennwort konnte nicht geändert werden."), color: "red" });
+        },
+      },
+    );
+  }
+
+  return (
+    <Modal opened={!!user} onClose={handleClose} title={`Kennwort ändern: ${user?.username ?? ""}`}>
+      <Stack>
+        <PasswordInput
+          label="Neues Kennwort"
+          required
+          description="Mindestens 8 Zeichen"
+          value={password}
+          onChange={(e) => setPassword(e.currentTarget.value)}
+        />
+        <Group justify="flex-end" mt="sm">
+          <Button variant="default" onClick={handleClose}>
+            Abbrechen
+          </Button>
+          <Button onClick={handleSubmit} loading={updatePassword.isPending} disabled={password.length < 8}>
+            Speichern
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
 export function SettingsPage() {
   const [params, setParams] = useSearchParams();
   const activeTab = params.get("tab") ?? "users";
   const { data: users } = useUsers();
   const { data: roles } = useRoles();
   const { data: settings } = usePublicSettings();
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [passwordModalUser, setPasswordModalUser] = useState<UserRead | null>(null);
 
   return (
     <Stack>
@@ -40,9 +188,12 @@ export function SettingsPage() {
         <Tabs.Panel value="users" pt="md">
           <Stack>
             <Paper p="md">
-              <Title order={5} mb="sm">
-                Benutzer
-              </Title>
+              <Group justify="space-between" mb="sm">
+                <Title order={5}>Benutzer</Title>
+                <Button leftSection={<IconUserPlus size={16} />} onClick={() => setCreateModalOpen(true)}>
+                  Benutzer hinzufügen
+                </Button>
+              </Group>
               <Table striped highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
@@ -51,6 +202,7 @@ export function SettingsPage() {
                     <Table.Th>Quelle</Table.Th>
                     <Table.Th>Status</Table.Th>
                     <Table.Th>Letzte Anmeldung</Table.Th>
+                    <Table.Th>Aktionen</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -69,11 +221,25 @@ export function SettingsPage() {
                         </Badge>
                       </Table.Td>
                       <Table.Td>{u.last_login_at ? new Date(u.last_login_at).toLocaleString("de-DE") : "nie"}</Table.Td>
+                      <Table.Td>
+                        <Tooltip label={u.source === "active_directory" ? "AD-Benutzer verwalten ihr Kennwort selbst" : "Kennwort ändern"}>
+                          <ActionIcon
+                            variant="light"
+                            disabled={u.source === "active_directory"}
+                            onClick={() => setPasswordModalUser(u)}
+                          >
+                            <IconKey size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>
               </Table>
             </Paper>
+
+            <CreateUserModal opened={createModalOpen} onClose={() => setCreateModalOpen(false)} />
+            <ChangePasswordModal user={passwordModalUser} onClose={() => setPasswordModalUser(null)} />
 
             <Paper p="md">
               <Title order={5} mb="sm">
@@ -145,8 +311,9 @@ export function SettingsPage() {
       </Tabs>
 
       <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
-        Diese Ansicht zeigt die aktuell aktive Server-Konfiguration (aus Umgebungsvariablen/.env). Bearbeitung direkt aus
-        der GUI folgt in einer kommenden Iteration.
+        Die Tabs "Active Directory", "NetApp-Verbindung", "Hyper-V-Hosts" und "Updates (Git)" zeigen die aktuell aktive
+        Server-Konfiguration (aus Umgebungsvariablen/.env) nur an. Bearbeitung direkt aus der GUI folgt fuer diese
+        Bereiche in einer kommenden Iteration.
       </Alert>
     </Stack>
   );

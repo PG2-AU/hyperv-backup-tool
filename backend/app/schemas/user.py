@@ -23,3 +23,8 @@ class UserCreate(BaseModel):
     display_name: str = ""
     email: str = ""
     password: str
+    role_id: str | None = None
+
+
+class UserPasswordUpdate(BaseModel):
+    password: str

@@ -1,4 +1,4 @@
-import { Badge, Menu, Stack, Table, Tabs, Title } from "@mantine/core";
+import { Badge, Group, Menu, Progress, Stack, Table, Tabs, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconInfoCircle, IconPlayerPlay, IconTerminal2 } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
@@ -6,8 +6,24 @@ import { useSearchParams } from "react-router-dom";
 import { useCsvs, useVms } from "@/api/hooks";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import type { Csv, Vm } from "@/api/types";
+import { formatBytes } from "@/utils/format";
 
 const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
+
+function PolicyBadge({ name }: { name?: string | null }) {
+  if (!name) {
+    return (
+      <Text c="dimmed" size="sm">
+        keine
+      </Text>
+    );
+  }
+  return (
+    <Badge color="indigo" variant="light">
+      {name}
+    </Badge>
+  );
+}
 
 export function VmsPage() {
   const [params, setParams] = useSearchParams();
@@ -44,6 +60,8 @@ export function VmsPage() {
                 <Table.Th>Host</Table.Th>
                 <Table.Th>Cluster</Table.Th>
                 <Table.Th>CSV-Pfade</Table.Th>
+                <Table.Th>VHDX-Größe</Table.Th>
+                <Table.Th>Backup Policy</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -58,6 +76,10 @@ export function VmsPage() {
                   <Table.Td>{vm.host}</Table.Td>
                   <Table.Td>{vm.cluster ?? "-"}</Table.Td>
                   <Table.Td>{vm.csv_paths.join(", ")}</Table.Td>
+                  <Table.Td>{formatBytes(vm.vhdx_size_bytes)}</Table.Td>
+                  <Table.Td>
+                    <PolicyBadge name={vm.backup_policy_name} />
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -72,21 +94,51 @@ export function VmsPage() {
                 <Table.Th>Owner-Node</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Pfad</Table.Th>
+                <Table.Th>Größe</Table.Th>
+                <Table.Th>Belegung</Table.Th>
+                <Table.Th>Backup Policy</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {csvs?.map((csv) => (
-                <Table.Tr key={csv.name} onContextMenu={(e) => csvMenu.open(e, csv)} style={{ cursor: "context-menu" }}>
-                  <Table.Td>{csv.name}</Table.Td>
-                  <Table.Td>{csv.owner_node}</Table.Td>
-                  <Table.Td>
-                    <Badge color="green" variant="light">
-                      {csv.state}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>{csv.volume_path}</Table.Td>
-                </Table.Tr>
-              ))}
+              {csvs?.map((csv) => {
+                const usedPct =
+                  csv.capacity_bytes && csv.capacity_bytes > 0
+                    ? Math.round(((csv.used_bytes ?? 0) / csv.capacity_bytes) * 100)
+                    : null;
+                return (
+                  <Table.Tr key={csv.name} onContextMenu={(e) => csvMenu.open(e, csv)} style={{ cursor: "context-menu" }}>
+                    <Table.Td>{csv.name}</Table.Td>
+                    <Table.Td>{csv.owner_node}</Table.Td>
+                    <Table.Td>
+                      <Badge color="green" variant="light">
+                        {csv.state}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>{csv.volume_path}</Table.Td>
+                    <Table.Td>{formatBytes(csv.capacity_bytes)}</Table.Td>
+                    <Table.Td miw={160}>
+                      {usedPct === null ? (
+                        "-"
+                      ) : (
+                        <Stack gap={2}>
+                          <Progress value={usedPct} color={usedPct >= 90 ? "red" : usedPct >= 75 ? "yellow" : "blue"} size="sm" />
+                          <Group justify="space-between">
+                            <Text size="xs" c="dimmed">
+                              {formatBytes(csv.used_bytes)} / {formatBytes(csv.capacity_bytes)}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              {usedPct}%
+                            </Text>
+                          </Group>
+                        </Stack>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      <PolicyBadge name={csv.backup_policy_name} />
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
             </Table.Tbody>
           </Table>
         </Tabs.Panel>
