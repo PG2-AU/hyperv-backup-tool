@@ -6,11 +6,14 @@ um die Suche auf den aktuell sichtbaren Bereich einzuschraenken.
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.routes.jobs import _DEMO_JOBS
 from app.api.routes.storage import _DEMO_RELATIONSHIPS, _DEMO_SVMS
 from app.api.routes.vms import _DEMO_CSVS, _DEMO_VMS
+from app.db.session import get_db
+from app.models.netapp_cluster import NetAppCluster
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -28,9 +31,23 @@ def search(
     q: str = Query(min_length=1),
     context: str | None = None,
     user=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> list[SearchResult]:
     needle = q.lower()
     results: list[SearchResult] = []
+
+    if context in (None, "netapp-clusters"):
+        for cluster in db.query(NetAppCluster).all():
+            if needle in cluster.name.lower() or needle in cluster.management_lif.lower():
+                results.append(
+                    SearchResult(
+                        type="NetApp-Cluster",
+                        id=cluster.id,
+                        label=cluster.name,
+                        subtitle=f"{cluster.management_lif} / {cluster.health.value}",
+                        route="/netapp-clusters",
+                    )
+                )
 
     if context in (None, "vms"):
         for vm in _DEMO_VMS:

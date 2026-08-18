@@ -1,6 +1,7 @@
 import {
   IconDatabase,
   IconLayoutDashboard,
+  IconServer,
   IconServerCog,
   IconSettings,
   IconStack2,
@@ -34,6 +35,12 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Virtuelle Maschinen", path: "/vms" },
       { label: "Cluster Shared Volumes", path: "/vms?tab=csv" },
     ],
+  },
+  {
+    label: "NetApp-Systeme",
+    icon: IconServer,
+    path: "/netapp-clusters",
+    searchContext: "netapp-clusters",
   },
   {
     label: "Storage",

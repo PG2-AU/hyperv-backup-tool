@@ -19,17 +19,10 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconInfoCircle, IconKey, IconUserPlus } from "@tabler/icons-react";
-import axios from "axios";
 import { useSearchParams } from "react-router-dom";
 
 import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useUsers, type UserRead } from "@/api/hooks.settings";
-
-function apiErrorMessage(err: unknown, fallback: string): string {
-  if (axios.isAxiosError(err) && typeof err.response?.data?.detail === "string") {
-    return err.response.data.detail;
-  }
-  return fallback;
-}
+import { apiErrorMessage } from "@/utils/errors";
 
 function ConfigRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (

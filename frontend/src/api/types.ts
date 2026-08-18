@@ -21,6 +21,27 @@ export interface Csv {
   backup_policy_name?: string | null;
 }
 
+export type NetAppAuthMethod = "password" | "certificate";
+export type NetAppClusterHealth = "unknown" | "healthy" | "degraded" | "unreachable";
+
+export interface NetAppCluster {
+  id: string;
+  name: string;
+  management_lif: string;
+  username: string;
+  auth_method: NetAppAuthMethod;
+  verify_ssl: boolean;
+  ontap_version?: string | null;
+  cluster_uuid?: string | null;
+  health: NetAppClusterHealth;
+  node_count: number;
+  healthy_node_count: number;
+  is_metrocluster: boolean;
+  last_checked_at?: string | null;
+  last_check_error?: string | null;
+  created_at: string;
+}
+
 export interface SvmInfo {
   name: string;
   state: string;

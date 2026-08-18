@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     ontap_password: str = ""
     ontap_verify_ssl: bool = True
     ontap_is_metrocluster: bool = False
+    netapp_cert_dir: str = "./data/netapp-certs"
 
     # --- Hyper-V / WinRM ---
     winrm_transport: Literal["ntlm", "kerberos", "credssp"] = "ntlm"

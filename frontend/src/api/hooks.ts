@@ -6,6 +6,7 @@ import type {
   BackupJobRun,
   Csv,
   MetroClusterStatus,
+  NetAppCluster,
   SnapMirrorRelationship,
   SvmInfo,
   Vm,
@@ -65,5 +66,55 @@ export function useTriggerJobRun() {
   return useMutation({
     mutationFn: async (jobId: string) => (await apiClient.post<BackupJobRun>(`/jobs/${jobId}/run`)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["job-runs"] }),
+  });
+}
+
+export function useNetAppClusters() {
+  return useQuery({
+    queryKey: ["netapp-clusters"],
+    queryFn: async () => (await apiClient.get<NetAppCluster[]>("/netapp/clusters")).data,
+  });
+}
+
+export interface NetAppClusterCreatePayload {
+  name: string;
+  management_lif: string;
+  username: string;
+  password: string;
+  verify_ssl: boolean;
+}
+
+export function useCreateNetAppCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: NetAppClusterCreatePayload) =>
+      (await apiClient.post<NetAppCluster>("/netapp/clusters", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["netapp-clusters"] }),
+  });
+}
+
+export function useVerifyNetAppCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<NetAppCluster>(`/netapp/clusters/${id}/verify`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["netapp-clusters"] }),
+  });
+}
+
+export function useEnrollNetAppClusterCertificate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<NetAppCluster>(`/netapp/clusters/${id}/enroll-certificate`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["netapp-clusters"] }),
+  });
+}
+
+export function useDeleteNetAppCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/netapp/clusters/${id}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["netapp-clusters"] }),
   });
 }
