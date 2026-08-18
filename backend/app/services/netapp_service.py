@@ -25,10 +25,10 @@ from netapp_ontap import HostConnection
 from netapp_ontap.error import NetAppRestError
 from netapp_ontap.resources import (
     Account,
-    Certificate,
     Cluster,
     Metrocluster,
     Node,
+    SecurityCertificate,
     Snapshot,
     SnapmirrorRelationship,
     Volume,
@@ -172,7 +172,7 @@ class NetAppOntapService:
 
         try:
             with self._connection():
-                ca_cert = Certificate.from_dict(
+                ca_cert = SecurityCertificate.from_dict(
                     {"type": "client_ca", "common_name": common_name, "public_certificate": cert_pem.decode()}
                 )
                 ca_cert.post()
