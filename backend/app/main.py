@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, jobs, logs, netapp_clusters, search, settings as settings_routes, storage, users, vms
+from app.api.routes import auth, jobs, logs, netapp_clusters, schedules, search, settings as settings_routes, storage, users, vms
 from app.core.config import get_settings
 from app.db.init_db import init_db
 from app.db.session import SessionLocal
@@ -36,6 +36,7 @@ app.include_router(vms.router)
 app.include_router(storage.router)
 app.include_router(netapp_clusters.router)
 app.include_router(jobs.router)
+app.include_router(schedules.router)
 app.include_router(logs.router)
 app.include_router(search.router)
 app.include_router(users.router)

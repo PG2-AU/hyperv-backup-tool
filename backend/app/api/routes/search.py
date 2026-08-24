@@ -9,10 +9,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.routes.jobs import _DEMO_JOBS
 from app.api.routes.storage import _DEMO_RELATIONSHIPS, _DEMO_SVMS
 from app.api.routes.vms import _DEMO_CSVS, _DEMO_VMS
 from app.db.session import get_db
+from app.models.backup_job import BackupJob
 from app.models.netapp_cluster import NetAppCluster
 
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -58,9 +58,10 @@ def search(
                 results.append(SearchResult(type="CSV", id=csv.name, label=csv.name, subtitle=csv.owner_node, route="/vms?tab=csv"))
 
     if context in (None, "jobs"):
-        for job in _DEMO_JOBS:
+        for job in db.query(BackupJob).all():
             if needle in job.name.lower():
-                results.append(SearchResult(type="Job", id=job.id, label=job.name, subtitle=job.scope.value, route=f"/jobs/{job.id}"))
+                subtitle = job.scope.value if job.scope else "kein Scope"
+                results.append(SearchResult(type="Job", id=job.id, label=job.name, subtitle=subtitle, route=f"/jobs/{job.id}"))
 
     if context in (None, "storage"):
         for svm in _DEMO_SVMS:

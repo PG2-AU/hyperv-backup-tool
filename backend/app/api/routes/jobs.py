@@ -1,49 +1,26 @@
 """Backup-Job-Definitionen und -Laeufe.
 
-TODO(iteration): Persistenz in DB + tatsaechliche Job-Ausfuehrung
-(HyperVService.create_checkpoint -> NetAppOntapService.create_snapshot ->
-SnapMirror-Update -> Checkpoint entfernen; bei Fehler: cleanup_checkpoints
-+ cleanup_snapshots) folgt als naechster Schritt.
+Job-Definitionen (Name, Zeitplan, Konsistenz, SnapMirror-Update) werden in
+der DB persistiert. Die VM/CSV/LUN-Zuordnung (scope/targets) sowie die
+tatsaechliche Job-Ausfuehrung (HyperVService.create_checkpoint ->
+NetAppOntapService.create_snapshot -> SnapMirror-Update -> Checkpoint
+entfernen; bei Fehler: cleanup_checkpoints + cleanup_snapshots) folgen als
+naechste Schritte -- Job-Laeufe (`_DEMO_RUNS`) sind daher weiterhin Demo-Daten.
 """
 
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.core.rbac import Permission
-from app.schemas.backup import (
-    BackupJobDefinition,
-    BackupJobRun,
-    BackupScope,
-    ConsistencyType,
-    JobStatus,
-)
+from app.db.session import get_db
+from app.models.backup_job import BackupJob, BackupScope, ConsistencyType
+from app.models.schedule import Schedule
+from app.schemas.backup import BackupJobCreate, BackupJobRead, BackupJobRun, JobStatus
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
-
-_DEMO_JOBS = [
-    BackupJobDefinition(
-        id="job-001",
-        name="SQL-Cluster taeglich 02:00",
-        scope=BackupScope.VM,
-        targets=["APP-SQL01"],
-        consistency=ConsistencyType.APPLICATION_CONSISTENT,
-        schedule_cron="0 2 * * *",
-        snapmirror_label="daily",
-        metrocluster_aware=True,
-    ),
-    BackupJobDefinition(
-        id="job-002",
-        name="CSV1 stuendlich",
-        scope=BackupScope.CSV,
-        targets=["CSV1"],
-        consistency=ConsistencyType.CRASH_CONSISTENT,
-        schedule_cron="0 * * * *",
-        snapmirror_label="hourly",
-        metrocluster_aware=True,
-    ),
-]
 
 _DEMO_RUNS = [
     BackupJobRun(
@@ -74,9 +51,44 @@ _DEMO_RUNS = [
 ]
 
 
-@router.get("", response_model=list[BackupJobDefinition])
-def list_jobs(user=Depends(require_permission(Permission.BACKUP_VIEW))) -> list[BackupJobDefinition]:
-    return _DEMO_JOBS
+@router.get("", response_model=list[BackupJobRead])
+def list_jobs(db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW))) -> list[BackupJob]:
+    return db.query(BackupJob).order_by(BackupJob.name).all()
+
+
+@router.post("", response_model=BackupJobRead, status_code=status.HTTP_201_CREATED)
+def create_job(
+    payload: BackupJobCreate,
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> BackupJob:
+    if db.query(BackupJob).filter(BackupJob.name == payload.name).first() is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ein Job mit diesem Namen existiert bereits")
+
+    if payload.schedule_id is not None and db.get(Schedule, payload.schedule_id) is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Zeitplan nicht gefunden")
+
+    job = BackupJob(
+        name=payload.name,
+        schedule_id=payload.schedule_id,
+        consistency=ConsistencyType.APPLICATION_CONSISTENT if payload.app_consistent else ConsistencyType.CRASH_CONSISTENT,
+        snapmirror_update=payload.snapmirror_update,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_job(
+    job_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_DELETE)),
+) -> None:
+    job = db.get(BackupJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job nicht gefunden")
+    db.delete(job)
+    db.commit()
 
 
 @router.get("/runs", response_model=list[BackupJobRun])
@@ -85,8 +97,10 @@ def list_job_runs(user=Depends(require_permission(Permission.BACKUP_VIEW))) -> l
 
 
 @router.post("/{job_id}/run", response_model=BackupJobRun, status_code=status.HTTP_202_ACCEPTED)
-def trigger_job_run(job_id: str, user=Depends(require_permission(Permission.BACKUP_RUN))) -> BackupJobRun:
-    job = next((j for j in _DEMO_JOBS if j.id == job_id), None)
+def trigger_job_run(
+    job_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_RUN)),
+) -> BackupJobRun:
+    job = db.get(BackupJob, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job nicht gefunden")
 

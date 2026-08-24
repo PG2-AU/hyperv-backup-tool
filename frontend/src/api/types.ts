@@ -72,16 +72,31 @@ export type JobStatus =
   | "cleaning_up"
   | "cleaned_up_after_failure";
 
+export type ScheduleType = "hourly" | "daily" | "weekly" | "monthly";
+
+export interface Schedule {
+  id: string;
+  name: string;
+  schedule_type: ScheduleType;
+  times: string[];
+  weekday?: number | null;
+  day_of_month?: number | null;
+  created_at: string;
+}
+
 export interface BackupJobDefinition {
   id: string;
   name: string;
-  scope: BackupScope;
+  schedule_id?: string | null;
+  schedule?: Schedule | null;
+  scope?: BackupScope | null;
   targets: string[];
   consistency: ConsistencyType;
-  schedule_cron?: string | null;
+  snapmirror_update: boolean;
   snapmirror_label?: string | null;
   metrocluster_aware: boolean;
   enabled: boolean;
+  created_at: string;
 }
 
 export interface BackupJobRun {
@@ -91,7 +106,7 @@ export interface BackupJobRun {
   status: JobStatus;
   started_at: string;
   finished_at?: string | null;
-  scope: BackupScope;
+  scope?: BackupScope | null;
   targets: string[];
   created_snapshots: string[];
   created_checkpoints: string[];

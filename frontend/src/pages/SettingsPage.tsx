@@ -18,11 +18,22 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconInfoCircle, IconKey, IconUserPlus } from "@tabler/icons-react";
+import { IconEdit, IconInfoCircle, IconKey, IconPlus, IconTrash, IconUserPlus } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
+import { useDeleteSchedule, useSchedules } from "@/api/hooks";
 import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useUsers, type UserRead } from "@/api/hooks.settings";
+import { ScheduleFormModal } from "@/components/ScheduleFormModal";
+import type { Schedule } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
+import { formatSchedule } from "@/utils/format";
+
+const SCHEDULE_TYPE_LABEL: Record<string, string> = {
+  hourly: "Mehrmals täglich",
+  daily: "Täglich",
+  weekly: "Wöchentlich",
+  monthly: "Monatlich",
+};
 
 function ConfigRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -164,6 +175,29 @@ export function SettingsPage() {
   const { data: settings } = usePublicSettings();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [passwordModalUser, setPasswordModalUser] = useState<UserRead | null>(null);
+  const { data: schedules } = useSchedules();
+  const deleteSchedule = useDeleteSchedule();
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
+
+  function openCreateSchedule() {
+    setEditingSchedule(null);
+    setScheduleModalOpen(true);
+  }
+
+  function openEditSchedule(schedule: Schedule) {
+    setEditingSchedule(schedule);
+    setScheduleModalOpen(true);
+  }
+
+  function removeSchedule(schedule: Schedule) {
+    if (!window.confirm(`Zeitplan '${schedule.name}' wirklich löschen?`)) return;
+    deleteSchedule.mutate(schedule.id, {
+      onSuccess: () => notifications.show({ title: "Zeitplan gelöscht", message: schedule.name, color: "blue" }),
+      onError: (err) =>
+        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Zeitplan konnte nicht gelöscht werden."), color: "red" }),
+    });
+  }
 
   return (
     <Stack>
@@ -172,6 +206,7 @@ export function SettingsPage() {
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "users" })}>
         <Tabs.List>
           <Tabs.Tab value="users">Benutzer & Rollen</Tabs.Tab>
+          <Tabs.Tab value="schedules">Zeitpläne</Tabs.Tab>
           <Tabs.Tab value="ad">Active Directory</Tabs.Tab>
           <Tabs.Tab value="netapp">NetApp-Verbindung</Tabs.Tab>
           <Tabs.Tab value="hyperv">Hyper-V-Hosts</Tabs.Tab>
@@ -258,6 +293,61 @@ export function SettingsPage() {
               </Table>
             </Paper>
           </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="schedules" pt="md">
+          <Paper p="md">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>Zeitpläne</Title>
+              <Button leftSection={<IconPlus size={16} />} onClick={openCreateSchedule}>
+                Zeitplan erstellen
+              </Button>
+            </Group>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Typ</Table.Th>
+                  <Table.Th>Details</Table.Th>
+                  <Table.Th>Aktionen</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {schedules?.map((s) => (
+                  <Table.Tr key={s.id}>
+                    <Table.Td>{s.name}</Table.Td>
+                    <Table.Td>
+                      <Badge variant="light" color="blue">
+                        {SCHEDULE_TYPE_LABEL[s.schedule_type] ?? s.schedule_type}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>{formatSchedule(s)}</Table.Td>
+                    <Table.Td>
+                      <Group gap="xs">
+                        <ActionIcon variant="light" onClick={() => openEditSchedule(s)}>
+                          <IconEdit size={16} />
+                        </ActionIcon>
+                        <ActionIcon variant="light" color="red" onClick={() => removeSchedule(s)}>
+                          <IconTrash size={16} />
+                        </ActionIcon>
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            {schedules?.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Noch keine Zeitpläne angelegt.
+              </Text>
+            )}
+          </Paper>
+
+          <ScheduleFormModal
+            opened={scheduleModalOpen}
+            onClose={() => setScheduleModalOpen(false)}
+            schedule={editingSchedule}
+          />
         </Tabs.Panel>
 
         <Tabs.Panel value="ad" pt="md">

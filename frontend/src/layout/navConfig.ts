@@ -67,6 +67,7 @@ export const NAV_ITEMS: NavItem[] = [
     searchContext: "settings",
     children: [
       { label: "Benutzer & Rollen", path: "/settings?tab=users" },
+      { label: "Zeitpläne", path: "/settings?tab=schedules" },
       { label: "Active-Directory-Integration", path: "/settings?tab=ad" },
       { label: "NetApp-Verbindung", path: "/settings?tab=netapp" },
       { label: "Hyper-V-Hosts", path: "/settings?tab=hyperv" },

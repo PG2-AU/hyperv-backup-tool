@@ -1,18 +1,10 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-
-class BackupScope(StrEnum):
-    VM = "vm"
-    CSV = "csv"
-    LUN = "lun"
-
-
-class ConsistencyType(StrEnum):
-    APPLICATION_CONSISTENT = "ApplicationConsistent"
-    CRASH_CONSISTENT = "CrashConsistent"
+from app.models.backup_job import BackupScope, ConsistencyType
+from app.schemas.schedule import ScheduleRead
 
 
 class JobStatus(StrEnum):
@@ -24,16 +16,28 @@ class JobStatus(StrEnum):
     CLEANED_UP_AFTER_FAILURE = "cleaned_up_after_failure"
 
 
-class BackupJobDefinition(BaseModel):
+class BackupJobCreate(BaseModel):
+    name: str
+    schedule_id: str | None = None
+    app_consistent: bool = False
+    snapmirror_update: bool = False
+
+
+class BackupJobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     name: str
-    scope: BackupScope
+    schedule_id: str | None = None
+    schedule: ScheduleRead | None = None
+    scope: BackupScope | None = None
     targets: list[str]
     consistency: ConsistencyType
-    schedule_cron: str | None = None
+    snapmirror_update: bool
     snapmirror_label: str | None = None
-    metrocluster_aware: bool = False
-    enabled: bool = True
+    metrocluster_aware: bool
+    enabled: bool
+    created_at: datetime
 
 
 class BackupJobRun(BaseModel):
@@ -43,7 +47,7 @@ class BackupJobRun(BaseModel):
     status: JobStatus
     started_at: datetime
     finished_at: datetime | None = None
-    scope: BackupScope
+    scope: BackupScope | None = None
     targets: list[str]
     created_snapshots: list[str] = []
     created_checkpoints: list[str] = []

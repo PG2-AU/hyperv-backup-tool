@@ -7,6 +7,8 @@ import type {
   Csv,
   MetroClusterStatus,
   NetAppCluster,
+  Schedule,
+  ScheduleType,
   SnapMirrorRelationship,
   SvmInfo,
   Vm,
@@ -66,6 +68,76 @@ export function useTriggerJobRun() {
   return useMutation({
     mutationFn: async (jobId: string) => (await apiClient.post<BackupJobRun>(`/jobs/${jobId}/run`)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["job-runs"] }),
+  });
+}
+
+export interface BackupJobCreatePayload {
+  name: string;
+  schedule_id?: string | null;
+  app_consistent: boolean;
+  snapmirror_update: boolean;
+}
+
+export function useCreateJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: BackupJobCreatePayload) => (await apiClient.post<BackupJobDefinition>("/jobs", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+}
+
+export function useDeleteJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/jobs/${id}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+}
+
+export function useSchedules() {
+  return useQuery({
+    queryKey: ["schedules"],
+    queryFn: async () => (await apiClient.get<Schedule[]>("/schedules")).data,
+  });
+}
+
+export interface ScheduleWritePayload {
+  name: string;
+  schedule_type: ScheduleType;
+  times: string[];
+  weekday?: number | null;
+  day_of_month?: number | null;
+}
+
+export function useCreateSchedule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: ScheduleWritePayload) => (await apiClient.post<Schedule>("/schedules", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedules"] }),
+  });
+}
+
+export function useUpdateSchedule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: ScheduleWritePayload }) =>
+      (await apiClient.put<Schedule>(`/schedules/${id}`, payload)).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["schedules"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  });
+}
+
+export function useDeleteSchedule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/schedules/${id}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedules"] }),
   });
 }
 
