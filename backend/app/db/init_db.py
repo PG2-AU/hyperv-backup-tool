@@ -3,6 +3,7 @@ initialen lokalen Admin-Benutzer an (Passwort ueber ENV/.env steuerbar)."""
 
 import os
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.rbac import DEFAULT_ROLES
@@ -14,8 +15,40 @@ from app.models.snapmirror_label import DEFAULT_SNAPMIRROR_LABELS, SnapMirrorLab
 from app.models.user import User, UserSource
 
 
+def _migrate_legacy_backup_policies_start(engine) -> None:
+    """SQLite kann bestehende NOT-NULL-Spalten nicht per ALTER TABLE entfernen.
+    Das BackupPolicy-Modell hatte frueher ein NOT-NULL-'targets'-Feld (VM/CSV-
+    Zuordnung erfolgt jetzt ueber ResourceGroups); eine bereits existierende
+    Alt-Tabelle mit dieser Spalte wuerde neue INSERTs ohne 'targets' scheitern
+    lassen. Falls vorhanden, wird sie umbenannt, sodass create_all() eine neue
+    Tabelle im aktuellen Schema anlegt; die Daten werden danach uebernommen."""
+    with engine.connect() as conn:
+        existing_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(backup_policies)"))]
+        if not existing_cols or "targets" not in existing_cols:
+            return
+        conn.execute(text("DROP TABLE IF EXISTS backup_policies_legacy"))
+        conn.execute(text("ALTER TABLE backup_policies RENAME TO backup_policies_legacy"))
+        conn.commit()
+
+
+def _migrate_legacy_backup_policies_finish(engine) -> None:
+    with engine.connect() as conn:
+        tables = [row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))]
+        if "backup_policies_legacy" not in tables:
+            return
+
+        old_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(backup_policies_legacy)"))}
+        new_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(backup_policies)"))}
+        shared_cols = ", ".join(sorted(old_cols & new_cols))
+        conn.execute(text(f"INSERT INTO backup_policies ({shared_cols}) SELECT {shared_cols} FROM backup_policies_legacy"))
+        conn.execute(text("DROP TABLE backup_policies_legacy"))
+        conn.commit()
+
+
 def init_db(db: Session) -> None:
+    _migrate_legacy_backup_policies_start(engine)
     Base.metadata.create_all(bind=engine)
+    _migrate_legacy_backup_policies_finish(engine)
 
     for role_name, permissions in DEFAULT_ROLES.items():
         existing = db.query(Role).filter(Role.name == role_name).first()
