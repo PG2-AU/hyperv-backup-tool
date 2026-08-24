@@ -8,6 +8,7 @@ export interface Vm {
   vhdx_size_bytes?: number | null;
   resource_group_names: string[];
   policy_names: string[];
+  protected: boolean;
 }
 
 export interface Csv {
@@ -17,8 +18,11 @@ export interface Csv {
   volume_path: string;
   capacity_bytes?: number | null;
   used_bytes?: number | null;
+  lun_name?: string | null;
+  volume_name?: string | null;
   resource_group_names: string[];
   policy_names: string[];
+  protected: boolean;
 }
 
 export type NetAppAuthMethod = "password" | "certificate";

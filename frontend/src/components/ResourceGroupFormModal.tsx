@@ -89,7 +89,7 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
 
         <MultiSelect
           label={scope === "vm" ? "Virtuelle Maschinen" : "Cluster Shared Volumes"}
-          placeholder="Mitglieder auswaehlen"
+          placeholder="Objekte auswaehlen"
           data={memberOptions}
           value={members}
           onChange={setMembers}

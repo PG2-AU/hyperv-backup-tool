@@ -5,13 +5,13 @@ import {
   IconServerCog,
   IconSettings,
   IconStack2,
-  IconTags,
 } from "@tabler/icons-react";
 import type { Icon } from "@tabler/icons-react";
 
 export interface NavChild {
   label: string;
   path: string;
+  searchContext?: string;
 }
 
 export interface NavItem {
@@ -44,12 +44,6 @@ export const NAV_ITEMS: NavItem[] = [
     searchContext: "netapp-clusters",
   },
   {
-    label: "Resource Groups",
-    icon: IconTags,
-    path: "/resource-groups",
-    searchContext: "resource-groups",
-  },
-  {
     label: "Storage",
     icon: IconDatabase,
     searchContext: "storage",
@@ -65,6 +59,7 @@ export const NAV_ITEMS: NavItem[] = [
     searchContext: "jobs",
     children: [
       { label: "Policies", path: "/jobs?tab=policies" },
+      { label: "Resource Groups", path: "/resource-groups", searchContext: "resource-groups" },
       { label: "Job-Verlauf", path: "/jobs?tab=runs" },
     ],
   },
@@ -87,9 +82,8 @@ export const NAV_ITEMS: NavItem[] = [
 export function resolveSearchContext(pathname: string): string | undefined {
   for (const item of NAV_ITEMS) {
     if (item.path === pathname) return item.searchContext;
-    if (item.children?.some((c) => pathname === c.path.split("?")[0])) {
-      return item.searchContext;
-    }
+    const child = item.children?.find((c) => pathname === c.path.split("?")[0]);
+    if (child) return child.searchContext ?? item.searchContext;
   }
   return undefined;
 }

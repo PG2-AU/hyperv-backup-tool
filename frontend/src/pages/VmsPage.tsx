@@ -36,6 +36,14 @@ function ResourceGroupCell({ groups, policies }: { groups: string[]; policies: s
   );
 }
 
+function ProtectedBadge({ protected: isProtected }: { protected: boolean }) {
+  return (
+    <Badge color={isProtected ? "green" : "red"} variant="light">
+      {isProtected ? "Protected" : "Ungeschützt"}
+    </Badge>
+  );
+}
+
 export function VmsPage() {
   const [params, setParams] = useSearchParams();
   const activeTab = params.get("tab") === "csv" ? "csv" : "vms";
@@ -73,6 +81,7 @@ export function VmsPage() {
                 <Table.Th>CSV-Pfade</Table.Th>
                 <Table.Th>VHDX-Größe</Table.Th>
                 <Table.Th>Resource Group</Table.Th>
+                <Table.Th>Protected</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -91,6 +100,9 @@ export function VmsPage() {
                   <Table.Td>
                     <ResourceGroupCell groups={vm.resource_group_names} policies={vm.policy_names} />
                   </Table.Td>
+                  <Table.Td>
+                    <ProtectedBadge protected={vm.protected} />
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -107,7 +119,10 @@ export function VmsPage() {
                 <Table.Th>Pfad</Table.Th>
                 <Table.Th>Größe</Table.Th>
                 <Table.Th>Belegung</Table.Th>
+                <Table.Th>LUN</Table.Th>
+                <Table.Th>Volume</Table.Th>
                 <Table.Th>Resource Group</Table.Th>
+                <Table.Th>Protected</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -144,8 +159,13 @@ export function VmsPage() {
                         </Stack>
                       )}
                     </Table.Td>
+                    <Table.Td>{csv.lun_name ?? "-"}</Table.Td>
+                    <Table.Td>{csv.volume_name ?? "-"}</Table.Td>
                     <Table.Td>
                       <ResourceGroupCell groups={csv.resource_group_names} policies={csv.policy_names} />
+                    </Table.Td>
+                    <Table.Td>
+                      <ProtectedBadge protected={csv.protected} />
                     </Table.Td>
                   </Table.Tr>
                 );

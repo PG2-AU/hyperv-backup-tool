@@ -7,8 +7,13 @@ HyperVService.list_vms/list_csvs folgt, sobald die Host-Verwaltung
 
 Resource-Group- und Policy-Zuordnung (siehe app.api.routes.resource_groups)
 ist dagegen bereits real: sie wird pro VM/CSV anhand der Mitgliedschaft in
-gespeicherten ResourceGroups berechnet.
+gespeicherten ResourceGroups berechnet. Eine VM gilt auch dann als
+"protected", wenn sie selbst in keiner VM-Resource-Group liegt, aber auf
+einem CSV liegt, das Mitglied einer CSV-Resource-Group ist (indirekter
+Schutz -- die VM-Sicherung erfolgt in diesem Fall ueber das CSV-Backup).
 """
+
+from ntpath import basename as win_basename
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -45,40 +50,51 @@ _DEMO_CSVS = [
     CsvRead(
         name="CSV1", owner_node="HV-NODE01", state="Online", volume_path="C:\\ClusterStorage\\CSV1",
         capacity_bytes=2_199_023_255_552, used_bytes=1_374_389_534_720,
+        lun_name="lun_csv1", volume_name="vol_csv1",
     ),
     CsvRead(
         name="CSV2", owner_node="HV-NODE02", state="Online", volume_path="C:\\ClusterStorage\\CSV2",
         capacity_bytes=1_099_511_627_776, used_bytes=343_597_383_680,
+        lun_name="lun_csv2", volume_name="vol_csv2",
     ),
     CsvRead(
         name="CSV3", owner_node="HV-NODE03", state="Online", volume_path="C:\\ClusterStorage\\CSV3",
         capacity_bytes=4_398_046_511_104, used_bytes=3_848_290_697_216,
+        lun_name="lun_csv3", volume_name="vol_csv3",
     ),
 ]
 
 
-def _annotate_with_resource_groups(member_name: str, scope: BackupScope, groups: list[ResourceGroup]) -> tuple[list[str], list[str]]:
-    matching = [g for g in groups if g.scope == scope and member_name in g.members]
-    group_names = [g.name for g in matching]
+def _csv_names_for_vm(vm: VmRead) -> set[str]:
+    return {win_basename(p.rstrip("\\/")) for p in vm.csv_paths}
+
+
+def _annotate_csv(csv: CsvRead, groups: list[ResourceGroup]) -> CsvRead:
+    matching = [g for g in groups if g.scope == BackupScope.CSV and csv.name in g.members]
+    group_names = sorted({g.name for g in matching})
     policy_names = sorted({p.name for g in matching for p in g.policies})
-    return group_names, policy_names
+    return csv.model_copy(update={"resource_group_names": group_names, "policy_names": policy_names, "protected": bool(group_names)})
+
+
+def _annotate_vm(vm: VmRead, groups: list[ResourceGroup]) -> VmRead:
+    direct = [g for g in groups if g.scope == BackupScope.VM and vm.name in g.members]
+
+    csv_names = _csv_names_for_vm(vm)
+    indirect = [g for g in groups if g.scope == BackupScope.CSV and csv_names & set(g.members)]
+
+    matching = direct + indirect
+    group_names = sorted({g.name for g in matching})
+    policy_names = sorted({p.name for g in matching for p in g.policies})
+    return vm.model_copy(update={"resource_group_names": group_names, "policy_names": policy_names, "protected": bool(group_names)})
 
 
 @router.get("", response_model=list[VmRead])
 def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_VIEW))) -> list[VmRead]:
     groups = db.query(ResourceGroup).all()
-    result = []
-    for vm in _DEMO_VMS:
-        group_names, policy_names = _annotate_with_resource_groups(vm.name, BackupScope.VM, groups)
-        result.append(vm.model_copy(update={"resource_group_names": group_names, "policy_names": policy_names}))
-    return result
+    return [_annotate_vm(vm, groups) for vm in _DEMO_VMS]
 
 
 @router.get("/csvs", response_model=list[CsvRead])
 def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_VIEW))) -> list[CsvRead]:
     groups = db.query(ResourceGroup).all()
-    result = []
-    for csv in _DEMO_CSVS:
-        group_names, policy_names = _annotate_with_resource_groups(csv.name, BackupScope.CSV, groups)
-        result.append(csv.model_copy(update={"resource_group_names": group_names, "policy_names": policy_names}))
-    return result
+    return [_annotate_csv(csv, groups) for csv in _DEMO_CSVS]

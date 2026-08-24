@@ -52,7 +52,8 @@ export function ResourceGroupsPage() {
             <Table.Tr>
               <Table.Th>Name</Table.Th>
               <Table.Th>Typ</Table.Th>
-              <Table.Th>Mitglieder</Table.Th>
+              <Table.Th>Anzahl</Table.Th>
+              <Table.Th>Objekte</Table.Th>
               <Table.Th>Verknüpfte Policies</Table.Th>
             </Table.Tr>
           </Table.Thead>
@@ -63,6 +64,11 @@ export function ResourceGroupsPage() {
                 <Table.Td>
                   <Badge variant="light" color="blue">
                     {SCOPE_LABEL[group.scope] ?? group.scope}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>
+                  <Badge variant="filled" color="gray">
+                    {group.members.length}
                   </Badge>
                 </Table.Td>
                 <Table.Td>{group.members.length ? group.members.join(", ") : "-"}</Table.Td>

@@ -11,6 +11,7 @@ class VmRead(BaseModel):
     vhdx_size_bytes: int | None = None
     resource_group_names: list[str] = []
     policy_names: list[str] = []
+    protected: bool = False
 
 
 class CsvRead(BaseModel):
@@ -20,5 +21,8 @@ class CsvRead(BaseModel):
     volume_path: str
     capacity_bytes: int | None = None
     used_bytes: int | None = None
+    lun_name: str | None = None
+    volume_name: str | None = None
     resource_group_names: list[str] = []
     policy_names: list[str] = []
+    protected: bool = False
