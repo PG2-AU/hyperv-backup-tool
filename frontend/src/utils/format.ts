@@ -1,4 +1,4 @@
-import type { Schedule } from "@/api/types";
+import type { BackupPolicy, Schedule } from "@/api/types";
 
 const UNITS = ["Bytes", "KB", "MB", "GB", "TB", "PB"] as const;
 
@@ -28,4 +28,8 @@ export function formatSchedule(schedule?: Schedule | null): string {
     default:
       return schedule.name;
   }
+}
+
+export function formatRetention(policy: Pick<BackupPolicy, "retention_type" | "retention_value">): string {
+  return policy.retention_type === "days" ? `${policy.retention_value} Tage` : `${policy.retention_value} Snapshots`;
 }

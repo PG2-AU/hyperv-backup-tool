@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.core.rbac import Permission
 from app.db.session import get_db
-from app.models.backup_job import BackupJob
+from app.models.backup_policy import BackupPolicy
 from app.models.schedule import Schedule
 from app.schemas.schedule import ScheduleRead, ScheduleWrite
 
@@ -67,12 +67,12 @@ def delete_schedule(
     if schedule is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Zeitplan nicht gefunden")
 
-    referencing_jobs = db.query(BackupJob).filter(BackupJob.schedule_id == schedule_id).all()
-    if referencing_jobs:
-        names = ", ".join(j.name for j in referencing_jobs)
+    referencing_policies = db.query(BackupPolicy).filter(BackupPolicy.schedule_id == schedule_id).all()
+    if referencing_policies:
+        names = ", ".join(p.name for p in referencing_policies)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Zeitplan wird noch von folgenden Jobs verwendet: {names}",
+            detail=f"Zeitplan wird noch von folgenden Backup-Policies verwendet: {names}",
         )
 
     db.delete(schedule)

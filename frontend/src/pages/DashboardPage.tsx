@@ -1,7 +1,7 @@
 import { Badge, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from "@mantine/core";
 import { IconAlertTriangle, IconCircleCheck, IconServer2, IconStack2 } from "@tabler/icons-react";
 
-import { useJobRuns, useJobs, useMetroClusterStatus, useVms } from "@/api/hooks";
+import { useJobRuns, useMetroClusterStatus, usePolicies, useVms } from "@/api/hooks";
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: "green",
@@ -32,7 +32,7 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
 
 export function DashboardPage() {
   const { data: vms } = useVms();
-  const { data: jobs } = useJobs();
+  const { data: policies } = usePolicies();
   const { data: runs } = useJobRuns();
   const { data: mcc } = useMetroClusterStatus();
 
@@ -44,7 +44,7 @@ export function DashboardPage() {
 
       <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
         <StatCard icon={<IconServer2 size={28} />} label="Virtuelle Maschinen" value={String(vms?.length ?? "-")} />
-        <StatCard icon={<IconStack2 size={28} />} label="Aktive Backup-Jobs" value={String(jobs?.filter((j) => j.enabled).length ?? "-")} />
+        <StatCard icon={<IconStack2 size={28} />} label="Aktive Policies" value={String(policies?.filter((p) => p.enabled).length ?? "-")} />
         <StatCard
           icon={<IconAlertTriangle size={28} />}
           label="Fehlgeschlagene Laeufe (letzte)"

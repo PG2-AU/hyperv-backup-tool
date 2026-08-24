@@ -2,13 +2,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/api/client";
 import type {
-  BackupJobDefinition,
   BackupJobRun,
+  BackupPolicy,
   Csv,
   MetroClusterStatus,
   NetAppCluster,
+  RetentionType,
   Schedule,
   ScheduleType,
+  SnapMirrorLabel,
   SnapMirrorRelationship,
   SvmInfo,
   Vm,
@@ -49,10 +51,10 @@ export function useMetroClusterStatus() {
   });
 }
 
-export function useJobs() {
+export function usePolicies() {
   return useQuery({
     queryKey: ["jobs"],
-    queryFn: async () => (await apiClient.get<BackupJobDefinition[]>("/jobs")).data,
+    queryFn: async () => (await apiClient.get<BackupPolicy[]>("/jobs")).data,
   });
 }
 
@@ -71,28 +73,79 @@ export function useTriggerJobRun() {
   });
 }
 
-export interface BackupJobCreatePayload {
+export interface BackupPolicyWritePayload {
   name: string;
   schedule_id?: string | null;
   app_consistent: boolean;
   snapmirror_update: boolean;
+  snapmirror_label_id?: string | null;
+  retention_type: RetentionType;
+  retention_value: number;
+  snapshot_locking_enabled: boolean;
+  snapshot_locking_days?: number | null;
 }
 
-export function useCreateJob() {
+export function useCreatePolicy() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: BackupJobCreatePayload) => (await apiClient.post<BackupJobDefinition>("/jobs", payload)).data,
+    mutationFn: async (payload: BackupPolicyWritePayload) => (await apiClient.post<BackupPolicy>("/jobs", payload)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
   });
 }
 
-export function useDeleteJob() {
+export function useUpdatePolicy() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: BackupPolicyWritePayload }) =>
+      (await apiClient.put<BackupPolicy>(`/jobs/${id}`, payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+}
+
+export function useDeletePolicy() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
       await apiClient.delete(`/jobs/${id}`);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+}
+
+export function useSnapMirrorLabels() {
+  return useQuery({
+    queryKey: ["snapmirror-labels"],
+    queryFn: async () => (await apiClient.get<SnapMirrorLabel[]>("/snapmirror-labels")).data,
+  });
+}
+
+export function useCreateSnapMirrorLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string) => (await apiClient.post<SnapMirrorLabel>("/snapmirror-labels", { name })).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["snapmirror-labels"] }),
+  });
+}
+
+export function useUpdateSnapMirrorLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) =>
+      (await apiClient.put<SnapMirrorLabel>(`/snapmirror-labels/${id}`, { name })).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["snapmirror-labels"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  });
+}
+
+export function useDeleteSnapMirrorLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/snapmirror-labels/${id}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["snapmirror-labels"] }),
   });
 }
 

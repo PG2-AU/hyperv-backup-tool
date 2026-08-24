@@ -10,6 +10,7 @@ from app.core.security import hash_password
 from app.db.base import Base
 from app.db.session import engine
 from app.models.role import Role, RoleAssignment
+from app.models.snapmirror_label import DEFAULT_SNAPMIRROR_LABELS, SnapMirrorLabel
 from app.models.user import User, UserSource
 
 
@@ -45,3 +46,9 @@ def init_db(db: Session) -> None:
         admin_role = db.query(Role).filter(Role.name == "Administrator").first()
         db.add(RoleAssignment(user_id=admin.id, role_id=admin_role.id, scope_type="global"))
         db.commit()
+
+    for label_name in DEFAULT_SNAPMIRROR_LABELS:
+        existing_label = db.query(SnapMirrorLabel).filter(SnapMirrorLabel.name == label_name).first()
+        if existing_label is None:
+            db.add(SnapMirrorLabel(name=label_name))
+    db.commit()

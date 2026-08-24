@@ -57,7 +57,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: IconStack2,
     searchContext: "jobs",
     children: [
-      { label: "Job-Definitionen", path: "/jobs?tab=definitions" },
+      { label: "Policies", path: "/jobs?tab=policies" },
       { label: "Job-Verlauf", path: "/jobs?tab=runs" },
     ],
   },
@@ -68,6 +68,7 @@ export const NAV_ITEMS: NavItem[] = [
     children: [
       { label: "Benutzer & Rollen", path: "/settings?tab=users" },
       { label: "Zeitpläne", path: "/settings?tab=schedules" },
+      { label: "SnapMirror-Labels", path: "/settings?tab=snapmirror-labels" },
       { label: "Active-Directory-Integration", path: "/settings?tab=ad" },
       { label: "NetApp-Verbindung", path: "/settings?tab=netapp" },
       { label: "Hyper-V-Hosts", path: "/settings?tab=hyperv" },

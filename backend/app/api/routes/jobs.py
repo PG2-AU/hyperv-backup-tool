@@ -1,11 +1,12 @@
-"""Backup-Job-Definitionen und -Laeufe.
+"""Backup-Policies (Job-Definitionen) und Job-Laeufe.
 
-Job-Definitionen (Name, Zeitplan, Konsistenz, SnapMirror-Update) werden in
-der DB persistiert. Die VM/CSV/LUN-Zuordnung (scope/targets) sowie die
-tatsaechliche Job-Ausfuehrung (HyperVService.create_checkpoint ->
-NetAppOntapService.create_snapshot -> SnapMirror-Update -> Checkpoint
-entfernen; bei Fehler: cleanup_checkpoints + cleanup_snapshots) folgen als
-naechste Schritte -- Job-Laeufe (`_DEMO_RUNS`) sind daher weiterhin Demo-Daten.
+Backup-Policies (Name, Zeitplan, Konsistenz, SnapMirror-Verhalten, Retention,
+Snapshot Locking) werden in der DB persistiert. Die VM/CSV/LUN-Zuordnung
+(scope/targets) sowie die tatsaechliche Job-Ausfuehrung
+(HyperVService.create_checkpoint -> NetAppOntapService.create_snapshot ->
+SnapMirror-Update -> Checkpoint entfernen; bei Fehler: cleanup_checkpoints
++ cleanup_snapshots) folgen als naechste Schritte -- Job-Laeufe (`_DEMO_RUNS`)
+sind daher weiterhin Demo-Daten.
 """
 
 from datetime import datetime, timezone
@@ -16,9 +17,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.core.rbac import Permission
 from app.db.session import get_db
-from app.models.backup_job import BackupJob, BackupScope, ConsistencyType
+from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
 from app.models.schedule import Schedule
-from app.schemas.backup import BackupJobCreate, BackupJobRead, BackupJobRun, JobStatus
+from app.models.snapmirror_label import SnapMirrorLabel
+from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite, JobStatus
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -51,43 +53,85 @@ _DEMO_RUNS = [
 ]
 
 
-@router.get("", response_model=list[BackupJobRead])
-def list_jobs(db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW))) -> list[BackupJob]:
-    return db.query(BackupJob).order_by(BackupJob.name).all()
-
-
-@router.post("", response_model=BackupJobRead, status_code=status.HTTP_201_CREATED)
-def create_job(
-    payload: BackupJobCreate,
-    db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.BACKUP_CREATE)),
-) -> BackupJob:
-    if db.query(BackupJob).filter(BackupJob.name == payload.name).first() is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ein Job mit diesem Namen existiert bereits")
-
+def _validate_references(payload: BackupPolicyWrite, db: Session) -> None:
     if payload.schedule_id is not None and db.get(Schedule, payload.schedule_id) is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Zeitplan nicht gefunden")
+    if payload.snapmirror_label_id is not None and db.get(SnapMirrorLabel, payload.snapmirror_label_id) is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SnapMirror-Label nicht gefunden")
 
-    job = BackupJob(
+
+@router.get("", response_model=list[BackupPolicyRead])
+def list_jobs(db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW))) -> list[BackupPolicy]:
+    return db.query(BackupPolicy).order_by(BackupPolicy.name).all()
+
+
+@router.post("", response_model=BackupPolicyRead, status_code=status.HTTP_201_CREATED)
+def create_job(
+    payload: BackupPolicyWrite,
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> BackupPolicy:
+    if db.query(BackupPolicy).filter(BackupPolicy.name == payload.name).first() is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Eine Policy mit diesem Namen existiert bereits")
+
+    _validate_references(payload, db)
+
+    policy = BackupPolicy(
         name=payload.name,
         schedule_id=payload.schedule_id,
         consistency=ConsistencyType.APPLICATION_CONSISTENT if payload.app_consistent else ConsistencyType.CRASH_CONSISTENT,
         snapmirror_update=payload.snapmirror_update,
+        snapmirror_label_id=payload.snapmirror_label_id,
+        retention_type=payload.retention_type,
+        retention_value=payload.retention_value,
+        snapshot_locking_enabled=payload.snapshot_locking_enabled,
+        snapshot_locking_days=payload.snapshot_locking_days,
     )
-    db.add(job)
+    db.add(policy)
     db.commit()
-    db.refresh(job)
-    return job
+    db.refresh(policy)
+    return policy
+
+
+@router.put("/{job_id}", response_model=BackupPolicyRead)
+def update_job(
+    job_id: str,
+    payload: BackupPolicyWrite,
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> BackupPolicy:
+    policy = db.get(BackupPolicy, job_id)
+    if policy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
+
+    duplicate = db.query(BackupPolicy).filter(BackupPolicy.name == payload.name, BackupPolicy.id != job_id).first()
+    if duplicate is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Eine Policy mit diesem Namen existiert bereits")
+
+    _validate_references(payload, db)
+
+    policy.name = payload.name
+    policy.schedule_id = payload.schedule_id
+    policy.consistency = ConsistencyType.APPLICATION_CONSISTENT if payload.app_consistent else ConsistencyType.CRASH_CONSISTENT
+    policy.snapmirror_update = payload.snapmirror_update
+    policy.snapmirror_label_id = payload.snapmirror_label_id
+    policy.retention_type = payload.retention_type
+    policy.retention_value = payload.retention_value
+    policy.snapshot_locking_enabled = payload.snapshot_locking_enabled
+    policy.snapshot_locking_days = payload.snapshot_locking_days
+    db.commit()
+    db.refresh(policy)
+    return policy
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_job(
     job_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_DELETE)),
 ) -> None:
-    job = db.get(BackupJob, job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job nicht gefunden")
-    db.delete(job)
+    policy = db.get(BackupPolicy, job_id)
+    if policy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
+    db.delete(policy)
     db.commit()
 
 
@@ -100,16 +144,16 @@ def list_job_runs(user=Depends(require_permission(Permission.BACKUP_VIEW))) -> l
 def trigger_job_run(
     job_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_RUN)),
 ) -> BackupJobRun:
-    job = db.get(BackupJob, job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job nicht gefunden")
+    policy = db.get(BackupPolicy, job_id)
+    if policy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
 
     return BackupJobRun(
         id=f"run-{int(datetime.now(timezone.utc).timestamp())}",
-        job_id=job.id,
-        job_name=job.name,
+        job_id=policy.id,
+        job_name=policy.name,
         status=JobStatus.PENDING,
         started_at=datetime.now(timezone.utc),
-        scope=job.scope,
-        targets=job.targets,
+        scope=policy.scope,
+        targets=policy.targets,
     )

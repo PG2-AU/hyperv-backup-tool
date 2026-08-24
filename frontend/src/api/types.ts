@@ -84,7 +84,15 @@ export interface Schedule {
   created_at: string;
 }
 
-export interface BackupJobDefinition {
+export interface SnapMirrorLabel {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export type RetentionType = "days" | "count";
+
+export interface BackupPolicy {
   id: string;
   name: string;
   schedule_id?: string | null;
@@ -93,7 +101,12 @@ export interface BackupJobDefinition {
   targets: string[];
   consistency: ConsistencyType;
   snapmirror_update: boolean;
-  snapmirror_label?: string | null;
+  snapmirror_label_id?: string | null;
+  snapmirror_label?: SnapMirrorLabel | null;
+  retention_type: RetentionType;
+  retention_value: number;
+  snapshot_locking_enabled: boolean;
+  snapshot_locking_days?: number | null;
   metrocluster_aware: boolean;
   enabled: boolean;
   created_at: string;

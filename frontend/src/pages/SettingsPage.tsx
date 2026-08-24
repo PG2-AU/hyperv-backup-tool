@@ -21,10 +21,11 @@ import { notifications } from "@mantine/notifications";
 import { IconEdit, IconInfoCircle, IconKey, IconPlus, IconTrash, IconUserPlus } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useDeleteSchedule, useSchedules } from "@/api/hooks";
+import { useDeleteSchedule, useDeleteSnapMirrorLabel, useSchedules, useSnapMirrorLabels } from "@/api/hooks";
 import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useUsers, type UserRead } from "@/api/hooks.settings";
 import { ScheduleFormModal } from "@/components/ScheduleFormModal";
-import type { Schedule } from "@/api/types";
+import { SnapMirrorLabelFormModal } from "@/components/SnapMirrorLabelFormModal";
+import type { Schedule, SnapMirrorLabel } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatSchedule } from "@/utils/format";
 
@@ -199,6 +200,30 @@ export function SettingsPage() {
     });
   }
 
+  const { data: labels } = useSnapMirrorLabels();
+  const deleteLabel = useDeleteSnapMirrorLabel();
+  const [labelModalOpen, setLabelModalOpen] = useState(false);
+  const [editingLabel, setEditingLabel] = useState<SnapMirrorLabel | null>(null);
+
+  function openCreateLabel() {
+    setEditingLabel(null);
+    setLabelModalOpen(true);
+  }
+
+  function openEditLabel(label: SnapMirrorLabel) {
+    setEditingLabel(label);
+    setLabelModalOpen(true);
+  }
+
+  function removeLabel(label: SnapMirrorLabel) {
+    if (!window.confirm(`Label '${label.name}' wirklich löschen?`)) return;
+    deleteLabel.mutate(label.id, {
+      onSuccess: () => notifications.show({ title: "Label gelöscht", message: label.name, color: "blue" }),
+      onError: (err) =>
+        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Label konnte nicht gelöscht werden."), color: "red" }),
+    });
+  }
+
   return (
     <Stack>
       <Title order={3}>Einstellungen</Title>
@@ -207,6 +232,7 @@ export function SettingsPage() {
         <Tabs.List>
           <Tabs.Tab value="users">Benutzer & Rollen</Tabs.Tab>
           <Tabs.Tab value="schedules">Zeitpläne</Tabs.Tab>
+          <Tabs.Tab value="snapmirror-labels">SnapMirror-Labels</Tabs.Tab>
           <Tabs.Tab value="ad">Active Directory</Tabs.Tab>
           <Tabs.Tab value="netapp">NetApp-Verbindung</Tabs.Tab>
           <Tabs.Tab value="hyperv">Hyper-V-Hosts</Tabs.Tab>
@@ -348,6 +374,49 @@ export function SettingsPage() {
             onClose={() => setScheduleModalOpen(false)}
             schedule={editingSchedule}
           />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="snapmirror-labels" pt="md">
+          <Paper p="md">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>SnapMirror-Labels</Title>
+              <Button leftSection={<IconPlus size={16} />} onClick={openCreateLabel}>
+                Label erstellen
+              </Button>
+            </Group>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Aktionen</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {labels?.map((l) => (
+                  <Table.Tr key={l.id}>
+                    <Table.Td>{l.name}</Table.Td>
+                    <Table.Td>
+                      <Group gap="xs">
+                        <ActionIcon variant="light" onClick={() => openEditLabel(l)}>
+                          <IconEdit size={16} />
+                        </ActionIcon>
+                        <ActionIcon variant="light" color="red" onClick={() => removeLabel(l)}>
+                          <IconTrash size={16} />
+                        </ActionIcon>
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            {labels?.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Noch keine Labels angelegt.
+              </Text>
+            )}
+          </Paper>
+
+          <SnapMirrorLabelFormModal opened={labelModalOpen} onClose={() => setLabelModalOpen(false)} label={editingLabel} />
         </Tabs.Panel>
 
         <Tabs.Panel value="ad" pt="md">
