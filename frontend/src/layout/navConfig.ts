@@ -5,6 +5,7 @@ import {
   IconServerCog,
   IconSettings,
   IconStack2,
+  IconTags,
 } from "@tabler/icons-react";
 import type { Icon } from "@tabler/icons-react";
 
@@ -43,6 +44,12 @@ export const NAV_ITEMS: NavItem[] = [
     searchContext: "netapp-clusters",
   },
   {
+    label: "Resource Groups",
+    icon: IconTags,
+    path: "/resource-groups",
+    searchContext: "resource-groups",
+  },
+  {
     label: "Storage",
     icon: IconDatabase,
     searchContext: "storage",
@@ -53,7 +60,7 @@ export const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
-    label: "Backup-Jobs",
+    label: "Backup",
     icon: IconStack2,
     searchContext: "jobs",
     children: [

@@ -9,8 +9,8 @@ class VmRead(BaseModel):
     cluster: str | None = None
     csv_paths: list[str] = []
     vhdx_size_bytes: int | None = None
-    backup_policy_id: str | None = None
-    backup_policy_name: str | None = None
+    resource_group_names: list[str] = []
+    policy_names: list[str] = []
 
 
 class CsvRead(BaseModel):
@@ -20,5 +20,5 @@ class CsvRead(BaseModel):
     volume_path: str
     capacity_bytes: int | None = None
     used_bytes: int | None = None
-    backup_policy_id: str | None = None
-    backup_policy_name: str | None = None
+    resource_group_names: list[str] = []
+    policy_names: list[str] = []

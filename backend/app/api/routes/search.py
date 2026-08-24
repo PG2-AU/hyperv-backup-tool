@@ -14,6 +14,7 @@ from app.api.routes.vms import _DEMO_CSVS, _DEMO_VMS
 from app.db.session import get_db
 from app.models.backup_policy import BackupPolicy
 from app.models.netapp_cluster import NetAppCluster
+from app.models.resource_group import ResourceGroup
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -60,8 +61,21 @@ def search(
     if context in (None, "jobs"):
         for policy in db.query(BackupPolicy).all():
             if needle in policy.name.lower():
-                subtitle = policy.scope.value if policy.scope else "kein Scope"
+                subtitle = f"{len(policy.resource_groups)} Resource Group(s)" if policy.resource_groups else "keine Resource Group"
                 results.append(SearchResult(type="Policy", id=policy.id, label=policy.name, subtitle=subtitle, route=f"/jobs/{policy.id}"))
+
+    if context in (None, "resource-groups"):
+        for group in db.query(ResourceGroup).all():
+            if needle in group.name.lower():
+                results.append(
+                    SearchResult(
+                        type="Resource Group",
+                        id=group.id,
+                        label=group.name,
+                        subtitle=f"{group.scope.value} / {len(group.members)} Mitglieder",
+                        route="/resource-groups",
+                    )
+                )
 
     if context in (None, "storage"):
         for svm in _DEMO_SVMS:

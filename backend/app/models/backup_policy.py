@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, JSON, Integer, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -27,15 +27,15 @@ class RetentionType(str, enum.Enum):
 class BackupPolicy(Base):
     """Backup-Policy (frueher 'Job-Definition'): wiederverwendbare Regel aus
     Zeitplan, Konsistenz-Modus, SnapMirror-Verhalten, Retention und optionalem
-    Snapshot Locking. VM/CSV-Zuordnung (scope/targets) erfolgt separat/spaeter."""
+    Snapshot Locking. Die VM/CSV-Zuordnung erfolgt ueber ResourceGroups, die
+    mit dieser Policy verknuepft werden (siehe app.models.resource_group) --
+    Resource Group + Policy ergeben zusammen die Backup-Definition."""
 
     __tablename__ = "backup_policies"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), unique=True)
     schedule_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("schedules.id"), nullable=True)
-    scope: Mapped[BackupScope | None] = mapped_column(Enum(BackupScope), nullable=True)
-    targets: Mapped[list[str]] = mapped_column(JSON, default=list)
     consistency: Mapped[ConsistencyType] = mapped_column(Enum(ConsistencyType), default=ConsistencyType.CRASH_CONSISTENT)
     snapmirror_update: Mapped[bool] = mapped_column(Boolean, default=False)
     snapmirror_label_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("snapmirror_labels.id"), nullable=True)
@@ -49,3 +49,4 @@ class BackupPolicy(Base):
 
     schedule = relationship("Schedule")
     snapmirror_label = relationship("SnapMirrorLabel")
+    resource_groups = relationship("ResourceGroup", secondary="resource_group_policies", back_populates="policies")

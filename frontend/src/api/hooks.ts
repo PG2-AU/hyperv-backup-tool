@@ -4,9 +4,11 @@ import { apiClient } from "@/api/client";
 import type {
   BackupJobRun,
   BackupPolicy,
+  BackupScope,
   Csv,
   MetroClusterStatus,
   NetAppCluster,
+  ResourceGroup,
   RetentionType,
   Schedule,
   ScheduleType,
@@ -191,6 +193,59 @@ export function useDeleteSchedule() {
       await apiClient.delete(`/schedules/${id}`);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedules"] }),
+  });
+}
+
+export function useResourceGroups() {
+  return useQuery({
+    queryKey: ["resource-groups"],
+    queryFn: async () => (await apiClient.get<ResourceGroup[]>("/resource-groups")).data,
+  });
+}
+
+export interface ResourceGroupWritePayload {
+  name: string;
+  scope: BackupScope;
+  members: string[];
+  policy_ids: string[];
+}
+
+export function useCreateResourceGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: ResourceGroupWritePayload) => (await apiClient.post<ResourceGroup>("/resource-groups", payload)).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["resource-groups"] });
+      queryClient.invalidateQueries({ queryKey: ["vms"] });
+      queryClient.invalidateQueries({ queryKey: ["csvs"] });
+    },
+  });
+}
+
+export function useUpdateResourceGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: ResourceGroupWritePayload }) =>
+      (await apiClient.put<ResourceGroup>(`/resource-groups/${id}`, payload)).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["resource-groups"] });
+      queryClient.invalidateQueries({ queryKey: ["vms"] });
+      queryClient.invalidateQueries({ queryKey: ["csvs"] });
+    },
+  });
+}
+
+export function useDeleteResourceGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/resource-groups/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["resource-groups"] });
+      queryClient.invalidateQueries({ queryKey: ["vms"] });
+      queryClient.invalidateQueries({ queryKey: ["csvs"] });
+    },
   });
 }
 

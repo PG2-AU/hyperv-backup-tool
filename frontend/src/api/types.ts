@@ -6,8 +6,8 @@ export interface Vm {
   cluster?: string | null;
   csv_paths: string[];
   vhdx_size_bytes?: number | null;
-  backup_policy_id?: string | null;
-  backup_policy_name?: string | null;
+  resource_group_names: string[];
+  policy_names: string[];
 }
 
 export interface Csv {
@@ -17,8 +17,8 @@ export interface Csv {
   volume_path: string;
   capacity_bytes?: number | null;
   used_bytes?: number | null;
-  backup_policy_id?: string | null;
-  backup_policy_name?: string | null;
+  resource_group_names: string[];
+  policy_names: string[];
 }
 
 export type NetAppAuthMethod = "password" | "certificate";
@@ -97,8 +97,6 @@ export interface BackupPolicy {
   name: string;
   schedule_id?: string | null;
   schedule?: Schedule | null;
-  scope?: BackupScope | null;
-  targets: string[];
   consistency: ConsistencyType;
   snapmirror_update: boolean;
   snapmirror_label_id?: string | null;
@@ -109,6 +107,20 @@ export interface BackupPolicy {
   snapshot_locking_days?: number | null;
   metrocluster_aware: boolean;
   enabled: boolean;
+  created_at: string;
+}
+
+export interface PolicySummary {
+  id: string;
+  name: string;
+}
+
+export interface ResourceGroup {
+  id: string;
+  name: string;
+  scope: BackupScope;
+  members: string[];
+  policies: PolicySummary[];
   created_at: string;
 }
 

@@ -51,8 +51,6 @@ class BackupPolicyRead(BaseModel):
     name: str
     schedule_id: str | None = None
     schedule: ScheduleRead | None = None
-    scope: BackupScope | None = None
-    targets: list[str]
     consistency: ConsistencyType
     snapmirror_update: bool
     snapmirror_label_id: str | None = None

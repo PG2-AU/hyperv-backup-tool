@@ -10,8 +10,8 @@ import { formatBytes } from "@/utils/format";
 
 const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
 
-function PolicyBadge({ name }: { name?: string | null }) {
-  if (!name) {
+function ResourceGroupCell({ groups, policies }: { groups: string[]; policies: string[] }) {
+  if (!groups.length) {
     return (
       <Text c="dimmed" size="sm">
         keine
@@ -19,9 +19,20 @@ function PolicyBadge({ name }: { name?: string | null }) {
     );
   }
   return (
-    <Badge color="indigo" variant="light">
-      {name}
-    </Badge>
+    <Stack gap={4}>
+      <Group gap={4}>
+        {groups.map((g) => (
+          <Badge key={g} color="blue" variant="light">
+            {g}
+          </Badge>
+        ))}
+      </Group>
+      {policies.length > 0 && (
+        <Text size="xs" c="dimmed">
+          Policy: {policies.join(", ")}
+        </Text>
+      )}
+    </Stack>
   );
 }
 
@@ -61,7 +72,7 @@ export function VmsPage() {
                 <Table.Th>Cluster</Table.Th>
                 <Table.Th>CSV-Pfade</Table.Th>
                 <Table.Th>VHDX-Größe</Table.Th>
-                <Table.Th>Backup Policy</Table.Th>
+                <Table.Th>Resource Group</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -78,7 +89,7 @@ export function VmsPage() {
                   <Table.Td>{vm.csv_paths.join(", ")}</Table.Td>
                   <Table.Td>{formatBytes(vm.vhdx_size_bytes)}</Table.Td>
                   <Table.Td>
-                    <PolicyBadge name={vm.backup_policy_name} />
+                    <ResourceGroupCell groups={vm.resource_group_names} policies={vm.policy_names} />
                   </Table.Td>
                 </Table.Tr>
               ))}
@@ -96,7 +107,7 @@ export function VmsPage() {
                 <Table.Th>Pfad</Table.Th>
                 <Table.Th>Größe</Table.Th>
                 <Table.Th>Belegung</Table.Th>
-                <Table.Th>Backup Policy</Table.Th>
+                <Table.Th>Resource Group</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -134,7 +145,7 @@ export function VmsPage() {
                       )}
                     </Table.Td>
                     <Table.Td>
-                      <PolicyBadge name={csv.backup_policy_name} />
+                      <ResourceGroupCell groups={csv.resource_group_names} policies={csv.policy_names} />
                     </Table.Td>
                   </Table.Tr>
                 );

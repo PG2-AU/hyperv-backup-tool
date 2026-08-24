@@ -8,6 +8,7 @@ from app.api.routes import (
     jobs,
     logs,
     netapp_clusters,
+    resource_groups,
     schedules,
     search,
     settings as settings_routes,
@@ -48,6 +49,7 @@ app.include_router(vms.router)
 app.include_router(storage.router)
 app.include_router(netapp_clusters.router)
 app.include_router(jobs.router)
+app.include_router(resource_groups.router)
 app.include_router(schedules.router)
 app.include_router(snapmirror_labels.router)
 app.include_router(logs.router)

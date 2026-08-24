@@ -1,11 +1,12 @@
-"""Backup-Policies (Job-Definitionen) und Job-Laeufe.
+"""Backup-Policies (frueher Job-Definitionen) und Job-Laeufe.
 
 Backup-Policies (Name, Zeitplan, Konsistenz, SnapMirror-Verhalten, Retention,
-Snapshot Locking) werden in der DB persistiert. Die VM/CSV/LUN-Zuordnung
-(scope/targets) sowie die tatsaechliche Job-Ausfuehrung
+Snapshot Locking) werden in der DB persistiert. Die VM/CSV-Zuordnung erfolgt
+ueber ResourceGroups, die mit einer Policy verknuepft werden (siehe
+app.api.routes.resource_groups). Die tatsaechliche Job-Ausfuehrung
 (HyperVService.create_checkpoint -> NetAppOntapService.create_snapshot ->
 SnapMirror-Update -> Checkpoint entfernen; bei Fehler: cleanup_checkpoints
-+ cleanup_snapshots) folgen als naechste Schritte -- Job-Laeufe (`_DEMO_RUNS`)
++ cleanup_snapshots) folgt als naechster Schritt -- Job-Laeufe (`_DEMO_RUNS`)
 sind daher weiterhin Demo-Daten.
 """
 
@@ -148,12 +149,16 @@ def trigger_job_run(
     if policy is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
 
+    groups = policy.resource_groups
+    targets = sorted({member for group in groups for member in group.members})
+    scope = groups[0].scope if groups else None
+
     return BackupJobRun(
         id=f"run-{int(datetime.now(timezone.utc).timestamp())}",
         job_id=policy.id,
         job_name=policy.name,
         status=JobStatus.PENDING,
         started_at=datetime.now(timezone.utc),
-        scope=policy.scope,
-        targets=policy.targets,
+        scope=scope,
+        targets=targets,
     )
