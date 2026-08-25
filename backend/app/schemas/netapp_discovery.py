@@ -1,6 +1,65 @@
+import json
 from datetime import datetime
 
 from pydantic import BaseModel
+
+
+class SnapMirrorPolicyRuleInfo(BaseModel):
+    label: str
+    count: str
+
+
+class NetAppSnapMirrorPolicyRead(BaseModel):
+    id: str
+    cluster_id: str
+    cluster_name: str
+    uuid: str | None = None
+    name: str
+    svm_name: str | None = None
+    scope: str | None = None
+    type: str | None = None
+    comment: str | None = None
+    rules: list[SnapMirrorPolicyRuleInfo] = []
+    last_seen_at: datetime
+
+    @classmethod
+    def from_model(cls, m, cluster_name: str) -> "NetAppSnapMirrorPolicyRead":
+        try:
+            rules = [SnapMirrorPolicyRuleInfo(**r) for r in json.loads(m.rules_json or "[]")]
+        except (json.JSONDecodeError, TypeError):
+            rules = []
+        return cls(
+            id=m.id, cluster_id=m.cluster_id, cluster_name=cluster_name, uuid=m.uuid, name=m.name,
+            svm_name=m.svm_name, scope=m.scope, type=m.type, comment=m.comment, rules=rules, last_seen_at=m.last_seen_at,
+        )
+
+
+class NetAppScheduleRead(BaseModel):
+    id: str
+    cluster_id: str
+    cluster_name: str
+    uuid: str | None = None
+    name: str
+    svm_name: str | None = None
+    scope: str | None = None
+    schedule_type: str | None = None
+    minutes: list[int] = []
+    hours: list[int] = []
+    days: list[int] = []
+    weekdays: list[int] = []
+    last_seen_at: datetime
+
+    @classmethod
+    def from_model(cls, m, cluster_name: str) -> "NetAppScheduleRead":
+        def parse(s: str | None) -> list[int]:
+            return [int(x) for x in s.split(",")] if s else []
+
+        return cls(
+            id=m.id, cluster_id=m.cluster_id, cluster_name=cluster_name, uuid=m.uuid, name=m.name,
+            svm_name=m.svm_name, scope=m.scope, schedule_type=m.schedule_type,
+            minutes=parse(m.minutes), hours=parse(m.hours), days=parse(m.days), weekdays=parse(m.weekdays),
+            last_seen_at=m.last_seen_at,
+        )
 
 
 class NetAppSvmRead(BaseModel):

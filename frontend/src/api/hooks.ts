@@ -17,17 +17,17 @@ import type {
   NetAppLun,
   NetAppNetworkInterface,
   NetAppPlatform,
+  NetAppSchedule,
+  NetAppSnapMirrorPolicy,
   NetAppSvm,
   NetAppSvmPeer,
   NetAppVolume,
   ResourceGroup,
   RetentionType,
   Schedule,
-  ScheduleInfo,
   ScheduleType,
   SnapMirrorLabel,
   SnapMirrorRelationship,
-  SnapmirrorPolicyInfo,
   SvmPeerCreate,
   Vm,
 } from "@/api/types";
@@ -67,19 +67,17 @@ export function useLuns() {
   });
 }
 
-export function useSnapmirrorPolicies(clusterId: string | null) {
+export function useSnapmirrorPolicies() {
   return useQuery({
-    queryKey: ["snapmirror-policies", clusterId],
-    queryFn: async () => (await apiClient.get<SnapmirrorPolicyInfo[]>(`/netapp/clusters/${clusterId}/snapmirror-policies`)).data,
-    enabled: !!clusterId,
+    queryKey: ["snapmirror-policies"],
+    queryFn: async () => (await apiClient.get<NetAppSnapMirrorPolicy[]>("/storage/snapmirror-policies")).data,
   });
 }
 
-export function useNetAppSchedules(clusterId: string | null) {
+export function useNetAppSchedules() {
   return useQuery({
-    queryKey: ["netapp-schedules", clusterId],
-    queryFn: async () => (await apiClient.get<ScheduleInfo[]>(`/netapp/clusters/${clusterId}/schedules`)).data,
-    enabled: !!clusterId,
+    queryKey: ["netapp-schedules"],
+    queryFn: async () => (await apiClient.get<NetAppSchedule[]>("/storage/schedules")).data,
   });
 }
 

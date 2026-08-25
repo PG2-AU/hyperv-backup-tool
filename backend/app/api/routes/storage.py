@@ -17,6 +17,8 @@ from app.models.netapp_discovery import (
     NetAppLun,
     NetAppNetworkInterface,
     NetAppPlatform,
+    NetAppSchedule,
+    NetAppSnapMirrorPolicy,
     NetAppSnapMirrorRelationship,
     NetAppSvm,
     NetAppSvmPeer,
@@ -29,6 +31,8 @@ from app.schemas.netapp_discovery import (
     NetAppLunRead,
     NetAppNetworkInterfaceRead,
     NetAppPlatformRead,
+    NetAppScheduleRead,
+    NetAppSnapMirrorPolicyRead,
     NetAppSnapMirrorRelationshipRead,
     NetAppSvmPeerRead,
     NetAppSvmRead,
@@ -184,6 +188,26 @@ def list_aggregates(db: Session = Depends(get_db), user=Depends(require_permissi
             last_seen_at=a.last_seen_at,
         )
         for a in db.query(NetAppAggregate).order_by(NetAppAggregate.name).all()
+    ]
+
+
+@router.get("/snapmirror-policies", response_model=list[NetAppSnapMirrorPolicyRead])
+def list_snapmirror_policies(
+    db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW))
+) -> list[NetAppSnapMirrorPolicyRead]:
+    names = _cluster_names(db)
+    return [
+        NetAppSnapMirrorPolicyRead.from_model(p, names.get(p.cluster_id, "?"))
+        for p in db.query(NetAppSnapMirrorPolicy).order_by(NetAppSnapMirrorPolicy.name).all()
+    ]
+
+
+@router.get("/schedules", response_model=list[NetAppScheduleRead])
+def list_schedules(db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW))) -> list[NetAppScheduleRead]:
+    names = _cluster_names(db)
+    return [
+        NetAppScheduleRead.from_model(s, names.get(s.cluster_id, "?"))
+        for s in db.query(NetAppSchedule).order_by(NetAppSchedule.name).all()
     ]
 
 

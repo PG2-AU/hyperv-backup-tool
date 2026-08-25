@@ -13,6 +13,7 @@ registrierte Cluster unabhaengig voneinander angesprochen werden koennen.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -187,6 +188,30 @@ class DiscoveredNetworkInterface:
 
 
 @dataclass
+class DiscoveredSnapMirrorPolicy:
+    uuid: str | None
+    name: str
+    svm_name: str | None
+    scope: str | None
+    type: str | None
+    comment: str | None
+    rules_json: str | None = None
+
+
+@dataclass
+class DiscoveredSchedule:
+    uuid: str | None
+    name: str
+    svm_name: str | None
+    scope: str | None
+    schedule_type: str | None
+    minutes: str | None = None
+    hours: str | None = None
+    days: str | None = None
+    weekdays: str | None = None
+
+
+@dataclass
 class DiscoveredPlatform:
     uuid: str | None
     node_name: str
@@ -222,6 +247,8 @@ class DiscoveryData:
     platforms: list[DiscoveredPlatform] = field(default_factory=list)
     aggregates: list[DiscoveredAggregate] = field(default_factory=list)
     igroups: list[DiscoveredIgroup] = field(default_factory=list)
+    snapmirror_policies: list[DiscoveredSnapMirrorPolicy] = field(default_factory=list)
+    schedules: list[DiscoveredSchedule] = field(default_factory=list)
 
 
 @dataclass
@@ -496,6 +523,52 @@ class NetAppOntapService:
                     results.append(DiscoveryStepResult("snapmirror", False, str(exc)))
 
                 try:
+                    policies = list(SnapmirrorPolicy.get_collection(fields="**"))
+                    for pol in policies:
+                        rules = _get_nested(pol, "retention") or []
+                        rules_list = [{"label": _get_nested(r, "label"), "count": _get_nested(r, "count")} for r in rules]
+                        data.snapmirror_policies.append(
+                            DiscoveredSnapMirrorPolicy(
+                                uuid=_get_nested(pol, "uuid"),
+                                name=_get_nested(pol, "name", ""),
+                                svm_name=_get_nested(pol, "svm.name"),
+                                scope=_get_nested(pol, "scope"),
+                                type=_get_nested(pol, "type"),
+                                comment=_get_nested(pol, "comment"),
+                                rules_json=json.dumps(rules_list),
+                            )
+                        )
+                    results.append(
+                        DiscoveryStepResult("snapmirror_policies", True, f"{len(policies)} SnapMirror-Policy(s) gefunden", len(policies))
+                    )
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("snapmirror_policies", False, str(exc)))
+
+                try:
+                    schedules = list(Schedule.get_collection(fields="**"))
+                    for sched in schedules:
+                        minutes = _get_nested(sched, "cron.minutes") or []
+                        hours = _get_nested(sched, "cron.hours") or []
+                        days = _get_nested(sched, "cron.days") or []
+                        weekdays = _get_nested(sched, "cron.weekdays") or []
+                        data.schedules.append(
+                            DiscoveredSchedule(
+                                uuid=_get_nested(sched, "uuid"),
+                                name=_get_nested(sched, "name", ""),
+                                svm_name=_get_nested(sched, "svm.name"),
+                                scope=_get_nested(sched, "scope"),
+                                schedule_type=_get_nested(sched, "type"),
+                                minutes=",".join(str(m) for m in minutes) or None,
+                                hours=",".join(str(h) for h in hours) or None,
+                                days=",".join(str(d) for d in days) or None,
+                                weekdays=",".join(str(w) for w in weekdays) or None,
+                            )
+                        )
+                    results.append(DiscoveryStepResult("schedules", True, f"{len(schedules)} Schedule(s) gefunden", len(schedules)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("schedules", False, str(exc)))
+
+                try:
                     interfaces = list(IpInterface.get_collection(fields="**"))
                     for iface in interfaces:
                         data.network_interfaces.append(
@@ -668,48 +741,64 @@ class NetAppOntapService:
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"LUN-Mapping konnte nicht angelegt werden: {exc}") from exc
 
-    def list_snapmirror_policies(self) -> list[dict]:
+    def create_snapmirror_policy(self, svm_name: str, name: str, vault_type: str, rules: list[dict]) -> None:
+        # ONTAP REST kennt auf Policy-Ebene nur type=async/sync/continuous --
+        # die klassischen NetApp-Begriffe "Vault" und "Mirror-Vault" sind beides
+        # async-Policies mit Retention-Regeln (gegen echte Policies auf CL2
+        # verifiziert: 'MirrorAndVault' und reine Vault-Policies wie
+        # 'CloudBackupDefault' haben identische Feldstruktur, nur der Kommentar
+        # unterscheidet sich). 'vault_type' steuert daher nur den
+        # dokumentierenden Kommentartext, technisch wird immer type=async gesetzt.
+        rule_desc = ", ".join(f"{r['count']}x {r['label']}" for r in rules)
+        comment = (
+            f"Vault policy with {rule_desc} rule(s)."
+            if vault_type == "vault"
+            else f"Mirror-and-Vault policy mirroring the latest active file system plus {rule_desc} rule(s)."
+        )
+        payload: dict = {
+            "name": name,
+            "type": "async",
+            "retention": [{"label": r["label"], "count": str(r["count"])} for r in rules],
+            "comment": comment,
+        }
+        if svm_name:
+            payload["svm"] = {"name": svm_name}
         with self._connection():
             try:
-                policies = SnapmirrorPolicy.get_collection(fields="name,type,svm.name")
-                return [
-                    {"name": _get_nested(p, "name"), "type": _get_nested(p, "type"), "svm_name": _get_nested(p, "svm.name")}
-                    for p in policies
-                ]
-            except NetAppRestError as exc:
-                raise NetAppConnectionError(f"SnapMirror-Policies konnten nicht abgerufen werden: {exc}") from exc
-
-    def create_snapmirror_policy(self, svm_name: str, name: str, policy_type: str) -> None:
-        with self._connection():
-            try:
-                SnapmirrorPolicy.from_dict({"name": name, "type": policy_type, "svm": {"name": svm_name}}).post()
+                SnapmirrorPolicy.from_dict(payload).post()
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"SnapMirror-Policy konnte nicht angelegt werden: {exc}") from exc
 
-    def list_schedules(self) -> list[dict]:
+    def update_snapmirror_policy(self, uuid: str, rules: list[dict]) -> None:
+        # Direkte Attribut-Zuweisung statt from_dict() (siehe update_volume) --
+        # ersetzt die komplette Regel-Liste der Policy.
         with self._connection():
+            policy = SnapmirrorPolicy(uuid=uuid)
+            policy.retention = [{"label": r["label"], "count": str(r["count"])} for r in rules]
             try:
-                schedules = Schedule.get_collection(fields="name")
-                return [{"name": _get_nested(s, "name")} for s in schedules]
+                policy.patch()
             except NetAppRestError as exc:
-                raise NetAppConnectionError(f"Schedules konnten nicht abgerufen werden: {exc}") from exc
+                raise NetAppConnectionError(f"SnapMirror-Policy konnte nicht geändert werden: {exc}") from exc
 
-    def create_schedule(self, name: str, preset: str) -> None:
+    def create_schedule(self, name: str, svm_name: str | None, minutes: list[int], hours: list[int], days: list[int], weekdays: list[int]) -> None:
         # SnapMirror akzeptiert nur cron-basierte Schedules, keine
         # Interval-Schedules (gegen echte Hardware verifiziert: "Schedule
         # ... is an interval schedule. SnapMirror does not support interval
-        # schedules." bei 409 Conflict) -- daher hier bewusst ueber cron.minutes
-        # abbilden statt der einfacheren 'interval'-Variante.
-        cron: dict = {
-            "every_5min": {"minutes": list(range(0, 60, 5))},
-            "every_15min": {"minutes": list(range(0, 60, 15))},
-            "every_30min": {"minutes": [0, 30]},
-            "hourly": {"minutes": [0]},
-            "daily": {"minutes": [0], "hours": [0]},
-        }[preset]
+        # schedules." bei 409 Conflict). 'minutes' ist bei cron-Schedules
+        # Pflichtfeld fuer POST.
+        cron: dict = {"minutes": minutes}
+        if hours:
+            cron["hours"] = hours
+        if days:
+            cron["days"] = days
+        if weekdays:
+            cron["weekdays"] = weekdays
+        payload: dict = {"name": name, "cron": cron}
+        if svm_name:
+            payload["svm"] = {"name": svm_name}
         with self._connection():
             try:
-                Schedule.from_dict({"name": name, "cron": cron}).post()
+                Schedule.from_dict(payload).post()
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"Schedule konnte nicht angelegt werden: {exc}") from exc
 

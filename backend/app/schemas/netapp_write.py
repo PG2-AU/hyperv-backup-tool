@@ -52,18 +52,34 @@ class LunMapCreate(BaseModel):
     igroup_name: str
 
 
+class SnapMirrorPolicyRuleWrite(BaseModel):
+    label: str
+    count: int
+
+
 class SnapmirrorPolicyCreate(BaseModel):
+    # ONTAP verlangt bei POST /api/snapmirror/policies immer eine SVM
+    # (gegen echte Hardware verifiziert: ohne 'svm' -> 400 "svm.uuid is a
+    # required field") -- eine echte clusterweite Policy ohne SVM-Bezug laesst
+    # sich ueber REST nicht anlegen, obwohl GET bei manchen Policies scope=cluster
+    # zeigt (das sind von ONTAP mitgelieferte Default-Policies).
     svm_name: str
     name: str
-    type: Literal["async", "sync"] = "async"
+    vault_type: Literal["vault", "mirror_vault"] = "vault"
+    rules: list[SnapMirrorPolicyRuleWrite]
 
 
-SchedulePreset = Literal["every_5min", "every_15min", "every_30min", "hourly", "daily"]
+class SnapmirrorPolicyUpdate(BaseModel):
+    rules: list[SnapMirrorPolicyRuleWrite]
 
 
 class ScheduleCreate(BaseModel):
     name: str
-    preset: SchedulePreset
+    svm_name: str | None = None
+    minutes: list[int]
+    hours: list[int] = []
+    days: list[int] = []
+    weekdays: list[int] = []
 
 
 class SnapmirrorRelationshipUpdate(BaseModel):

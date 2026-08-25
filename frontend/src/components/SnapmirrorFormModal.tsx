@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Button, Group, Modal, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
 
 import { useNetAppSchedules, useSnapmirrorPolicies } from "@/api/hooks";
-import type { NetAppAggregate, NetAppCluster, NetAppSvm, NetAppVolume, SchedulePreset, SnapmirrorCreationPlan } from "@/api/types";
+import { PolicyRulesEditor } from "@/components/PolicyRulesEditor";
+import { ScheduleCronPicker, type CronValue } from "@/components/ScheduleCronPicker";
+import type { NetAppAggregate, NetAppCluster, NetAppSvm, NetAppVolume, SnapMirrorPolicyRuleWrite, SnapmirrorCreationPlan, VaultType } from "@/api/types";
 
 interface InitialSource {
   clusterId: string;
@@ -26,14 +28,6 @@ const NEW_POLICY_VALUE = "__new_policy__";
 const NEW_SCHEDULE_VALUE = "__new_schedule__";
 const NO_SCHEDULE_VALUE = "__no_schedule__";
 
-const SCHEDULE_PRESETS: { value: SchedulePreset; label: string }[] = [
-  { value: "every_5min", label: "Alle 5 Minuten" },
-  { value: "every_15min", label: "Alle 15 Minuten" },
-  { value: "every_30min", label: "Alle 30 Minuten" },
-  { value: "hourly", label: "Stündlich" },
-  { value: "daily", label: "Täglich" },
-];
-
 export function SnapmirrorFormModal({
   opened, onClose, clusters, svms, volumes, aggregates, initialSource, onSubmitPlan,
 }: SnapmirrorFormModalProps) {
@@ -46,14 +40,17 @@ export function SnapmirrorFormModal({
   const [destinationAggregate, setDestinationAggregate] = useState<string | null>(null);
   const [policySelection, setPolicySelection] = useState<string | null>(null);
   const [newPolicyName, setNewPolicyName] = useState("");
-  const [newPolicyType, setNewPolicyType] = useState<string | null>("async");
+  const [newPolicyVaultType, setNewPolicyVaultType] = useState<VaultType>("vault");
+  const [newPolicyRules, setNewPolicyRules] = useState<SnapMirrorPolicyRuleWrite[]>([{ label: "", count: 7 }]);
   const [scheduleSelection, setScheduleSelection] = useState<string | null>(NO_SCHEDULE_VALUE);
   const [newScheduleName, setNewScheduleName] = useState("");
-  const [newSchedulePreset, setNewSchedulePreset] = useState<SchedulePreset | null>("hourly");
+  const [newScheduleCron, setNewScheduleCron] = useState<CronValue>({ minutes: [0], hours: [], days: [], weekdays: [] });
   const [autoInitialize, setAutoInitialize] = useState(true);
 
-  const { data: policies } = useSnapmirrorPolicies(destinationClusterId);
-  const { data: schedules } = useNetAppSchedules(destinationClusterId);
+  const { data: allPolicies } = useSnapmirrorPolicies();
+  const { data: allSchedules } = useNetAppSchedules();
+  const policies = (allPolicies ?? []).filter((p) => p.cluster_id === destinationClusterId);
+  const schedules = (allSchedules ?? []).filter((s) => s.cluster_id === destinationClusterId);
 
   useEffect(() => {
     if (!opened) return;
@@ -67,10 +64,11 @@ export function SnapmirrorFormModal({
     setDestinationAggregate(null);
     setPolicySelection(null);
     setNewPolicyName("");
-    setNewPolicyType("async");
+    setNewPolicyVaultType("vault");
+    setNewPolicyRules([{ label: "", count: 7 }]);
     setScheduleSelection(NO_SCHEDULE_VALUE);
     setNewScheduleName("");
-    setNewSchedulePreset("hourly");
+    setNewScheduleCron({ minutes: [0], hours: [], days: [], weekdays: [] });
     setAutoInitialize(true);
   }, [opened, clusters, initialSource]);
 
@@ -82,12 +80,12 @@ export function SnapmirrorFormModal({
   const destinationAggregateOptions = (aggregates ?? []).filter((a) => a.cluster_id === destinationClusterId).map((a) => ({ value: a.name, label: a.name }));
 
   const policyOptions = [
-    ...(policies ?? []).map((p) => ({ value: p.name, label: `${p.name} (${p.type})` })),
+    ...policies.map((p) => ({ value: p.name, label: `${p.name} (${p.svm_name ?? p.scope})` })),
     { value: NEW_POLICY_VALUE, label: "+ Neue Policy anlegen" },
   ];
   const scheduleOptions = [
     { value: NO_SCHEDULE_VALUE, label: "Kein Schedule" },
-    ...(schedules ?? []).map((s) => ({ value: s.name, label: s.name })),
+    ...schedules.map((s) => ({ value: s.name, label: s.name })),
     { value: NEW_SCHEDULE_VALUE, label: "+ Neuen Schedule anlegen" },
   ];
 
@@ -97,12 +95,13 @@ export function SnapmirrorFormModal({
   const destinationVolumeName = sourceVolumeName ? `${destinationPrefix}${sourceVolumeName}` : "";
   const policyMode = policySelection === NEW_POLICY_VALUE ? "new" : "existing";
   const scheduleMode = scheduleSelection === NEW_SCHEDULE_VALUE ? "new" : scheduleSelection === NO_SCHEDULE_VALUE ? "none" : "existing";
+  const validNewPolicyRules = newPolicyRules.filter((r) => r.label.trim() && r.count > 0);
 
   const canSubmit =
     !!sourceClusterId && !!sourceSvmName && !!sourceVolumeName && !!destinationClusterId && !!destinationSvmName &&
     !!destinationAggregate && !!destinationVolumeName && !!sourceVolume &&
-    (policyMode === "existing" ? !!policySelection : !!newPolicyName) &&
-    (scheduleMode !== "new" || !!newScheduleName);
+    (policyMode === "existing" ? !!policySelection : !!newPolicyName && validNewPolicyRules.length > 0) &&
+    (scheduleMode !== "new" || (!!newScheduleName && newScheduleCron.minutes.length > 0));
 
   function handleSubmit() {
     if (!canSubmit || !sourceClusterId || !sourceSvmName || !sourceVolumeName || !destinationClusterId || !destinationSvmName || !destinationAggregate || !sourceVolume) {
@@ -119,10 +118,16 @@ export function SnapmirrorFormModal({
       destinationAggregate,
       policyMode,
       policyName: policyMode === "existing" ? (policySelection ?? undefined) : undefined,
-      newPolicy: policyMode === "new" ? { name: newPolicyName, type: (newPolicyType as "async" | "sync") ?? "async" } : undefined,
+      newPolicy:
+        policyMode === "new"
+          ? { svmName: destinationSvmName, name: newPolicyName, vaultType: newPolicyVaultType, rules: validNewPolicyRules }
+          : undefined,
       scheduleMode,
       scheduleName: scheduleMode === "existing" ? (scheduleSelection ?? undefined) : undefined,
-      newSchedule: scheduleMode === "new" ? { name: newScheduleName, preset: newSchedulePreset ?? "hourly" } : undefined,
+      newSchedule:
+        scheduleMode === "new"
+          ? { name: newScheduleName, svmName: destinationSvmName, ...newScheduleCron }
+          : undefined,
       autoInitialize,
     });
   }
@@ -188,10 +193,22 @@ export function SnapmirrorFormModal({
         </Text>
         <Select label="Policy" data={policyOptions} value={policySelection} onChange={setPolicySelection} required searchable />
         {policyMode === "new" && (
-          <Group grow>
-            <TextInput label="Name der neuen Policy" value={newPolicyName} onChange={(e) => setNewPolicyName(e.currentTarget.value)} required />
-            <Select label="Typ" data={["async", "sync"]} value={newPolicyType} onChange={setNewPolicyType} required />
-          </Group>
+          <Stack gap="xs">
+            <Group grow>
+              <TextInput label="Name der neuen Policy" value={newPolicyName} onChange={(e) => setNewPolicyName(e.currentTarget.value)} required />
+              <Select
+                label="Typ"
+                data={[
+                  { value: "vault", label: "Vault (nur Retention-Regeln)" },
+                  { value: "mirror_vault", label: "Mirror-Vault (Spiegelung + Retention-Regeln)" },
+                ]}
+                value={newPolicyVaultType}
+                onChange={(v) => setNewPolicyVaultType((v as VaultType) ?? "vault")}
+                required
+              />
+            </Group>
+            <PolicyRulesEditor rules={newPolicyRules} onChange={setNewPolicyRules} />
+          </Stack>
         )}
 
         <Text size="sm" fw={600} mt="sm">
@@ -199,16 +216,10 @@ export function SnapmirrorFormModal({
         </Text>
         <Select label="Schedule" data={scheduleOptions} value={scheduleSelection} onChange={setScheduleSelection} searchable />
         {scheduleMode === "new" && (
-          <Group grow>
+          <Stack gap="xs">
             <TextInput label="Name des neuen Schedules" value={newScheduleName} onChange={(e) => setNewScheduleName(e.currentTarget.value)} required />
-            <Select
-              label="Intervall"
-              data={SCHEDULE_PRESETS}
-              value={newSchedulePreset}
-              onChange={(v) => setNewSchedulePreset(v as SchedulePreset)}
-              required
-            />
-          </Group>
+            <ScheduleCronPicker value={newScheduleCron} onChange={setNewScheduleCron} />
+          </Stack>
         )}
 
         <Switch

@@ -7,7 +7,7 @@ des letzten erfolgreichen Laufs, in dem das Objekt gefunden wurde."""
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -143,6 +143,38 @@ class NetAppNetworkInterface(Base):
     address: Mapped[str | None] = mapped_column(String(100), nullable=True)
     svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     state: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class NetAppSnapMirrorPolicy(Base):
+    __tablename__ = "netapp_snapmirror_policies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    cluster_id: Mapped[str] = mapped_column(String(36), ForeignKey("netapp_clusters.id", ondelete="CASCADE"))
+    uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    name: Mapped[str] = mapped_column(String(255))
+    svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    comment: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    rules_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class NetAppSchedule(Base):
+    __tablename__ = "netapp_schedules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    cluster_id: Mapped[str] = mapped_column(String(36), ForeignKey("netapp_clusters.id", ondelete="CASCADE"))
+    uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    name: Mapped[str] = mapped_column(String(255))
+    svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    schedule_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    minutes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    hours: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    days: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    weekdays: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

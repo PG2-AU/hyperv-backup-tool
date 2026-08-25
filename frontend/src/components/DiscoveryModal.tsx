@@ -14,6 +14,8 @@ const STEP_META: Record<string, { emoji: string; label: string }> = {
   cluster_peers: { emoji: "🤝", label: "Cluster-Peer-Beziehungen" },
   svm_peers: { emoji: "🔗", label: "SVM-Beziehungen" },
   snapmirror: { emoji: "🪞", label: "SnapMirror-Beziehungen" },
+  snapmirror_policies: { emoji: "📋", label: "Sammle SnapMirror-Policies" },
+  schedules: { emoji: "⏱️", label: "Sammle Schedules" },
   network_interfaces: { emoji: "🌐", label: "Network Interfaces" },
   platforms: { emoji: "🖥️", label: "Sammle Plattform-Informationen" },
   aggregates: { emoji: "🪨", label: "Sammle Informationen über Aggregate" },

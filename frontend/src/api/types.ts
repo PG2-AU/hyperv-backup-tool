@@ -278,16 +278,77 @@ export interface VolumeEditPlan {
   setState?: "online" | "offline";
 }
 
-export type SchedulePreset = "every_5min" | "every_15min" | "every_30min" | "hourly" | "daily";
-
-export interface SnapmirrorPolicyInfo {
-  name: string;
-  type: string;
-  svm_name?: string | null;
+export interface SnapMirrorPolicyRule {
+  label: string;
+  count: string;
 }
 
-export interface ScheduleInfo {
+export interface SnapMirrorPolicyRuleWrite {
+  label: string;
+  count: number;
+}
+
+export interface NetAppSnapMirrorPolicy extends NetAppDiscoveredBase {
   name: string;
+  svm_name?: string | null;
+  scope?: string | null;
+  type?: string | null;
+  comment?: string | null;
+  rules: SnapMirrorPolicyRule[];
+}
+
+export interface NetAppSchedule extends NetAppDiscoveredBase {
+  name: string;
+  svm_name?: string | null;
+  scope?: string | null;
+  schedule_type?: string | null;
+  minutes: number[];
+  hours: number[];
+  days: number[];
+  weekdays: number[];
+}
+
+export type VaultType = "vault" | "mirror_vault";
+
+export interface NewPolicyPlan {
+  svmName: string;
+  name: string;
+  vaultType: VaultType;
+  rules: SnapMirrorPolicyRuleWrite[];
+}
+
+export interface NewSchedulePlan {
+  svmName?: string;
+  name: string;
+  minutes: number[];
+  hours: number[];
+  days: number[];
+  weekdays: number[];
+}
+
+export interface PolicyCreationPlan {
+  clusterId: string;
+  svmName: string;
+  name: string;
+  vaultType: VaultType;
+  rules: SnapMirrorPolicyRuleWrite[];
+}
+
+export interface PolicyEditPlan {
+  clusterId: string;
+  policyUuid: string;
+  policyName: string;
+  rules: SnapMirrorPolicyRuleWrite[];
+}
+
+export interface ScheduleCreationPlan {
+  clusterId: string;
+  svmName?: string;
+  name: string;
+  minutes: number[];
+  hours: number[];
+  days: number[];
+  weekdays: number[];
 }
 
 export interface SnapmirrorCreationPlan {
@@ -301,10 +362,10 @@ export interface SnapmirrorCreationPlan {
   destinationAggregate: string;
   policyMode: "existing" | "new";
   policyName?: string;
-  newPolicy?: { name: string; type: "async" | "sync" };
+  newPolicy?: NewPolicyPlan;
   scheduleMode: "none" | "existing" | "new";
   scheduleName?: string;
-  newSchedule?: { name: string; preset: SchedulePreset };
+  newSchedule?: NewSchedulePlan;
   autoInitialize: boolean;
 }
 
@@ -315,10 +376,10 @@ export interface SnapmirrorEditPlan {
   destinationSvmName: string;
   policyMode: "existing" | "new";
   policyName?: string;
-  newPolicy?: { svmName: string; name: string; type: "async" | "sync" };
+  newPolicy?: NewPolicyPlan;
   scheduleMode: "unchanged" | "none" | "existing" | "new";
   scheduleName?: string;
-  newSchedule?: { name: string; preset: SchedulePreset };
+  newSchedule?: NewSchedulePlan;
 }
 
 export interface MetroClusterStatus {

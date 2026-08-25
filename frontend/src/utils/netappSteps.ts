@@ -2,6 +2,9 @@ import { apiClient } from "@/api/client";
 import type {
   LunCreationPlan,
   LunEditPlan,
+  PolicyCreationPlan,
+  PolicyEditPlan,
+  ScheduleCreationPlan,
   SnapmirrorCreationPlan,
   SnapmirrorEditPlan,
   VolumeCreationPlan,
@@ -247,9 +250,10 @@ export function buildSnapmirrorCreationSteps(plan: SnapmirrorCreationPlan): Proc
       label: `Lege SnapMirror-Policy '${plan.newPolicy.name}' an`,
       run: async () => {
         await apiClient.post(`${destBase}/snapmirror-policies`, {
-          svm_name: plan.destinationSvmName,
+          svm_name: plan.newPolicy!.svmName,
           name: plan.newPolicy!.name,
-          type: plan.newPolicy!.type,
+          vault_type: plan.newPolicy!.vaultType,
+          rules: plan.newPolicy!.rules,
         });
       },
     });
@@ -261,7 +265,14 @@ export function buildSnapmirrorCreationSteps(plan: SnapmirrorCreationPlan): Proc
       emoji: "⏱️",
       label: `Lege Schedule '${plan.newSchedule.name}' an`,
       run: async () => {
-        await apiClient.post(`${destBase}/schedules`, { name: plan.newSchedule!.name, preset: plan.newSchedule!.preset });
+        await apiClient.post(`${destBase}/schedules`, {
+          name: plan.newSchedule!.name,
+          svm_name: plan.newSchedule!.svmName,
+          minutes: plan.newSchedule!.minutes,
+          hours: plan.newSchedule!.hours,
+          days: plan.newSchedule!.days,
+          weekdays: plan.newSchedule!.weekdays,
+        });
       },
     });
   }
@@ -327,7 +338,8 @@ export function buildSnapmirrorEditSteps(plan: SnapmirrorEditPlan): ProcessStepD
         await apiClient.post(`${base}/snapmirror-policies`, {
           svm_name: plan.newPolicy!.svmName,
           name: plan.newPolicy!.name,
-          type: plan.newPolicy!.type,
+          vault_type: plan.newPolicy!.vaultType,
+          rules: plan.newPolicy!.rules,
         });
       },
     });
@@ -339,7 +351,14 @@ export function buildSnapmirrorEditSteps(plan: SnapmirrorEditPlan): ProcessStepD
       emoji: "⏱️",
       label: `Lege Schedule '${plan.newSchedule.name}' an`,
       run: async () => {
-        await apiClient.post(`${base}/schedules`, { name: plan.newSchedule!.name, preset: plan.newSchedule!.preset });
+        await apiClient.post(`${base}/schedules`, {
+          name: plan.newSchedule!.name,
+          svm_name: plan.newSchedule!.svmName,
+          minutes: plan.newSchedule!.minutes,
+          hours: plan.newSchedule!.hours,
+          days: plan.newSchedule!.days,
+          weekdays: plan.newSchedule!.weekdays,
+        });
       },
     });
   }
@@ -361,4 +380,61 @@ export function buildSnapmirrorEditSteps(plan: SnapmirrorEditPlan): ProcessStepD
 
   steps.push(discoverStep(plan.clusterId));
   return steps;
+}
+
+export function buildPolicyCreationSteps(plan: PolicyCreationPlan): ProcessStepDef[] {
+  const base = `/netapp/clusters/${plan.clusterId}`;
+  return [
+    {
+      id: "policy",
+      emoji: "📋",
+      label: `Lege SnapMirror-Policy '${plan.name}' an`,
+      run: async () => {
+        await apiClient.post(`${base}/snapmirror-policies`, {
+          svm_name: plan.svmName,
+          name: plan.name,
+          vault_type: plan.vaultType,
+          rules: plan.rules,
+        });
+      },
+    },
+    discoverStep(plan.clusterId),
+  ];
+}
+
+export function buildPolicyEditSteps(plan: PolicyEditPlan): ProcessStepDef[] {
+  const base = `/netapp/clusters/${plan.clusterId}`;
+  return [
+    {
+      id: "update",
+      emoji: "🛠️",
+      label: `Ändere Regeln der Policy '${plan.policyName}'`,
+      run: async () => {
+        await apiClient.patch(`${base}/snapmirror-policies/${plan.policyUuid}`, { rules: plan.rules });
+      },
+    },
+    discoverStep(plan.clusterId),
+  ];
+}
+
+export function buildScheduleCreationSteps(plan: ScheduleCreationPlan): ProcessStepDef[] {
+  const base = `/netapp/clusters/${plan.clusterId}`;
+  return [
+    {
+      id: "schedule",
+      emoji: "⏱️",
+      label: `Lege Schedule '${plan.name}' an`,
+      run: async () => {
+        await apiClient.post(`${base}/schedules`, {
+          name: plan.name,
+          svm_name: plan.svmName,
+          minutes: plan.minutes,
+          hours: plan.hours,
+          days: plan.days,
+          weekdays: plan.weekdays,
+        });
+      },
+    },
+    discoverStep(plan.clusterId),
+  ];
 }

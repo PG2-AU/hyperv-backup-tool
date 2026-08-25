@@ -21,13 +21,27 @@ import { notifications } from "@mantine/notifications";
 import { IconEdit, IconInfoCircle, IconKey, IconPlus, IconTrash, IconUserPlus } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useDeleteSchedule, useDeleteSnapMirrorLabel, useSchedules, useSnapMirrorLabels } from "@/api/hooks";
+import {
+  useDeleteSchedule,
+  useDeleteSnapMirrorLabel,
+  useNetAppClusters,
+  useNetAppSchedules,
+  useSchedules,
+  useSnapmirrorPolicies,
+  useSnapMirrorLabels,
+  useSvms,
+} from "@/api/hooks";
 import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useUsers, type UserRead } from "@/api/hooks.settings";
+import { NetAppScheduleFormModal } from "@/components/NetAppScheduleFormModal";
+import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
 import { ScheduleFormModal } from "@/components/ScheduleFormModal";
 import { SnapMirrorLabelFormModal } from "@/components/SnapMirrorLabelFormModal";
-import type { Schedule, SnapMirrorLabel } from "@/api/types";
+import { SnapMirrorPolicyEditModal } from "@/components/SnapMirrorPolicyEditModal";
+import { SnapMirrorPolicyFormModal } from "@/components/SnapMirrorPolicyFormModal";
+import type { NetAppSnapMirrorPolicy, Schedule, SnapMirrorLabel } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatSchedule } from "@/utils/format";
+import { buildPolicyCreationSteps, buildPolicyEditSteps, buildScheduleCreationSteps } from "@/utils/netappSteps";
 
 const SCHEDULE_TYPE_LABEL: Record<string, string> = {
   hourly: "Mehrmals täglich",
@@ -224,6 +238,16 @@ export function SettingsPage() {
     });
   }
 
+  const { data: netappClusters } = useNetAppClusters();
+  const { data: netappSvms } = useSvms();
+  const { data: netappPolicies } = useSnapmirrorPolicies();
+  const { data: netappSchedules } = useNetAppSchedules();
+  const [policyFormOpen, setPolicyFormOpen] = useState(false);
+  const [policyEditOpen, setPolicyEditOpen] = useState(false);
+  const [editingPolicy, setEditingPolicy] = useState<NetAppSnapMirrorPolicy | null>(null);
+  const [netappScheduleFormOpen, setNetappScheduleFormOpen] = useState(false);
+  const [process, setProcess] = useState<ProcessPlan | null>(null);
+
   return (
     <Stack>
       <Title order={3}>Einstellungen</Title>
@@ -233,6 +257,8 @@ export function SettingsPage() {
           <Tabs.Tab value="users">Benutzer & Rollen</Tabs.Tab>
           <Tabs.Tab value="schedules">Zeitpläne</Tabs.Tab>
           <Tabs.Tab value="snapmirror-labels">SnapMirror-Labels</Tabs.Tab>
+          <Tabs.Tab value="netapp-snapmirror-policies">SnapMirror-Policies</Tabs.Tab>
+          <Tabs.Tab value="netapp-schedules">Schedules</Tabs.Tab>
           <Tabs.Tab value="ad">Active Directory</Tabs.Tab>
           <Tabs.Tab value="netapp">NetApp-Verbindung</Tabs.Tab>
           <Tabs.Tab value="hyperv">Hyper-V-Hosts</Tabs.Tab>
@@ -419,6 +445,135 @@ export function SettingsPage() {
           <SnapMirrorLabelFormModal opened={labelModalOpen} onClose={() => setLabelModalOpen(false)} label={editingLabel} />
         </Tabs.Panel>
 
+        <Tabs.Panel value="netapp-snapmirror-policies" pt="md">
+          <Paper p="md">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>NetApp SnapMirror-Policies</Title>
+              <Button leftSection={<IconPlus size={16} />} onClick={() => setPolicyFormOpen(true)}>
+                Policy anlegen
+              </Button>
+            </Group>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Cluster</Table.Th>
+                  <Table.Th>SVM</Table.Th>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Typ</Table.Th>
+                  <Table.Th>Regeln</Table.Th>
+                  <Table.Th>Aktionen</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {netappPolicies?.map((p) => (
+                  <Table.Tr key={p.id}>
+                    <Table.Td>{p.cluster_name}</Table.Td>
+                    <Table.Td>{p.svm_name ?? "-"}</Table.Td>
+                    <Table.Td>{p.name}</Table.Td>
+                    <Table.Td>
+                      <Badge variant="light" color="blue">
+                        {p.type ?? "-"}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      {p.rules.length ? p.rules.map((r) => `${r.label}: ${r.count}`).join(", ") : "-"}
+                    </Table.Td>
+                    <Table.Td>
+                      <ActionIcon
+                        variant="light"
+                        onClick={() => {
+                          setEditingPolicy(p);
+                          setPolicyEditOpen(true);
+                        }}
+                      >
+                        <IconEdit size={16} />
+                      </ActionIcon>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            {netappPolicies?.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Noch keine SnapMirror-Policies erkannt. Führe eine Discovery unter Storage &gt; Cluster aus.
+              </Text>
+            )}
+          </Paper>
+
+          <SnapMirrorPolicyFormModal
+            opened={policyFormOpen}
+            onClose={() => setPolicyFormOpen(false)}
+            clusters={netappClusters}
+            svms={netappSvms}
+            onSubmitPlan={(plan) => {
+              setPolicyFormOpen(false);
+              setProcess({ title: "SnapMirror-Policy anlegen", steps: buildPolicyCreationSteps(plan) });
+            }}
+          />
+          <SnapMirrorPolicyEditModal
+            opened={policyEditOpen}
+            onClose={() => setPolicyEditOpen(false)}
+            policy={editingPolicy}
+            onSubmitPlan={(plan) => {
+              setPolicyEditOpen(false);
+              setProcess({ title: "SnapMirror-Policy bearbeiten", steps: buildPolicyEditSteps(plan) });
+            }}
+          />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="netapp-schedules" pt="md">
+          <Paper p="md">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>NetApp-Schedules</Title>
+              <Button leftSection={<IconPlus size={16} />} onClick={() => setNetappScheduleFormOpen(true)}>
+                Schedule anlegen
+              </Button>
+            </Group>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Cluster</Table.Th>
+                  <Table.Th>SVM</Table.Th>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Minuten</Table.Th>
+                  <Table.Th>Stunden</Table.Th>
+                  <Table.Th>Wochentage</Table.Th>
+                  <Table.Th>Tage</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {netappSchedules?.map((s) => (
+                  <Table.Tr key={s.id}>
+                    <Table.Td>{s.cluster_name}</Table.Td>
+                    <Table.Td>{s.svm_name ?? "cluster-weit"}</Table.Td>
+                    <Table.Td>{s.name}</Table.Td>
+                    <Table.Td>{s.minutes.join(", ") || "-"}</Table.Td>
+                    <Table.Td>{s.hours.join(", ") || "jede"}</Table.Td>
+                    <Table.Td>{s.weekdays.join(", ") || "jeder"}</Table.Td>
+                    <Table.Td>{s.days.join(", ") || "jeder"}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            {netappSchedules?.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Noch keine Schedules erkannt. Führe eine Discovery unter Storage &gt; Cluster aus.
+              </Text>
+            )}
+          </Paper>
+
+          <NetAppScheduleFormModal
+            opened={netappScheduleFormOpen}
+            onClose={() => setNetappScheduleFormOpen(false)}
+            clusters={netappClusters}
+            svms={netappSvms}
+            onSubmitPlan={(plan) => {
+              setNetappScheduleFormOpen(false);
+              setProcess({ title: "Schedule anlegen", steps: buildScheduleCreationSteps(plan) });
+            }}
+          />
+        </Tabs.Panel>
+
         <Tabs.Panel value="ad" pt="md">
           <Paper p="md" maw={520}>
             <Stack gap="xs">
@@ -461,6 +616,8 @@ export function SettingsPage() {
           </Paper>
         </Tabs.Panel>
       </Tabs>
+
+      <ProcessModal opened={!!process} onClose={() => setProcess(null)} plan={process} />
 
       <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
         Die Tabs "Active Directory", "NetApp-Verbindung", "Hyper-V-Hosts" und "Updates (Git)" zeigen die aktuell aktive

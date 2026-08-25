@@ -33,6 +33,8 @@ from app.models.netapp_discovery import (
     NetAppLun,
     NetAppNetworkInterface,
     NetAppPlatform,
+    NetAppSchedule,
+    NetAppSnapMirrorPolicy,
     NetAppSnapMirrorRelationship,
     NetAppSvm,
     NetAppSvmPeer,
@@ -47,6 +49,7 @@ from app.schemas.netapp_write import (
     LunUpdate,
     ScheduleCreate,
     SnapmirrorPolicyCreate,
+    SnapmirrorPolicyUpdate,
     SnapmirrorRelationshipCreate,
     SnapmirrorRelationshipUpdate,
     SvmPeerCreate,
@@ -176,6 +179,27 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
                     state=agg.state, size_bytes=agg.size_bytes, used_bytes=agg.used_bytes,
                     used_percent=agg.used_percent, efficiency_ratio=agg.efficiency_ratio,
                     efficiency_ratio_wo_snapshots=agg.efficiency_ratio_wo_snapshots, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("snapmirror_policies"):
+        db.query(NetAppSnapMirrorPolicy).filter(NetAppSnapMirrorPolicy.cluster_id == cluster.id).delete()
+        for pol in data.snapmirror_policies:
+            db.add(
+                NetAppSnapMirrorPolicy(
+                    cluster_id=cluster.id, uuid=pol.uuid, name=pol.name, svm_name=pol.svm_name,
+                    scope=pol.scope, type=pol.type, comment=pol.comment, rules_json=pol.rules_json, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("schedules"):
+        db.query(NetAppSchedule).filter(NetAppSchedule.cluster_id == cluster.id).delete()
+        for sched in data.schedules:
+            db.add(
+                NetAppSchedule(
+                    cluster_id=cluster.id, uuid=sched.uuid, name=sched.name, svm_name=sched.svm_name,
+                    scope=sched.scope, schedule_type=sched.schedule_type, minutes=sched.minutes,
+                    hours=sched.hours, days=sched.days, weekdays=sched.weekdays, last_seen_at=now,
                 )
             )
 
@@ -488,18 +512,6 @@ def delete_lun_map(
     return {"status": "deleted"}
 
 
-@router.get("/{cluster_id}/snapmirror-policies")
-def list_snapmirror_policies(
-    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW)),
-) -> list[dict]:
-    cluster = _get_cluster_or_404(db, cluster_id)
-    service = _service_for(cluster)
-    try:
-        return service.list_snapmirror_policies()
-    except NetAppConnectionError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-
 @router.post("/{cluster_id}/snapmirror-policies", status_code=status.HTTP_201_CREATED)
 def create_snapmirror_policy(
     cluster_id: str, payload: SnapmirrorPolicyCreate, db: Session = Depends(get_db),
@@ -508,22 +520,26 @@ def create_snapmirror_policy(
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
     try:
-        service.create_snapmirror_policy(payload.svm_name, payload.name, payload.type)
+        service.create_snapmirror_policy(
+            payload.svm_name, payload.name, payload.vault_type, [r.model_dump() for r in payload.rules]
+        )
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"status": "created"}
 
 
-@router.get("/{cluster_id}/schedules")
-def list_schedules(
-    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW)),
-) -> list[dict]:
+@router.patch("/{cluster_id}/snapmirror-policies/{policy_uuid}")
+def update_snapmirror_policy(
+    cluster_id: str, policy_uuid: str, payload: SnapmirrorPolicyUpdate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
     try:
-        return service.list_schedules()
+        service.update_snapmirror_policy(policy_uuid, [r.model_dump() for r in payload.rules])
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "updated"}
 
 
 @router.post("/{cluster_id}/schedules", status_code=status.HTTP_201_CREATED)
@@ -534,7 +550,7 @@ def create_schedule(
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
     try:
-        service.create_schedule(payload.name, payload.preset)
+        service.create_schedule(payload.name, payload.svm_name, payload.minutes, payload.hours, payload.days, payload.weekdays)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"status": "created"}
