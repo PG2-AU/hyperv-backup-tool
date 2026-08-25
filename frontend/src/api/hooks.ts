@@ -8,14 +8,21 @@ import type {
   Csv,
   DiscoveryStep,
   MetroClusterStatus,
+  NetAppAggregate,
   NetAppCluster,
+  NetAppClusterPeer,
+  NetAppLun,
+  NetAppNetworkInterface,
+  NetAppPlatform,
+  NetAppSvm,
+  NetAppSvmPeer,
+  NetAppVolume,
   ResourceGroup,
   RetentionType,
   Schedule,
   ScheduleType,
   SnapMirrorLabel,
   SnapMirrorRelationship,
-  SvmInfo,
   Vm,
 } from "@/api/types";
 
@@ -36,7 +43,35 @@ export function useCsvs() {
 export function useSvms() {
   return useQuery({
     queryKey: ["svms"],
-    queryFn: async () => (await apiClient.get<SvmInfo[]>("/storage/svms")).data,
+    queryFn: async () => (await apiClient.get<NetAppSvm[]>("/storage/svms")).data,
+  });
+}
+
+export function useVolumes() {
+  return useQuery({
+    queryKey: ["volumes"],
+    queryFn: async () => (await apiClient.get<NetAppVolume[]>("/storage/volumes")).data,
+  });
+}
+
+export function useLuns() {
+  return useQuery({
+    queryKey: ["luns"],
+    queryFn: async () => (await apiClient.get<NetAppLun[]>("/storage/luns")).data,
+  });
+}
+
+export function useClusterPeers() {
+  return useQuery({
+    queryKey: ["cluster-peers"],
+    queryFn: async () => (await apiClient.get<NetAppClusterPeer[]>("/storage/cluster-peers")).data,
+  });
+}
+
+export function useSvmPeers() {
+  return useQuery({
+    queryKey: ["svm-peers"],
+    queryFn: async () => (await apiClient.get<NetAppSvmPeer[]>("/storage/svm-peers")).data,
   });
 }
 
@@ -44,6 +79,27 @@ export function useSnapMirrorRelationships() {
   return useQuery({
     queryKey: ["snapmirror"],
     queryFn: async () => (await apiClient.get<SnapMirrorRelationship[]>("/storage/snapmirror-relationships")).data,
+  });
+}
+
+export function useNetworkInterfaces() {
+  return useQuery({
+    queryKey: ["network-interfaces"],
+    queryFn: async () => (await apiClient.get<NetAppNetworkInterface[]>("/storage/network-interfaces")).data,
+  });
+}
+
+export function usePlatforms() {
+  return useQuery({
+    queryKey: ["platforms"],
+    queryFn: async () => (await apiClient.get<NetAppPlatform[]>("/storage/platforms")).data,
+  });
+}
+
+export function useAggregates() {
+  return useQuery({
+    queryKey: ["aggregates"],
+    queryFn: async () => (await apiClient.get<NetAppAggregate[]>("/storage/aggregates")).data,
   });
 }
 
@@ -300,10 +356,23 @@ export function useDeleteNetAppCluster() {
   });
 }
 
+const DISCOVERY_QUERY_KEYS = [
+  "netapp-clusters",
+  "svms",
+  "volumes",
+  "luns",
+  "cluster-peers",
+  "svm-peers",
+  "snapmirror",
+  "network-interfaces",
+  "platforms",
+  "aggregates",
+];
+
 export function useDiscoverNetAppCluster() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => (await apiClient.post<DiscoveryStep[]>(`/netapp/clusters/${id}/discover`)).data,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["netapp-clusters"] }),
+    onSuccess: () => DISCOVERY_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })),
   });
 }

@@ -5,20 +5,28 @@ import { IconCertificate, IconInfoCircle, IconPlus, IconRadar2, IconRefresh, Ico
 import { useSearchParams } from "react-router-dom";
 
 import {
+  useAggregates,
+  useClusterPeers,
   useCreateNetAppCluster,
   useDeleteNetAppCluster,
   useDiscoverNetAppCluster,
   useEnrollNetAppClusterCertificate,
+  useLuns,
   useMetroClusterStatus,
   useNetAppClusters,
+  useNetworkInterfaces,
+  usePlatforms,
   useSnapMirrorRelationships,
+  useSvmPeers,
   useSvms,
   useVerifyNetAppCluster,
+  useVolumes,
 } from "@/api/hooks";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
 import type { NetAppCluster, SnapMirrorRelationship } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
+import { formatBytes } from "@/utils/format";
 
 const HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
 const HEALTH_LABEL: Record<string, string> = {
@@ -257,7 +265,14 @@ export function StoragePage() {
   const [params, setParams] = useSearchParams();
   const activeTab = params.get("tab") ?? "clusters";
   const { data: svms } = useSvms();
+  const { data: volumes } = useVolumes();
+  const { data: luns } = useLuns();
+  const { data: clusterPeers } = useClusterPeers();
+  const { data: svmPeers } = useSvmPeers();
   const { data: relationships } = useSnapMirrorRelationships();
+  const { data: networkInterfaces } = useNetworkInterfaces();
+  const { data: platforms } = usePlatforms();
+  const { data: aggregates } = useAggregates();
   const { data: mcc } = useMetroClusterStatus();
   const relMenu = useContextMenu<SnapMirrorRelationship>();
 
@@ -277,7 +292,14 @@ export function StoragePage() {
         <Tabs.List>
           <Tabs.Tab value="clusters">Cluster</Tabs.Tab>
           <Tabs.Tab value="svms">Storage Virtual Machines</Tabs.Tab>
+          <Tabs.Tab value="volumes">Volumes</Tabs.Tab>
+          <Tabs.Tab value="luns">LUNs</Tabs.Tab>
+          <Tabs.Tab value="cluster-peers">Cluster Peer</Tabs.Tab>
+          <Tabs.Tab value="svm-peers">SVM Peer</Tabs.Tab>
           <Tabs.Tab value="snapmirror">SnapMirror-Beziehungen</Tabs.Tab>
+          <Tabs.Tab value="network-interfaces">Network Interfaces</Tabs.Tab>
+          <Tabs.Tab value="platforms">Plattform</Tabs.Tab>
+          <Tabs.Tab value="aggregates">Aggregate</Tabs.Tab>
           <Tabs.Tab value="metrocluster">MetroCluster</Tabs.Tab>
         </Tabs.List>
 
@@ -289,31 +311,179 @@ export function StoragePage() {
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
+                <Table.Th>Cluster</Table.Th>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Status</Table.Th>
-                <Table.Th>MetroCluster</Table.Th>
+                <Table.Th>Subtype</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {svms?.map((svm) => (
-                <Table.Tr key={svm.name}>
+                <Table.Tr key={svm.id}>
+                  <Table.Td>{svm.cluster_name}</Table.Td>
                   <Table.Td>{svm.name}</Table.Td>
                   <Table.Td>
-                    <Badge color="green" variant="light">
-                      {svm.state}
+                    <Badge color={svm.state === "running" ? "green" : "gray"} variant="light">
+                      {svm.state ?? "-"}
                     </Badge>
                   </Table.Td>
-                  <Table.Td>{svm.is_metrocluster ? "Ja" : "Nein"}</Table.Td>
+                  <Table.Td>{svm.subtype ?? "-"}</Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
           </Table>
+          {svms?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine SVMs erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="volumes" pt="md">
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Cluster</Table.Th>
+                <Table.Th>SVM</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>Größe</Table.Th>
+                <Table.Th>Belegt</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {volumes?.map((vol) => (
+                <Table.Tr key={vol.id}>
+                  <Table.Td>{vol.cluster_name}</Table.Td>
+                  <Table.Td>{vol.svm_name ?? "-"}</Table.Td>
+                  <Table.Td>{vol.name}</Table.Td>
+                  <Table.Td>
+                    <Badge color={vol.state === "online" ? "green" : "gray"} variant="light">
+                      {vol.state ?? "-"}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>{formatBytes(vol.size_bytes)}</Table.Td>
+                  <Table.Td>{formatBytes(vol.used_bytes)}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          {volumes?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine Volumes erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="luns" pt="md">
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Cluster</Table.Th>
+                <Table.Th>SVM</Table.Th>
+                <Table.Th>Volume</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>OS-Type</Table.Th>
+                <Table.Th>Größe</Table.Th>
+                <Table.Th>Status</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {luns?.map((lun) => (
+                <Table.Tr key={lun.id}>
+                  <Table.Td>{lun.cluster_name}</Table.Td>
+                  <Table.Td>{lun.svm_name ?? "-"}</Table.Td>
+                  <Table.Td>{lun.volume_name ?? "-"}</Table.Td>
+                  <Table.Td>{lun.name}</Table.Td>
+                  <Table.Td>{lun.os_type ?? "-"}</Table.Td>
+                  <Table.Td>{formatBytes(lun.size_bytes)}</Table.Td>
+                  <Table.Td>
+                    <Badge color={lun.state === "online" ? "green" : "gray"} variant="light">
+                      {lun.state ?? "-"}
+                    </Badge>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          {luns?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine LUNs erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="cluster-peers" pt="md">
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Cluster</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Remote-Name</Table.Th>
+                <Table.Th>Status</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {clusterPeers?.map((peer) => (
+                <Table.Tr key={peer.id}>
+                  <Table.Td>{peer.cluster_name}</Table.Td>
+                  <Table.Td>{peer.name ?? "-"}</Table.Td>
+                  <Table.Td>{peer.remote_name ?? "-"}</Table.Td>
+                  <Table.Td>
+                    <Badge color={peer.state === "available" ? "green" : "gray"} variant="light">
+                      {peer.state ?? "-"}
+                    </Badge>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          {clusterPeers?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine Cluster-Peer-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="svm-peers" pt="md">
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Cluster</Table.Th>
+                <Table.Th>SVM</Table.Th>
+                <Table.Th>Peer-SVM</Table.Th>
+                <Table.Th>Peer-Cluster</Table.Th>
+                <Table.Th>Status</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {svmPeers?.map((peer) => (
+                <Table.Tr key={peer.id}>
+                  <Table.Td>{peer.cluster_name}</Table.Td>
+                  <Table.Td>{peer.svm_name ?? "-"}</Table.Td>
+                  <Table.Td>{peer.peer_svm_name ?? "-"}</Table.Td>
+                  <Table.Td>{peer.peer_cluster_name ?? "-"}</Table.Td>
+                  <Table.Td>
+                    <Badge color={peer.state === "peered" ? "green" : "gray"} variant="light">
+                      {peer.state ?? "-"}
+                    </Badge>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          {svmPeers?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine SVM-Peer-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
         </Tabs.Panel>
 
         <Tabs.Panel value="snapmirror" pt="md">
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
+                <Table.Th>Cluster</Table.Th>
                 <Table.Th>Quelle</Table.Th>
                 <Table.Th>Ziel</Table.Th>
                 <Table.Th>Status</Table.Th>
@@ -322,7 +492,8 @@ export function StoragePage() {
             </Table.Thead>
             <Table.Tbody>
               {relationships?.map((rel) => (
-                <Table.Tr key={rel.uuid} onContextMenu={(e) => relMenu.open(e, rel)} style={{ cursor: "context-menu" }}>
+                <Table.Tr key={rel.id} onContextMenu={(e) => relMenu.open(e, rel)} style={{ cursor: "context-menu" }}>
+                  <Table.Td>{rel.cluster_name}</Table.Td>
                   <Table.Td>{rel.source_path}</Table.Td>
                   <Table.Td>{rel.destination_path}</Table.Td>
                   <Table.Td>{rel.state}</Table.Td>
@@ -335,6 +506,119 @@ export function StoragePage() {
               ))}
             </Table.Tbody>
           </Table>
+          {relationships?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine SnapMirror-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="network-interfaces" pt="md">
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Cluster</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>SVM</Table.Th>
+                <Table.Th>Adresse</Table.Th>
+                <Table.Th>Status</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {networkInterfaces?.map((iface) => (
+                <Table.Tr key={iface.id}>
+                  <Table.Td>{iface.cluster_name}</Table.Td>
+                  <Table.Td>{iface.name ?? "-"}</Table.Td>
+                  <Table.Td>{iface.svm_name ?? "-"}</Table.Td>
+                  <Table.Td>{iface.address ?? "-"}</Table.Td>
+                  <Table.Td>
+                    <Badge color={iface.state === "up" ? "green" : "gray"} variant="light">
+                      {iface.state ?? "-"}
+                    </Badge>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          {networkInterfaces?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine Network Interfaces erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="platforms" pt="md">
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Cluster</Table.Th>
+                <Table.Th>Node</Table.Th>
+                <Table.Th>Modell</Table.Th>
+                <Table.Th>Seriennummer</Table.Th>
+                <Table.Th>ONTAP-Version</Table.Th>
+                <Table.Th>Uptime</Table.Th>
+                <Table.Th>Status</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {platforms?.map((p) => (
+                <Table.Tr key={p.id}>
+                  <Table.Td>{p.cluster_name}</Table.Td>
+                  <Table.Td>{p.node_name}</Table.Td>
+                  <Table.Td>{p.model ?? "-"}</Table.Td>
+                  <Table.Td>{p.serial_number ?? "-"}</Table.Td>
+                  <Table.Td>{p.ontap_version ?? "-"}</Table.Td>
+                  <Table.Td>{p.uptime_seconds ? `${Math.floor(p.uptime_seconds / 86400)} Tage` : "-"}</Table.Td>
+                  <Table.Td>
+                    <Badge color={p.state === "up" ? "green" : "gray"} variant="light">
+                      {p.state ?? "-"}
+                    </Badge>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          {platforms?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine Plattform-Informationen erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="aggregates" pt="md">
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Cluster</Table.Th>
+                <Table.Th>Node</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>Größe</Table.Th>
+                <Table.Th>Belegt</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {aggregates?.map((agg) => (
+                <Table.Tr key={agg.id}>
+                  <Table.Td>{agg.cluster_name}</Table.Td>
+                  <Table.Td>{agg.node_name ?? "-"}</Table.Td>
+                  <Table.Td>{agg.name}</Table.Td>
+                  <Table.Td>
+                    <Badge color={agg.state === "online" ? "green" : "gray"} variant="light">
+                      {agg.state ?? "-"}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>{formatBytes(agg.size_bytes)}</Table.Td>
+                  <Table.Td>{formatBytes(agg.used_bytes)}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          {aggregates?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine Aggregate erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
         </Tabs.Panel>
 
         <Tabs.Panel value="metrocluster" pt="md">

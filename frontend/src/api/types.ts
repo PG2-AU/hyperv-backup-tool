@@ -66,18 +66,79 @@ export interface DiscoveryStep {
   count?: number | null;
 }
 
-export interface SvmInfo {
-  name: string;
-  state: string;
-  is_metrocluster: boolean;
+interface NetAppDiscoveredBase {
+  id: string;
+  cluster_id: string;
+  cluster_name: string;
+  uuid?: string | null;
+  last_seen_at: string;
 }
 
-export interface SnapMirrorRelationship {
-  uuid: string;
-  source_path: string;
-  destination_path: string;
-  state: string;
+export interface NetAppSvm extends NetAppDiscoveredBase {
+  name: string;
+  state?: string | null;
+  subtype?: string | null;
+}
+
+export interface NetAppVolume extends NetAppDiscoveredBase {
+  name: string;
+  svm_name?: string | null;
+  state?: string | null;
+  size_bytes?: number | null;
+  used_bytes?: number | null;
+}
+
+export interface NetAppLun extends NetAppDiscoveredBase {
+  name: string;
+  svm_name?: string | null;
+  volume_name?: string | null;
+  state?: string | null;
+  size_bytes?: number | null;
+  os_type?: string | null;
+}
+
+export interface NetAppClusterPeer extends NetAppDiscoveredBase {
+  name?: string | null;
+  remote_name?: string | null;
+  state?: string | null;
+}
+
+export interface NetAppSvmPeer extends NetAppDiscoveredBase {
+  svm_name?: string | null;
+  peer_svm_name?: string | null;
+  peer_cluster_name?: string | null;
+  state?: string | null;
+}
+
+export interface SnapMirrorRelationship extends NetAppDiscoveredBase {
+  source_path?: string | null;
+  destination_path?: string | null;
+  state?: string | null;
   healthy: boolean;
+}
+
+export interface NetAppNetworkInterface extends NetAppDiscoveredBase {
+  name?: string | null;
+  address?: string | null;
+  svm_name?: string | null;
+  state?: string | null;
+}
+
+export interface NetAppPlatform extends NetAppDiscoveredBase {
+  node_name: string;
+  model?: string | null;
+  serial_number?: string | null;
+  ontap_version?: string | null;
+  uptime_seconds?: number | null;
+  state?: string | null;
+}
+
+export interface NetAppAggregate extends NetAppDiscoveredBase {
+  name: string;
+  node_name?: string | null;
+  state?: string | null;
+  size_bytes?: number | null;
+  used_bytes?: number | null;
 }
 
 export interface MetroClusterStatus {

@@ -26,10 +26,119 @@ from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster, NetAppClusterHealth
+from app.models.netapp_discovery import (
+    NetAppAggregate,
+    NetAppClusterPeer,
+    NetAppLun,
+    NetAppNetworkInterface,
+    NetAppPlatform,
+    NetAppSnapMirrorRelationship,
+    NetAppSvm,
+    NetAppSvmPeer,
+    NetAppVolume,
+)
 from app.schemas.netapp_cluster import DiscoveryStepRead, NetAppClusterCreate, NetAppClusterRead
-from app.services.netapp_service import NetAppConnectionError, NetAppOntapService
+from app.services.netapp_service import DiscoveryData, NetAppConnectionError, NetAppOntapService
 
 router = APIRouter(prefix="/api/netapp/clusters", tags=["netapp-clusters"])
+
+
+def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData, step_success: dict[str, bool]) -> None:
+    """Ersetzt je Objekttyp alle zuvor gespeicherten Discovery-Ergebnisse dieses
+    Clusters durch die aktuellen -- aber nur fuer Typen, deren Discovery-Schritt
+    in diesem Lauf erfolgreich war (sonst bliebe ein fehlgeschlagener Schritt
+    die bereits bekannten Objekte faelschlich loeschen)."""
+    now = datetime.now(timezone.utc)
+
+    if step_success.get("svms"):
+        db.query(NetAppSvm).filter(NetAppSvm.cluster_id == cluster.id).delete()
+        for svm in data.svms:
+            db.add(NetAppSvm(cluster_id=cluster.id, uuid=svm.uuid, name=svm.name, state=svm.state, subtype=svm.subtype, last_seen_at=now))
+
+    if step_success.get("volumes"):
+        db.query(NetAppVolume).filter(NetAppVolume.cluster_id == cluster.id).delete()
+        for vol in data.volumes:
+            db.add(
+                NetAppVolume(
+                    cluster_id=cluster.id, uuid=vol.uuid, name=vol.name, svm_name=vol.svm_name,
+                    state=vol.state, size_bytes=vol.size_bytes, used_bytes=vol.used_bytes, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("luns"):
+        db.query(NetAppLun).filter(NetAppLun.cluster_id == cluster.id).delete()
+        for lun in data.luns:
+            db.add(
+                NetAppLun(
+                    cluster_id=cluster.id, uuid=lun.uuid, name=lun.name, svm_name=lun.svm_name,
+                    volume_name=lun.volume_name, state=lun.state, size_bytes=lun.size_bytes,
+                    os_type=lun.os_type, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("cluster_peers"):
+        db.query(NetAppClusterPeer).filter(NetAppClusterPeer.cluster_id == cluster.id).delete()
+        for peer in data.cluster_peers:
+            db.add(
+                NetAppClusterPeer(
+                    cluster_id=cluster.id, uuid=peer.uuid, name=peer.name,
+                    remote_name=peer.remote_name, state=peer.state, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("svm_peers"):
+        db.query(NetAppSvmPeer).filter(NetAppSvmPeer.cluster_id == cluster.id).delete()
+        for peer in data.svm_peers:
+            db.add(
+                NetAppSvmPeer(
+                    cluster_id=cluster.id, uuid=peer.uuid, svm_name=peer.svm_name,
+                    peer_svm_name=peer.peer_svm_name, peer_cluster_name=peer.peer_cluster_name,
+                    state=peer.state, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("snapmirror"):
+        db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.cluster_id == cluster.id).delete()
+        for rel in data.snapmirror_relationships:
+            db.add(
+                NetAppSnapMirrorRelationship(
+                    cluster_id=cluster.id, uuid=rel.uuid, source_path=rel.source_path,
+                    destination_path=rel.destination_path, state=rel.state, healthy=rel.healthy, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("network_interfaces"):
+        db.query(NetAppNetworkInterface).filter(NetAppNetworkInterface.cluster_id == cluster.id).delete()
+        for iface in data.network_interfaces:
+            db.add(
+                NetAppNetworkInterface(
+                    cluster_id=cluster.id, uuid=iface.uuid, name=iface.name, address=iface.address,
+                    svm_name=iface.svm_name, state=iface.state, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("platforms"):
+        db.query(NetAppPlatform).filter(NetAppPlatform.cluster_id == cluster.id).delete()
+        for plat in data.platforms:
+            db.add(
+                NetAppPlatform(
+                    cluster_id=cluster.id, uuid=plat.uuid, node_name=plat.node_name, model=plat.model,
+                    serial_number=plat.serial_number, ontap_version=plat.ontap_version,
+                    uptime_seconds=plat.uptime_seconds, state=plat.state, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("aggregates"):
+        db.query(NetAppAggregate).filter(NetAppAggregate.cluster_id == cluster.id).delete()
+        for agg in data.aggregates:
+            db.add(
+                NetAppAggregate(
+                    cluster_id=cluster.id, uuid=agg.uuid, name=agg.name, node_name=agg.node_name,
+                    state=agg.state, size_bytes=agg.size_bytes, used_bytes=agg.used_bytes, last_seen_at=now,
+                )
+            )
+
+    db.commit()
 
 
 def _service_for(cluster: NetAppCluster) -> NetAppOntapService:
@@ -175,7 +284,10 @@ def discover_cluster(
     if cluster is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster nicht gefunden")
     service = _service_for(cluster)
-    return service.run_discovery()
+    steps, data = service.run_discovery()
+    step_success = {s.step: s.success for s in steps}
+    _persist_discovery(db, cluster, data, step_success)
+    return steps
 
 
 @router.delete("/{cluster_id}", status_code=status.HTTP_204_NO_CONTENT)

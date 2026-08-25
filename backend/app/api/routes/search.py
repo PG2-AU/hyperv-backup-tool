@@ -9,11 +9,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.routes.storage import _DEMO_RELATIONSHIPS, _DEMO_SVMS
 from app.api.routes.vms import _DEMO_CSVS, _DEMO_VMS
 from app.db.session import get_db
 from app.models.backup_policy import BackupPolicy
 from app.models.netapp_cluster import NetAppCluster
+from app.models.netapp_discovery import NetAppSnapMirrorRelationship, NetAppSvm
 from app.models.resource_group import ResourceGroup
 
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -78,11 +78,13 @@ def search(
                 )
 
     if context in (None, "storage"):
-        for svm in _DEMO_SVMS:
+        for svm in db.query(NetAppSvm).all():
             if needle in svm.name.lower():
-                results.append(SearchResult(type="SVM", id=svm.name, label=svm.name, subtitle=svm.state, route="/storage?tab=svms"))
-        for rel in _DEMO_RELATIONSHIPS:
-            if needle in rel.source_path.lower() or needle in rel.destination_path.lower():
-                results.append(SearchResult(type="SnapMirror", id=rel.uuid, label=rel.source_path, subtitle=f"-> {rel.destination_path}", route="/storage?tab=snapmirror"))
+                results.append(SearchResult(type="SVM", id=svm.id, label=svm.name, subtitle=svm.state or "", route="/storage?tab=svms"))
+        for rel in db.query(NetAppSnapMirrorRelationship).all():
+            source = rel.source_path or ""
+            destination = rel.destination_path or ""
+            if needle in source.lower() or needle in destination.lower():
+                results.append(SearchResult(type="SnapMirror", id=rel.id, label=source, subtitle=f"-> {destination}", route="/storage?tab=snapmirror"))
 
     return results[:20]

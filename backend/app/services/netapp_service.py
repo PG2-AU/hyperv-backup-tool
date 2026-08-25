@@ -25,6 +25,7 @@ from netapp_ontap import HostConnection
 from netapp_ontap.error import NetAppRestError
 from netapp_ontap.resources import (
     Account,
+    Aggregate,
     Cluster,
     ClusterPeer,
     IpInterface,
@@ -42,6 +43,22 @@ from netapp_ontap.resources import (
 
 class NetAppConnectionError(Exception):
     """Verbindungsaufbau oder Authentifizierung gegen den Cluster fehlgeschlagen."""
+
+
+def _get_nested(obj: object, path: str, default=None):
+    """Sicherer verschachtelter Attributzugriff (z.B. 'svm.name'). Das
+    netapp_ontap-SDK wirft bei nicht angefragten/nicht vorhandenen Feldern
+    einen AttributeError statt None zurueckzugeben (siehe Vorfall mit
+    Cluster.uuid) -- diese Funktion faengt das an jeder Stufe ab."""
+    current = obj
+    for part in path.split("."):
+        try:
+            current = getattr(current, part)
+        except AttributeError:
+            return default
+        if current is None:
+            return default
+    return current
 
 
 @dataclass
@@ -79,6 +96,95 @@ class DiscoveryStepResult:
     success: bool
     message: str
     count: int | None = None
+
+
+@dataclass
+class DiscoveredSvm:
+    uuid: str | None
+    name: str
+    state: str | None
+    subtype: str | None
+
+
+@dataclass
+class DiscoveredVolume:
+    uuid: str | None
+    name: str
+    svm_name: str | None
+    state: str | None
+    size_bytes: int | None
+    used_bytes: int | None
+
+
+@dataclass
+class DiscoveredLun:
+    uuid: str | None
+    name: str
+    svm_name: str | None
+    volume_name: str | None
+    state: str | None
+    size_bytes: int | None
+    os_type: str | None
+
+
+@dataclass
+class DiscoveredClusterPeer:
+    uuid: str | None
+    name: str | None
+    remote_name: str | None
+    state: str | None
+
+
+@dataclass
+class DiscoveredSvmPeer:
+    uuid: str | None
+    svm_name: str | None
+    peer_svm_name: str | None
+    peer_cluster_name: str | None
+    state: str | None
+
+
+@dataclass
+class DiscoveredNetworkInterface:
+    uuid: str | None
+    name: str | None
+    address: str | None
+    svm_name: str | None
+    state: str | None
+
+
+@dataclass
+class DiscoveredPlatform:
+    uuid: str | None
+    node_name: str
+    model: str | None
+    serial_number: str | None
+    ontap_version: str | None
+    uptime_seconds: int | None
+    state: str | None
+
+
+@dataclass
+class DiscoveredAggregate:
+    uuid: str | None
+    name: str
+    node_name: str | None
+    state: str | None
+    size_bytes: int | None
+    used_bytes: int | None
+
+
+@dataclass
+class DiscoveryData:
+    svms: list[DiscoveredSvm] = field(default_factory=list)
+    volumes: list[DiscoveredVolume] = field(default_factory=list)
+    luns: list[DiscoveredLun] = field(default_factory=list)
+    cluster_peers: list[DiscoveredClusterPeer] = field(default_factory=list)
+    svm_peers: list[DiscoveredSvmPeer] = field(default_factory=list)
+    snapmirror_relationships: list[SnapMirrorRelationshipInfo] = field(default_factory=list)
+    network_interfaces: list[DiscoveredNetworkInterface] = field(default_factory=list)
+    platforms: list[DiscoveredPlatform] = field(default_factory=list)
+    aggregates: list[DiscoveredAggregate] = field(default_factory=list)
 
 
 @dataclass
@@ -151,44 +257,191 @@ class NetAppOntapService:
         except Exception as exc:  # Transportfehler (Timeout, DNS, TLS, ...) sind keine NetAppRestError
             raise NetAppConnectionError(str(exc)) from exc
 
-    def run_discovery(self) -> list[DiscoveryStepResult]:
+    def run_discovery(self) -> tuple[list[DiscoveryStepResult], DiscoveryData]:
         """Fuehrt eine mehrstufige Cluster-Discovery durch (Login, SVMs,
         Volumes, LUNs, Cluster-Peers, SVM-Peers, SnapMirror-Beziehungen,
-        Netzwerk-Interfaces). Jeder Schritt wird einzeln abgesichert, damit
-        z.B. eine fehlende SnapMirror-Lizenz nicht die gesamte Discovery
+        Netzwerk-Interfaces) und liefert sowohl die Schritt-Ergebnisse (fuer
+        die Fortschrittsanzeige) als auch die tatsaechlich gefundenen Objekte
+        (zur Persistierung) zurueck. Jeder Schritt wird einzeln abgesichert,
+        damit z.B. eine fehlende SnapMirror-Lizenz nicht die gesamte Discovery
         abbricht -- der jeweilige Schritt wird dann nur als fehlgeschlagen
-        markiert, die uebrigen Schritte laufen weiter."""
+        markiert, die uebrigen Schritte laufen weiter.
+
+        Feldabfragen nutzen 'fields=**' (ONTAP-Konvention fuer "alle Felder"),
+        um genau die Art von 400-Fehlern zu vermeiden, die eine explizite,
+        schmale Feldliste bei abweichenden ONTAP-Versionen ausloesen kann
+        (siehe get_cluster_summary-Vorfall). Attributzugriffe erfolgen
+        durchgehend ueber _get_nested/getattr mit Default, da das SDK bei
+        fehlenden Feldern wirft statt None zu liefern."""
         results: list[DiscoveryStepResult] = []
+        data = DiscoveryData()
 
         try:
             with self._connection():
                 try:
                     cluster = Cluster()
                     cluster.get(fields="name")
-                    results.append(DiscoveryStepResult("login", True, f"Angemeldet an Cluster '{cluster.name}'"))
+                    cluster_name = _get_nested(cluster, "name", "unbekannt")
+                    results.append(DiscoveryStepResult("login", True, f"Angemeldet an Cluster '{cluster_name}'"))
                 except NetAppRestError as exc:
                     results.append(DiscoveryStepResult("login", False, str(exc)))
-                    return results  # ohne erfolgreichen Login sind weitere Schritte zwecklos
+                    return results, data  # ohne erfolgreichen Login sind weitere Schritte zwecklos
 
-                steps: list[tuple[str, type, str]] = [
-                    ("svms", Svm, "Storage Virtual Machine(s)"),
-                    ("volumes", Volume, "Volume(s)"),
-                    ("luns", Lun, "LUN(s)"),
-                    ("cluster_peers", ClusterPeer, "Cluster-Peer-Beziehung(en)"),
-                    ("svm_peers", SvmPeer, "SVM-Peer-Beziehung(en)"),
-                    ("snapmirror", SnapmirrorRelationship, "SnapMirror-Beziehung(en)"),
-                    ("network_interfaces", IpInterface, "Netzwerk-Interface(s)"),
-                ]
-                for step_id, resource_cls, noun in steps:
-                    try:
-                        items = list(resource_cls.get_collection())
-                        results.append(DiscoveryStepResult(step_id, True, f"{len(items)} {noun} gefunden", len(items)))
-                    except NetAppRestError as exc:
-                        results.append(DiscoveryStepResult(step_id, False, str(exc)))
+                try:
+                    svms = list(Svm.get_collection(fields="**"))
+                    for s in svms:
+                        data.svms.append(
+                            DiscoveredSvm(
+                                uuid=_get_nested(s, "uuid"),
+                                name=_get_nested(s, "name", ""),
+                                state=_get_nested(s, "state"),
+                                subtype=_get_nested(s, "subtype"),
+                            )
+                        )
+                    results.append(DiscoveryStepResult("svms", True, f"{len(svms)} Storage Virtual Machine(s) gefunden", len(svms)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("svms", False, str(exc)))
+
+                try:
+                    volumes = list(Volume.get_collection(fields="**"))
+                    for v in volumes:
+                        data.volumes.append(
+                            DiscoveredVolume(
+                                uuid=_get_nested(v, "uuid"),
+                                name=_get_nested(v, "name", ""),
+                                svm_name=_get_nested(v, "svm.name"),
+                                state=_get_nested(v, "state"),
+                                size_bytes=_get_nested(v, "space.size"),
+                                used_bytes=_get_nested(v, "space.used.size") or _get_nested(v, "space.afs_used_size"),
+                            )
+                        )
+                    results.append(DiscoveryStepResult("volumes", True, f"{len(volumes)} Volume(s) gefunden", len(volumes)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("volumes", False, str(exc)))
+
+                try:
+                    luns = list(Lun.get_collection(fields="**"))
+                    for lun in luns:
+                        data.luns.append(
+                            DiscoveredLun(
+                                uuid=_get_nested(lun, "uuid"),
+                                name=_get_nested(lun, "name", ""),
+                                svm_name=_get_nested(lun, "svm.name"),
+                                volume_name=_get_nested(lun, "location.volume.name"),
+                                state=_get_nested(lun, "state"),
+                                size_bytes=_get_nested(lun, "space.size"),
+                                os_type=_get_nested(lun, "os_type"),
+                            )
+                        )
+                    results.append(DiscoveryStepResult("luns", True, f"{len(luns)} LUN(s) gefunden", len(luns)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("luns", False, str(exc)))
+
+                try:
+                    peers = list(ClusterPeer.get_collection(fields="**"))
+                    for p in peers:
+                        data.cluster_peers.append(
+                            DiscoveredClusterPeer(
+                                uuid=_get_nested(p, "uuid"),
+                                name=_get_nested(p, "name"),
+                                remote_name=_get_nested(p, "remote.name"),
+                                state=_get_nested(p, "status.state"),
+                            )
+                        )
+                    results.append(DiscoveryStepResult("cluster_peers", True, f"{len(peers)} Cluster-Peer-Beziehung(en) gefunden", len(peers)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("cluster_peers", False, str(exc)))
+
+                try:
+                    svm_peers = list(SvmPeer.get_collection(fields="**"))
+                    for sp in svm_peers:
+                        data.svm_peers.append(
+                            DiscoveredSvmPeer(
+                                uuid=_get_nested(sp, "uuid"),
+                                svm_name=_get_nested(sp, "svm.name"),
+                                peer_svm_name=_get_nested(sp, "peer.svm.name"),
+                                peer_cluster_name=_get_nested(sp, "peer.cluster.name"),
+                                state=_get_nested(sp, "state"),
+                            )
+                        )
+                    results.append(DiscoveryStepResult("svm_peers", True, f"{len(svm_peers)} SVM-Peer-Beziehung(en) gefunden", len(svm_peers)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("svm_peers", False, str(exc)))
+
+                try:
+                    relationships = list(SnapmirrorRelationship.get_collection(fields="**"))
+                    for rel in relationships:
+                        data.snapmirror_relationships.append(
+                            SnapMirrorRelationshipInfo(
+                                uuid=_get_nested(rel, "uuid", ""),
+                                source_path=_get_nested(rel, "source.path", ""),
+                                destination_path=_get_nested(rel, "destination.path", ""),
+                                state=_get_nested(rel, "state", ""),
+                                healthy=bool(_get_nested(rel, "healthy", False)),
+                            )
+                        )
+                    results.append(
+                        DiscoveryStepResult("snapmirror", True, f"{len(relationships)} SnapMirror-Beziehung(en) gefunden", len(relationships))
+                    )
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("snapmirror", False, str(exc)))
+
+                try:
+                    interfaces = list(IpInterface.get_collection(fields="**"))
+                    for iface in interfaces:
+                        data.network_interfaces.append(
+                            DiscoveredNetworkInterface(
+                                uuid=_get_nested(iface, "uuid"),
+                                name=_get_nested(iface, "name"),
+                                address=_get_nested(iface, "ip.address"),
+                                svm_name=_get_nested(iface, "svm.name"),
+                                state=_get_nested(iface, "state"),
+                            )
+                        )
+                    results.append(
+                        DiscoveryStepResult("network_interfaces", True, f"{len(interfaces)} Netzwerk-Interface(s) gefunden", len(interfaces))
+                    )
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("network_interfaces", False, str(exc)))
+
+                try:
+                    nodes = list(Node.get_collection(fields="**"))
+                    for n in nodes:
+                        data.platforms.append(
+                            DiscoveredPlatform(
+                                uuid=_get_nested(n, "uuid"),
+                                node_name=_get_nested(n, "name", ""),
+                                model=_get_nested(n, "model"),
+                                serial_number=_get_nested(n, "serial_number"),
+                                ontap_version=_get_nested(n, "version.full"),
+                                uptime_seconds=_get_nested(n, "uptime"),
+                                state=_get_nested(n, "state"),
+                            )
+                        )
+                    results.append(DiscoveryStepResult("platforms", True, f"{len(nodes)} Plattform(en) gefunden", len(nodes)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("platforms", False, str(exc)))
+
+                try:
+                    aggregates = list(Aggregate.get_collection(fields="**"))
+                    for agg in aggregates:
+                        data.aggregates.append(
+                            DiscoveredAggregate(
+                                uuid=_get_nested(agg, "uuid"),
+                                name=_get_nested(agg, "name", ""),
+                                node_name=_get_nested(agg, "node.name"),
+                                state=_get_nested(agg, "state"),
+                                size_bytes=_get_nested(agg, "space.block_storage.size"),
+                                used_bytes=_get_nested(agg, "space.block_storage.used"),
+                            )
+                        )
+                    results.append(DiscoveryStepResult("aggregates", True, f"{len(aggregates)} Aggregat(e) gefunden", len(aggregates)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("aggregates", False, str(exc)))
         except Exception as exc:  # Verbindungsfehler wie bei get_cluster_summary behandeln
             results.append(DiscoveryStepResult("login", False, str(exc)))
 
-        return results
+        return results, data
 
     def install_client_certificate(self, common_name: str, cert_dir: Path, file_stem: str) -> tuple[str, str]:
         """Erzeugt ein selbstsigniertes Client-Zertifikat, installiert es auf
