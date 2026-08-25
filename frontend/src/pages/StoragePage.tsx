@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Badge,
   Button,
@@ -46,6 +46,7 @@ import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { IgroupFormModal } from "@/components/IgroupFormModal";
 import { LunFormModal } from "@/components/LunFormModal";
+import { DistributionCard, StatCard, StatRibbon, groupCount } from "@/components/StatRibbon";
 import { SvmPeerFormModal } from "@/components/SvmPeerFormModal";
 import type { NetAppCluster, NetAppClusterPeer, SnapMirrorRelationship } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
@@ -237,8 +238,20 @@ function ClusterTab() {
     });
   }
 
+  const versionDistribution = groupCount(clusters, (c) => c.ontap_version);
+  const healthDistribution = groupCount(clusters, (c) => HEALTH_LABEL[c.health]);
+
   return (
     <Stack>
+      <StatRibbon>
+        <StatCard label="Anzahl Cluster" value={clusters?.length ?? 0} />
+        <DistributionCard label="ONTAP-Versionen" items={versionDistribution} />
+        <DistributionCard
+          label="Gesundheitszustand"
+          items={healthDistribution.map((d) => ({ ...d, color: d.key === "Healthy" ? "green" : d.key === "Eingeschränkt" ? "yellow" : "gray" }))}
+        />
+      </StatRibbon>
+
       <Group justify="flex-end">
         <Button leftSection={<IconPlus size={16} />} onClick={() => setAddOpen(true)}>
           Cluster hinzufügen
@@ -353,6 +366,52 @@ export function StoragePage() {
   const [clusterPeerFormOpen, setClusterPeerFormOpen] = useState(false);
   const [svmPeerFormOpen, setSvmPeerFormOpen] = useState(false);
 
+  const nodeStats = useMemo(() => {
+    const uptimes = (platforms ?? []).map((p) => p.uptime_seconds).filter((u): u is number => u != null);
+    const avgUptimeDays = uptimes.length ? uptimes.reduce((sum, u) => sum + u, 0) / uptimes.length / 86400 : null;
+    return {
+      models: groupCount(platforms, (p) => p.model),
+      versions: groupCount(platforms, (p) => p.ontap_version),
+      avgUptimeDays,
+    };
+  }, [platforms]);
+
+  const aggregateStats = useMemo(() => {
+    const list = aggregates ?? [];
+    const totalSize = list.reduce((sum, a) => sum + (a.size_bytes ?? 0), 0);
+    const totalUsed = list.reduce((sum, a) => sum + (a.used_bytes ?? 0), 0);
+    const ratios = list.map((a) => a.efficiency_ratio_wo_snapshots).filter((r): r is number => r != null);
+    const avgEfficiency = ratios.length ? ratios.reduce((sum, r) => sum + r, 0) / ratios.length : null;
+    return { totalSize, totalUsed, avgEfficiency };
+  }, [aggregates]);
+
+  const volumeStats = useMemo(() => {
+    const list = volumes ?? [];
+    return {
+      totalSize: list.reduce((sum, v) => sum + (v.size_bytes ?? 0), 0),
+      totalUsed: list.reduce((sum, v) => sum + (v.used_bytes ?? 0), 0),
+      securityStyles: groupCount(volumes, (v) => v.security_style),
+    };
+  }, [volumes]);
+
+  const lunStats = useMemo(() => {
+    const list = luns ?? [];
+    return {
+      totalSize: list.reduce((sum, l) => sum + (l.size_bytes ?? 0), 0),
+      osTypes: groupCount(luns, (l) => l.os_type),
+    };
+  }, [luns]);
+
+  const snapmirrorStats = useMemo(
+    () => ({
+      states: groupCount(relationships, (r) => r.state),
+      healthy: groupCount(relationships, (r) => (r.healthy ? "OK" : "Fehler")),
+    }),
+    [relationships],
+  );
+
+  const nifStats = useMemo(() => ({ states: groupCount(networkInterfaces, (i) => i.state) }), [networkInterfaces]);
+
   function triggerUpdate(rel: SnapMirrorRelationship) {
     notifications.show({
       title: "SnapMirror-Update ausgeloest",
@@ -386,6 +445,9 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="svms" pt="md">
+          <StatRibbon>
+            <StatCard label="Anzahl SVMs" value={svms?.length ?? 0} />
+          </StatRibbon>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -422,6 +484,12 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="volumes" pt="md">
+          <StatRibbon>
+            <StatCard label="Anzahl Volumes" value={volumes?.length ?? 0} />
+            <StatCard label="Provisioniert" value={formatBytes(volumeStats.totalSize)} />
+            <StatCard label="Belegt" value={formatBytes(volumeStats.totalUsed)} />
+            <DistributionCard label="Security Style" items={volumeStats.securityStyles} />
+          </StatRibbon>
           <Group justify="flex-end" mb="xs">
             <MultiSelect
               placeholder="Weitere Attribute anzeigen..."
@@ -529,6 +597,11 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="luns" pt="md">
+          <StatRibbon>
+            <StatCard label="Anzahl LUNs" value={luns?.length ?? 0} />
+            <StatCard label="Provisioniert" value={formatBytes(lunStats.totalSize)} />
+            <DistributionCard label="OS-Type" items={lunStats.osTypes} />
+          </StatRibbon>
           <Group justify="flex-end" mb="xs">
             <Button leftSection={<IconPlus size={16} />} onClick={() => setLunFormOpen(true)}>
               LUN anlegen
@@ -611,6 +684,9 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="cluster-peers" pt="md">
+          <StatRibbon>
+            <StatCard label="Anzahl Cluster Peer" value={clusterPeers?.length ?? 0} />
+          </StatRibbon>
           <Group justify="flex-end" mb="xs">
             <Button leftSection={<IconLink size={16} />} onClick={() => setClusterPeerFormOpen(true)}>
               Cluster Peer erstellen
@@ -656,6 +732,9 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="svm-peers" pt="md">
+          <StatRibbon>
+            <StatCard label="Anzahl SVM Peer" value={svmPeers?.length ?? 0} />
+          </StatRibbon>
           <Group justify="flex-end" mb="xs">
             <Button leftSection={<IconLink size={16} />} onClick={() => setSvmPeerFormOpen(true)}>
               SVM Peer erstellen
@@ -697,6 +776,14 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="snapmirror" pt="md">
+          <StatRibbon>
+            <StatCard label="Anzahl Beziehungen" value={relationships?.length ?? 0} />
+            <DistributionCard label="Status" items={snapmirrorStats.states} />
+            <DistributionCard
+              label="Healthy"
+              items={snapmirrorStats.healthy.map((d) => ({ ...d, color: d.key === "OK" ? "green" : "red" }))}
+            />
+          </StatRibbon>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -751,6 +838,10 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="network-interfaces" pt="md">
+          <StatRibbon>
+            <StatCard label="Anzahl LIFs" value={networkInterfaces?.length ?? 0} />
+            <DistributionCard label="Status" items={nifStats.states} />
+          </StatRibbon>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -785,6 +876,12 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="platforms" pt="md">
+          <StatRibbon>
+            <StatCard label="Anzahl Nodes" value={platforms?.length ?? 0} />
+            <DistributionCard label="Modelle" items={nodeStats.models} />
+            <DistributionCard label="ONTAP-Versionen" items={nodeStats.versions} />
+            <StatCard label="Ø Uptime" value={nodeStats.avgUptimeDays != null ? `${Math.round(nodeStats.avgUptimeDays)} Tage` : "-"} />
+          </StatRibbon>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -823,6 +920,15 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="aggregates" pt="md">
+          <StatRibbon>
+            <StatCard label="Anzahl Aggregate" value={aggregates?.length ?? 0} />
+            <StatCard label="Gesamtspeicher" value={formatBytes(aggregateStats.totalSize)} />
+            <StatCard label="Gesamt belegt" value={formatBytes(aggregateStats.totalUsed)} />
+            <StatCard
+              label="Storage Efficiency"
+              value={aggregateStats.avgEfficiency != null ? `${aggregateStats.avgEfficiency.toFixed(2)} : 1` : "-"}
+            />
+          </StatRibbon>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>

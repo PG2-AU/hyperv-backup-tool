@@ -146,4 +146,5 @@ class NetAppAggregateRead(BaseModel):
     used_bytes: int | None = None
     used_percent: int | None = None
     efficiency_ratio: float | None = None
+    efficiency_ratio_wo_snapshots: float | None = None
     last_seen_at: datetime

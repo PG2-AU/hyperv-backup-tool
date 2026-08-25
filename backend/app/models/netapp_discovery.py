@@ -174,4 +174,5 @@ class NetAppAggregate(Base):
     used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     used_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
     efficiency_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    efficiency_ratio_wo_snapshots: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

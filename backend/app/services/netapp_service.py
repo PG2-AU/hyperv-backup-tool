@@ -205,6 +205,7 @@ class DiscoveredAggregate:
     used_bytes: int | None
     used_percent: int | None = None
     efficiency_ratio: float | None = None
+    efficiency_ratio_wo_snapshots: float | None = None
 
 
 @dataclass
@@ -541,6 +542,7 @@ class NetAppOntapService:
                                 used_bytes=_get_nested(agg, "space.block_storage.used"),
                                 used_percent=_get_nested(agg, "space.block_storage.used_percent"),
                                 efficiency_ratio=_get_nested(agg, "space.efficiency.ratio"),
+                                efficiency_ratio_wo_snapshots=_get_nested(agg, "space.efficiency_without_snapshots.ratio"),
                             )
                         )
                     results.append(DiscoveryStepResult("aggregates", True, f"{len(aggregates)} Aggregat(e) gefunden", len(aggregates)))

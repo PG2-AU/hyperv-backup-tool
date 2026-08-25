@@ -161,7 +161,8 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
                 NetAppAggregate(
                     cluster_id=cluster.id, uuid=agg.uuid, name=agg.name, node_name=agg.node_name,
                     state=agg.state, size_bytes=agg.size_bytes, used_bytes=agg.used_bytes,
-                    used_percent=agg.used_percent, efficiency_ratio=agg.efficiency_ratio, last_seen_at=now,
+                    used_percent=agg.used_percent, efficiency_ratio=agg.efficiency_ratio,
+                    efficiency_ratio_wo_snapshots=agg.efficiency_ratio_wo_snapshots, last_seen_at=now,
                 )
             )
 

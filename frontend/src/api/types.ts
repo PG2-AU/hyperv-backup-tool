@@ -169,6 +169,7 @@ export interface NetAppAggregate extends NetAppDiscoveredBase {
   used_bytes?: number | null;
   used_percent?: number | null;
   efficiency_ratio?: number | null;
+  efficiency_ratio_wo_snapshots?: number | null;
 }
 
 export const IGROUP_OS_TYPES = ["aix", "hpux", "hyper_v", "linux", "netware", "openvms", "solaris", "vmware", "windows", "xen"] as const;
