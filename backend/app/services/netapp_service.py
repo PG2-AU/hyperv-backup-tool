@@ -122,11 +122,12 @@ class NetAppOntapService:
                 version = getattr(cluster, "version", None)
                 version_str = getattr(version, "full", None) or "unbekannt"
 
-                nodes = list(Node.get_collection(fields="health,state"))
+                # Hinweis: 'health' ist als Wert fuer den 'fields'-Query-Parameter auf
+                # manchen ONTAP-Versionen kein gueltiger Feldname (400 Bad Request).
+                # 'state' ist das stabile, immer verfuegbare Basisfeld und genuegt hier.
+                nodes = list(Node.get_collection(fields="state"))
                 node_count = len(nodes)
-                healthy_count = sum(
-                    1 for n in nodes if str(getattr(n, "state", "")) == "up" and getattr(n, "health", True)
-                )
+                healthy_count = sum(1 for n in nodes if str(getattr(n, "state", "")) == "up")
 
                 is_mcc = False
                 try:
