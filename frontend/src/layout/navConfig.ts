@@ -29,7 +29,7 @@ export const NAV_ITEMS: NavItem[] = [
     path: "/",
   },
   {
-    label: "VMs & CSVs",
+    label: "Inventory",
     icon: IconServerCog,
     searchContext: "vms",
     children: [
@@ -59,7 +59,7 @@ export const NAV_ITEMS: NavItem[] = [
     searchContext: "jobs",
     children: [
       { label: "Policies", path: "/jobs?tab=policies" },
-      { label: "Protection Groups", path: "/resource-groups", searchContext: "resource-groups" },
+      { label: "Protection Groups", path: "/jobs?tab=protection-groups", searchContext: "resource-groups" },
       { label: "Job-Verlauf", path: "/jobs?tab=runs" },
     ],
   },
@@ -79,9 +79,14 @@ export const NAV_ITEMS: NavItem[] = [
   },
 ];
 
-export function resolveSearchContext(pathname: string): string | undefined {
+export function resolveSearchContext(pathname: string, search = ""): string | undefined {
+  const fullPath = pathname + search;
   for (const item of NAV_ITEMS) {
     if (item.path === pathname) return item.searchContext;
+    // Mehrere Kinder koennen dieselbe Basis-Pathname teilen (z.B. /jobs?tab=...);
+    // zuerst exakt (inkl. Query) matchen, sonst auf Pathname-Basis zurueckfallen.
+    const exactChild = item.children?.find((c) => c.path === fullPath);
+    if (exactChild) return exactChild.searchContext ?? item.searchContext;
     const child = item.children?.find((c) => pathname === c.path.split("?")[0]);
     if (child) return child.searchContext ?? item.searchContext;
   }

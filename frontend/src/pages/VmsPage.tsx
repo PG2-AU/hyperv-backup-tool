@@ -1,6 +1,20 @@
-import { Badge, Group, Menu, Progress, Stack, Table, Tabs, Text, Title } from "@mantine/core";
+import { useState } from "react";
+import { ActionIcon, Badge, Box, Group, Menu, Paper, Progress, Stack, Table, Tabs, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconInfoCircle, IconPlayerPlay, IconTerminal2 } from "@tabler/icons-react";
+import {
+  IconChevronsRight,
+  IconDatabase,
+  IconFileText,
+  IconFolder,
+  IconInfoCircle,
+  IconPlayerPlay,
+  IconServer,
+  IconServer2,
+  IconServerCog,
+  IconStack2,
+  IconTerminal2,
+  IconX,
+} from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import { useCsvs, useVms } from "@/api/hooks";
@@ -44,6 +58,112 @@ function ProtectedBadge({ protected: isProtected }: { protected: boolean }) {
   );
 }
 
+function ChainNode({
+  icon,
+  label,
+  title,
+  usedBytes,
+  capacityBytes,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  title: string;
+  usedBytes?: number | null;
+  capacityBytes?: number | null;
+}) {
+  const hasUsage = usedBytes != null && capacityBytes != null && capacityBytes > 0;
+  const pct = hasUsage ? Math.round((usedBytes! / capacityBytes!) * 100) : null;
+  return (
+    <Paper withBorder p="xs" miw={150}>
+      <Group gap={6} mb={2} wrap="nowrap">
+        {icon}
+        <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+          {label}
+        </Text>
+      </Group>
+      <Text size="sm" fw={600} truncate maw={170}>
+        {title}
+      </Text>
+      {capacityBytes != null && (
+        <Text size="xs" c="dimmed">
+          {hasUsage ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
+        </Text>
+      )}
+      {pct !== null && <Progress value={pct} size={4} mt={4} color={pct >= 90 ? "red" : pct >= 75 ? "yellow" : "blue"} />}
+    </Paper>
+  );
+}
+
+function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined; onClose: () => void }) {
+  const vhds = vm.vhds.length
+    ? vm.vhds
+    : vm.csv_paths.map((p) => ({ name: `${vm.name}.vhdx`, size_bytes: vm.vhdx_size_bytes ?? 0, csv_path: p }));
+
+  return (
+    <Paper withBorder p="md">
+      <Group justify="space-between" mb="xs">
+        <Text size="sm" fw={600}>
+          Speicherkette: {vm.name}
+        </Text>
+        <ActionIcon variant="subtle" size="sm" onClick={onClose}>
+          <IconX size={14} />
+        </ActionIcon>
+      </Group>
+      <Stack gap="sm">
+        {vhds.map((vhd, i) => {
+          const csvName = vhd.csv_path.split(/[\\/]/).pop();
+          const csv = csvs?.find((c) => c.name === csvName);
+          return (
+            <Box key={i} style={{ overflowX: "auto" }}>
+              <Group gap={6} wrap="nowrap">
+                <ChainNode icon={<IconServer2 size={14} />} label="VM" title={vm.name} />
+                <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+                <ChainNode icon={<IconFileText size={14} />} label="VHD" title={vhd.name} capacityBytes={vhd.size_bytes} />
+                <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+                {csv ? (
+                  <>
+                    <ChainNode
+                      icon={<IconFolder size={14} />}
+                      label="CSV"
+                      title={csv.name}
+                      usedBytes={csv.used_bytes}
+                      capacityBytes={csv.capacity_bytes}
+                    />
+                    <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+                    <ChainNode
+                      icon={<IconStack2 size={14} />}
+                      label="LUN"
+                      title={csv.lun_name ?? "-"}
+                      usedBytes={csv.lun_used_bytes}
+                      capacityBytes={csv.lun_capacity_bytes}
+                    />
+                    <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+                    <ChainNode
+                      icon={<IconDatabase size={14} />}
+                      label="Volume"
+                      title={csv.volume_name ?? "-"}
+                      usedBytes={csv.volume_used_bytes}
+                      capacityBytes={csv.volume_capacity_bytes}
+                    />
+                    <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+                    <ChainNode icon={<IconServerCog size={14} />} label="SVM" title={csv.svm_name ?? "-"} />
+                    <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+                    <ChainNode icon={<IconServer size={14} />} label="Cluster" title={csv.netapp_cluster_name ?? "-"} />
+                  </>
+                ) : (
+                  <Text c="dimmed" size="sm">
+                    CSV-Details nicht verfügbar
+                  </Text>
+                )}
+              </Group>
+            </Box>
+          );
+        })}
+      </Stack>
+    </Paper>
+  );
+}
+
 export function VmsPage() {
   const [params, setParams] = useSearchParams();
   const activeTab = params.get("tab") === "csv" ? "csv" : "vms";
@@ -51,6 +171,11 @@ export function VmsPage() {
   const { data: csvs } = useCsvs();
   const vmMenu = useContextMenu<Vm>();
   const csvMenu = useContextMenu<Csv>();
+  const [selectedVm, setSelectedVm] = useState<Vm | null>(null);
+
+  function toggleSelectedVm(vm: Vm) {
+    setSelectedVm((prev) => (prev?.id === vm.id ? null : vm));
+  }
 
   function runBackupNow(target: string) {
     notifications.show({
@@ -62,7 +187,9 @@ export function VmsPage() {
 
   return (
     <Stack>
-      <Title order={3}>VMs & CSVs</Title>
+      <Title order={3}>Inventory</Title>
+
+      {selectedVm && <VmChainHeader vm={selectedVm} csvs={csvs} onClose={() => setSelectedVm(null)} />}
 
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "vms" })}>
         <Tabs.List>
@@ -86,7 +213,12 @@ export function VmsPage() {
             </Table.Thead>
             <Table.Tbody>
               {vms?.map((vm) => (
-                <Table.Tr key={vm.id} onContextMenu={(e) => vmMenu.open(e, vm)} style={{ cursor: "context-menu" }}>
+                <Table.Tr
+                  key={vm.id}
+                  onClick={() => toggleSelectedVm(vm)}
+                  onContextMenu={(e) => vmMenu.open(e, vm)}
+                  style={{ cursor: "pointer", backgroundColor: selectedVm?.id === vm.id ? "var(--mantine-color-blue-light)" : undefined }}
+                >
                   <Table.Td>{vm.name}</Table.Td>
                   <Table.Td>
                     <Badge color={STATE_COLOR[vm.state] ?? "gray"} variant="light">
@@ -180,7 +312,9 @@ export function VmsPage() {
         <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => vmMenu.state && runBackupNow(vmMenu.state.data.name)}>
           Backup jetzt starten
         </Menu.Item>
-        <Menu.Item leftSection={<IconInfoCircle size={16} />}>Details anzeigen</Menu.Item>
+        <Menu.Item leftSection={<IconInfoCircle size={16} />} onClick={() => vmMenu.state && setSelectedVm(vmMenu.state.data)}>
+          Details anzeigen
+        </Menu.Item>
         <Menu.Item leftSection={<IconTerminal2 size={16} />}>Log anzeigen</Menu.Item>
       </ContextMenuDropdown>
 

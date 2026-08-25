@@ -6,7 +6,6 @@ import { RequireAuth } from "@/layout/RequireAuth";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { VmsPage } from "@/pages/VmsPage";
 import { NetAppClustersPage } from "@/pages/NetAppClustersPage";
-import { ResourceGroupsPage } from "@/pages/ResourceGroupsPage";
 import { StoragePage } from "@/pages/StoragePage";
 import { JobsPage } from "@/pages/JobsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -25,7 +24,6 @@ export default function App() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/vms" element={<VmsPage />} />
         <Route path="/netapp-clusters" element={<NetAppClustersPage />} />
-        <Route path="/resource-groups" element={<ResourceGroupsPage />} />
         <Route path="/storage" element={<StoragePage />} />
         <Route path="/jobs" element={<JobsPage />} />
         <Route path="/settings" element={<SettingsPage />} />

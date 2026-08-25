@@ -1,15 +1,16 @@
 import { useState } from "react";
-import { Badge, Button, Drawer, Menu, Stack, Table, Tabs, Title } from "@mantine/core";
+import { Badge, Button, Drawer, Group, Menu, Stack, Table, Tabs, Text, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconEdit, IconPlayerPlay, IconPlus, IconTerminal2, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useDeletePolicy, useJobRuns, usePolicies, useTriggerJobRun } from "@/api/hooks";
+import { useDeletePolicy, useDeleteResourceGroup, useJobRuns, usePolicies, useResourceGroups, useTriggerJobRun } from "@/api/hooks";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { LogViewer } from "@/components/LogViewer";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
-import type { BackupPolicy, JobStatus } from "@/api/types";
+import { ResourceGroupFormModal } from "@/components/ResourceGroupFormModal";
+import type { BackupPolicy, JobStatus, ResourceGroup } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatRetention, formatSchedule } from "@/utils/format";
 
@@ -22,9 +23,13 @@ const STATUS_COLOR: Record<JobStatus, string> = {
   cleaned_up_after_failure: "orange",
 };
 
+const SCOPE_LABEL: Record<string, string> = { vm: "VMs", csv: "CSVs", lun: "LUNs" };
+
 export function JobsPage() {
   const [params, setParams] = useSearchParams();
-  const activeTab = params.get("tab") === "runs" ? "runs" : "policies";
+  const tabParam = params.get("tab");
+  const activeTab = tabParam === "runs" || tabParam === "protection-groups" ? tabParam : "policies";
+
   const { data: policies } = usePolicies();
   const { data: runs } = useJobRuns();
   const triggerRun = useTriggerJobRun();
@@ -34,6 +39,12 @@ export function JobsPage() {
   const [logContext, setLogContext] = useState<string | undefined>(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<BackupPolicy | null>(null);
+
+  const { data: groups } = useResourceGroups();
+  const deleteGroup = useDeleteResourceGroup();
+  const groupMenu = useContextMenu<ResourceGroup>();
+  const [groupFormOpen, setGroupFormOpen] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<ResourceGroup | null>(null);
 
   function runNow(policy: BackupPolicy) {
     triggerRun.mutate(policy.id, {
@@ -66,6 +77,25 @@ export function JobsPage() {
     openLogs();
   }
 
+  function openCreateGroup() {
+    setEditingGroup(null);
+    setGroupFormOpen(true);
+  }
+
+  function openEditGroup(group: ResourceGroup) {
+    setEditingGroup(group);
+    setGroupFormOpen(true);
+  }
+
+  function removeGroup(group: ResourceGroup) {
+    if (!window.confirm(`Protection Group '${group.name}' wirklich löschen?`)) return;
+    deleteGroup.mutate(group.id, {
+      onSuccess: () => notifications.show({ title: "Protection Group gelöscht", message: group.name, color: "blue" }),
+      onError: (err) =>
+        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Protection Group konnte nicht gelöscht werden."), color: "red" }),
+    });
+  }
+
   return (
     <Stack>
       <Title order={3}>Backup</Title>
@@ -73,6 +103,7 @@ export function JobsPage() {
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "policies" })}>
         <Tabs.List>
           <Tabs.Tab value="policies">Policies</Tabs.Tab>
+          <Tabs.Tab value="protection-groups">Protection Groups</Tabs.Tab>
           <Tabs.Tab value="runs">Job-Verlauf</Tabs.Tab>
         </Tabs.List>
 
@@ -138,6 +169,63 @@ export function JobsPage() {
           </Stack>
         </Tabs.Panel>
 
+        <Tabs.Panel value="protection-groups" pt="md">
+          <Stack>
+            <Button leftSection={<IconPlus size={16} />} onClick={openCreateGroup} style={{ alignSelf: "flex-end" }}>
+              Protection Group anlegen
+            </Button>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Typ</Table.Th>
+                  <Table.Th>Anzahl</Table.Th>
+                  <Table.Th>Objekte</Table.Th>
+                  <Table.Th>Verknüpfte Policies</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {groups?.map((group) => (
+                  <Table.Tr key={group.id} onContextMenu={(e) => groupMenu.open(e, group)} style={{ cursor: "context-menu" }}>
+                    <Table.Td>{group.name}</Table.Td>
+                    <Table.Td>
+                      <Badge variant="light" color="blue">
+                        {SCOPE_LABEL[group.scope] ?? group.scope}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge variant="filled" color="gray">
+                        {group.members.length}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>{group.members.length ? group.members.join(", ") : "-"}</Table.Td>
+                    <Table.Td>
+                      {group.policies.length ? (
+                        <Group gap={4}>
+                          {group.policies.map((p) => (
+                            <Badge key={p.id} color="indigo" variant="light">
+                              {p.name}
+                            </Badge>
+                          ))}
+                        </Group>
+                      ) : (
+                        <Text c="dimmed" size="sm">
+                          keine
+                        </Text>
+                      )}
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            {groups?.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Noch keine Protection Groups angelegt.
+              </Text>
+            )}
+          </Stack>
+        </Tabs.Panel>
+
         <Tabs.Panel value="runs" pt="md">
           <Table striped highlightOnHover>
             <Table.Thead>
@@ -191,11 +279,22 @@ export function JobsPage() {
         </Menu.Item>
       </ContextMenuDropdown>
 
+      <ContextMenuDropdown position={groupMenu.state?.position ?? null} opened={!!groupMenu.state} onClose={groupMenu.close}>
+        <Menu.Label>{groupMenu.state?.data.name}</Menu.Label>
+        <Menu.Item leftSection={<IconEdit size={16} />} onClick={() => groupMenu.state && openEditGroup(groupMenu.state.data)}>
+          Bearbeiten
+        </Menu.Item>
+        <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={() => groupMenu.state && removeGroup(groupMenu.state.data)}>
+          Loeschen
+        </Menu.Item>
+      </ContextMenuDropdown>
+
       <Drawer opened={logsOpened} onClose={closeLogs} position="bottom" size="45%" title="Job-Log">
         <LogViewer context={logContext} />
       </Drawer>
 
       <PolicyFormModal opened={formOpen} onClose={() => setFormOpen(false)} policy={editingPolicy} />
+      <ResourceGroupFormModal opened={groupFormOpen} onClose={() => setGroupFormOpen(false)} group={editingGroup} />
     </Stack>
   );
 }

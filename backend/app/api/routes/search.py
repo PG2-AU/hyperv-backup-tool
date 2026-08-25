@@ -62,7 +62,7 @@ def search(
         for policy in db.query(BackupPolicy).all():
             if needle in policy.name.lower():
                 subtitle = f"{len(policy.resource_groups)} Protection Group(s)" if policy.resource_groups else "keine Protection Group"
-                results.append(SearchResult(type="Policy", id=policy.id, label=policy.name, subtitle=subtitle, route=f"/jobs/{policy.id}"))
+                results.append(SearchResult(type="Policy", id=policy.id, label=policy.name, subtitle=subtitle, route="/jobs?tab=policies"))
 
     if context in (None, "resource-groups"):
         for group in db.query(ResourceGroup).all():
@@ -73,7 +73,7 @@ def search(
                         id=group.id,
                         label=group.name,
                         subtitle=f"{group.scope.value} / {len(group.members)} Objekte",
-                        route="/resource-groups",
+                        route="/jobs?tab=protection-groups",
                     )
                 )
 

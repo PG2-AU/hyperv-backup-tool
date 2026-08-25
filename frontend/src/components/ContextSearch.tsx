@@ -22,7 +22,7 @@ export function ContextSearch() {
   const combobox = useCombobox();
   const [query, setQuery] = useState("");
   const [debouncedQuery] = useDebouncedValue(query, 200);
-  const context = resolveSearchContext(location.pathname);
+  const context = resolveSearchContext(location.pathname, location.search);
 
   const { data: results, isFetching } = useQuery({
     queryKey: ["search", debouncedQuery, context],

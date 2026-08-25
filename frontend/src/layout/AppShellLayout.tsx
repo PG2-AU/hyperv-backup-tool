@@ -1,6 +1,19 @@
-import { ActionIcon, AppShell, Burger, Drawer, Group, Menu, NavLink, Text, Title, Tooltip, UnstyledButton } from "@mantine/core";
+import {
+  ActionIcon,
+  AppShell,
+  Burger,
+  Drawer,
+  Group,
+  Menu,
+  NavLink,
+  Text,
+  Title,
+  Tooltip,
+  UnstyledButton,
+  useMantineColorScheme,
+} from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconChevronDown, IconLogout, IconServer2, IconTerminal2, IconUserCircle } from "@tabler/icons-react";
+import { IconChevronDown, IconLogout, IconMoon, IconServer2, IconSun, IconTerminal2, IconUserCircle } from "@tabler/icons-react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { ContextSearch } from "@/components/ContextSearch";
@@ -15,13 +28,17 @@ export function AppShellLayout() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const { colorScheme, toggleColorScheme } = useMantineColorScheme();
+  const isDark = colorScheme === "dark";
 
-  const currentContext = resolveSearchContext(location.pathname);
+  const currentContext = resolveSearchContext(location.pathname, location.search);
 
   function isActive(path?: string) {
     if (!path) return false;
     const currentPath = location.pathname + location.search;
-    return currentPath === path || (path === "/" ? location.pathname === "/" : location.pathname.startsWith(path.split("?")[0]) && path.split("?")[0] !== "/");
+    if (path.includes("?")) return currentPath === path;
+    if (path === "/") return location.pathname === "/";
+    return location.pathname.startsWith(path);
   }
 
   return (
@@ -60,6 +77,10 @@ export function AppShellLayout() {
                 </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
+                <Menu.Item leftSection={isDark ? <IconSun size={16} /> : <IconMoon size={16} />} onClick={() => toggleColorScheme()}>
+                  {isDark ? "Heller Modus" : "Dunkler Modus"}
+                </Menu.Item>
+                <Menu.Divider />
                 <Menu.Item
                   leftSection={<IconLogout size={16} />}
                   onClick={() => {
