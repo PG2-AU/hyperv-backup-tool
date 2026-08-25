@@ -648,6 +648,7 @@ export function SettingsPage() {
                   <Table.Tr>
                     <Table.Th>Name</Table.Th>
                     <Table.Th>IP-Adresse</Table.Th>
+                    <Table.Th>Transport</Table.Th>
                     <Table.Th>Benutzer</Table.Th>
                     <Table.Th>Cluster-Name</Table.Th>
                     <Table.Th>Health</Table.Th>
@@ -660,6 +661,11 @@ export function SettingsPage() {
                     <Table.Tr key={c.id}>
                       <Table.Td>{c.name}</Table.Td>
                       <Table.Td>{c.management_address}</Table.Td>
+                      <Table.Td>
+                        <Badge variant="light" color={c.use_https ? "indigo" : "gray"}>
+                          {c.use_https ? "HTTPS" : "HTTP"}
+                        </Badge>
+                      </Table.Td>
                       <Table.Td>{c.username}</Table.Td>
                       <Table.Td>{c.hyperv_cluster_name ?? "-"}</Table.Td>
                       <Table.Td>

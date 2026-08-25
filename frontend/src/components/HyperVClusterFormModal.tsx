@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, Group, Modal, PasswordInput, Stack, Text, TextInput } from "@mantine/core";
+import { Button, Group, Modal, PasswordInput, Stack, Switch, Text, TextInput } from "@mantine/core";
 
-import { usePublicSettings } from "@/api/hooks.settings";
 import type { HyperVClusterCreationPlan } from "@/api/types";
 
 interface HyperVClusterFormModalProps {
@@ -11,11 +10,11 @@ interface HyperVClusterFormModalProps {
 }
 
 export function HyperVClusterFormModal({ opened, onClose, onSubmitPlan }: HyperVClusterFormModalProps) {
-  const { data: settings } = usePublicSettings();
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [useHttps, setUseHttps] = useState(true);
 
   useEffect(() => {
     if (!opened) return;
@@ -23,13 +22,14 @@ export function HyperVClusterFormModal({ opened, onClose, onSubmitPlan }: HyperV
     setAddress("");
     setUsername("");
     setPassword("");
+    setUseHttps(true);
   }, [opened]);
 
   const canSubmit = !!name && !!address && !!username && !!password;
 
   function handleSubmit() {
     if (!canSubmit) return;
-    onSubmitPlan({ name, managementAddress: address, username, password, winrmPort: settings?.winrm_port ?? 5986 });
+    onSubmitPlan({ name, managementAddress: address, username, password, useHttps });
   }
 
   return (
@@ -45,10 +45,17 @@ export function HyperVClusterFormModal({ opened, onClose, onSubmitPlan }: HyperV
         />
         <TextInput label="Benutzername" required value={username} onChange={(e) => setUsername(e.currentTarget.value)} />
         <PasswordInput label="Kennwort" required value={password} onChange={(e) => setPassword(e.currentTarget.value)} />
+        <Switch
+          label="WinRM über HTTPS (Port 5986)"
+          checked={useHttps}
+          onChange={(e) => setUseHttps(e.currentTarget.checked)}
+        />
         <Text size="xs" c="dimmed">
           Beim Hinzufügen wird zuerst die Netzwerk-Erreichbarkeit geprüft, danach die WinRM-Verbindung getestet
-          (Get-Cluster / Get-ClusterNode). Die IP-Adresse sollte auf das Cluster Name Object (den Failover-Cluster
-          selbst) zeigen, nicht auf einen einzelnen Knoten.
+          (Get-Cluster / Get-ClusterNode). "Enable-PSRemoting -Force" richtet nur den HTTP-Listener (Port 5985) ein
+          — für HTTPS ist zusätzlich ein an WinRM gebundenes Zertifikat auf den Hosts nötig. Ohne das kann HTTPS hier
+          deaktiviert werden. Die IP-Adresse sollte auf das Cluster Name Object (den Failover-Cluster selbst)
+          zeigen, nicht auf einen einzelnen Knoten.
         </Text>
         <Group justify="flex-end" mt="sm">
           <Button variant="default" onClick={onClose}>

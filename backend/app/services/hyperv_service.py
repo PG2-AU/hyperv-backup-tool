@@ -93,18 +93,29 @@ def check_reachability(host: str, port: int, timeout_sec: float = 5.0) -> None:
 
 
 class HyperVService:
-    def __init__(self, settings: Settings, target_host: str):
+    def __init__(self, settings: Settings, target_host: str, use_https: bool | None = None):
+        """'use_https' ist ein Pro-Cluster-Override (Standard: globale
+        Einstellung 'winrm_use_https'). Der Port wird daraus abgeleitet
+        (Standard-WinRM-Ports 5986/HTTPS bzw. 5985/HTTP), nicht aus der
+        globalen 'winrm_port'-Einstellung -- so koennen einzelne Cluster ohne
+        eigenes Zertifikat per HTTP angebunden werden, waehrend andere
+        HTTPS nutzen."""
         self._settings = settings
         self._target_host = target_host
+        self._use_https = settings.winrm_use_https if use_https is None else use_https
+
+    @property
+    def port(self) -> int:
+        return 5986 if self._use_https else 5985
 
     def _session(self, username: str, password: str, *, read_timeout_sec: int = 30, operation_timeout_sec: int = 20) -> winrm.Session:
-        scheme = "https" if self._settings.winrm_use_https else "http"
-        endpoint = f"{scheme}://{self._target_host}:{self._settings.winrm_port}/wsman"
+        scheme = "https" if self._use_https else "http"
+        endpoint = f"{scheme}://{self._target_host}:{self.port}/wsman"
         return winrm.Session(
             endpoint,
             auth=(username, password),
             transport=self._settings.winrm_transport,
-            server_cert_validation="validate" if self._settings.winrm_use_https else "ignore",
+            server_cert_validation="validate" if self._use_https else "ignore",
             read_timeout_sec=read_timeout_sec,
             operation_timeout_sec=operation_timeout_sec,
         )

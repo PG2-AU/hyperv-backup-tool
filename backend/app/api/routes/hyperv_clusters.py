@@ -30,7 +30,7 @@ def _get_cluster_or_404(db: Session, cluster_id: str) -> HyperVCluster:
 
 
 def _service_for(cluster: HyperVCluster) -> HyperVService:
-    return HyperVService(get_settings(), cluster.management_address)
+    return HyperVService(get_settings(), cluster.management_address, use_https=cluster.use_https)
 
 
 def _apply_summary(cluster: HyperVCluster, summary) -> None:
@@ -68,9 +68,9 @@ def list_clusters(db: Session = Depends(get_db), user=Depends(require_permission
 def check_reachability_route(
     payload: HyperVReachabilityCheck, user=Depends(require_permission(Permission.HYPERV_MANAGE)),
 ) -> dict:
-    settings = get_settings()
+    port = 5986 if payload.use_https else 5985
     try:
-        check_reachability(payload.management_address, settings.winrm_port)
+        check_reachability(payload.management_address, port)
     except HyperVConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"status": "reachable"}
@@ -85,7 +85,7 @@ def create_cluster(
     if db.query(HyperVCluster).filter(HyperVCluster.name == payload.name).first() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ein Cluster mit diesem Namen existiert bereits")
 
-    probe = HyperVService(get_settings(), payload.management_address)
+    probe = HyperVService(get_settings(), payload.management_address, use_https=payload.use_https)
     try:
         summary = probe.get_cluster_summary(payload.username, payload.password)
     except HyperVConnectionError as exc:
@@ -96,6 +96,7 @@ def create_cluster(
         management_address=payload.management_address,
         username=payload.username,
         encrypted_password=encrypt_secret(payload.password),
+        use_https=payload.use_https,
         last_checked_at=datetime.now(timezone.utc),
     )
     _apply_summary(cluster, summary)

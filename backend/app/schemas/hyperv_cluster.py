@@ -7,6 +7,7 @@ from app.models.hyperv_cluster import HyperVClusterHealth
 
 class HyperVReachabilityCheck(BaseModel):
     management_address: str
+    use_https: bool = True
 
 
 class HyperVClusterCreate(BaseModel):
@@ -14,6 +15,7 @@ class HyperVClusterCreate(BaseModel):
     management_address: str
     username: str
     password: str
+    use_https: bool = True
 
 
 class HyperVClusterRead(BaseModel):
@@ -23,6 +25,7 @@ class HyperVClusterRead(BaseModel):
     name: str
     management_address: str
     username: str
+    use_https: bool
     hyperv_cluster_name: str | None = None
     health: HyperVClusterHealth
     node_count: int

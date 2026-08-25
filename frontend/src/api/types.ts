@@ -67,6 +67,7 @@ export interface HyperVCluster {
   name: string;
   management_address: string;
   username: string;
+  use_https: boolean;
   hyperv_cluster_name?: string | null;
   health: HyperVClusterHealth;
   node_count: number;
@@ -81,6 +82,7 @@ export interface HyperVClusterCreate {
   management_address: string;
   username: string;
   password: string;
+  use_https: boolean;
 }
 
 export interface HyperVClusterCreationPlan {
@@ -88,7 +90,7 @@ export interface HyperVClusterCreationPlan {
   managementAddress: string;
   username: string;
   password: string;
-  winrmPort: number;
+  useHttps: boolean;
 }
 
 export interface DiscoveryStep {

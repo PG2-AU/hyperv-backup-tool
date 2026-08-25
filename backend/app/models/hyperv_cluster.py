@@ -29,6 +29,7 @@ class HyperVCluster(Base):
     management_address: Mapped[str] = mapped_column(String(255))
     username: Mapped[str] = mapped_column(String(255))
     encrypted_password: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    use_https: Mapped[bool] = mapped_column(Boolean, default=True)
 
     hyperv_cluster_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     health: Mapped[HyperVClusterHealth] = mapped_column(Enum(HyperVClusterHealth), default=HyperVClusterHealth.UNKNOWN)

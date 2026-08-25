@@ -3,13 +3,17 @@ import type { HyperVClusterCreationPlan } from "@/api/types";
 import type { ProcessStepDef } from "@/components/ProcessModal";
 
 export function buildHyperVClusterCreationSteps(plan: HyperVClusterCreationPlan): ProcessStepDef[] {
+  const port = plan.useHttps ? 5986 : 5985;
   return [
     {
       id: "reachability",
       emoji: "📡",
-      label: `Prüfe Netzwerk-Erreichbarkeit (Port ${plan.winrmPort})`,
+      label: `Prüfe Netzwerk-Erreichbarkeit (Port ${port}, ${plan.useHttps ? "HTTPS" : "HTTP"})`,
       run: async () => {
-        await apiClient.post("/hyperv/clusters/check-reachability", { management_address: plan.managementAddress });
+        await apiClient.post("/hyperv/clusters/check-reachability", {
+          management_address: plan.managementAddress,
+          use_https: plan.useHttps,
+        });
       },
     },
     {
@@ -22,6 +26,7 @@ export function buildHyperVClusterCreationSteps(plan: HyperVClusterCreationPlan)
           management_address: plan.managementAddress,
           username: plan.username,
           password: plan.password,
+          use_https: plan.useHttps,
         });
       },
     },
