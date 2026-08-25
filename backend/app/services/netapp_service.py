@@ -118,7 +118,7 @@ class NetAppOntapService:
         try:
             with self._connection():
                 cluster = Cluster()
-                cluster.get(fields="name,version")
+                cluster.get(fields="uuid,name,version")
                 version = getattr(cluster, "version", None)
                 version_str = getattr(version, "full", None) or "unbekannt"
 
