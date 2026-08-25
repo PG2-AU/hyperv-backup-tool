@@ -47,6 +47,7 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Storage Virtual Machines", path: "/storage?tab=svms" },
       { label: "Volumes", path: "/storage?tab=volumes" },
       { label: "LUNs", path: "/storage?tab=luns" },
+      { label: "IGroups", path: "/storage?tab=igroups" },
       { label: "Cluster Peer", path: "/storage?tab=cluster-peers" },
       { label: "SVM Peer", path: "/storage?tab=svm-peers" },
       { label: "SnapMirror-Beziehungen", path: "/storage?tab=snapmirror" },

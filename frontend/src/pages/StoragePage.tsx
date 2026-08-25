@@ -19,7 +19,7 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconCertificate, IconInfoCircle, IconPlus, IconRadar2, IconRefresh, IconTrash } from "@tabler/icons-react";
+import { IconCertificate, IconInfoCircle, IconLink, IconPlus, IconRadar2, IconRefresh, IconShieldCheck, IconShieldOff, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -29,6 +29,7 @@ import {
   useDeleteNetAppCluster,
   useDiscoverNetAppCluster,
   useEnrollNetAppClusterCertificate,
+  useIgroups,
   useLuns,
   useMetroClusterStatus,
   useNetAppClusters,
@@ -40,8 +41,12 @@ import {
   useVerifyNetAppCluster,
   useVolumes,
 } from "@/api/hooks";
+import { ClusterPeerFormModal } from "@/components/ClusterPeerFormModal";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
+import { IgroupFormModal } from "@/components/IgroupFormModal";
+import { LunFormModal } from "@/components/LunFormModal";
+import { SvmPeerFormModal } from "@/components/SvmPeerFormModal";
 import type { NetAppCluster, NetAppClusterPeer, SnapMirrorRelationship } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, formatLagTime } from "@/utils/format";
@@ -257,7 +262,14 @@ function ClusterTab() {
           <Table.Tbody>
             {clusters?.map((cluster) => (
               <Table.Tr key={cluster.id} onContextMenu={(e) => menu.open(e, cluster)} style={{ cursor: "context-menu" }}>
-                <Table.Td>{cluster.name}</Table.Td>
+                <Table.Td>
+                  {cluster.name}
+                  {cluster.ontap_cluster_name && cluster.ontap_cluster_name !== cluster.name && (
+                    <Text size="xs" c="dimmed">
+                      ONTAP: {cluster.ontap_cluster_name}
+                    </Text>
+                  )}
+                </Table.Td>
                 <Table.Td>{cluster.management_lif}</Table.Td>
                 <Table.Td>{cluster.username}</Table.Td>
                 <Table.Td>
@@ -324,6 +336,7 @@ export function StoragePage() {
   const { data: svms } = useSvms();
   const { data: volumes } = useVolumes();
   const { data: luns } = useLuns();
+  const { data: igroups } = useIgroups();
   const { data: clusterPeers } = useClusterPeers();
   const { data: svmPeers } = useSvmPeers();
   const { data: relationships } = useSnapMirrorRelationships();
@@ -331,9 +344,14 @@ export function StoragePage() {
   const { data: platforms } = usePlatforms();
   const { data: aggregates } = useAggregates();
   const { data: mcc } = useMetroClusterStatus();
+  const { data: clusters } = useNetAppClusters();
   const relMenu = useContextMenu<SnapMirrorRelationship>();
   const [extraVolCols, setExtraVolCols] = useState<string[]>([]);
   const [peerDetail, setPeerDetail] = useState<NetAppClusterPeer | null>(null);
+  const [igroupFormOpen, setIgroupFormOpen] = useState(false);
+  const [lunFormOpen, setLunFormOpen] = useState(false);
+  const [clusterPeerFormOpen, setClusterPeerFormOpen] = useState(false);
+  const [svmPeerFormOpen, setSvmPeerFormOpen] = useState(false);
 
   function triggerUpdate(rel: SnapMirrorRelationship) {
     notifications.show({
@@ -355,6 +373,7 @@ export function StoragePage() {
           <Tabs.Tab value="svms">Storage Virtual Machines</Tabs.Tab>
           <Tabs.Tab value="volumes">Volumes</Tabs.Tab>
           <Tabs.Tab value="luns">LUNs</Tabs.Tab>
+          <Tabs.Tab value="igroups">IGroups</Tabs.Tab>
           <Tabs.Tab value="cluster-peers">Cluster Peer</Tabs.Tab>
           <Tabs.Tab value="svm-peers">SVM Peer</Tabs.Tab>
           <Tabs.Tab value="snapmirror">SnapMirror-Beziehungen</Tabs.Tab>
@@ -429,6 +448,7 @@ export function StoragePage() {
                 <Table.Th>Language</Table.Th>
                 <Table.Th>Größe</Table.Th>
                 <Table.Th>Belegung</Table.Th>
+                <Table.Th>SnapMirror</Table.Th>
                 {extraVolCols.includes("autodelete") && <Table.Th>Snapshot Autodelete</Table.Th>}
                 {extraVolCols.includes("autogrow") && <Table.Th>Autogrow</Table.Th>}
                 {extraVolCols.includes("snapshot_policy") && <Table.Th>Snapshot Policy</Table.Th>}
@@ -461,6 +481,15 @@ export function StoragePage() {
                         color={vol.percent_used >= 90 ? "red" : vol.percent_used >= 75 ? "yellow" : "blue"}
                       />
                     )}
+                  </Table.Td>
+                  <Table.Td>
+                    <Tooltip label={vol.snapmirror_protected ? "Per SnapMirror gesichert" : "Nicht per SnapMirror gesichert"}>
+                      {vol.snapmirror_protected ? (
+                        <IconShieldCheck size={20} color="var(--mantine-color-green-6)" />
+                      ) : (
+                        <IconShieldOff size={20} color="var(--mantine-color-gray-5)" />
+                      )}
+                    </Tooltip>
                   </Table.Td>
                   {extraVolCols.includes("autodelete") && (
                     <Table.Td>
@@ -500,6 +529,11 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="luns" pt="md">
+          <Group justify="flex-end" mb="xs">
+            <Button leftSection={<IconPlus size={16} />} onClick={() => setLunFormOpen(true)}>
+              LUN anlegen
+            </Button>
+          </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -510,6 +544,7 @@ export function StoragePage() {
                 <Table.Th>OS-Type</Table.Th>
                 <Table.Th>Größe</Table.Th>
                 <Table.Th>Status</Table.Th>
+                <Table.Th>LUN-Mapping (IGroups)</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -526,6 +561,7 @@ export function StoragePage() {
                       {lun.state ?? "-"}
                     </Badge>
                   </Table.Td>
+                  <Table.Td>{lun.mapped_igroups ?? "-"}</Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -537,7 +573,49 @@ export function StoragePage() {
           )}
         </Tabs.Panel>
 
+        <Tabs.Panel value="igroups" pt="md">
+          <Group justify="flex-end" mb="xs">
+            <Button leftSection={<IconPlus size={16} />} onClick={() => setIgroupFormOpen(true)}>
+              IGroup anlegen
+            </Button>
+          </Group>
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Cluster</Table.Th>
+                <Table.Th>SVM</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>OS-Type</Table.Th>
+                <Table.Th>Protocol</Table.Th>
+                <Table.Th>Initiatoren</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {igroups?.map((ig) => (
+                <Table.Tr key={ig.id}>
+                  <Table.Td>{ig.cluster_name}</Table.Td>
+                  <Table.Td>{ig.svm_name ?? "-"}</Table.Td>
+                  <Table.Td>{ig.name}</Table.Td>
+                  <Table.Td>{ig.os_type ?? "-"}</Table.Td>
+                  <Table.Td>{ig.protocol ?? "-"}</Table.Td>
+                  <Table.Td>{ig.initiator_count}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          {igroups?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine Initiator-Gruppen erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+        </Tabs.Panel>
+
         <Tabs.Panel value="cluster-peers" pt="md">
+          <Group justify="flex-end" mb="xs">
+            <Button leftSection={<IconLink size={16} />} onClick={() => setClusterPeerFormOpen(true)}>
+              Cluster Peer erstellen
+            </Button>
+          </Group>
           {peerDetail && <ClusterPeerDetailHeader peer={peerDetail} onClose={() => setPeerDetail(null)} />}
           <Table striped highlightOnHover>
             <Table.Thead>
@@ -578,6 +656,11 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="svm-peers" pt="md">
+          <Group justify="flex-end" mb="xs">
+            <Button leftSection={<IconLink size={16} />} onClick={() => setSvmPeerFormOpen(true)}>
+              SVM Peer erstellen
+            </Button>
+          </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -818,6 +901,18 @@ export function StoragePage() {
         </Menu.Item>
         <Menu.Item leftSection={<IconInfoCircle size={16} />}>Details anzeigen</Menu.Item>
       </ContextMenuDropdown>
+
+      <IgroupFormModal opened={igroupFormOpen} onClose={() => setIgroupFormOpen(false)} clusters={clusters} svms={svms} />
+      <LunFormModal
+        opened={lunFormOpen}
+        onClose={() => setLunFormOpen(false)}
+        clusters={clusters}
+        svms={svms}
+        volumes={volumes}
+        aggregates={aggregates}
+      />
+      <ClusterPeerFormModal opened={clusterPeerFormOpen} onClose={() => setClusterPeerFormOpen(false)} clusters={clusters} />
+      <SvmPeerFormModal opened={svmPeerFormOpen} onClose={() => setSvmPeerFormOpen(false)} clusters={clusters} svms={svms} />
     </Stack>
   );
 }

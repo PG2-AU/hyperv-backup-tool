@@ -9,6 +9,8 @@ const STEP_META: Record<string, { emoji: string; label: string }> = {
   svms: { emoji: "🏠", label: "Sammle Informationen über SVMs" },
   volumes: { emoji: "💾", label: "Sammle Informationen über Volumes" },
   luns: { emoji: "🧱", label: "Informationen über LUNs" },
+  igroups: { emoji: "🎯", label: "Sammle Initiator-Gruppen" },
+  lun_maps: { emoji: "🔌", label: "Ordne LUN-Mappings zu" },
   cluster_peers: { emoji: "🤝", label: "Cluster-Peer-Beziehungen" },
   svm_peers: { emoji: "🔗", label: "SVM-Beziehungen" },
   snapmirror: { emoji: "🪞", label: "SnapMirror-Beziehungen" },

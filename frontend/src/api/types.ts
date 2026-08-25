@@ -49,6 +49,7 @@ export interface NetAppCluster {
   auth_method: NetAppAuthMethod;
   verify_ssl: boolean;
   ontap_version?: string | null;
+  ontap_cluster_name?: string | null;
   cluster_uuid?: string | null;
   health: NetAppClusterHealth;
   node_count: number;
@@ -95,6 +96,7 @@ export interface NetAppVolume extends NetAppDiscoveredBase {
   autosize_mode?: string | null;
   snapshot_policy_name?: string | null;
   encryption_enabled?: boolean | null;
+  snapmirror_protected?: boolean | null;
 }
 
 export interface NetAppLun extends NetAppDiscoveredBase {
@@ -104,6 +106,15 @@ export interface NetAppLun extends NetAppDiscoveredBase {
   state?: string | null;
   size_bytes?: number | null;
   os_type?: string | null;
+  mapped_igroups?: string | null;
+}
+
+export interface NetAppIgroup extends NetAppDiscoveredBase {
+  name: string;
+  svm_name?: string | null;
+  os_type?: string | null;
+  protocol?: string | null;
+  initiator_count: number;
 }
 
 export interface NetAppClusterPeer extends NetAppDiscoveredBase {
@@ -158,6 +169,42 @@ export interface NetAppAggregate extends NetAppDiscoveredBase {
   used_bytes?: number | null;
   used_percent?: number | null;
   efficiency_ratio?: number | null;
+}
+
+export const IGROUP_OS_TYPES = ["aix", "hpux", "hyper_v", "linux", "netware", "openvms", "solaris", "vmware", "windows", "xen"] as const;
+export const LUN_OS_TYPES = [
+  "aix", "hpux", "hyper_v", "linux", "netware", "openvms", "solaris", "solaris_efi",
+  "vmware", "windows", "windows_2008", "windows_gpt", "xen",
+] as const;
+
+export interface IgroupCreate {
+  svm_name: string;
+  name: string;
+  os_type: string;
+  protocol: "fcp" | "iscsi" | "mixed";
+  initiators: string[];
+}
+
+export interface LunCreate {
+  svm_name: string;
+  lun_name: string;
+  os_type: string;
+  size_bytes: number;
+  volume_mode: "existing" | "new";
+  volume_name: string;
+  new_volume_aggregate?: string | null;
+  new_volume_size_bytes?: number | null;
+}
+
+export interface ClusterPeerCreate {
+  peer_cluster_id: string;
+}
+
+export interface SvmPeerCreate {
+  local_svm_name: string;
+  peer_cluster_id: string;
+  peer_svm_name: string;
+  applications: string[];
 }
 
 export interface MetroClusterStatus {

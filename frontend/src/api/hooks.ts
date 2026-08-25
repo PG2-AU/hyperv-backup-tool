@@ -5,12 +5,16 @@ import type {
   BackupJobRun,
   BackupPolicy,
   BackupScope,
+  ClusterPeerCreate,
   Csv,
   DiscoveryStep,
+  IgroupCreate,
+  LunCreate,
   MetroClusterStatus,
   NetAppAggregate,
   NetAppCluster,
   NetAppClusterPeer,
+  NetAppIgroup,
   NetAppLun,
   NetAppNetworkInterface,
   NetAppPlatform,
@@ -23,6 +27,7 @@ import type {
   ScheduleType,
   SnapMirrorLabel,
   SnapMirrorRelationship,
+  SvmPeerCreate,
   Vm,
 } from "@/api/types";
 
@@ -58,6 +63,13 @@ export function useLuns() {
   return useQuery({
     queryKey: ["luns"],
     queryFn: async () => (await apiClient.get<NetAppLun[]>("/storage/luns")).data,
+  });
+}
+
+export function useIgroups() {
+  return useQuery({
+    queryKey: ["igroups"],
+    queryFn: async () => (await apiClient.get<NetAppIgroup[]>("/storage/igroups")).data,
   });
 }
 
@@ -361,6 +373,7 @@ const DISCOVERY_QUERY_KEYS = [
   "svms",
   "volumes",
   "luns",
+  "igroups",
   "cluster-peers",
   "svm-peers",
   "snapmirror",
@@ -373,6 +386,42 @@ export function useDiscoverNetAppCluster() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => (await apiClient.post<DiscoveryStep[]>(`/netapp/clusters/${id}/discover`)).data,
+    onSuccess: () => DISCOVERY_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })),
+  });
+}
+
+export function useCreateIgroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clusterId, payload }: { clusterId: string; payload: IgroupCreate }) =>
+      (await apiClient.post(`/netapp/clusters/${clusterId}/igroups`, payload)).data,
+    onSuccess: () => DISCOVERY_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })),
+  });
+}
+
+export function useCreateLun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clusterId, payload }: { clusterId: string; payload: LunCreate }) =>
+      (await apiClient.post(`/netapp/clusters/${clusterId}/luns`, payload)).data,
+    onSuccess: () => DISCOVERY_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })),
+  });
+}
+
+export function useCreateClusterPeer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clusterId, payload }: { clusterId: string; payload: ClusterPeerCreate }) =>
+      (await apiClient.post(`/netapp/clusters/${clusterId}/cluster-peers`, payload)).data,
+    onSuccess: () => DISCOVERY_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })),
+  });
+}
+
+export function useCreateSvmPeer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clusterId, payload }: { clusterId: string; payload: SvmPeerCreate }) =>
+      (await apiClient.post(`/netapp/clusters/${clusterId}/svm-peers`, payload)).data,
     onSuccess: () => DISCOVERY_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })),
   });
 }
