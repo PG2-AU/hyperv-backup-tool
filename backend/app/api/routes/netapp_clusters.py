@@ -48,6 +48,7 @@ from app.schemas.netapp_write import (
     ScheduleCreate,
     SnapmirrorPolicyCreate,
     SnapmirrorRelationshipCreate,
+    SnapmirrorRelationshipUpdate,
     SvmPeerCreate,
     VolumeCreate,
     VolumeUpdate,
@@ -439,7 +440,7 @@ def update_lun(
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
     try:
-        service.update_lun(lun_uuid, size_bytes=payload.size_bytes, full_name=payload.new_name, enabled=payload.enabled)
+        service.update_lun(lun_uuid, size_bytes=payload.size_bytes, enabled=payload.enabled)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"status": "updated"}
@@ -563,6 +564,20 @@ def create_snapmirror_relationship(
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"status": "created", "uuid": uuid}
+
+
+@router.patch("/{cluster_id}/snapmirror-relationships/{relationship_uuid}")
+def update_snapmirror_relationship(
+    cluster_id: str, relationship_uuid: str, payload: SnapmirrorRelationshipUpdate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.update_snapmirror_relationship(relationship_uuid, policy_name=payload.policy_name, schedule_name=payload.schedule_name)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "updated"}
 
 
 @router.post("/{cluster_id}/snapmirror-relationships/{relationship_uuid}/initialize", status_code=status.HTTP_202_ACCEPTED)

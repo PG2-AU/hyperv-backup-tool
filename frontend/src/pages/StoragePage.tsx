@@ -60,6 +60,7 @@ import { LunEditModal } from "@/components/LunEditModal";
 import { LunFormModal } from "@/components/LunFormModal";
 import { ProcessModal } from "@/components/ProcessModal";
 import type { ProcessPlan } from "@/components/ProcessModal";
+import { SnapmirrorEditModal } from "@/components/SnapmirrorEditModal";
 import { SnapmirrorFormModal } from "@/components/SnapmirrorFormModal";
 import { CapacityBarCard, DistributionCard, StatCard, StatRibbon, groupCount } from "@/components/StatRibbon";
 import { SvmPeerFormModal } from "@/components/SvmPeerFormModal";
@@ -73,6 +74,7 @@ import {
   buildLunDeleteSteps,
   buildLunEditSteps,
   buildSnapmirrorCreationSteps,
+  buildSnapmirrorEditSteps,
   buildVolumeCreationSteps,
   buildVolumeDeleteSteps,
   buildVolumeEditSteps,
@@ -397,8 +399,10 @@ export function StoragePage() {
   const [process, setProcess] = useState<ProcessPlan | null>(null);
   const [selectedLun, setSelectedLun] = useState<NetAppLun | null>(null);
   const [selectedVolume, setSelectedVolume] = useState<NetAppVolume | null>(null);
+  const [selectedRelationship, setSelectedRelationship] = useState<SnapMirrorRelationship | null>(null);
   const [lunEditOpen, setLunEditOpen] = useState(false);
   const [volumeEditOpen, setVolumeEditOpen] = useState(false);
+  const [snapmirrorEditOpen, setSnapmirrorEditOpen] = useState(false);
   const [snapmirrorFormOpen, setSnapmirrorFormOpen] = useState(false);
   const [snapmirrorInitialSource, setSnapmirrorInitialSource] = useState<{
     clusterId: string;
@@ -1091,6 +1095,16 @@ export function StoragePage() {
 
       <ContextMenuDropdown position={relMenu.state?.position ?? null} opened={!!relMenu.state} onClose={relMenu.close}>
         <Menu.Label>{relMenu.state?.data.source_path}</Menu.Label>
+        <Menu.Item
+          leftSection={<IconEdit size={16} />}
+          onClick={() => {
+            if (!relMenu.state) return;
+            setSelectedRelationship(relMenu.state.data);
+            setSnapmirrorEditOpen(true);
+          }}
+        >
+          Bearbeiten
+        </Menu.Item>
         <Menu.Item leftSection={<IconRefresh size={16} />} onClick={() => relMenu.state && triggerUpdate(relMenu.state.data)}>
           SnapMirror-Update erzwingen
         </Menu.Item>
@@ -1176,6 +1190,15 @@ export function StoragePage() {
         onSubmitPlan={(plan) => {
           setVolumeEditOpen(false);
           setProcess({ title: "Volume bearbeiten", steps: buildVolumeEditSteps(plan) });
+        }}
+      />
+      <SnapmirrorEditModal
+        opened={snapmirrorEditOpen}
+        onClose={() => setSnapmirrorEditOpen(false)}
+        relationship={selectedRelationship}
+        onSubmitPlan={(plan) => {
+          setSnapmirrorEditOpen(false);
+          setProcess({ title: "SnapMirror-Beziehung bearbeiten", steps: buildSnapmirrorEditSteps(plan) });
         }}
       />
       <SnapmirrorFormModal

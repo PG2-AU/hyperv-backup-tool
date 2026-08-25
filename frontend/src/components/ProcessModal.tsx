@@ -1,8 +1,17 @@
 import { useEffect, useState } from "react";
 import { Button, Group, Loader, Modal, Stack, Text } from "@mantine/core";
 import { IconCheck, IconMinus, IconX } from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { apiErrorMessage } from "@/utils/errors";
+
+// Jeder Prozess (LUN/Volume/IGroup/SnapMirror anlegen/bearbeiten/loeschen)
+// aendert Storage-Objekte im Hintergrund; die zugehoerigen Listen sollen sich
+// danach einmalig aktualisieren, statt erst bei einem manuellen Reload.
+const STORAGE_QUERY_KEYS = [
+  "svms", "volumes", "luns", "igroups", "cluster-peers", "svm-peers", "snapmirror",
+  "network-interfaces", "platforms", "aggregates", "netapp-clusters", "snapmirror-policies", "netapp-schedules",
+];
 
 export type StepStatus = "pending" | "running" | "success" | "error" | "skipped";
 
@@ -39,6 +48,7 @@ export interface ProcessPlan {
 export function ProcessModal({ opened, onClose, plan }: { opened: boolean; onClose: () => void; plan: ProcessPlan | null }) {
   const [stepStates, setStepStates] = useState<ProcessStepState[]>([]);
   const [running, setRunning] = useState(false);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!opened || !plan) return;
@@ -69,7 +79,13 @@ export function ProcessModal({ opened, onClose, plan }: { opened: boolean; onClo
           failed = true;
         }
       }
-      if (!cancelled) setRunning(false);
+      if (!cancelled) {
+        setRunning(false);
+        // Einmalige Aktualisierung aller Storage-Listen nach Prozessende --
+        // egal ob alle Schritte erfolgreich waren oder nur ein Teil, damit
+        // bereits durchgefuehrte Aenderungen sofort sichtbar werden.
+        for (const key of STORAGE_QUERY_KEYS) queryClient.invalidateQueries({ queryKey: [key] });
+      }
     })();
 
     return () => {

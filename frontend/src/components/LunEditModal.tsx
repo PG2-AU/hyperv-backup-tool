@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Group, Modal, NumberInput, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { Button, Group, Modal, NumberInput, Select, Stack, Switch, Text } from "@mantine/core";
 
 import type { LunEditPlan, NetAppIgroup, NetAppLun } from "@/api/types";
 import { formatBytes } from "@/utils/format";
@@ -21,7 +21,6 @@ function shortName(fullPath: string): string {
 
 export function LunEditModal({ opened, onClose, lun, igroups, onSubmitPlan }: LunEditModalProps) {
   const [sizeGb, setSizeGb] = useState<number | "">("");
-  const [newShortName, setNewShortName] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [unmapIgroupName, setUnmapIgroupName] = useState<string | null>(null);
   const [mapIgroupName, setMapIgroupName] = useState<string | null>(null);
@@ -34,7 +33,6 @@ export function LunEditModal({ opened, onClose, lun, igroups, onSubmitPlan }: Lu
   useEffect(() => {
     if (!opened || !lun) return;
     setSizeGb(lun.size_bytes ? Math.round((lun.size_bytes / GB) * 100) / 100 : "");
-    setNewShortName(shortName(lun.name));
     setEnabled(lun.state !== "offline");
     setUnmapIgroupName(null);
     setMapIgroupName(null);
@@ -44,9 +42,8 @@ export function LunEditModal({ opened, onClose, lun, igroups, onSubmitPlan }: Lu
 
   const currentShort = shortName(lun.name);
   const sizeChanged = sizeGb !== "" && Math.round(Number(sizeGb) * GB) !== lun.size_bytes;
-  const nameChanged = newShortName !== currentShort && newShortName.trim() !== "";
   const enabledChanged = enabled !== (lun.state !== "offline");
-  const canSubmit = sizeChanged || nameChanged || enabledChanged || !!unmapIgroupName || !!mapIgroupName;
+  const canSubmit = sizeChanged || enabledChanged || !!unmapIgroupName || !!mapIgroupName;
 
   function handleSubmit() {
     if (!lun || !canSubmit || !lun.volume_name) return;
@@ -57,7 +54,6 @@ export function LunEditModal({ opened, onClose, lun, igroups, onSubmitPlan }: Lu
       volumeName: lun.volume_name,
       currentShortName: currentShort,
       newSizeBytes: sizeChanged ? Math.round(Number(sizeGb) * GB) : undefined,
-      newShortName: nameChanged ? newShortName : undefined,
       setEnabled: enabledChanged ? enabled : undefined,
       unmapIgroupName: unmapIgroupName ?? undefined,
       mapIgroupName: mapIgroupName ?? undefined,
@@ -67,7 +63,9 @@ export function LunEditModal({ opened, onClose, lun, igroups, onSubmitPlan }: Lu
   return (
     <Modal opened={opened} onClose={onClose} title={`LUN bearbeiten: ${currentShort}`}>
       <Stack>
-        <TextInput label="Name" value={newShortName} onChange={(e) => setNewShortName(e.currentTarget.value)} />
+        <Text size="sm" c="dimmed">
+          Name: {currentShort} (nicht änderbar)
+        </Text>
         <NumberInput
           label={`Größe (GB) — aktuell ${formatBytes(lun.size_bytes)}`}
           min={sizeGb === "" ? undefined : Number(sizeGb)}

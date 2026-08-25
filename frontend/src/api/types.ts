@@ -265,7 +265,6 @@ export interface LunEditPlan {
   volumeName: string;
   currentShortName: string;
   newSizeBytes?: number;
-  newShortName?: string;
   setEnabled?: boolean;
   unmapIgroupName?: string;
   mapIgroupName?: string;
@@ -307,6 +306,19 @@ export interface SnapmirrorCreationPlan {
   scheduleName?: string;
   newSchedule?: { name: string; preset: SchedulePreset };
   autoInitialize: boolean;
+}
+
+export interface SnapmirrorEditPlan {
+  clusterId: string;
+  relationshipUuid: string;
+  sourcePath: string;
+  destinationSvmName: string;
+  policyMode: "existing" | "new";
+  policyName?: string;
+  newPolicy?: { svmName: string; name: string; type: "async" | "sync" };
+  scheduleMode: "unchanged" | "none" | "existing" | "new";
+  scheduleName?: string;
+  newSchedule?: { name: string; preset: SchedulePreset };
 }
 
 export interface MetroClusterStatus {

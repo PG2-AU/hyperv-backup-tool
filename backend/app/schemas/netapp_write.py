@@ -43,7 +43,6 @@ class LunCreate(BaseModel):
 
 class LunUpdate(BaseModel):
     size_bytes: int | None = None
-    new_name: str | None = None
     enabled: bool | None = None
 
 
@@ -65,6 +64,11 @@ SchedulePreset = Literal["every_5min", "every_15min", "every_30min", "hourly", "
 class ScheduleCreate(BaseModel):
     name: str
     preset: SchedulePreset
+
+
+class SnapmirrorRelationshipUpdate(BaseModel):
+    policy_name: str | None = None
+    schedule_name: str | None = None
 
 
 class SnapmirrorRelationshipCreate(BaseModel):

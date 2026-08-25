@@ -626,15 +626,16 @@ class NetAppOntapService:
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"LUN konnte nicht angelegt werden: {exc}") from exc
 
-    def update_lun(self, uuid: str, *, size_bytes: int | None = None, full_name: str | None = None, enabled: bool | None = None) -> None:
+    def update_lun(self, uuid: str, *, size_bytes: int | None = None, enabled: bool | None = None) -> None:
         # Siehe Kommentar in update_volume: direkte Attribut-Zuweisung statt
-        # from_dict(), sonst sendet .patch() einen leeren Body.
+        # from_dict(), sonst sendet .patch() einen leeren Body. Umbenennen wird
+        # bewusst nicht unterstuetzt (der LUN-Name ist Teil des ONTAP-Pfads und
+        # eine Aenderung waere eine Move-/Rename-Operation mit Nebenwirkungen
+        # auf verbundene Hosts -- vom Nutzer explizit ausgeschlossen).
         with self._connection():
             lun = Lun(uuid=uuid)
             if size_bytes is not None:
                 lun.space = {"size": size_bytes}
-            if full_name is not None:
-                lun.name = full_name
             if enabled is not None:
                 lun.enabled = enabled
             try:
@@ -739,6 +740,22 @@ class NetAppOntapService:
                 rel.patch(poll=True, poll_timeout=180)
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"SnapMirror-Initialisierung fehlgeschlagen: {exc}") from exc
+
+    def update_snapmirror_relationship(self, uuid: str, *, policy_name: str | None = None, schedule_name: str | None = None) -> None:
+        # Direkte Attribut-Zuweisung statt from_dict() (siehe update_volume).
+        # Ein leerer String bei schedule_name bedeutet "Schedule entfernen" --
+        # ONTAP verlangt dafuer explizit {"uuid": null, "name": null} statt
+        # eines leeren Namens (siehe REST-API-Doku zu transfer_schedule).
+        with self._connection():
+            rel = SnapmirrorRelationship(uuid=uuid)
+            if policy_name is not None:
+                rel.policy = {"name": policy_name}
+            if schedule_name is not None:
+                rel.transfer_schedule = {"uuid": None, "name": None} if schedule_name == "" else {"name": schedule_name}
+            try:
+                rel.patch(poll=True, poll_timeout=60)
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"SnapMirror-Beziehung konnte nicht geändert werden: {exc}") from exc
 
     def generate_cluster_peer_passphrase(self) -> tuple[str, list[str]]:
         """Erzeugt eine Peering-Passphrase auf diesem Cluster (Schritt 1 des

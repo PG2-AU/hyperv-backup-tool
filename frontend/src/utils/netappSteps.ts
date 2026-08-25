@@ -3,6 +3,7 @@ import type {
   LunCreationPlan,
   LunEditPlan,
   SnapmirrorCreationPlan,
+  SnapmirrorEditPlan,
   VolumeCreationPlan,
   VolumeEditPlan,
 } from "@/api/types";
@@ -115,7 +116,7 @@ export function buildLunEditSteps(plan: LunEditPlan): ProcessStepDef[] {
   const base = `/netapp/clusters/${plan.clusterId}`;
   const steps: ProcessStepDef[] = [];
 
-  if (plan.newSizeBytes != null || plan.newShortName != null || plan.setEnabled != null) {
+  if (plan.newSizeBytes != null || plan.setEnabled != null) {
     steps.push({
       id: "update",
       emoji: "🛠️",
@@ -123,7 +124,6 @@ export function buildLunEditSteps(plan: LunEditPlan): ProcessStepDef[] {
       run: async () => {
         await apiClient.patch(`${base}/luns/${plan.lunUuid}`, {
           size_bytes: plan.newSizeBytes,
-          new_name: plan.newShortName ? `/vol/${plan.volumeName}/${plan.newShortName}` : undefined,
           enabled: plan.setEnabled,
         });
       },
@@ -151,7 +151,7 @@ export function buildLunEditSteps(plan: LunEditPlan): ProcessStepDef[] {
       run: async () => {
         await apiClient.post(`${base}/lun-maps`, {
           svm_name: plan.svmName,
-          lun_name: `/vol/${plan.volumeName}/${plan.newShortName ?? plan.currentShortName}`,
+          lun_name: `/vol/${plan.volumeName}/${plan.currentShortName}`,
           igroup_name: plan.mapIgroupName,
         });
       },
@@ -311,5 +311,54 @@ export function buildSnapmirrorCreationSteps(plan: SnapmirrorCreationPlan): Proc
   }
   steps.push(discoverStep(plan.destinationClusterId));
 
+  return steps;
+}
+
+export function buildSnapmirrorEditSteps(plan: SnapmirrorEditPlan): ProcessStepDef[] {
+  const base = `/netapp/clusters/${plan.clusterId}`;
+  const steps: ProcessStepDef[] = [];
+
+  if (plan.policyMode === "new" && plan.newPolicy) {
+    steps.push({
+      id: "policy",
+      emoji: "📋",
+      label: `Lege SnapMirror-Policy '${plan.newPolicy.name}' an`,
+      run: async () => {
+        await apiClient.post(`${base}/snapmirror-policies`, {
+          svm_name: plan.newPolicy!.svmName,
+          name: plan.newPolicy!.name,
+          type: plan.newPolicy!.type,
+        });
+      },
+    });
+  }
+
+  if (plan.scheduleMode === "new" && plan.newSchedule) {
+    steps.push({
+      id: "schedule",
+      emoji: "⏱️",
+      label: `Lege Schedule '${plan.newSchedule.name}' an`,
+      run: async () => {
+        await apiClient.post(`${base}/schedules`, { name: plan.newSchedule!.name, preset: plan.newSchedule!.preset });
+      },
+    });
+  }
+
+  steps.push({
+    id: "update",
+    emoji: "🛠️",
+    label: `Ändere SnapMirror-Beziehung ${plan.sourcePath}`,
+    run: async () => {
+      const policyName = plan.policyMode === "new" ? plan.newPolicy?.name : plan.policyName;
+      const scheduleName =
+        plan.scheduleMode === "new" ? plan.newSchedule?.name : plan.scheduleMode === "existing" ? plan.scheduleName : plan.scheduleMode === "none" ? "" : undefined;
+      await apiClient.patch(`${base}/snapmirror-relationships/${plan.relationshipUuid}`, {
+        policy_name: policyName,
+        schedule_name: scheduleName,
+      });
+    },
+  });
+
+  steps.push(discoverStep(plan.clusterId));
   return steps;
 }
