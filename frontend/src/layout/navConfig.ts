@@ -42,6 +42,8 @@ export const NAV_ITEMS: NavItem[] = [
     searchContext: "storage",
     children: [
       { label: "Cluster", path: "/storage?tab=clusters", searchContext: "netapp-clusters" },
+      { label: "Nodes", path: "/storage?tab=platforms" },
+      { label: "Aggregate", path: "/storage?tab=aggregates" },
       { label: "Storage Virtual Machines", path: "/storage?tab=svms" },
       { label: "Volumes", path: "/storage?tab=volumes" },
       { label: "LUNs", path: "/storage?tab=luns" },
@@ -49,8 +51,6 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "SVM Peer", path: "/storage?tab=svm-peers" },
       { label: "SnapMirror-Beziehungen", path: "/storage?tab=snapmirror" },
       { label: "Network Interfaces", path: "/storage?tab=network-interfaces" },
-      { label: "Plattform", path: "/storage?tab=platforms" },
-      { label: "Aggregate", path: "/storage?tab=aggregates" },
       { label: "MetroCluster-Status", path: "/storage?tab=metrocluster" },
     ],
   },

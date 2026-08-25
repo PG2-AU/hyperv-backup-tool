@@ -33,3 +33,17 @@ export function formatSchedule(schedule?: Schedule | null): string {
 export function formatRetention(policy: Pick<BackupPolicy, "retention_type" | "retention_value">): string {
   return policy.retention_type === "days" ? `${policy.retention_value} Tage` : `${policy.retention_value} Snapshots`;
 }
+
+const LAG_TIME_PATTERN = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/;
+
+export function formatLagTime(lagTime?: string | null): string {
+  if (!lagTime) return "-";
+  const match = LAG_TIME_PATTERN.exec(lagTime);
+  if (!match) return lagTime;
+  const [, days, hours, minutes] = match;
+  const parts: string[] = [];
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  if (minutes && !days) parts.push(`${minutes}m`);
+  return parts.length ? parts.join(" ") : "< 1m";
+}

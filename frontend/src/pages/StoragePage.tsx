@@ -1,5 +1,23 @@
 import { useState } from "react";
-import { Badge, Button, Group, Menu, Modal, Paper, PasswordInput, Stack, Switch, Table, Tabs, Text, TextInput, Title, Tooltip } from "@mantine/core";
+import {
+  Badge,
+  Button,
+  Group,
+  Menu,
+  Modal,
+  MultiSelect,
+  Paper,
+  PasswordInput,
+  Progress,
+  Stack,
+  Switch,
+  Table,
+  Tabs,
+  Text,
+  TextInput,
+  Title,
+  Tooltip,
+} from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconCertificate, IconInfoCircle, IconPlus, IconRadar2, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
@@ -24,9 +42,9 @@ import {
 } from "@/api/hooks";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
-import type { NetAppCluster, SnapMirrorRelationship } from "@/api/types";
+import type { NetAppCluster, NetAppClusterPeer, SnapMirrorRelationship } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
-import { formatBytes } from "@/utils/format";
+import { formatBytes, formatLagTime } from "@/utils/format";
 
 const HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
 const HEALTH_LABEL: Record<string, string> = {
@@ -113,6 +131,45 @@ function AddClusterModal({ opened, onClose, onCreated }: { opened: boolean; onCl
         </Group>
       </Stack>
     </Modal>
+  );
+}
+
+function ClusterPeerDetailHeader({ peer, onClose }: { peer: NetAppClusterPeer; onClose: () => void }) {
+  return (
+    <Paper withBorder p="sm" mb="sm">
+      <Group justify="space-between" mb="xs">
+        <Text fw={600}>{peer.name ?? "Cluster-Peer"}</Text>
+        <Button variant="subtle" size="xs" onClick={onClose}>
+          Schließen
+        </Button>
+      </Group>
+      <Group gap="xl" align="flex-start">
+        <Stack gap={2}>
+          <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+            Remote-Name
+          </Text>
+          <Text size="sm">{peer.remote_name ?? "-"}</Text>
+        </Stack>
+        <Stack gap={2}>
+          <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+            Status
+          </Text>
+          <Text size="sm">{peer.state ?? "-"}</Text>
+        </Stack>
+        <Stack gap={2}>
+          <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+            Peer-Adressen (peer-addrs)
+          </Text>
+          <Text size="sm">{peer.peer_ip_addresses ?? "-"}</Text>
+        </Stack>
+        <Stack gap={2}>
+          <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+            Lokale Intercluster-Adressen (ip-addrs)
+          </Text>
+          <Text size="sm">{peer.local_ip_addresses ?? "-"}</Text>
+        </Stack>
+      </Group>
+    </Paper>
   );
 }
 
@@ -275,6 +332,8 @@ export function StoragePage() {
   const { data: aggregates } = useAggregates();
   const { data: mcc } = useMetroClusterStatus();
   const relMenu = useContextMenu<SnapMirrorRelationship>();
+  const [extraVolCols, setExtraVolCols] = useState<string[]>([]);
+  const [peerDetail, setPeerDetail] = useState<NetAppClusterPeer | null>(null);
 
   function triggerUpdate(rel: SnapMirrorRelationship) {
     notifications.show({
@@ -291,6 +350,8 @@ export function StoragePage() {
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "clusters" })}>
         <Tabs.List>
           <Tabs.Tab value="clusters">Cluster</Tabs.Tab>
+          <Tabs.Tab value="platforms">Nodes</Tabs.Tab>
+          <Tabs.Tab value="aggregates">Aggregate</Tabs.Tab>
           <Tabs.Tab value="svms">Storage Virtual Machines</Tabs.Tab>
           <Tabs.Tab value="volumes">Volumes</Tabs.Tab>
           <Tabs.Tab value="luns">LUNs</Tabs.Tab>
@@ -298,8 +359,6 @@ export function StoragePage() {
           <Tabs.Tab value="svm-peers">SVM Peer</Tabs.Tab>
           <Tabs.Tab value="snapmirror">SnapMirror-Beziehungen</Tabs.Tab>
           <Tabs.Tab value="network-interfaces">Network Interfaces</Tabs.Tab>
-          <Tabs.Tab value="platforms">Plattform</Tabs.Tab>
-          <Tabs.Tab value="aggregates">Aggregate</Tabs.Tab>
           <Tabs.Tab value="metrocluster">MetroCluster</Tabs.Tab>
         </Tabs.List>
 
@@ -315,6 +374,8 @@ export function StoragePage() {
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Subtype</Table.Th>
+                <Table.Th>Allowed Protocols</Table.Th>
+                <Table.Th>Data-Services</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -328,6 +389,8 @@ export function StoragePage() {
                     </Badge>
                   </Table.Td>
                   <Table.Td>{svm.subtype ?? "-"}</Table.Td>
+                  <Table.Td>{svm.allowed_protocols ?? "-"}</Table.Td>
+                  <Table.Td>{svm.data_services ?? "-"}</Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -340,6 +403,21 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="volumes" pt="md">
+          <Group justify="flex-end" mb="xs">
+            <MultiSelect
+              placeholder="Weitere Attribute anzeigen..."
+              data={[
+                { value: "autodelete", label: "Snapshot Autodelete" },
+                { value: "autogrow", label: "Autogrow" },
+                { value: "snapshot_policy", label: "Snapshot Policy" },
+                { value: "encryption", label: "Verschlüsselung" },
+              ]}
+              value={extraVolCols}
+              onChange={setExtraVolCols}
+              clearable
+              w={360}
+            />
+          </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -347,8 +425,14 @@ export function StoragePage() {
                 <Table.Th>SVM</Table.Th>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Status</Table.Th>
+                <Table.Th>Security Style</Table.Th>
+                <Table.Th>Language</Table.Th>
                 <Table.Th>Größe</Table.Th>
-                <Table.Th>Belegt</Table.Th>
+                <Table.Th>Belegung</Table.Th>
+                {extraVolCols.includes("autodelete") && <Table.Th>Snapshot Autodelete</Table.Th>}
+                {extraVolCols.includes("autogrow") && <Table.Th>Autogrow</Table.Th>}
+                {extraVolCols.includes("snapshot_policy") && <Table.Th>Snapshot Policy</Table.Th>}
+                {extraVolCols.includes("encryption") && <Table.Th>Verschlüsselung</Table.Th>}
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -362,8 +446,48 @@ export function StoragePage() {
                       {vol.state ?? "-"}
                     </Badge>
                   </Table.Td>
+                  <Table.Td>{vol.security_style ?? "-"}</Table.Td>
+                  <Table.Td>{vol.language ?? "-"}</Table.Td>
                   <Table.Td>{formatBytes(vol.size_bytes)}</Table.Td>
-                  <Table.Td>{formatBytes(vol.used_bytes)}</Table.Td>
+                  <Table.Td miw={140}>
+                    <Text size="xs" c="dimmed">
+                      {formatBytes(vol.used_bytes)} {vol.percent_used != null ? `(${vol.percent_used}%)` : ""}
+                    </Text>
+                    {vol.percent_used != null && (
+                      <Progress
+                        value={vol.percent_used}
+                        size={6}
+                        mt={2}
+                        color={vol.percent_used >= 90 ? "red" : vol.percent_used >= 75 ? "yellow" : "blue"}
+                      />
+                    )}
+                  </Table.Td>
+                  {extraVolCols.includes("autodelete") && (
+                    <Table.Td>
+                      {vol.snapshot_autodelete_enabled == null ? (
+                        "-"
+                      ) : (
+                        <Badge color={vol.snapshot_autodelete_enabled ? "green" : "gray"} variant="light">
+                          {vol.snapshot_autodelete_enabled ? "Aktiv" : "Inaktiv"}
+                        </Badge>
+                      )}
+                    </Table.Td>
+                  )}
+                  {extraVolCols.includes("autogrow") && (
+                    <Table.Td>{vol.autosize_mode && vol.autosize_mode !== "off" ? vol.autosize_mode : "Aus"}</Table.Td>
+                  )}
+                  {extraVolCols.includes("snapshot_policy") && <Table.Td>{vol.snapshot_policy_name ?? "-"}</Table.Td>}
+                  {extraVolCols.includes("encryption") && (
+                    <Table.Td>
+                      {vol.encryption_enabled == null ? (
+                        "-"
+                      ) : (
+                        <Badge color={vol.encryption_enabled ? "green" : "gray"} variant="light">
+                          {vol.encryption_enabled ? "Aktiv" : "Inaktiv"}
+                        </Badge>
+                      )}
+                    </Table.Td>
+                  )}
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -414,6 +538,7 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="cluster-peers" pt="md">
+          {peerDetail && <ClusterPeerDetailHeader peer={peerDetail} onClose={() => setPeerDetail(null)} />}
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -425,7 +550,14 @@ export function StoragePage() {
             </Table.Thead>
             <Table.Tbody>
               {clusterPeers?.map((peer) => (
-                <Table.Tr key={peer.id}>
+                <Table.Tr
+                  key={peer.id}
+                  onClick={() => setPeerDetail(peer)}
+                  style={{
+                    cursor: "pointer",
+                    backgroundColor: peerDetail?.id === peer.id ? "var(--mantine-color-blue-light)" : undefined,
+                  }}
+                >
                   <Table.Td>{peer.cluster_name}</Table.Td>
                   <Table.Td>{peer.name ?? "-"}</Table.Td>
                   <Table.Td>{peer.remote_name ?? "-"}</Table.Td>
@@ -454,6 +586,7 @@ export function StoragePage() {
                 <Table.Th>Peer-SVM</Table.Th>
                 <Table.Th>Peer-Cluster</Table.Th>
                 <Table.Th>Status</Table.Th>
+                <Table.Th>Applications</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -468,6 +601,7 @@ export function StoragePage() {
                       {peer.state ?? "-"}
                     </Badge>
                   </Table.Td>
+                  <Table.Td>{peer.applications ?? "-"}</Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -488,6 +622,11 @@ export function StoragePage() {
                 <Table.Th>Ziel</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Healthy</Table.Th>
+                <Table.Th>Lag Time</Table.Th>
+                <Table.Th>Last Transfer Size</Table.Th>
+                <Table.Th>Last Transfer Error</Table.Th>
+                <Table.Th>Schedule</Table.Th>
+                <Table.Th>Policy</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -498,10 +637,25 @@ export function StoragePage() {
                   <Table.Td>{rel.destination_path}</Table.Td>
                   <Table.Td>{rel.state}</Table.Td>
                   <Table.Td>
-                    <Badge color={rel.healthy ? "green" : "red"} variant="light">
-                      {rel.healthy ? "OK" : "Fehler"}
-                    </Badge>
+                    <Tooltip label={rel.last_transfer_error ?? ""} disabled={!rel.last_transfer_error}>
+                      <Badge color={rel.healthy ? "green" : "red"} variant="light">
+                        {rel.healthy ? "OK" : "Fehler"}
+                      </Badge>
+                    </Tooltip>
                   </Table.Td>
+                  <Table.Td>{formatLagTime(rel.lag_time)}</Table.Td>
+                  <Table.Td>{formatBytes(rel.last_transfer_size_bytes)}</Table.Td>
+                  <Table.Td maw={220}>
+                    {rel.last_transfer_error ? (
+                      <Text size="xs" c="red" lineClamp={2}>
+                        {rel.last_transfer_error}
+                      </Text>
+                    ) : (
+                      "-"
+                    )}
+                  </Table.Td>
+                  <Table.Td>{rel.schedule_name ?? "-"}</Table.Td>
+                  <Table.Td>{rel.policy_name ?? "-"}</Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -595,6 +749,7 @@ export function StoragePage() {
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Größe</Table.Th>
                 <Table.Th>Belegt</Table.Th>
+                <Table.Th>Storage Efficiency</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -609,7 +764,20 @@ export function StoragePage() {
                     </Badge>
                   </Table.Td>
                   <Table.Td>{formatBytes(agg.size_bytes)}</Table.Td>
-                  <Table.Td>{formatBytes(agg.used_bytes)}</Table.Td>
+                  <Table.Td miw={160}>
+                    <Text size="xs" c="dimmed">
+                      {formatBytes(agg.used_bytes)} {agg.used_percent != null ? `(${agg.used_percent}%)` : ""}
+                    </Text>
+                    {agg.used_percent != null && (
+                      <Progress
+                        value={agg.used_percent}
+                        size={6}
+                        mt={2}
+                        color={agg.used_percent >= 90 ? "red" : agg.used_percent >= 75 ? "yellow" : "blue"}
+                      />
+                    )}
+                  </Table.Td>
+                  <Table.Td>{agg.efficiency_ratio != null ? `${agg.efficiency_ratio.toFixed(2)} : 1` : "-"}</Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>

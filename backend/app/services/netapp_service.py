@@ -77,6 +77,11 @@ class SnapMirrorRelationshipInfo:
     destination_path: str
     state: str
     healthy: bool
+    lag_time: str | None = None
+    last_transfer_size_bytes: int | None = None
+    last_transfer_error: str | None = None
+    schedule_name: str | None = None
+    policy_name: str | None = None
 
 
 @dataclass
@@ -104,6 +109,8 @@ class DiscoveredSvm:
     name: str
     state: str | None
     subtype: str | None
+    allowed_protocols: str | None = None
+    data_services: str | None = None
 
 
 @dataclass
@@ -114,6 +121,13 @@ class DiscoveredVolume:
     state: str | None
     size_bytes: int | None
     used_bytes: int | None
+    percent_used: int | None = None
+    security_style: str | None = None
+    language: str | None = None
+    snapshot_autodelete_enabled: bool | None = None
+    autosize_mode: str | None = None
+    snapshot_policy_name: str | None = None
+    encryption_enabled: bool | None = None
 
 
 @dataclass
@@ -133,6 +147,8 @@ class DiscoveredClusterPeer:
     name: str | None
     remote_name: str | None
     state: str | None
+    peer_ip_addresses: str | None = None
+    local_ip_addresses: str | None = None
 
 
 @dataclass
@@ -142,6 +158,7 @@ class DiscoveredSvmPeer:
     peer_svm_name: str | None
     peer_cluster_name: str | None
     state: str | None
+    applications: str | None = None
 
 
 @dataclass
@@ -172,6 +189,8 @@ class DiscoveredAggregate:
     state: str | None
     size_bytes: int | None
     used_bytes: int | None
+    used_percent: int | None = None
+    efficiency_ratio: float | None = None
 
 
 @dataclass
@@ -289,13 +308,18 @@ class NetAppOntapService:
 
                 try:
                     svms = list(Svm.get_collection(fields="**"))
+                    protocol_names = ("nfs", "cifs", "iscsi", "fcp", "nvme", "s3")
                     for s in svms:
+                        allowed = [p for p in protocol_names if _get_nested(s, f"{p}.allowed")]
+                        enabled = [p for p in protocol_names if _get_nested(s, f"{p}.enabled")]
                         data.svms.append(
                             DiscoveredSvm(
                                 uuid=_get_nested(s, "uuid"),
                                 name=_get_nested(s, "name", ""),
                                 state=_get_nested(s, "state"),
                                 subtype=_get_nested(s, "subtype"),
+                                allowed_protocols=", ".join(allowed) or None,
+                                data_services=", ".join(enabled) or None,
                             )
                         )
                     results.append(DiscoveryStepResult("svms", True, f"{len(svms)} Storage Virtual Machine(s) gefunden", len(svms)))
@@ -312,7 +336,14 @@ class NetAppOntapService:
                                 svm_name=_get_nested(v, "svm.name"),
                                 state=_get_nested(v, "state"),
                                 size_bytes=_get_nested(v, "space.size"),
-                                used_bytes=_get_nested(v, "space.used.size") or _get_nested(v, "space.afs_used_size"),
+                                used_bytes=_get_nested(v, "space.used"),
+                                percent_used=_get_nested(v, "space.percent_used"),
+                                security_style=_get_nested(v, "nas.security_style"),
+                                language=_get_nested(v, "language"),
+                                snapshot_autodelete_enabled=_get_nested(v, "space.snapshot.autodelete_enabled"),
+                                autosize_mode=_get_nested(v, "autosize.mode"),
+                                snapshot_policy_name=_get_nested(v, "snapshot_policy.name"),
+                                encryption_enabled=_get_nested(v, "encryption.enabled"),
                             )
                         )
                     results.append(DiscoveryStepResult("volumes", True, f"{len(volumes)} Volume(s) gefunden", len(volumes)))
@@ -338,14 +369,25 @@ class NetAppOntapService:
                     results.append(DiscoveryStepResult("luns", False, str(exc)))
 
                 try:
+                    local_intercluster_ips: list[str] = []
+                    try:
+                        local_lifs = IpInterface.get_collection(fields="ip.address", services="intercluster_core")
+                        local_intercluster_ips = [ip for lif in local_lifs if (ip := _get_nested(lif, "ip.address"))]
+                    except NetAppRestError:
+                        pass  # lokale Intercluster-LIFs sind fuer die Peer-Liste selbst nicht kritisch
+                    local_ip_str = ", ".join(local_intercluster_ips) or None
+
                     peers = list(ClusterPeer.get_collection(fields="**"))
                     for p in peers:
+                        remote_ips = _get_nested(p, "remote.ip_addresses") or []
                         data.cluster_peers.append(
                             DiscoveredClusterPeer(
                                 uuid=_get_nested(p, "uuid"),
                                 name=_get_nested(p, "name"),
                                 remote_name=_get_nested(p, "remote.name"),
                                 state=_get_nested(p, "status.state"),
+                                peer_ip_addresses=", ".join(remote_ips) or None,
+                                local_ip_addresses=local_ip_str,
                             )
                         )
                     results.append(DiscoveryStepResult("cluster_peers", True, f"{len(peers)} Cluster-Peer-Beziehung(en) gefunden", len(peers)))
@@ -355,6 +397,7 @@ class NetAppOntapService:
                 try:
                     svm_peers = list(SvmPeer.get_collection(fields="**"))
                     for sp in svm_peers:
+                        applications = _get_nested(sp, "applications") or []
                         data.svm_peers.append(
                             DiscoveredSvmPeer(
                                 uuid=_get_nested(sp, "uuid"),
@@ -362,6 +405,7 @@ class NetAppOntapService:
                                 peer_svm_name=_get_nested(sp, "peer.svm.name"),
                                 peer_cluster_name=_get_nested(sp, "peer.cluster.name"),
                                 state=_get_nested(sp, "state"),
+                                applications=", ".join(applications) or None,
                             )
                         )
                     results.append(DiscoveryStepResult("svm_peers", True, f"{len(svm_peers)} SVM-Peer-Beziehung(en) gefunden", len(svm_peers)))
@@ -371,6 +415,13 @@ class NetAppOntapService:
                 try:
                     relationships = list(SnapmirrorRelationship.get_collection(fields="**"))
                     for rel in relationships:
+                        unhealthy_reasons = _get_nested(rel, "unhealthy_reason") or []
+                        last_error = None
+                        if unhealthy_reasons:
+                            try:
+                                last_error = unhealthy_reasons[0].message
+                            except AttributeError:
+                                last_error = None
                         data.snapmirror_relationships.append(
                             SnapMirrorRelationshipInfo(
                                 uuid=_get_nested(rel, "uuid", ""),
@@ -378,6 +429,11 @@ class NetAppOntapService:
                                 destination_path=_get_nested(rel, "destination.path", ""),
                                 state=_get_nested(rel, "state", ""),
                                 healthy=bool(_get_nested(rel, "healthy", False)),
+                                lag_time=_get_nested(rel, "lag_time"),
+                                last_transfer_size_bytes=_get_nested(rel, "transfer.bytes_transferred"),
+                                last_transfer_error=last_error,
+                                schedule_name=_get_nested(rel, "transfer_schedule.name"),
+                                policy_name=_get_nested(rel, "policy.name"),
                             )
                         )
                     results.append(
@@ -433,6 +489,8 @@ class NetAppOntapService:
                                 state=_get_nested(agg, "state"),
                                 size_bytes=_get_nested(agg, "space.block_storage.size"),
                                 used_bytes=_get_nested(agg, "space.block_storage.used"),
+                                used_percent=_get_nested(agg, "space.block_storage.used_percent"),
+                                efficiency_ratio=_get_nested(agg, "space.efficiency.ratio"),
                             )
                         )
                     results.append(DiscoveryStepResult("aggregates", True, f"{len(aggregates)} Aggregat(e) gefunden", len(aggregates)))

@@ -78,6 +78,8 @@ export interface NetAppSvm extends NetAppDiscoveredBase {
   name: string;
   state?: string | null;
   subtype?: string | null;
+  allowed_protocols?: string | null;
+  data_services?: string | null;
 }
 
 export interface NetAppVolume extends NetAppDiscoveredBase {
@@ -86,6 +88,13 @@ export interface NetAppVolume extends NetAppDiscoveredBase {
   state?: string | null;
   size_bytes?: number | null;
   used_bytes?: number | null;
+  percent_used?: number | null;
+  security_style?: string | null;
+  language?: string | null;
+  snapshot_autodelete_enabled?: boolean | null;
+  autosize_mode?: string | null;
+  snapshot_policy_name?: string | null;
+  encryption_enabled?: boolean | null;
 }
 
 export interface NetAppLun extends NetAppDiscoveredBase {
@@ -101,6 +110,8 @@ export interface NetAppClusterPeer extends NetAppDiscoveredBase {
   name?: string | null;
   remote_name?: string | null;
   state?: string | null;
+  peer_ip_addresses?: string | null;
+  local_ip_addresses?: string | null;
 }
 
 export interface NetAppSvmPeer extends NetAppDiscoveredBase {
@@ -108,6 +119,7 @@ export interface NetAppSvmPeer extends NetAppDiscoveredBase {
   peer_svm_name?: string | null;
   peer_cluster_name?: string | null;
   state?: string | null;
+  applications?: string | null;
 }
 
 export interface SnapMirrorRelationship extends NetAppDiscoveredBase {
@@ -115,6 +127,11 @@ export interface SnapMirrorRelationship extends NetAppDiscoveredBase {
   destination_path?: string | null;
   state?: string | null;
   healthy: boolean;
+  lag_time?: string | null;
+  last_transfer_size_bytes?: number | null;
+  last_transfer_error?: string | null;
+  schedule_name?: string | null;
+  policy_name?: string | null;
 }
 
 export interface NetAppNetworkInterface extends NetAppDiscoveredBase {
@@ -139,6 +156,8 @@ export interface NetAppAggregate extends NetAppDiscoveredBase {
   state?: string | null;
   size_bytes?: number | null;
   used_bytes?: number | null;
+  used_percent?: number | null;
+  efficiency_ratio?: number | null;
 }
 
 export interface MetroClusterStatus {

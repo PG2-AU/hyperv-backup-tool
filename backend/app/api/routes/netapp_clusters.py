@@ -53,7 +53,12 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
     if step_success.get("svms"):
         db.query(NetAppSvm).filter(NetAppSvm.cluster_id == cluster.id).delete()
         for svm in data.svms:
-            db.add(NetAppSvm(cluster_id=cluster.id, uuid=svm.uuid, name=svm.name, state=svm.state, subtype=svm.subtype, last_seen_at=now))
+            db.add(
+                NetAppSvm(
+                    cluster_id=cluster.id, uuid=svm.uuid, name=svm.name, state=svm.state, subtype=svm.subtype,
+                    allowed_protocols=svm.allowed_protocols, data_services=svm.data_services, last_seen_at=now,
+                )
+            )
 
     if step_success.get("volumes"):
         db.query(NetAppVolume).filter(NetAppVolume.cluster_id == cluster.id).delete()
@@ -61,7 +66,11 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
             db.add(
                 NetAppVolume(
                     cluster_id=cluster.id, uuid=vol.uuid, name=vol.name, svm_name=vol.svm_name,
-                    state=vol.state, size_bytes=vol.size_bytes, used_bytes=vol.used_bytes, last_seen_at=now,
+                    state=vol.state, size_bytes=vol.size_bytes, used_bytes=vol.used_bytes,
+                    percent_used=vol.percent_used, security_style=vol.security_style, language=vol.language,
+                    snapshot_autodelete_enabled=vol.snapshot_autodelete_enabled, autosize_mode=vol.autosize_mode,
+                    snapshot_policy_name=vol.snapshot_policy_name, encryption_enabled=vol.encryption_enabled,
+                    last_seen_at=now,
                 )
             )
 
@@ -82,7 +91,9 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
             db.add(
                 NetAppClusterPeer(
                     cluster_id=cluster.id, uuid=peer.uuid, name=peer.name,
-                    remote_name=peer.remote_name, state=peer.state, last_seen_at=now,
+                    remote_name=peer.remote_name, state=peer.state,
+                    peer_ip_addresses=peer.peer_ip_addresses, local_ip_addresses=peer.local_ip_addresses,
+                    last_seen_at=now,
                 )
             )
 
@@ -93,7 +104,7 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
                 NetAppSvmPeer(
                     cluster_id=cluster.id, uuid=peer.uuid, svm_name=peer.svm_name,
                     peer_svm_name=peer.peer_svm_name, peer_cluster_name=peer.peer_cluster_name,
-                    state=peer.state, last_seen_at=now,
+                    state=peer.state, applications=peer.applications, last_seen_at=now,
                 )
             )
 
@@ -103,7 +114,10 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
             db.add(
                 NetAppSnapMirrorRelationship(
                     cluster_id=cluster.id, uuid=rel.uuid, source_path=rel.source_path,
-                    destination_path=rel.destination_path, state=rel.state, healthy=rel.healthy, last_seen_at=now,
+                    destination_path=rel.destination_path, state=rel.state, healthy=rel.healthy,
+                    lag_time=rel.lag_time, last_transfer_size_bytes=rel.last_transfer_size_bytes,
+                    last_transfer_error=rel.last_transfer_error, schedule_name=rel.schedule_name,
+                    policy_name=rel.policy_name, last_seen_at=now,
                 )
             )
 
@@ -134,7 +148,8 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
             db.add(
                 NetAppAggregate(
                     cluster_id=cluster.id, uuid=agg.uuid, name=agg.name, node_name=agg.node_name,
-                    state=agg.state, size_bytes=agg.size_bytes, used_bytes=agg.used_bytes, last_seen_at=now,
+                    state=agg.state, size_bytes=agg.size_bytes, used_bytes=agg.used_bytes,
+                    used_percent=agg.used_percent, efficiency_ratio=agg.efficiency_ratio, last_seen_at=now,
                 )
             )
 
