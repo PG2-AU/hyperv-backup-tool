@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   AppShell,
+  Box,
   Burger,
   Drawer,
   Group,
@@ -13,9 +14,10 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconChevronDown, IconLogout, IconMoon, IconServer2, IconSun, IconTerminal2, IconUserCircle } from "@tabler/icons-react";
+import { IconChevronDown, IconLogout, IconMoon, IconSun, IconTerminal2, IconUserCircle } from "@tabler/icons-react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
+import logo from "@/assets/logo.png";
 import { ContextSearch } from "@/components/ContextSearch";
 import { LogViewer } from "@/components/LogViewer";
 import { NAV_ITEMS, resolveSearchContext } from "@/layout/navConfig";
@@ -51,7 +53,9 @@ export function AppShellLayout() {
         <Group h="100%" px="md" justify="space-between" wrap="nowrap">
           <Group wrap="nowrap">
             <Burger opened={navOpened} onClick={toggleNav} hiddenFrom="sm" size="sm" />
-            <IconServer2 size={24} />
+            <Box bg="white" px={8} py={4} style={{ borderRadius: 6, lineHeight: 0 }}>
+              <img src={logo} alt="Advanced Unibyte" height={24} style={{ display: "block" }} />
+            </Box>
             <Title order={4} visibleFrom="sm">
               Hyper-V NetApp Backup
             </Title>
