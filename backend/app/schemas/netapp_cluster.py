@@ -30,6 +30,7 @@ class NetAppClusterRead(BaseModel):
     auth_method: NetAppAuthMethod
     verify_ssl: bool
     ontap_version: str | None = None
+    ontap_cluster_name: str | None = None
     cluster_uuid: str | None = None
     health: NetAppClusterHealth
     node_count: int

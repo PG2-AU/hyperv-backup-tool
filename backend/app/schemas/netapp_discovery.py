@@ -33,6 +33,7 @@ class NetAppVolumeRead(BaseModel):
     autosize_mode: str | None = None
     snapshot_policy_name: str | None = None
     encryption_enabled: bool | None = None
+    snapmirror_protected: bool | None = None
     last_seen_at: datetime
 
 
@@ -47,6 +48,20 @@ class NetAppLunRead(BaseModel):
     state: str | None = None
     size_bytes: int | None = None
     os_type: str | None = None
+    mapped_igroups: str | None = None
+    last_seen_at: datetime
+
+
+class NetAppIgroupRead(BaseModel):
+    id: str
+    cluster_id: str
+    cluster_name: str
+    uuid: str | None = None
+    name: str
+    svm_name: str | None = None
+    os_type: str | None = None
+    protocol: str | None = None
+    initiator_count: int
     last_seen_at: datetime
 
 

@@ -38,6 +38,7 @@ class NetAppCluster(Base):
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True)
 
     ontap_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ontap_cluster_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     cluster_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
     health: Mapped[NetAppClusterHealth] = mapped_column(Enum(NetAppClusterHealth), default=NetAppClusterHealth.UNKNOWN)
     node_count: Mapped[int] = mapped_column(Integer, default=0)

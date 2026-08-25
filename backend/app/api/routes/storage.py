@@ -13,6 +13,7 @@ from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import (
     NetAppAggregate,
     NetAppClusterPeer,
+    NetAppIgroup,
     NetAppLun,
     NetAppNetworkInterface,
     NetAppPlatform,
@@ -24,6 +25,7 @@ from app.models.netapp_discovery import (
 from app.schemas.netapp_discovery import (
     NetAppAggregateRead,
     NetAppClusterPeerRead,
+    NetAppIgroupRead,
     NetAppLunRead,
     NetAppNetworkInterfaceRead,
     NetAppPlatformRead,
@@ -65,7 +67,7 @@ def list_volumes(db: Session = Depends(get_db), user=Depends(require_permission(
             security_style=v.security_style, language=v.language,
             snapshot_autodelete_enabled=v.snapshot_autodelete_enabled, autosize_mode=v.autosize_mode,
             snapshot_policy_name=v.snapshot_policy_name, encryption_enabled=v.encryption_enabled,
-            last_seen_at=v.last_seen_at,
+            snapmirror_protected=v.snapmirror_protected, last_seen_at=v.last_seen_at,
         )
         for v in db.query(NetAppVolume).order_by(NetAppVolume.name).all()
     ]
@@ -78,9 +80,23 @@ def list_luns(db: Session = Depends(get_db), user=Depends(require_permission(Per
         NetAppLunRead(
             id=l.id, cluster_id=l.cluster_id, cluster_name=names.get(l.cluster_id, "?"),
             uuid=l.uuid, name=l.name, svm_name=l.svm_name, volume_name=l.volume_name,
-            state=l.state, size_bytes=l.size_bytes, os_type=l.os_type, last_seen_at=l.last_seen_at,
+            state=l.state, size_bytes=l.size_bytes, os_type=l.os_type, mapped_igroups=l.mapped_igroups,
+            last_seen_at=l.last_seen_at,
         )
         for l in db.query(NetAppLun).order_by(NetAppLun.name).all()
+    ]
+
+
+@router.get("/igroups", response_model=list[NetAppIgroupRead])
+def list_igroups(db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW))) -> list[NetAppIgroupRead]:
+    names = _cluster_names(db)
+    return [
+        NetAppIgroupRead(
+            id=ig.id, cluster_id=ig.cluster_id, cluster_name=names.get(ig.cluster_id, "?"),
+            uuid=ig.uuid, name=ig.name, svm_name=ig.svm_name, os_type=ig.os_type,
+            protocol=ig.protocol, initiator_count=ig.initiator_count, last_seen_at=ig.last_seen_at,
+        )
+        for ig in db.query(NetAppIgroup).order_by(NetAppIgroup.name).all()
     ]
 
 

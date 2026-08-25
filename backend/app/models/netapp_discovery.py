@@ -53,6 +53,7 @@ class NetAppVolume(Base):
     autosize_mode: Mapped[str | None] = mapped_column(String(50), nullable=True)
     snapshot_policy_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     encryption_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    snapmirror_protected: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -68,6 +69,21 @@ class NetAppLun(Base):
     state: Mapped[str | None] = mapped_column(String(50), nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     os_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    mapped_igroups: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class NetAppIgroup(Base):
+    __tablename__ = "netapp_igroups"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    cluster_id: Mapped[str] = mapped_column(String(36), ForeignKey("netapp_clusters.id", ondelete="CASCADE"))
+    uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    name: Mapped[str] = mapped_column(String(255))
+    svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    os_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    protocol: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    initiator_count: Mapped[int] = mapped_column(Integer, default=0)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

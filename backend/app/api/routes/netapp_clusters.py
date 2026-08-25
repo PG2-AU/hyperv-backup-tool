@@ -29,6 +29,7 @@ from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster, NetAppClu
 from app.models.netapp_discovery import (
     NetAppAggregate,
     NetAppClusterPeer,
+    NetAppIgroup,
     NetAppLun,
     NetAppNetworkInterface,
     NetAppPlatform,
@@ -38,6 +39,7 @@ from app.models.netapp_discovery import (
     NetAppVolume,
 )
 from app.schemas.netapp_cluster import DiscoveryStepRead, NetAppClusterCreate, NetAppClusterRead
+from app.schemas.netapp_write import ClusterPeerCreate, IgroupCreate, LunCreate, SvmPeerCreate
 from app.services.netapp_service import DiscoveryData, NetAppConnectionError, NetAppOntapService
 
 router = APIRouter(prefix="/api/netapp/clusters", tags=["netapp-clusters"])
@@ -70,7 +72,7 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
                     percent_used=vol.percent_used, security_style=vol.security_style, language=vol.language,
                     snapshot_autodelete_enabled=vol.snapshot_autodelete_enabled, autosize_mode=vol.autosize_mode,
                     snapshot_policy_name=vol.snapshot_policy_name, encryption_enabled=vol.encryption_enabled,
-                    last_seen_at=now,
+                    snapmirror_protected=vol.snapmirror_protected, last_seen_at=now,
                 )
             )
 
@@ -81,7 +83,17 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
                 NetAppLun(
                     cluster_id=cluster.id, uuid=lun.uuid, name=lun.name, svm_name=lun.svm_name,
                     volume_name=lun.volume_name, state=lun.state, size_bytes=lun.size_bytes,
-                    os_type=lun.os_type, last_seen_at=now,
+                    os_type=lun.os_type, mapped_igroups=lun.mapped_igroups, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("igroups"):
+        db.query(NetAppIgroup).filter(NetAppIgroup.cluster_id == cluster.id).delete()
+        for ig in data.igroups:
+            db.add(
+                NetAppIgroup(
+                    cluster_id=cluster.id, uuid=ig.uuid, name=ig.name, svm_name=ig.svm_name,
+                    os_type=ig.os_type, protocol=ig.protocol, initiator_count=ig.initiator_count, last_seen_at=now,
                 )
             )
 
@@ -156,6 +168,21 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
     db.commit()
 
 
+def _get_cluster_or_404(db: Session, cluster_id: str) -> NetAppCluster:
+    cluster = db.get(NetAppCluster, cluster_id)
+    if cluster is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster nicht gefunden")
+    return cluster
+
+
+def _discover_and_persist(db: Session, cluster: NetAppCluster) -> list:
+    service = _service_for(cluster)
+    steps, data = service.run_discovery()
+    step_success = {s.step: s.success for s in steps}
+    _persist_discovery(db, cluster, data, step_success)
+    return steps
+
+
 def _service_for(cluster: NetAppCluster) -> NetAppOntapService:
     if cluster.auth_method == NetAppAuthMethod.CERTIFICATE and cluster.client_cert_path and cluster.client_key_path:
         return NetAppOntapService(
@@ -177,6 +204,7 @@ def _refresh_status(db: Session, cluster: NetAppCluster) -> NetAppCluster:
     try:
         summary = service.get_cluster_summary()
         cluster.ontap_version = summary.ontap_version
+        cluster.ontap_cluster_name = summary.name
         cluster.cluster_uuid = summary.uuid
         cluster.node_count = summary.node_count
         cluster.healthy_node_count = summary.healthy_node_count
@@ -221,6 +249,7 @@ def create_cluster(
         encrypted_password=encrypt_secret(payload.password),
         verify_ssl=payload.verify_ssl,
         ontap_version=summary.ontap_version,
+        ontap_cluster_name=summary.name,
         cluster_uuid=summary.uuid,
         node_count=summary.node_count,
         healthy_node_count=summary.healthy_node_count,
@@ -238,9 +267,7 @@ def create_cluster(
 def verify_cluster(
     cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
 ) -> NetAppCluster:
-    cluster = db.get(NetAppCluster, cluster_id)
-    if cluster is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster nicht gefunden")
+    cluster = _get_cluster_or_404(db, cluster_id)
     return _refresh_status(db, cluster)
 
 
@@ -248,9 +275,7 @@ def verify_cluster(
 def enroll_certificate(
     cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
 ) -> NetAppCluster:
-    cluster = db.get(NetAppCluster, cluster_id)
-    if cluster is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster nicht gefunden")
+    cluster = _get_cluster_or_404(db, cluster_id)
     if not cluster.encrypted_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -295,22 +320,109 @@ def enroll_certificate(
 def discover_cluster(
     cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
 ):
-    cluster = db.get(NetAppCluster, cluster_id)
-    if cluster is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster nicht gefunden")
-    service = _service_for(cluster)
-    steps, data = service.run_discovery()
-    step_success = {s.step: s.success for s in steps}
-    _persist_discovery(db, cluster, data, step_success)
-    return steps
+    cluster = _get_cluster_or_404(db, cluster_id)
+    return _discover_and_persist(db, cluster)
 
 
 @router.delete("/{cluster_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_cluster(
     cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
 ) -> None:
-    cluster = db.get(NetAppCluster, cluster_id)
-    if cluster is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster nicht gefunden")
+    cluster = _get_cluster_or_404(db, cluster_id)
     db.delete(cluster)
     db.commit()
+
+
+@router.post("/{cluster_id}/igroups", status_code=status.HTTP_201_CREATED)
+def create_igroup(
+    cluster_id: str, payload: IgroupCreate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.create_igroup(payload.svm_name, payload.name, payload.os_type, payload.protocol, payload.initiators)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _discover_and_persist(db, cluster)
+    return {"status": "created"}
+
+
+@router.post("/{cluster_id}/luns", status_code=status.HTTP_201_CREATED)
+def create_lun(
+    cluster_id: str, payload: LunCreate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        if payload.volume_mode == "new":
+            if not payload.new_volume_aggregate or not payload.new_volume_size_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Aggregat und Größe für das neue Volume sind erforderlich",
+                )
+            service.create_volume(
+                payload.svm_name, payload.volume_name, payload.new_volume_aggregate, payload.new_volume_size_bytes
+            )
+        service.create_lun(payload.svm_name, payload.volume_name, payload.lun_name, payload.os_type, payload.size_bytes)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _discover_and_persist(db, cluster)
+    return {"status": "created"}
+
+
+@router.post("/{cluster_id}/cluster-peers", status_code=status.HTTP_201_CREATED)
+def create_cluster_peer(
+    cluster_id: str, payload: ClusterPeerCreate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    """Peert diesen Cluster mit einem anderen bereits registrierten Cluster.
+    Beide Seiten muessen in unserer App registriert sein, da fuer den
+    ONTAP-Peering-Workflow (Passphrase erzeugen -> auf der Gegenseite mit den
+    Intercluster-LIF-Adressen annehmen) Zugangsdaten fuer BEIDE Cluster
+    benoetigt werden -- vergleichbar mit 'cluster peer create
+    -generate-passphrase' gefolgt von 'cluster peer create -peer-addrs ...'
+    auf der Gegenseite."""
+    cluster_a = _get_cluster_or_404(db, cluster_id)
+    cluster_b = _get_cluster_or_404(db, payload.peer_cluster_id)
+    service_a = _service_for(cluster_a)
+    service_b = _service_for(cluster_b)
+    try:
+        passphrase, a_local_ips = service_a.generate_cluster_peer_passphrase()
+        service_b.accept_cluster_peer(a_local_ips, passphrase)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _discover_and_persist(db, cluster_a)
+    _discover_and_persist(db, cluster_b)
+    return {"status": "peered"}
+
+
+@router.post("/{cluster_id}/svm-peers", status_code=status.HTTP_201_CREATED)
+def create_svm_peer(
+    cluster_id: str, payload: SvmPeerCreate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    """Erstellt eine SVM-Peer-Beziehung zwischen einer SVM auf diesem Cluster
+    und einer SVM auf einem bereits (Cluster-)gepeerten, in unserer App
+    registrierten Cluster. Die Anfrage wird auf der Gegenseite automatisch
+    angenommen, da wir dort ebenfalls Zugangsdaten besitzen."""
+    cluster_local = _get_cluster_or_404(db, cluster_id)
+    cluster_remote = _get_cluster_or_404(db, payload.peer_cluster_id)
+    service_local = _service_for(cluster_local)
+    service_remote = _service_for(cluster_remote)
+    if not cluster_remote.ontap_cluster_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Der reale ONTAP-Cluster-Name der Gegenseite ist noch nicht bekannt -- zuerst 'Verbindung erneut prüfen' ausführen.",
+        )
+    try:
+        service_local.create_svm_peer(
+            payload.local_svm_name, cluster_remote.ontap_cluster_name, payload.peer_svm_name, payload.applications
+        )
+        service_remote.accept_pending_svm_peer(payload.peer_svm_name, payload.local_svm_name)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _discover_and_persist(db, cluster_local)
+    _discover_and_persist(db, cluster_remote)
+    return {"status": "peered"}

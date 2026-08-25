@@ -28,8 +28,10 @@ from netapp_ontap.resources import (
     Aggregate,
     Cluster,
     ClusterPeer,
+    Igroup,
     IpInterface,
     Lun,
+    LunMap,
     Metrocluster,
     Node,
     SecurityCertificate,
@@ -128,6 +130,7 @@ class DiscoveredVolume:
     autosize_mode: str | None = None
     snapshot_policy_name: str | None = None
     encryption_enabled: bool | None = None
+    snapmirror_protected: bool | None = None
 
 
 @dataclass
@@ -139,6 +142,17 @@ class DiscoveredLun:
     state: str | None
     size_bytes: int | None
     os_type: str | None
+    mapped_igroups: str | None = None
+
+
+@dataclass
+class DiscoveredIgroup:
+    uuid: str | None
+    name: str
+    svm_name: str | None
+    os_type: str | None
+    protocol: str | None
+    initiator_count: int = 0
 
 
 @dataclass
@@ -204,6 +218,7 @@ class DiscoveryData:
     network_interfaces: list[DiscoveredNetworkInterface] = field(default_factory=list)
     platforms: list[DiscoveredPlatform] = field(default_factory=list)
     aggregates: list[DiscoveredAggregate] = field(default_factory=list)
+    igroups: list[DiscoveredIgroup] = field(default_factory=list)
 
 
 @dataclass
@@ -344,6 +359,7 @@ class NetAppOntapService:
                                 autosize_mode=_get_nested(v, "autosize.mode"),
                                 snapshot_policy_name=_get_nested(v, "snapshot_policy.name"),
                                 encryption_enabled=_get_nested(v, "encryption.enabled"),
+                                snapmirror_protected=_get_nested(v, "snapmirror.is_protected"),
                             )
                         )
                     results.append(DiscoveryStepResult("volumes", True, f"{len(volumes)} Volume(s) gefunden", len(volumes)))
@@ -367,6 +383,40 @@ class NetAppOntapService:
                     results.append(DiscoveryStepResult("luns", True, f"{len(luns)} LUN(s) gefunden", len(luns)))
                 except NetAppRestError as exc:
                     results.append(DiscoveryStepResult("luns", False, str(exc)))
+
+                try:
+                    igroups = list(Igroup.get_collection(fields="**"))
+                    for ig in igroups:
+                        initiators = _get_nested(ig, "initiators") or []
+                        data.igroups.append(
+                            DiscoveredIgroup(
+                                uuid=_get_nested(ig, "uuid"),
+                                name=_get_nested(ig, "name", ""),
+                                svm_name=_get_nested(ig, "svm.name"),
+                                os_type=_get_nested(ig, "os_type"),
+                                protocol=_get_nested(ig, "protocol"),
+                                initiator_count=len(initiators),
+                            )
+                        )
+                    results.append(DiscoveryStepResult("igroups", True, f"{len(igroups)} Initiator-Gruppe(n) gefunden", len(igroups)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("igroups", False, str(exc)))
+
+                try:
+                    lun_maps = list(LunMap.get_collection(fields="**"))
+                    igroups_by_lun: dict[str, list[str]] = {}
+                    for lm in lun_maps:
+                        lun_name = _get_nested(lm, "lun.name")
+                        igroup_name = _get_nested(lm, "igroup.name")
+                        if lun_name and igroup_name:
+                            igroups_by_lun.setdefault(lun_name, []).append(igroup_name)
+                    for lun_obj in data.luns:
+                        mapped = igroups_by_lun.get(lun_obj.name)
+                        if mapped:
+                            lun_obj.mapped_igroups = ", ".join(mapped)
+                    results.append(DiscoveryStepResult("lun_maps", True, f"{len(lun_maps)} LUN-Mapping(s) gefunden", len(lun_maps)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("lun_maps", False, str(exc)))
 
                 try:
                     local_intercluster_ips: list[str] = []
@@ -500,6 +550,112 @@ class NetAppOntapService:
             results.append(DiscoveryStepResult("login", False, str(exc)))
 
         return results, data
+
+    def create_igroup(self, svm_name: str, name: str, os_type: str, protocol: str | None, initiators: list[str]) -> None:
+        with self._connection():
+            payload: dict = {"name": name, "svm": {"name": svm_name}, "os_type": os_type}
+            if protocol:
+                payload["protocol"] = protocol
+            if initiators:
+                payload["initiators"] = [{"name": i} for i in initiators]
+            try:
+                Igroup.from_dict(payload).post()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Initiator-Gruppe konnte nicht angelegt werden: {exc}") from exc
+
+    def create_volume(self, svm_name: str, name: str, aggregate_name: str, size_bytes: int) -> None:
+        with self._connection():
+            payload = {"name": name, "svm": {"name": svm_name}, "aggregates": [{"name": aggregate_name}], "size": size_bytes}
+            try:
+                Volume.from_dict(payload).post(poll=True, poll_timeout=120)
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Volume konnte nicht angelegt werden: {exc}") from exc
+
+    def create_lun(self, svm_name: str, volume_name: str, lun_name: str, os_type: str, size_bytes: int) -> None:
+        with self._connection():
+            payload = {
+                "name": f"/vol/{volume_name}/{lun_name}",
+                "svm": {"name": svm_name},
+                "os_type": os_type,
+                "space": {"size": size_bytes},
+            }
+            try:
+                Lun.from_dict(payload).post()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN konnte nicht angelegt werden: {exc}") from exc
+
+    def generate_cluster_peer_passphrase(self) -> tuple[str, list[str]]:
+        """Erzeugt eine Peering-Passphrase auf diesem Cluster (Schritt 1 des
+        ONTAP-Cluster-Peering-Workflows, entspricht 'cluster peer create
+        -generate-passphrase') und liefert sie zusammen mit den lokalen
+        Intercluster-LIF-Adressen zurueck, die die Gegenseite fuer
+        'remote.ip_addresses' benoetigt."""
+        with self._connection():
+            try:
+                peer = ClusterPeer.from_dict({"authentication": {"generate_passphrase": True}})
+                peer.post()
+                peer.get(fields="authentication.passphrase")
+                passphrase = _get_nested(peer, "authentication.passphrase")
+                if not passphrase:
+                    raise NetAppConnectionError("Keine Passphrase vom Cluster erhalten")
+                local_lifs = IpInterface.get_collection(fields="ip.address", services="intercluster_core")
+                local_ips = [ip for lif in local_lifs if (ip := _get_nested(lif, "ip.address"))]
+                if not local_ips:
+                    raise NetAppConnectionError("Keine Intercluster-LIFs auf diesem Cluster konfiguriert")
+                return passphrase, local_ips
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Passphrase-Erzeugung fehlgeschlagen: {exc}") from exc
+
+    def accept_cluster_peer(self, remote_ip_addresses: list[str], passphrase: str) -> None:
+        """Schritt 2 des Cluster-Peering-Workflows: nimmt die von der
+        Gegenseite erzeugte Passphrase an und stellt die Peer-Beziehung her."""
+        with self._connection():
+            try:
+                peer = ClusterPeer.from_dict(
+                    {"remote": {"ip_addresses": remote_ip_addresses}, "authentication": {"passphrase": passphrase}}
+                )
+                peer.post()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Cluster-Peering fehlgeschlagen: {exc}") from exc
+
+    def create_svm_peer(self, local_svm_name: str, peer_cluster_name: str, peer_svm_name: str, applications: list[str]) -> None:
+        with self._connection():
+            try:
+                peer = SvmPeer.from_dict(
+                    {
+                        "svm": {"name": local_svm_name},
+                        "peer": {"cluster": {"name": peer_cluster_name}, "svm": {"name": peer_svm_name}},
+                        "applications": applications,
+                    }
+                )
+                peer.post()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"SVM-Peering fehlgeschlagen: {exc}") from exc
+
+    def accept_pending_svm_peer(self, local_svm_name: str, remote_svm_name: str) -> None:
+        """Nimmt eine von der Gegenseite initiierte SVM-Peer-Anfrage an
+        (PATCH state=peered). 'local_svm_name' ist die SVM auf DIESEM
+        Cluster, 'remote_svm_name' die SVM auf der Gegenseite, die die
+        Anfrage gestellt hat."""
+        with self._connection():
+            try:
+                candidates = list(SvmPeer.get_collection(fields="uuid,state,svm.name,peer.svm.name"))
+                match = next(
+                    (
+                        p
+                        for p in candidates
+                        if _get_nested(p, "svm.name") == local_svm_name
+                        and _get_nested(p, "peer.svm.name") == remote_svm_name
+                        and _get_nested(p, "state") == "pending"
+                    ),
+                    None,
+                )
+                if match is None:
+                    raise NetAppConnectionError("Keine ausstehende SVM-Peer-Anfrage gefunden")
+                match.state = "peered"
+                match.patch()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"SVM-Peer-Annahme fehlgeschlagen: {exc}") from exc
 
     def install_client_certificate(self, common_name: str, cert_dir: Path, file_stem: str) -> tuple[str, str]:
         """Erzeugt ein selbstsigniertes Client-Zertifikat, installiert es auf
