@@ -16,9 +16,10 @@ interface PolicyFormModalProps {
   opened: boolean;
   onClose: () => void;
   policy?: BackupPolicy | null;
+  onSaved?: (policy: BackupPolicy) => void;
 }
 
-export function PolicyFormModal({ opened, onClose, policy }: PolicyFormModalProps) {
+export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyFormModalProps) {
   const createPolicy = useCreatePolicy();
   const updatePolicy = useUpdatePolicy();
   const { data: schedules } = useSchedules();
@@ -81,6 +82,7 @@ export function PolicyFormModal({ opened, onClose, policy }: PolicyFormModalProp
     mutation
       .then((saved) => {
         notifications.show({ title: isEdit ? "Policy aktualisiert" : "Policy erstellt", message: saved.name, color: "green" });
+        onSaved?.(saved);
         onClose();
       })
       .catch((err) => {

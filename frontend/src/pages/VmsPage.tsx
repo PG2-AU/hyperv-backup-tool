@@ -164,6 +164,72 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
   );
 }
 
+function CsvChainHeader({ csv, vms, onClose }: { csv: Csv; vms: Vm[] | undefined; onClose: () => void }) {
+  const vmsOnCsv = vms?.filter((vm) => vm.csv_paths.some((p) => p.split(/[\\/]/).pop() === csv.name)) ?? [];
+
+  return (
+    <Paper withBorder p="md">
+      <Group justify="space-between" mb="xs">
+        <Text size="sm" fw={600}>
+          Speicherkette: {csv.name}
+        </Text>
+        <ActionIcon variant="subtle" size="sm" onClick={onClose}>
+          <IconX size={14} />
+        </ActionIcon>
+      </Group>
+      <Stack gap="sm">
+        <Group gap={6} wrap="nowrap">
+          <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+            VMs auf diesem CSV:
+          </Text>
+          {vmsOnCsv.length ? (
+            vmsOnCsv.map((vm) => (
+              <Badge key={vm.id} color="teal" variant="light">
+                {vm.name}
+              </Badge>
+            ))
+          ) : (
+            <Text size="xs" c="dimmed">
+              keine
+            </Text>
+          )}
+        </Group>
+        <Box style={{ overflowX: "auto" }}>
+          <Group gap={6} wrap="nowrap">
+            <ChainNode
+              icon={<IconFolder size={14} />}
+              label="CSV"
+              title={csv.name}
+              usedBytes={csv.used_bytes}
+              capacityBytes={csv.capacity_bytes}
+            />
+            <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+            <ChainNode
+              icon={<IconStack2 size={14} />}
+              label="LUN"
+              title={csv.lun_name ?? "-"}
+              usedBytes={csv.lun_used_bytes}
+              capacityBytes={csv.lun_capacity_bytes}
+            />
+            <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+            <ChainNode
+              icon={<IconDatabase size={14} />}
+              label="Volume"
+              title={csv.volume_name ?? "-"}
+              usedBytes={csv.volume_used_bytes}
+              capacityBytes={csv.volume_capacity_bytes}
+            />
+            <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+            <ChainNode icon={<IconServerCog size={14} />} label="SVM" title={csv.svm_name ?? "-"} />
+            <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+            <ChainNode icon={<IconServer size={14} />} label="Cluster" title={csv.netapp_cluster_name ?? "-"} />
+          </Group>
+        </Box>
+      </Stack>
+    </Paper>
+  );
+}
+
 export function VmsPage() {
   const [params, setParams] = useSearchParams();
   const activeTab = params.get("tab") === "csv" ? "csv" : "vms";
@@ -172,9 +238,16 @@ export function VmsPage() {
   const vmMenu = useContextMenu<Vm>();
   const csvMenu = useContextMenu<Csv>();
   const [selectedVm, setSelectedVm] = useState<Vm | null>(null);
+  const [selectedCsv, setSelectedCsv] = useState<Csv | null>(null);
 
   function toggleSelectedVm(vm: Vm) {
+    setSelectedCsv(null);
     setSelectedVm((prev) => (prev?.id === vm.id ? null : vm));
+  }
+
+  function toggleSelectedCsv(csv: Csv) {
+    setSelectedVm(null);
+    setSelectedCsv((prev) => (prev?.name === csv.name ? null : csv));
   }
 
   function runBackupNow(target: string) {
@@ -190,6 +263,7 @@ export function VmsPage() {
       <Title order={3}>Inventory</Title>
 
       {selectedVm && <VmChainHeader vm={selectedVm} csvs={csvs} onClose={() => setSelectedVm(null)} />}
+      {selectedCsv && <CsvChainHeader csv={selectedCsv} vms={vms} onClose={() => setSelectedCsv(null)} />}
 
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "vms" })}>
         <Tabs.List>
@@ -264,7 +338,15 @@ export function VmsPage() {
                     ? Math.round(((csv.used_bytes ?? 0) / csv.capacity_bytes) * 100)
                     : null;
                 return (
-                  <Table.Tr key={csv.name} onContextMenu={(e) => csvMenu.open(e, csv)} style={{ cursor: "context-menu" }}>
+                  <Table.Tr
+                    key={csv.name}
+                    onClick={() => toggleSelectedCsv(csv)}
+                    onContextMenu={(e) => csvMenu.open(e, csv)}
+                    style={{
+                      cursor: "pointer",
+                      backgroundColor: selectedCsv?.name === csv.name ? "var(--mantine-color-blue-light)" : undefined,
+                    }}
+                  >
                     <Table.Td>{csv.name}</Table.Td>
                     <Table.Td>{csv.owner_node}</Table.Td>
                     <Table.Td>
@@ -323,7 +405,9 @@ export function VmsPage() {
         <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => csvMenu.state && runBackupNow(csvMenu.state.data.name)}>
           Backup jetzt starten (CSV-Scope)
         </Menu.Item>
-        <Menu.Item leftSection={<IconInfoCircle size={16} />}>Details anzeigen</Menu.Item>
+        <Menu.Item leftSection={<IconInfoCircle size={16} />} onClick={() => csvMenu.state && setSelectedCsv(csvMenu.state.data)}>
+          Details anzeigen
+        </Menu.Item>
       </ContextMenuDropdown>
     </Stack>
   );

@@ -10,6 +10,7 @@ import {
   useVms,
   type ResourceGroupWritePayload,
 } from "@/api/hooks";
+import { PolicyFormModal } from "@/components/PolicyFormModal";
 import type { BackupScope, ResourceGroup } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 
@@ -17,6 +18,8 @@ const SCOPE_OPTIONS: { value: BackupScope; label: string }[] = [
   { value: "vm", label: "Virtuelle Maschinen" },
   { value: "csv", label: "Cluster Shared Volumes" },
 ];
+
+const NEW_POLICY_VALUE = "__new_policy__";
 
 interface ResourceGroupFormModalProps {
   opened: boolean;
@@ -36,6 +39,7 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
   const [scope, setScope] = useState<BackupScope>("vm");
   const [members, setMembers] = useState<string[]>([]);
   const [policyIds, setPolicyIds] = useState<string[]>([]);
+  const [policyModalOpen, setPolicyModalOpen] = useState(false);
 
   useEffect(() => {
     if (!opened) return;
@@ -60,6 +64,15 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
     setMembers([]);
   }
 
+  function handlePolicyIdsChange(values: string[]) {
+    if (values.includes(NEW_POLICY_VALUE)) {
+      setPolicyIds(values.filter((v) => v !== NEW_POLICY_VALUE));
+      setPolicyModalOpen(true);
+      return;
+    }
+    setPolicyIds(values);
+  }
+
   function handleSubmit() {
     const payload: ResourceGroupWritePayload = { name, scope, members, policy_ids: policyIds };
     const mutation = isEdit ? updateGroup.mutateAsync({ id: group!.id, payload }) : createGroup.mutateAsync(payload);
@@ -81,39 +94,50 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
   const isPending = createGroup.isPending || updateGroup.isPending;
 
   return (
-    <Modal opened={opened} onClose={onClose} title={isEdit ? "Protection Group bearbeiten" : "Protection Group anlegen"} size="lg">
-      <Stack>
-        <TextInput label="Name" placeholder="z.B. Bronze" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
+    <>
+      <Modal opened={opened} onClose={onClose} title={isEdit ? "Protection Group bearbeiten" : "Protection Group anlegen"} size="lg">
+        <Stack>
+          <TextInput label="Name" placeholder="z.B. Bronze" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
 
-        <Select label="Typ" data={SCOPE_OPTIONS} value={scope} onChange={handleScopeChange} allowDeselect={false} disabled={isEdit} />
+          <Select label="Typ" data={SCOPE_OPTIONS} value={scope} onChange={handleScopeChange} allowDeselect={false} disabled={isEdit} />
 
-        <MultiSelect
-          label={scope === "vm" ? "Virtuelle Maschinen" : "Cluster Shared Volumes"}
-          placeholder="Objekte auswaehlen"
-          data={memberOptions}
-          value={members}
-          onChange={setMembers}
-          searchable
-        />
+          <MultiSelect
+            label={scope === "vm" ? "Virtuelle Maschinen" : "Cluster Shared Volumes"}
+            placeholder="Objekte auswaehlen"
+            data={memberOptions}
+            value={members}
+            onChange={setMembers}
+            searchable
+          />
 
-        <MultiSelect
-          label="Verknuepfte Backup-Policies"
-          placeholder="Policies auswaehlen"
-          data={policies?.map((p) => ({ value: p.id, label: p.name })) ?? []}
-          value={policyIds}
-          onChange={setPolicyIds}
-          searchable
-        />
+          <MultiSelect
+            label="Verknuepfte Backup-Policies"
+            placeholder="Policies auswaehlen"
+            data={[
+              { value: NEW_POLICY_VALUE, label: "+ Neue Policy erstellen..." },
+              ...(policies?.map((p) => ({ value: p.id, label: p.name })) ?? []),
+            ]}
+            value={policyIds}
+            onChange={handlePolicyIdsChange}
+            searchable
+          />
 
-        <Group justify="flex-end" mt="sm">
-          <Button variant="default" onClick={onClose}>
-            Abbrechen
-          </Button>
-          <Button onClick={handleSubmit} loading={isPending} disabled={!name}>
-            {isEdit ? "Speichern" : "Anlegen"}
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
+          <Group justify="flex-end" mt="sm">
+            <Button variant="default" onClick={onClose}>
+              Abbrechen
+            </Button>
+            <Button onClick={handleSubmit} loading={isPending} disabled={!name}>
+              {isEdit ? "Speichern" : "Anlegen"}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <PolicyFormModal
+        opened={policyModalOpen}
+        onClose={() => setPolicyModalOpen(false)}
+        onSaved={(saved) => setPolicyIds((prev) => [...prev, saved.id])}
+      />
+    </>
   );
 }
