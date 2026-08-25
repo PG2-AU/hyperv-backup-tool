@@ -39,7 +39,19 @@ from app.models.netapp_discovery import (
     NetAppVolume,
 )
 from app.schemas.netapp_cluster import DiscoveryStepRead, NetAppClusterCreate, NetAppClusterRead
-from app.schemas.netapp_write import ClusterPeerCreate, IgroupCreate, LunCreate, LunMapCreate, SvmPeerCreate, VolumeCreate
+from app.schemas.netapp_write import (
+    ClusterPeerCreate,
+    IgroupCreate,
+    LunCreate,
+    LunMapCreate,
+    LunUpdate,
+    ScheduleCreate,
+    SnapmirrorPolicyCreate,
+    SnapmirrorRelationshipCreate,
+    SvmPeerCreate,
+    VolumeCreate,
+    VolumeUpdate,
+)
 from app.services.netapp_service import DiscoveryData, NetAppConnectionError, NetAppOntapService
 
 router = APIRouter(prefix="/api/netapp/clusters", tags=["netapp-clusters"])
@@ -361,10 +373,41 @@ def create_volume(
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
     try:
-        service.create_volume(payload.svm_name, payload.name, payload.aggregate_name, payload.size_bytes)
+        service.create_volume(
+            payload.svm_name, payload.name, payload.aggregate_name, payload.size_bytes,
+            security_style=payload.security_style, guarantee_type=payload.guarantee_type, volume_type=payload.volume_type,
+        )
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"status": "created"}
+
+
+@router.patch("/{cluster_id}/volumes/{volume_uuid}")
+def update_volume(
+    cluster_id: str, volume_uuid: str, payload: VolumeUpdate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.update_volume(volume_uuid, size_bytes=payload.size_bytes, state=payload.state)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "updated"}
+
+
+@router.delete("/{cluster_id}/volumes/{volume_uuid}")
+def delete_volume(
+    cluster_id: str, volume_uuid: str, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.delete_volume(volume_uuid)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "deleted"}
 
 
 @router.post("/{cluster_id}/luns", status_code=status.HTTP_201_CREATED)
@@ -379,10 +422,41 @@ def create_lun(
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
     try:
-        service.create_lun(payload.svm_name, payload.volume_name, payload.lun_name, payload.os_type, payload.size_bytes)
+        service.create_lun(
+            payload.svm_name, payload.volume_name, payload.lun_name, payload.os_type, payload.size_bytes,
+            space_allocation_enabled=payload.space_allocation_enabled,
+        )
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"status": "created"}
+
+
+@router.patch("/{cluster_id}/luns/{lun_uuid}")
+def update_lun(
+    cluster_id: str, lun_uuid: str, payload: LunUpdate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.update_lun(lun_uuid, size_bytes=payload.size_bytes, full_name=payload.new_name, enabled=payload.enabled)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "updated"}
+
+
+@router.delete("/{cluster_id}/luns/{lun_uuid}")
+def delete_lun(
+    cluster_id: str, lun_uuid: str, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.delete_lun(lun_uuid)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "deleted"}
 
 
 @router.post("/{cluster_id}/lun-maps", status_code=status.HTTP_201_CREATED)
@@ -397,6 +471,112 @@ def create_lun_map(
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"status": "created"}
+
+
+@router.delete("/{cluster_id}/lun-maps/{lun_uuid}")
+def delete_lun_map(
+    cluster_id: str, lun_uuid: str, igroup_name: str, svm_name: str, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.delete_lun_map(lun_uuid, igroup_name, svm_name)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "deleted"}
+
+
+@router.get("/{cluster_id}/snapmirror-policies")
+def list_snapmirror_policies(
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW)),
+) -> list[dict]:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        return service.list_snapmirror_policies()
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{cluster_id}/snapmirror-policies", status_code=status.HTTP_201_CREATED)
+def create_snapmirror_policy(
+    cluster_id: str, payload: SnapmirrorPolicyCreate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.create_snapmirror_policy(payload.svm_name, payload.name, payload.type)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "created"}
+
+
+@router.get("/{cluster_id}/schedules")
+def list_schedules(
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW)),
+) -> list[dict]:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        return service.list_schedules()
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{cluster_id}/schedules", status_code=status.HTTP_201_CREATED)
+def create_schedule(
+    cluster_id: str, payload: ScheduleCreate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.create_schedule(payload.name, payload.preset)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "created"}
+
+
+@router.post("/{cluster_id}/snapmirror-relationships", status_code=status.HTTP_201_CREATED)
+def create_snapmirror_relationship(
+    cluster_id: str, payload: SnapmirrorRelationshipCreate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    """SnapMirror-Beziehungen werden immer von der Zielseite aus angelegt
+    (cluster_id = Ziel-Cluster). Liegt die Quelle auf einem anderen
+    registrierten Cluster, wird deren echter ONTAP-Cluster-Name (nicht
+    unser Anzeigename) im 'source.cluster'-Feld referenziert."""
+    destination_cluster = _get_cluster_or_404(db, cluster_id)
+    source_cluster = _get_cluster_or_404(db, payload.source_cluster_id)
+    service = _service_for(destination_cluster)
+    source_cluster_name = source_cluster.ontap_cluster_name if source_cluster.id != destination_cluster.id else None
+    try:
+        uuid = service.create_snapmirror_relationship(
+            f"{payload.source_svm_name}:{payload.source_volume_name}",
+            f"{payload.destination_svm_name}:{payload.destination_volume_name}",
+            payload.policy_name,
+            schedule_name=payload.schedule_name,
+            source_cluster_name=source_cluster_name,
+        )
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "created", "uuid": uuid}
+
+
+@router.post("/{cluster_id}/snapmirror-relationships/{relationship_uuid}/initialize", status_code=status.HTTP_202_ACCEPTED)
+def initialize_snapmirror_relationship(
+    cluster_id: str, relationship_uuid: str, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.initialize_snapmirror_relationship(relationship_uuid)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "initialized"}
 
 
 @router.post("/{cluster_id}/cluster-peers", status_code=status.HTTP_201_CREATED)

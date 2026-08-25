@@ -238,6 +238,77 @@ export interface SvmPeerCreate {
   applications: string[];
 }
 
+export interface VolumeCreatePayload {
+  svm_name: string;
+  name: string;
+  aggregate_name: string;
+  size_bytes: number;
+  security_style?: "unix" | "ntfs" | "mixed" | null;
+  guarantee_type?: "volume" | "none" | null;
+  volume_type?: "rw" | "dp" | null;
+}
+
+export interface VolumeCreationPlan {
+  clusterId: string;
+  svmName: string;
+  name: string;
+  aggregateName: string;
+  sizeBytes: number;
+  securityStyle: "unix" | "ntfs" | "mixed";
+  guaranteeType: "volume" | "none";
+}
+
+export interface LunEditPlan {
+  clusterId: string;
+  lunUuid: string;
+  svmName: string;
+  volumeName: string;
+  currentShortName: string;
+  newSizeBytes?: number;
+  newShortName?: string;
+  setEnabled?: boolean;
+  unmapIgroupName?: string;
+  mapIgroupName?: string;
+}
+
+export interface VolumeEditPlan {
+  clusterId: string;
+  volumeUuid: string;
+  volumeName: string;
+  newSizeBytes?: number;
+  setState?: "online" | "offline";
+}
+
+export type SchedulePreset = "every_5min" | "every_15min" | "every_30min" | "hourly" | "daily";
+
+export interface SnapmirrorPolicyInfo {
+  name: string;
+  type: string;
+  svm_name?: string | null;
+}
+
+export interface ScheduleInfo {
+  name: string;
+}
+
+export interface SnapmirrorCreationPlan {
+  sourceClusterId: string;
+  sourceSvmName: string;
+  sourceVolumeName: string;
+  sourceVolumeSizeBytes: number;
+  destinationClusterId: string;
+  destinationSvmName: string;
+  destinationVolumeName: string;
+  destinationAggregate: string;
+  policyMode: "existing" | "new";
+  policyName?: string;
+  newPolicy?: { name: string; type: "async" | "sync" };
+  scheduleMode: "none" | "existing" | "new";
+  scheduleName?: string;
+  newSchedule?: { name: string; preset: SchedulePreset };
+  autoInitialize: boolean;
+}
+
 export interface MetroClusterStatus {
   configured: boolean;
   mode: string;

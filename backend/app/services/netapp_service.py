@@ -34,8 +34,10 @@ from netapp_ontap.resources import (
     LunMap,
     Metrocluster,
     Node,
+    Schedule,
     SecurityCertificate,
     Snapshot,
+    SnapmirrorPolicy,
     SnapmirrorRelationship,
     Svm,
     SvmPeer,
@@ -376,7 +378,7 @@ class NetAppOntapService:
                                 name=_get_nested(lun, "name", ""),
                                 svm_name=_get_nested(lun, "svm.name"),
                                 volume_name=_get_nested(lun, "location.volume.name"),
-                                state=_get_nested(lun, "state"),
+                                state=_get_nested(lun, "status.state"),
                                 size_bytes=_get_nested(lun, "space.size"),
                                 os_type=_get_nested(lun, "os_type"),
                             )
@@ -565,26 +567,97 @@ class NetAppOntapService:
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"Initiator-Gruppe konnte nicht angelegt werden: {exc}") from exc
 
-    def create_volume(self, svm_name: str, name: str, aggregate_name: str, size_bytes: int) -> None:
+    def create_volume(
+        self, svm_name: str, name: str, aggregate_name: str, size_bytes: int,
+        *, security_style: str | None = None, guarantee_type: str | None = None, volume_type: str | None = None,
+    ) -> None:
         with self._connection():
-            payload = {"name": name, "svm": {"name": svm_name}, "aggregates": [{"name": aggregate_name}], "size": size_bytes}
+            payload: dict = {"name": name, "svm": {"name": svm_name}, "aggregates": [{"name": aggregate_name}], "size": size_bytes}
+            if security_style:
+                payload["nas"] = {"security_style": security_style}
+            if guarantee_type:
+                payload["guarantee"] = {"type": guarantee_type}
+            if volume_type:
+                payload["type"] = volume_type
             try:
                 Volume.from_dict(payload).post(poll=True, poll_timeout=120)
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"Volume konnte nicht angelegt werden: {exc}") from exc
 
-    def create_lun(self, svm_name: str, volume_name: str, lun_name: str, os_type: str, size_bytes: int) -> None:
+    def update_volume(self, uuid: str, *, size_bytes: int | None = None, state: str | None = None) -> None:
+        # WICHTIG: from_dict(...).patch() sendet einen LEEREN Request-Body,
+        # da das SDK Felder nur bei direkter Attribut-Zuweisung auf einem
+        # (frisch instanziierten oder per .get() geladenen) Resource-Objekt
+        # als "dirty" markiert -- ueber from_dict() gesetzte Felder werden
+        # von .patch() nicht erkannt (gegen echte Hardware verifiziert: PATCH
+        # mit from_dict() liefert 200 OK, aendert aber nichts). Deshalb hier
+        # bewusst Attribut-Zuweisung statt from_dict() verwenden.
+        with self._connection():
+            volume = Volume(uuid=uuid)
+            if size_bytes is not None:
+                volume.space = {"size": size_bytes}
+            if state is not None:
+                volume.state = state
+            try:
+                volume.patch(poll=True, poll_timeout=120)
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Volume konnte nicht geändert werden: {exc}") from exc
+
+    def delete_volume(self, uuid: str) -> None:
+        with self._connection():
+            try:
+                Volume.from_dict({"uuid": uuid}).delete(poll=True, poll_timeout=120)
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Volume konnte nicht gelöscht werden: {exc}") from exc
+
+    def create_lun(
+        self, svm_name: str, volume_name: str, lun_name: str, os_type: str, size_bytes: int,
+        *, space_allocation_enabled: bool = False,
+    ) -> None:
         with self._connection():
             payload = {
                 "name": f"/vol/{volume_name}/{lun_name}",
                 "svm": {"name": svm_name},
                 "os_type": os_type,
-                "space": {"size": size_bytes},
+                "space": {"size": size_bytes, "scsi_thin_provisioning_support_enabled": space_allocation_enabled},
             }
             try:
                 Lun.from_dict(payload).post()
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"LUN konnte nicht angelegt werden: {exc}") from exc
+
+    def update_lun(self, uuid: str, *, size_bytes: int | None = None, full_name: str | None = None, enabled: bool | None = None) -> None:
+        # Siehe Kommentar in update_volume: direkte Attribut-Zuweisung statt
+        # from_dict(), sonst sendet .patch() einen leeren Body.
+        with self._connection():
+            lun = Lun(uuid=uuid)
+            if size_bytes is not None:
+                lun.space = {"size": size_bytes}
+            if full_name is not None:
+                lun.name = full_name
+            if enabled is not None:
+                lun.enabled = enabled
+            try:
+                lun.patch()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN konnte nicht geändert werden: {exc}") from exc
+
+    def delete_lun(self, uuid: str) -> None:
+        with self._connection():
+            try:
+                Lun.from_dict({"uuid": uuid}).delete()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN konnte nicht gelöscht werden: {exc}") from exc
+
+    def delete_lun_map(self, lun_uuid: str, igroup_name: str, svm_name: str) -> None:
+        with self._connection():
+            try:
+                igroup = Igroup.find(name=igroup_name, **{"svm.name": svm_name})
+                if igroup is None:
+                    raise NetAppConnectionError(f"Initiator-Gruppe '{igroup_name}' nicht gefunden")
+                LunMap.from_dict({"lun": {"uuid": lun_uuid}, "igroup": {"uuid": igroup.uuid}}).delete()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN-Mapping konnte nicht entfernt werden: {exc}") from exc
 
     def create_lun_map(self, svm_name: str, lun_name: str, igroup_name: str) -> None:
         with self._connection():
@@ -593,6 +666,79 @@ class NetAppOntapService:
                 LunMap.from_dict(payload).post()
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"LUN-Mapping konnte nicht angelegt werden: {exc}") from exc
+
+    def list_snapmirror_policies(self) -> list[dict]:
+        with self._connection():
+            try:
+                policies = SnapmirrorPolicy.get_collection(fields="name,type,svm.name")
+                return [
+                    {"name": _get_nested(p, "name"), "type": _get_nested(p, "type"), "svm_name": _get_nested(p, "svm.name")}
+                    for p in policies
+                ]
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"SnapMirror-Policies konnten nicht abgerufen werden: {exc}") from exc
+
+    def create_snapmirror_policy(self, svm_name: str, name: str, policy_type: str) -> None:
+        with self._connection():
+            try:
+                SnapmirrorPolicy.from_dict({"name": name, "type": policy_type, "svm": {"name": svm_name}}).post()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"SnapMirror-Policy konnte nicht angelegt werden: {exc}") from exc
+
+    def list_schedules(self) -> list[dict]:
+        with self._connection():
+            try:
+                schedules = Schedule.get_collection(fields="name")
+                return [{"name": _get_nested(s, "name")} for s in schedules]
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Schedules konnten nicht abgerufen werden: {exc}") from exc
+
+    def create_schedule(self, name: str, preset: str) -> None:
+        # SnapMirror akzeptiert nur cron-basierte Schedules, keine
+        # Interval-Schedules (gegen echte Hardware verifiziert: "Schedule
+        # ... is an interval schedule. SnapMirror does not support interval
+        # schedules." bei 409 Conflict) -- daher hier bewusst ueber cron.minutes
+        # abbilden statt der einfacheren 'interval'-Variante.
+        cron: dict = {
+            "every_5min": {"minutes": list(range(0, 60, 5))},
+            "every_15min": {"minutes": list(range(0, 60, 15))},
+            "every_30min": {"minutes": [0, 30]},
+            "hourly": {"minutes": [0]},
+            "daily": {"minutes": [0], "hours": [0]},
+        }[preset]
+        with self._connection():
+            try:
+                Schedule.from_dict({"name": name, "cron": cron}).post()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Schedule konnte nicht angelegt werden: {exc}") from exc
+
+    def create_snapmirror_relationship(
+        self, source_path: str, destination_path: str, policy_name: str,
+        schedule_name: str | None = None, source_cluster_name: str | None = None,
+    ) -> str:
+        with self._connection():
+            source: dict = {"path": source_path}
+            if source_cluster_name:
+                source["cluster"] = {"name": source_cluster_name}
+            payload: dict = {"source": source, "destination": {"path": destination_path}, "policy": {"name": policy_name}}
+            if schedule_name:
+                payload["transfer_schedule"] = {"name": schedule_name}
+            try:
+                rel = SnapmirrorRelationship.from_dict(payload)
+                rel.post(poll=True, poll_timeout=120)
+                rel.get(fields="uuid")
+                return _get_nested(rel, "uuid", "")
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"SnapMirror-Beziehung konnte nicht angelegt werden: {exc}") from exc
+
+    def initialize_snapmirror_relationship(self, uuid: str) -> None:
+        with self._connection():
+            rel = SnapmirrorRelationship(uuid=uuid)
+            rel.state = "snapmirrored"
+            try:
+                rel.patch(poll=True, poll_timeout=180)
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"SnapMirror-Initialisierung fehlgeschlagen: {exc}") from exc
 
     def generate_cluster_peer_passphrase(self) -> tuple[str, list[str]]:
         """Erzeugt eine Peering-Passphrase auf diesem Cluster (Schritt 1 des

@@ -19,7 +19,18 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconCertificate, IconInfoCircle, IconLink, IconPlus, IconRadar2, IconRefresh, IconShieldCheck, IconShieldOff, IconTrash } from "@tabler/icons-react";
+import {
+  IconCertificate,
+  IconEdit,
+  IconInfoCircle,
+  IconLink,
+  IconPlus,
+  IconRadar2,
+  IconRefresh,
+  IconShieldCheck,
+  IconShieldOff,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -45,13 +56,27 @@ import { ClusterPeerFormModal } from "@/components/ClusterPeerFormModal";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { IgroupFormModal } from "@/components/IgroupFormModal";
-import { LunCreationModal } from "@/components/LunCreationModal";
+import { LunEditModal } from "@/components/LunEditModal";
 import { LunFormModal } from "@/components/LunFormModal";
+import { ProcessModal } from "@/components/ProcessModal";
+import type { ProcessPlan } from "@/components/ProcessModal";
+import { SnapmirrorFormModal } from "@/components/SnapmirrorFormModal";
 import { CapacityBarCard, DistributionCard, StatCard, StatRibbon, groupCount } from "@/components/StatRibbon";
 import { SvmPeerFormModal } from "@/components/SvmPeerFormModal";
-import type { LunCreationPlan, NetAppCluster, NetAppClusterPeer, SnapMirrorRelationship } from "@/api/types";
+import { VolumeEditModal } from "@/components/VolumeEditModal";
+import { VolumeFormModal } from "@/components/VolumeFormModal";
+import type { NetAppCluster, NetAppClusterPeer, NetAppLun, NetAppVolume, SnapMirrorRelationship } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, formatLagTime } from "@/utils/format";
+import {
+  buildLunCreationSteps,
+  buildLunDeleteSteps,
+  buildLunEditSteps,
+  buildSnapmirrorCreationSteps,
+  buildVolumeCreationSteps,
+  buildVolumeDeleteSteps,
+  buildVolumeEditSteps,
+} from "@/utils/netappSteps";
 
 const HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
 const HEALTH_LABEL: Record<string, string> = {
@@ -360,13 +385,27 @@ export function StoragePage() {
   const { data: mcc } = useMetroClusterStatus();
   const { data: clusters } = useNetAppClusters();
   const relMenu = useContextMenu<SnapMirrorRelationship>();
+  const volMenu = useContextMenu<NetAppVolume>();
+  const lunMenu = useContextMenu<NetAppLun>();
   const [extraVolCols, setExtraVolCols] = useState<string[]>([]);
   const [peerDetail, setPeerDetail] = useState<NetAppClusterPeer | null>(null);
   const [igroupFormOpen, setIgroupFormOpen] = useState(false);
   const [lunFormOpen, setLunFormOpen] = useState(false);
-  const [lunPlan, setLunPlan] = useState<LunCreationPlan | null>(null);
+  const [volumeFormOpen, setVolumeFormOpen] = useState(false);
   const [clusterPeerFormOpen, setClusterPeerFormOpen] = useState(false);
   const [svmPeerFormOpen, setSvmPeerFormOpen] = useState(false);
+  const [process, setProcess] = useState<ProcessPlan | null>(null);
+  const [selectedLun, setSelectedLun] = useState<NetAppLun | null>(null);
+  const [selectedVolume, setSelectedVolume] = useState<NetAppVolume | null>(null);
+  const [lunEditOpen, setLunEditOpen] = useState(false);
+  const [volumeEditOpen, setVolumeEditOpen] = useState(false);
+  const [snapmirrorFormOpen, setSnapmirrorFormOpen] = useState(false);
+  const [snapmirrorInitialSource, setSnapmirrorInitialSource] = useState<{
+    clusterId: string;
+    svmName: string;
+    volumeName: string;
+    sizeBytes: number;
+  } | null>(null);
 
   const nodeStats = useMemo(() => {
     const uptimes = (platforms ?? []).map((p) => p.uptime_seconds).filter((u): u is number => u != null);
@@ -414,12 +453,37 @@ export function StoragePage() {
 
   const nifStats = useMemo(() => ({ states: groupCount(networkInterfaces, (i) => i.state) }), [networkInterfaces]);
 
+  const igroupStats = useMemo(
+    () => ({ osTypes: groupCount(igroups, (ig) => ig.os_type), protocols: groupCount(igroups, (ig) => ig.protocol) }),
+    [igroups],
+  );
+
   function triggerUpdate(rel: SnapMirrorRelationship) {
     notifications.show({
       title: "SnapMirror-Update ausgeloest",
       message: `${rel.source_path} -> ${rel.destination_path}`,
       color: "blue",
     });
+  }
+
+  function handleDeleteVolume(vol: NetAppVolume) {
+    if (!window.confirm(`Volume '${vol.name}' wirklich löschen? Dies kann nicht rückgängig gemacht werden.`)) return;
+    setProcess({ title: "Volume löschen", steps: buildVolumeDeleteSteps(vol.cluster_id, vol.uuid ?? "") });
+  }
+
+  function handleDeleteLun(lun: NetAppLun) {
+    if (!window.confirm(`LUN '${lun.name}' wirklich löschen? Dies kann nicht rückgängig gemacht werden.`)) return;
+    setProcess({ title: "LUN löschen", steps: buildLunDeleteSteps(lun.cluster_id, lun.uuid ?? "") });
+  }
+
+  function openSnapmirrorForVolume(vol: NetAppVolume) {
+    setSnapmirrorInitialSource({
+      clusterId: vol.cluster_id,
+      svmName: vol.svm_name ?? "",
+      volumeName: vol.name,
+      sizeBytes: vol.size_bytes ?? 1073741824,
+    });
+    setSnapmirrorFormOpen(true);
   }
 
   return (
@@ -491,7 +555,10 @@ export function StoragePage() {
             <CapacityBarCard label="Kapazität" used={volumeStats.totalUsed} total={volumeStats.totalSize} formatValue={formatBytes} />
             <DistributionCard label="Security Style" items={volumeStats.securityStyles} />
           </StatRibbon>
-          <Group justify="flex-end" mb="xs">
+          <Group justify="space-between" mb="xs">
+            <Button leftSection={<IconPlus size={16} />} onClick={() => setVolumeFormOpen(true)}>
+              Volume anlegen
+            </Button>
             <MultiSelect
               placeholder="Weitere Attribute anzeigen..."
               data={[
@@ -506,6 +573,9 @@ export function StoragePage() {
               w={360}
             />
           </Group>
+          <Text size="xs" c="dimmed" mb={4}>
+            Rechtsklick auf ein Volume für Bearbeiten / Löschen / SnapMirror-Replikation erstellen.
+          </Text>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -526,7 +596,7 @@ export function StoragePage() {
             </Table.Thead>
             <Table.Tbody>
               {volumes?.map((vol) => (
-                <Table.Tr key={vol.id}>
+                <Table.Tr key={vol.id} onContextMenu={(e) => volMenu.open(e, vol)} style={{ cursor: "context-menu" }}>
                   <Table.Td>{vol.cluster_name}</Table.Td>
                   <Table.Td>{vol.svm_name ?? "-"}</Table.Td>
                   <Table.Td>{vol.name}</Table.Td>
@@ -608,6 +678,9 @@ export function StoragePage() {
               LUN anlegen
             </Button>
           </Group>
+          <Text size="xs" c="dimmed" mb={4}>
+            Rechtsklick auf eine LUN für Bearbeiten / Löschen.
+          </Text>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -623,7 +696,7 @@ export function StoragePage() {
             </Table.Thead>
             <Table.Tbody>
               {luns?.map((lun) => (
-                <Table.Tr key={lun.id}>
+                <Table.Tr key={lun.id} onContextMenu={(e) => lunMenu.open(e, lun)} style={{ cursor: "context-menu" }}>
                   <Table.Td>{lun.cluster_name}</Table.Td>
                   <Table.Td>{lun.svm_name ?? "-"}</Table.Td>
                   <Table.Td>{lun.volume_name ?? "-"}</Table.Td>
@@ -648,6 +721,11 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="igroups" pt="md">
+          <StatRibbon>
+            <StatCard label="Anzahl IGroups" value={igroups?.length ?? 0} />
+            <DistributionCard label="OS-Type" items={igroupStats.osTypes} />
+            <DistributionCard label="Protocol" items={igroupStats.protocols} />
+          </StatRibbon>
           <Group justify="flex-end" mb="xs">
             <Button leftSection={<IconPlus size={16} />} onClick={() => setIgroupFormOpen(true)}>
               IGroup anlegen
@@ -785,6 +863,17 @@ export function StoragePage() {
               items={snapmirrorStats.healthy.map((d) => ({ ...d, color: d.key === "OK" ? "green" : "red" }))}
             />
           </StatRibbon>
+          <Group justify="flex-end" mb="xs">
+            <Button
+              leftSection={<IconLink size={16} />}
+              onClick={() => {
+                setSnapmirrorInitialSource(null);
+                setSnapmirrorFormOpen(true);
+              }}
+            >
+              Neue SnapMirror-Beziehung
+            </Button>
+          </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -1008,6 +1097,43 @@ export function StoragePage() {
         <Menu.Item leftSection={<IconInfoCircle size={16} />}>Details anzeigen</Menu.Item>
       </ContextMenuDropdown>
 
+      <ContextMenuDropdown position={volMenu.state?.position ?? null} opened={!!volMenu.state} onClose={volMenu.close}>
+        <Menu.Label>{volMenu.state?.data.name}</Menu.Label>
+        <Menu.Item
+          leftSection={<IconEdit size={16} />}
+          onClick={() => {
+            if (!volMenu.state) return;
+            setSelectedVolume(volMenu.state.data);
+            setVolumeEditOpen(true);
+          }}
+        >
+          Bearbeiten
+        </Menu.Item>
+        <Menu.Item leftSection={<IconLink size={16} />} onClick={() => volMenu.state && openSnapmirrorForVolume(volMenu.state.data)}>
+          SnapMirror-Replikation erstellen
+        </Menu.Item>
+        <Menu.Item leftSection={<IconTrash size={16} />} color="red" onClick={() => volMenu.state && handleDeleteVolume(volMenu.state.data)}>
+          Löschen
+        </Menu.Item>
+      </ContextMenuDropdown>
+
+      <ContextMenuDropdown position={lunMenu.state?.position ?? null} opened={!!lunMenu.state} onClose={lunMenu.close}>
+        <Menu.Label>{lunMenu.state?.data.name}</Menu.Label>
+        <Menu.Item
+          leftSection={<IconEdit size={16} />}
+          onClick={() => {
+            if (!lunMenu.state) return;
+            setSelectedLun(lunMenu.state.data);
+            setLunEditOpen(true);
+          }}
+        >
+          Bearbeiten
+        </Menu.Item>
+        <Menu.Item leftSection={<IconTrash size={16} />} color="red" onClick={() => lunMenu.state && handleDeleteLun(lunMenu.state.data)}>
+          Löschen
+        </Menu.Item>
+      </ContextMenuDropdown>
+
       <IgroupFormModal opened={igroupFormOpen} onClose={() => setIgroupFormOpen(false)} clusters={clusters} svms={svms} />
       <LunFormModal
         opened={lunFormOpen}
@@ -1019,12 +1145,55 @@ export function StoragePage() {
         igroups={igroups}
         onSubmitPlan={(plan) => {
           setLunFormOpen(false);
-          setLunPlan(plan);
+          setProcess({ title: "LUN anlegen", steps: buildLunCreationSteps(plan) });
         }}
       />
-      <LunCreationModal opened={!!lunPlan} onClose={() => setLunPlan(null)} plan={lunPlan} />
+      <VolumeFormModal
+        opened={volumeFormOpen}
+        onClose={() => setVolumeFormOpen(false)}
+        clusters={clusters}
+        svms={svms}
+        aggregates={aggregates}
+        onSubmitPlan={(plan) => {
+          setVolumeFormOpen(false);
+          setProcess({ title: "Volume anlegen", steps: buildVolumeCreationSteps(plan) });
+        }}
+      />
+      <LunEditModal
+        opened={lunEditOpen}
+        onClose={() => setLunEditOpen(false)}
+        lun={selectedLun}
+        igroups={igroups}
+        onSubmitPlan={(plan) => {
+          setLunEditOpen(false);
+          setProcess({ title: "LUN bearbeiten", steps: buildLunEditSteps(plan) });
+        }}
+      />
+      <VolumeEditModal
+        opened={volumeEditOpen}
+        onClose={() => setVolumeEditOpen(false)}
+        volume={selectedVolume}
+        onSubmitPlan={(plan) => {
+          setVolumeEditOpen(false);
+          setProcess({ title: "Volume bearbeiten", steps: buildVolumeEditSteps(plan) });
+        }}
+      />
+      <SnapmirrorFormModal
+        opened={snapmirrorFormOpen}
+        onClose={() => setSnapmirrorFormOpen(false)}
+        clusters={clusters}
+        svms={svms}
+        volumes={volumes}
+        aggregates={aggregates}
+        initialSource={snapmirrorInitialSource}
+        onSubmitPlan={(plan) => {
+          setSnapmirrorFormOpen(false);
+          setProcess({ title: "SnapMirror-Beziehung erstellen", steps: buildSnapmirrorCreationSteps(plan) });
+        }}
+      />
       <ClusterPeerFormModal opened={clusterPeerFormOpen} onClose={() => setClusterPeerFormOpen(false)} clusters={clusters} />
       <SvmPeerFormModal opened={svmPeerFormOpen} onClose={() => setSvmPeerFormOpen(false)} clusters={clusters} svms={svms} />
+      <ProcessModal opened={!!process} onClose={() => setProcess(null)} plan={process} />
     </Stack>
   );
 }

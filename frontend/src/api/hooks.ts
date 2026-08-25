@@ -23,9 +23,11 @@ import type {
   ResourceGroup,
   RetentionType,
   Schedule,
+  ScheduleInfo,
   ScheduleType,
   SnapMirrorLabel,
   SnapMirrorRelationship,
+  SnapmirrorPolicyInfo,
   SvmPeerCreate,
   Vm,
 } from "@/api/types";
@@ -62,6 +64,22 @@ export function useLuns() {
   return useQuery({
     queryKey: ["luns"],
     queryFn: async () => (await apiClient.get<NetAppLun[]>("/storage/luns")).data,
+  });
+}
+
+export function useSnapmirrorPolicies(clusterId: string | null) {
+  return useQuery({
+    queryKey: ["snapmirror-policies", clusterId],
+    queryFn: async () => (await apiClient.get<SnapmirrorPolicyInfo[]>(`/netapp/clusters/${clusterId}/snapmirror-policies`)).data,
+    enabled: !!clusterId,
+  });
+}
+
+export function useNetAppSchedules(clusterId: string | null) {
+  return useQuery({
+    queryKey: ["netapp-schedules", clusterId],
+    queryFn: async () => (await apiClient.get<ScheduleInfo[]>(`/netapp/clusters/${clusterId}/schedules`)).data,
+    enabled: !!clusterId,
   });
 }
 
