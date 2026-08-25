@@ -8,6 +8,8 @@ import type {
   ClusterPeerCreate,
   Csv,
   DiscoveryStep,
+  HyperVCluster,
+  HyperVClusterCreate,
   IgroupCreate,
   MetroClusterStatus,
   NetAppAggregate,
@@ -380,6 +382,39 @@ export function useDeleteNetAppCluster() {
       await apiClient.delete(`/netapp/clusters/${id}`);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["netapp-clusters"] }),
+  });
+}
+
+export function useHyperVClusters() {
+  return useQuery({
+    queryKey: ["hyperv-clusters"],
+    queryFn: async () => (await apiClient.get<HyperVCluster[]>("/hyperv/clusters")).data,
+  });
+}
+
+export function useCreateHyperVCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: HyperVClusterCreate) => (await apiClient.post<HyperVCluster>("/hyperv/clusters", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["hyperv-clusters"] }),
+  });
+}
+
+export function useVerifyHyperVCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<HyperVCluster>(`/hyperv/clusters/${id}/verify`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["hyperv-clusters"] }),
+  });
+}
+
+export function useDeleteHyperVCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/hyperv/clusters/${id}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["hyperv-clusters"] }),
   });
 }
 

@@ -60,6 +60,29 @@ export interface NetAppCluster {
   created_at: string;
 }
 
+export type HyperVClusterHealth = "unknown" | "healthy" | "degraded" | "unreachable";
+
+export interface HyperVCluster {
+  id: string;
+  name: string;
+  management_address: string;
+  username: string;
+  hyperv_cluster_name?: string | null;
+  health: HyperVClusterHealth;
+  node_count: number;
+  healthy_node_count: number;
+  last_checked_at?: string | null;
+  last_check_error?: string | null;
+  created_at: string;
+}
+
+export interface HyperVClusterCreate {
+  name: string;
+  management_address: string;
+  username: string;
+  password: string;
+}
+
 export interface DiscoveryStep {
   step: string;
   success: boolean;

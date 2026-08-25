@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
     auth,
+    hyperv_clusters,
     jobs,
     logs,
     netapp_clusters,
@@ -48,6 +49,7 @@ app.include_router(auth.router)
 app.include_router(vms.router)
 app.include_router(storage.router)
 app.include_router(netapp_clusters.router)
+app.include_router(hyperv_clusters.router)
 app.include_router(jobs.router)
 app.include_router(resource_groups.router)
 app.include_router(schedules.router)

@@ -18,27 +18,31 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconEdit, IconInfoCircle, IconKey, IconPlus, IconTrash, IconUserPlus } from "@tabler/icons-react";
+import { IconEdit, IconInfoCircle, IconKey, IconPlus, IconRefresh, IconTrash, IconUserPlus } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
+  useDeleteHyperVCluster,
   useDeleteSchedule,
   useDeleteSnapMirrorLabel,
+  useHyperVClusters,
   useNetAppClusters,
   useNetAppSchedules,
   useSchedules,
   useSnapmirrorPolicies,
   useSnapMirrorLabels,
   useSvms,
+  useVerifyHyperVCluster,
 } from "@/api/hooks";
 import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useUsers, type UserRead } from "@/api/hooks.settings";
+import { HyperVClusterFormModal } from "@/components/HyperVClusterFormModal";
 import { NetAppScheduleFormModal } from "@/components/NetAppScheduleFormModal";
 import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
 import { ScheduleFormModal } from "@/components/ScheduleFormModal";
 import { SnapMirrorLabelFormModal } from "@/components/SnapMirrorLabelFormModal";
 import { SnapMirrorPolicyEditModal } from "@/components/SnapMirrorPolicyEditModal";
 import { SnapMirrorPolicyFormModal } from "@/components/SnapMirrorPolicyFormModal";
-import type { NetAppSnapMirrorPolicy, Schedule, SnapMirrorLabel } from "@/api/types";
+import type { HyperVCluster, NetAppSnapMirrorPolicy, Schedule, SnapMirrorLabel } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatSchedule } from "@/utils/format";
 import { buildPolicyCreationSteps, buildPolicyEditSteps, buildScheduleCreationSteps } from "@/utils/netappSteps";
@@ -48,6 +52,14 @@ const SCHEDULE_TYPE_LABEL: Record<string, string> = {
   daily: "Täglich",
   weekly: "Wöchentlich",
   monthly: "Monatlich",
+};
+
+const HYPERV_HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
+const HYPERV_HEALTH_LABEL: Record<string, string> = {
+  healthy: "Healthy",
+  degraded: "Eingeschränkt",
+  unreachable: "Nicht erreichbar",
+  unknown: "Unbekannt",
 };
 
 function ConfigRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -235,6 +247,32 @@ export function SettingsPage() {
       onSuccess: () => notifications.show({ title: "Label gelöscht", message: label.name, color: "blue" }),
       onError: (err) =>
         notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Label konnte nicht gelöscht werden."), color: "red" }),
+    });
+  }
+
+  const { data: hyperVClusters } = useHyperVClusters();
+  const verifyHyperVCluster = useVerifyHyperVCluster();
+  const deleteHyperVCluster = useDeleteHyperVCluster();
+  const [hyperVFormOpen, setHyperVFormOpen] = useState(false);
+
+  function handleVerifyHyperVCluster(cluster: HyperVCluster) {
+    verifyHyperVCluster.mutate(cluster.id, {
+      onSuccess: (c) =>
+        notifications.show({
+          title: "Verbindung geprüft",
+          message: `${c.name}: ${HYPERV_HEALTH_LABEL[c.health]}`,
+          color: c.health === "healthy" ? "green" : "orange",
+        }),
+      onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Prüfung fehlgeschlagen."), color: "red" }),
+    });
+  }
+
+  function handleDeleteHyperVCluster(cluster: HyperVCluster) {
+    if (!window.confirm(`Hyper-V-Cluster '${cluster.name}' wirklich entfernen? Die gespeicherten Zugangsdaten werden gelöscht.`)) return;
+    deleteHyperVCluster.mutate(cluster.id, {
+      onSuccess: () => notifications.show({ title: "Cluster entfernt", message: cluster.name, color: "blue" }),
+      onError: (err) =>
+        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Cluster konnte nicht entfernt werden."), color: "red" }),
     });
   }
 
@@ -596,13 +634,76 @@ export function SettingsPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="hyperv" pt="md">
-          <Paper p="md" maw={520}>
-            <Stack gap="xs">
-              <ConfigRow label="WinRM-Transport" value={settings?.winrm_transport ?? "-"} />
-              <ConfigRow label="WinRM ueber HTTPS" value={settings?.winrm_use_https ? "Ja" : "Nein"} />
-              <ConfigRow label="WinRM-Port" value={settings?.winrm_port ?? "-"} />
-            </Stack>
-          </Paper>
+          <Stack>
+            <Paper p="md">
+              <Group justify="space-between" mb="sm">
+                <Title order={5}>Hyper-V-Cluster</Title>
+                <Button leftSection={<IconPlus size={16} />} onClick={() => setHyperVFormOpen(true)}>
+                  Hyper-V-Cluster hinzufügen
+                </Button>
+              </Group>
+              <Table striped highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>IP-Adresse</Table.Th>
+                    <Table.Th>Benutzer</Table.Th>
+                    <Table.Th>Cluster-Name</Table.Th>
+                    <Table.Th>Health</Table.Th>
+                    <Table.Th>Letzte Prüfung</Table.Th>
+                    <Table.Th>Aktionen</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {hyperVClusters?.map((c) => (
+                    <Table.Tr key={c.id}>
+                      <Table.Td>{c.name}</Table.Td>
+                      <Table.Td>{c.management_address}</Table.Td>
+                      <Table.Td>{c.username}</Table.Td>
+                      <Table.Td>{c.hyperv_cluster_name ?? "-"}</Table.Td>
+                      <Table.Td>
+                        <Tooltip label={c.last_check_error ?? ""} disabled={!c.last_check_error}>
+                          <Badge color={HYPERV_HEALTH_COLOR[c.health]} variant="light">
+                            {HYPERV_HEALTH_LABEL[c.health]}
+                            {c.node_count > 0 ? ` (${c.healthy_node_count}/${c.node_count} Knoten)` : ""}
+                          </Badge>
+                        </Tooltip>
+                      </Table.Td>
+                      <Table.Td>{c.last_checked_at ? new Date(c.last_checked_at).toLocaleString("de-DE") : "nie"}</Table.Td>
+                      <Table.Td>
+                        <Group gap="xs">
+                          <ActionIcon variant="light" onClick={() => handleVerifyHyperVCluster(c)}>
+                            <IconRefresh size={16} />
+                          </ActionIcon>
+                          <ActionIcon variant="light" color="red" onClick={() => handleDeleteHyperVCluster(c)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Group>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+              {hyperVClusters?.length === 0 && (
+                <Text c="dimmed" size="sm" ta="center" py="md">
+                  Noch keine Hyper-V-Cluster hinzugefügt.
+                </Text>
+              )}
+            </Paper>
+
+            <HyperVClusterFormModal opened={hyperVFormOpen} onClose={() => setHyperVFormOpen(false)} />
+
+            <Paper p="md" maw={520}>
+              <Title order={5} mb="sm">
+                Globale WinRM-Einstellungen
+              </Title>
+              <Stack gap="xs">
+                <ConfigRow label="WinRM-Transport" value={settings?.winrm_transport ?? "-"} />
+                <ConfigRow label="WinRM ueber HTTPS" value={settings?.winrm_use_https ? "Ja" : "Nein"} />
+                <ConfigRow label="WinRM-Port" value={settings?.winrm_port ?? "-"} />
+              </Stack>
+            </Paper>
+          </Stack>
         </Tabs.Panel>
 
         <Tabs.Panel value="updates" pt="md">
@@ -620,9 +721,10 @@ export function SettingsPage() {
       <ProcessModal opened={!!process} onClose={() => setProcess(null)} plan={process} />
 
       <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
-        Die Tabs "Active Directory", "NetApp-Verbindung", "Hyper-V-Hosts" und "Updates (Git)" zeigen die aktuell aktive
+        Die Tabs "Active Directory", "NetApp-Verbindung" und "Updates (Git)" zeigen die aktuell aktive
         Server-Konfiguration (aus Umgebungsvariablen/.env) nur an. Bearbeitung direkt aus der GUI folgt fuer diese
-        Bereiche in einer kommenden Iteration.
+        Bereiche in einer kommenden Iteration. Die globalen WinRM-Einstellungen unter "Hyper-V-Hosts" gelten ebenso
+        nur zur Anzeige -- sie werden fuer alle registrierten Hyper-V-Cluster verwendet.
       </Alert>
     </Stack>
   );

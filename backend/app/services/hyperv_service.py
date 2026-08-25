@@ -58,6 +58,24 @@ class CommandResult:
     error: str = ""
 
 
+@dataclass
+class HyperVClusterNodeSummary:
+    name: str
+    state: str
+
+
+@dataclass
+class HyperVClusterSummary:
+    cluster_name: str
+    node_count: int
+    healthy_node_count: int
+    nodes: list[HyperVClusterNodeSummary] = field(default_factory=list)
+
+
+class HyperVConnectionError(Exception):
+    """Verbindungsaufbau oder Cluster-Abfrage per WinRM fehlgeschlagen."""
+
+
 class HyperVService:
     def __init__(self, settings: Settings, target_host: str):
         self._settings = settings
@@ -79,6 +97,42 @@ class HyperVService:
             success=result.status_code == 0,
             output=result.std_out.decode("utf-8", errors="replace"),
             error=result.std_err.decode("utf-8", errors="replace"),
+        )
+
+    def get_cluster_summary(self, username: str, password: str) -> HyperVClusterSummary:
+        """Verbindungstest + Basisinfo (Cluster-Name, Knoten-Status). Wird
+        sowohl beim Hinzufuegen eines Hyper-V-Clusters als auch fuer die
+        regelmaessige Aktualisierung der Cluster-Uebersicht genutzt.
+        Verbindet zum Cluster Name Object (CNO) -- WinRM/PS-Remoting dorthin
+        routet transparent zum jeweils aktiven Knoten."""
+        script = (
+            "$cluster = Get-Cluster; "
+            "$nodes = Get-ClusterNode | Select-Object Name, State; "
+            "[PSCustomObject]@{ ClusterName = $cluster.Name; Nodes = $nodes } | ConvertTo-Json -Depth 4"
+        )
+        try:
+            session = self._session(username, password)
+            result = self._run_ps(session, script)
+        except Exception as exc:  # WinRM-Transportfehler (Timeout, DNS, TLS, Auth) sind keine einheitliche Exception-Klasse
+            raise HyperVConnectionError(str(exc)) from exc
+        if not result.success:
+            raise HyperVConnectionError(result.error or "Get-Cluster/Get-ClusterNode fehlgeschlagen")
+
+        try:
+            data = json.loads(result.output)
+        except json.JSONDecodeError as exc:
+            raise HyperVConnectionError(f"Unerwartete Antwort: {result.output}") from exc
+
+        nodes_raw = data.get("Nodes") or []
+        nodes_raw = nodes_raw if isinstance(nodes_raw, list) else [nodes_raw]
+        nodes = [HyperVClusterNodeSummary(name=n["Name"], state=str(n["State"])) for n in nodes_raw]
+        healthy_count = sum(1 for n in nodes if n.state == "Up")
+
+        return HyperVClusterSummary(
+            cluster_name=data.get("ClusterName") or self._target_host,
+            node_count=len(nodes),
+            healthy_node_count=healthy_count,
+            nodes=nodes,
         )
 
     def list_vms(self, session: winrm.Session) -> list[VirtualMachineInfo]:
