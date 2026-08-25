@@ -586,6 +586,14 @@ class NetAppOntapService:
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"LUN konnte nicht angelegt werden: {exc}") from exc
 
+    def create_lun_map(self, svm_name: str, lun_name: str, igroup_name: str) -> None:
+        with self._connection():
+            payload = {"svm": {"name": svm_name}, "lun": {"name": lun_name}, "igroup": {"name": igroup_name}}
+            try:
+                LunMap.from_dict(payload).post()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN-Mapping konnte nicht angelegt werden: {exc}") from exc
+
     def generate_cluster_peer_passphrase(self) -> tuple[str, list[str]]:
         """Erzeugt eine Peering-Passphrase auf diesem Cluster (Schritt 1 des
         ONTAP-Cluster-Peering-Workflows, entspricht 'cluster peer create

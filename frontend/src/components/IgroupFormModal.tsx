@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Group, Modal, Select, Stack, TagsInput, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 
-import { useCreateIgroup } from "@/api/hooks";
+import { useCreateIgroup, useDiscoverNetAppCluster } from "@/api/hooks";
 import { IGROUP_OS_TYPES } from "@/api/types";
 import type { NetAppCluster, NetAppSvm } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
@@ -16,6 +16,7 @@ interface IgroupFormModalProps {
 
 export function IgroupFormModal({ opened, onClose, clusters, svms }: IgroupFormModalProps) {
   const createIgroup = useCreateIgroup();
+  const discoverCluster = useDiscoverNetAppCluster();
   const [clusterId, setClusterId] = useState<string | null>(null);
   const [svmName, setSvmName] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -46,6 +47,7 @@ export function IgroupFormModal({ opened, onClose, clusters, svms }: IgroupFormM
         onSuccess: () => {
           notifications.show({ title: "Initiator-Gruppe angelegt", message: name, color: "green" });
           onClose();
+          discoverCluster.mutate(clusterId);
         },
         onError: (err) =>
           notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Initiator-Gruppe konnte nicht angelegt werden."), color: "red" }),

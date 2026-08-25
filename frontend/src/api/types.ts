@@ -191,10 +191,40 @@ export interface LunCreate {
   lun_name: string;
   os_type: string;
   size_bytes: number;
-  volume_mode: "existing" | "new";
   volume_name: string;
-  new_volume_aggregate?: string | null;
-  new_volume_size_bytes?: number | null;
+}
+
+export interface VolumeCreate {
+  svm_name: string;
+  name: string;
+  aggregate_name: string;
+  size_bytes: number;
+}
+
+export interface LunMapCreate {
+  svm_name: string;
+  lun_name: string;
+  igroup_name: string;
+}
+
+export interface LunCreationPlan {
+  clusterId: string;
+  svmName: string;
+  volumeMode: "existing" | "new";
+  volumeName: string;
+  newVolumeAggregate?: string;
+  newVolumeSizeBytes?: number;
+  lunName: string;
+  osType: string;
+  lunSizeBytes: number;
+  igroupMode: "none" | "existing" | "new";
+  igroupName?: string;
+  newIgroup?: {
+    name: string;
+    osType: string;
+    protocol: "fcp" | "iscsi" | "mixed";
+    initiators: string[];
+  };
 }
 
 export interface ClusterPeerCreate {

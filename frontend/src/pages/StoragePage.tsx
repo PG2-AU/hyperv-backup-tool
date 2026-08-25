@@ -45,10 +45,11 @@ import { ClusterPeerFormModal } from "@/components/ClusterPeerFormModal";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { IgroupFormModal } from "@/components/IgroupFormModal";
+import { LunCreationModal } from "@/components/LunCreationModal";
 import { LunFormModal } from "@/components/LunFormModal";
-import { DistributionCard, StatCard, StatRibbon, groupCount } from "@/components/StatRibbon";
+import { CapacityBarCard, DistributionCard, StatCard, StatRibbon, groupCount } from "@/components/StatRibbon";
 import { SvmPeerFormModal } from "@/components/SvmPeerFormModal";
-import type { NetAppCluster, NetAppClusterPeer, SnapMirrorRelationship } from "@/api/types";
+import type { LunCreationPlan, NetAppCluster, NetAppClusterPeer, SnapMirrorRelationship } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, formatLagTime } from "@/utils/format";
 
@@ -363,6 +364,7 @@ export function StoragePage() {
   const [peerDetail, setPeerDetail] = useState<NetAppClusterPeer | null>(null);
   const [igroupFormOpen, setIgroupFormOpen] = useState(false);
   const [lunFormOpen, setLunFormOpen] = useState(false);
+  const [lunPlan, setLunPlan] = useState<LunCreationPlan | null>(null);
   const [clusterPeerFormOpen, setClusterPeerFormOpen] = useState(false);
   const [svmPeerFormOpen, setSvmPeerFormOpen] = useState(false);
 
@@ -486,8 +488,7 @@ export function StoragePage() {
         <Tabs.Panel value="volumes" pt="md">
           <StatRibbon>
             <StatCard label="Anzahl Volumes" value={volumes?.length ?? 0} />
-            <StatCard label="Provisioniert" value={formatBytes(volumeStats.totalSize)} />
-            <StatCard label="Belegt" value={formatBytes(volumeStats.totalUsed)} />
+            <CapacityBarCard label="Kapazität" used={volumeStats.totalUsed} total={volumeStats.totalSize} formatValue={formatBytes} />
             <DistributionCard label="Security Style" items={volumeStats.securityStyles} />
           </StatRibbon>
           <Group justify="flex-end" mb="xs">
@@ -922,8 +923,7 @@ export function StoragePage() {
         <Tabs.Panel value="aggregates" pt="md">
           <StatRibbon>
             <StatCard label="Anzahl Aggregate" value={aggregates?.length ?? 0} />
-            <StatCard label="Gesamtspeicher" value={formatBytes(aggregateStats.totalSize)} />
-            <StatCard label="Gesamt belegt" value={formatBytes(aggregateStats.totalUsed)} />
+            <CapacityBarCard label="Kapazität" used={aggregateStats.totalUsed} total={aggregateStats.totalSize} formatValue={formatBytes} />
             <StatCard
               label="Storage Efficiency"
               value={aggregateStats.avgEfficiency != null ? `${aggregateStats.avgEfficiency.toFixed(2)} : 1` : "-"}
@@ -1016,7 +1016,13 @@ export function StoragePage() {
         svms={svms}
         volumes={volumes}
         aggregates={aggregates}
+        igroups={igroups}
+        onSubmitPlan={(plan) => {
+          setLunFormOpen(false);
+          setLunPlan(plan);
+        }}
       />
+      <LunCreationModal opened={!!lunPlan} onClose={() => setLunPlan(null)} plan={lunPlan} />
       <ClusterPeerFormModal opened={clusterPeerFormOpen} onClose={() => setClusterPeerFormOpen(false)} clusters={clusters} />
       <SvmPeerFormModal opened={svmPeerFormOpen} onClose={() => setSvmPeerFormOpen(false)} clusters={clusters} svms={svms} />
     </Stack>

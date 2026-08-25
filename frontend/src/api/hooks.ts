@@ -9,7 +9,6 @@ import type {
   Csv,
   DiscoveryStep,
   IgroupCreate,
-  LunCreate,
   MetroClusterStatus,
   NetAppAggregate,
   NetAppCluster,
@@ -368,7 +367,7 @@ export function useDeleteNetAppCluster() {
   });
 }
 
-const DISCOVERY_QUERY_KEYS = [
+export const DISCOVERY_QUERY_KEYS = [
   "netapp-clusters",
   "svms",
   "volumes",
@@ -395,15 +394,6 @@ export function useCreateIgroup() {
   return useMutation({
     mutationFn: async ({ clusterId, payload }: { clusterId: string; payload: IgroupCreate }) =>
       (await apiClient.post(`/netapp/clusters/${clusterId}/igroups`, payload)).data,
-    onSuccess: () => DISCOVERY_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })),
-  });
-}
-
-export function useCreateLun() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ clusterId, payload }: { clusterId: string; payload: LunCreate }) =>
-      (await apiClient.post(`/netapp/clusters/${clusterId}/luns`, payload)).data,
     onSuccess: () => DISCOVERY_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })),
   });
 }

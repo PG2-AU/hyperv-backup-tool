@@ -39,7 +39,7 @@ from app.models.netapp_discovery import (
     NetAppVolume,
 )
 from app.schemas.netapp_cluster import DiscoveryStepRead, NetAppClusterCreate, NetAppClusterRead
-from app.schemas.netapp_write import ClusterPeerCreate, IgroupCreate, LunCreate, SvmPeerCreate
+from app.schemas.netapp_write import ClusterPeerCreate, IgroupCreate, LunCreate, LunMapCreate, SvmPeerCreate, VolumeCreate
 from app.services.netapp_service import DiscoveryData, NetAppConnectionError, NetAppOntapService
 
 router = APIRouter(prefix="/api/netapp/clusters", tags=["netapp-clusters"])
@@ -339,13 +339,31 @@ def create_igroup(
     cluster_id: str, payload: IgroupCreate, db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.STORAGE_MANAGE)),
 ) -> dict:
+    """Legt nur die Initiator-Gruppe an -- loest KEINE Discovery aus. Aufrufer
+    (Standalone-Formular oder der mehrstufige LUN-Anlegen-Workflow) entscheiden
+    selbst, wann/ob im Anschluss neu discovert wird, damit der Fortschritt im
+    Frontend Schritt fuer Schritt sichtbar bleibt statt in einer einzelnen
+    Anfrage zu verschwinden."""
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
     try:
         service.create_igroup(payload.svm_name, payload.name, payload.os_type, payload.protocol, payload.initiators)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    _discover_and_persist(db, cluster)
+    return {"status": "created"}
+
+
+@router.post("/{cluster_id}/volumes", status_code=status.HTTP_201_CREATED)
+def create_volume(
+    cluster_id: str, payload: VolumeCreate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.create_volume(payload.svm_name, payload.name, payload.aggregate_name, payload.size_bytes)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"status": "created"}
 
 
@@ -354,22 +372,30 @@ def create_lun(
     cluster_id: str, payload: LunCreate, db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.STORAGE_MANAGE)),
 ) -> dict:
+    """Legt nur die LUN in einem (bereits existierenden) Volume an. Das
+    Anlegen eines neuen Volumes ist ein eigener Schritt (POST .../volumes),
+    den das Frontend bei Bedarf davor ausfuehrt -- dadurch kann der
+    LUN-Anlegen-Workflow jeden Teilschritt einzeln als Fortschritt anzeigen."""
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
     try:
-        if payload.volume_mode == "new":
-            if not payload.new_volume_aggregate or not payload.new_volume_size_bytes:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Aggregat und Größe für das neue Volume sind erforderlich",
-                )
-            service.create_volume(
-                payload.svm_name, payload.volume_name, payload.new_volume_aggregate, payload.new_volume_size_bytes
-            )
         service.create_lun(payload.svm_name, payload.volume_name, payload.lun_name, payload.os_type, payload.size_bytes)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    _discover_and_persist(db, cluster)
+    return {"status": "created"}
+
+
+@router.post("/{cluster_id}/lun-maps", status_code=status.HTTP_201_CREATED)
+def create_lun_map(
+    cluster_id: str, payload: LunMapCreate, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> dict:
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        service.create_lun_map(payload.svm_name, payload.lun_name, payload.igroup_name)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"status": "created"}
 
 

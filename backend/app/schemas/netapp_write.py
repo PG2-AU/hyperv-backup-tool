@@ -17,15 +17,25 @@ class IgroupCreate(BaseModel):
     initiators: list[str] = []
 
 
+class VolumeCreate(BaseModel):
+    svm_name: str
+    name: str
+    aggregate_name: str
+    size_bytes: int
+
+
 class LunCreate(BaseModel):
     svm_name: str
     lun_name: str
     os_type: LunOsType
     size_bytes: int
-    volume_mode: Literal["existing", "new"]
     volume_name: str
-    new_volume_aggregate: str | None = None
-    new_volume_size_bytes: int | None = None
+
+
+class LunMapCreate(BaseModel):
+    svm_name: str
+    lun_name: str
+    igroup_name: str
 
 
 class ClusterPeerCreate(BaseModel):
