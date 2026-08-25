@@ -5,6 +5,10 @@ from pydantic import BaseModel, ConfigDict
 from app.models.hyperv_cluster import HyperVClusterHealth
 
 
+class HyperVReachabilityCheck(BaseModel):
+    management_address: str
+
+
 class HyperVClusterCreate(BaseModel):
     name: str
     management_address: str

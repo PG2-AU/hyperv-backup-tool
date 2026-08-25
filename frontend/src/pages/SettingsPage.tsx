@@ -45,6 +45,7 @@ import { SnapMirrorPolicyFormModal } from "@/components/SnapMirrorPolicyFormModa
 import type { HyperVCluster, NetAppSnapMirrorPolicy, Schedule, SnapMirrorLabel } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatSchedule } from "@/utils/format";
+import { buildHyperVClusterCreationSteps } from "@/utils/hypervSteps";
 import { buildPolicyCreationSteps, buildPolicyEditSteps, buildScheduleCreationSteps } from "@/utils/netappSteps";
 
 const SCHEDULE_TYPE_LABEL: Record<string, string> = {
@@ -691,7 +692,14 @@ export function SettingsPage() {
               )}
             </Paper>
 
-            <HyperVClusterFormModal opened={hyperVFormOpen} onClose={() => setHyperVFormOpen(false)} />
+            <HyperVClusterFormModal
+              opened={hyperVFormOpen}
+              onClose={() => setHyperVFormOpen(false)}
+              onSubmitPlan={(plan) => {
+                setHyperVFormOpen(false);
+                setProcess({ title: "Hyper-V-Cluster hinzufügen", steps: buildHyperVClusterCreationSteps(plan) });
+              }}
+            />
 
             <Paper p="md" maw={520}>
               <Title order={5} mb="sm">

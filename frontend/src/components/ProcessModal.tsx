@@ -5,12 +5,14 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { apiErrorMessage } from "@/utils/errors";
 
-// Jeder Prozess (LUN/Volume/IGroup/SnapMirror anlegen/bearbeiten/loeschen)
-// aendert Storage-Objekte im Hintergrund; die zugehoerigen Listen sollen sich
-// danach einmalig aktualisieren, statt erst bei einem manuellen Reload.
+// Jeder Prozess (LUN/Volume/IGroup/SnapMirror/Hyper-V-Cluster anlegen/
+// bearbeiten/loeschen) aendert Objekte im Hintergrund; die zugehoerigen
+// Listen sollen sich danach einmalig aktualisieren, statt erst bei einem
+// manuellen Reload.
 const STORAGE_QUERY_KEYS = [
   "svms", "volumes", "luns", "igroups", "cluster-peers", "svm-peers", "snapmirror",
   "network-interfaces", "platforms", "aggregates", "netapp-clusters", "snapmirror-policies", "netapp-schedules",
+  "hyperv-clusters",
 ];
 
 export type StepStatus = "pending" | "running" | "success" | "error" | "skipped";

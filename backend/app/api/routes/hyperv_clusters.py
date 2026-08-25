@@ -16,8 +16,8 @@ from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
-from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead
-from app.services.hyperv_service import HyperVConnectionError, HyperVService
+from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead, HyperVReachabilityCheck
+from app.services.hyperv_service import HyperVConnectionError, HyperVService, check_reachability
 
 router = APIRouter(prefix="/api/hyperv/clusters", tags=["hyperv-clusters"])
 
@@ -62,6 +62,18 @@ def _refresh_status(db: Session, cluster: HyperVCluster) -> HyperVCluster:
 @router.get("", response_model=list[HyperVClusterRead])
 def list_clusters(db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_VIEW))) -> list[HyperVCluster]:
     return db.query(HyperVCluster).order_by(HyperVCluster.name).all()
+
+
+@router.post("/check-reachability")
+def check_reachability_route(
+    payload: HyperVReachabilityCheck, user=Depends(require_permission(Permission.HYPERV_MANAGE)),
+) -> dict:
+    settings = get_settings()
+    try:
+        check_reachability(payload.management_address, settings.winrm_port)
+    except HyperVConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "reachable"}
 
 
 @router.post("", response_model=HyperVClusterRead, status_code=status.HTTP_201_CREATED)

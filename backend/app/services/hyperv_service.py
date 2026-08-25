@@ -10,6 +10,7 @@ Checkpoints" (VSS-basiert) verwendet, fuer crash-konsistente Sicherungen
 from __future__ import annotations
 
 import json
+import socket
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -76,12 +77,27 @@ class HyperVConnectionError(Exception):
     """Verbindungsaufbau oder Cluster-Abfrage per WinRM fehlgeschlagen."""
 
 
+def check_reachability(host: str, port: int, timeout_sec: float = 5.0) -> None:
+    """Schneller TCP-Connect-Test auf den WinRM-Port, bevor der volle
+    WinRM/PowerShell-Handshake versucht wird. pywinrm's eigener Timeout
+    (Standard 30s) deckt zwar auch haengende Verbindungsversuche ab, aber ein
+    Host, der Pakete lautlos verwirft (Firewall-DROP statt REJECT), fuehlt
+    sich fuer den Nutzer wie ein Absturz ohne Fehlermeldung an, wenn man
+    30 Sekunden auf eine generische Fehlermeldung wartet. Dieser Schritt
+    scheitert stattdessen in wenigen Sekunden mit einer klaren Ursache."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout_sec):
+            return
+    except OSError as exc:
+        raise HyperVConnectionError(f"Host '{host}' ist auf Port {port} nicht erreichbar: {exc}") from exc
+
+
 class HyperVService:
     def __init__(self, settings: Settings, target_host: str):
         self._settings = settings
         self._target_host = target_host
 
-    def _session(self, username: str, password: str) -> winrm.Session:
+    def _session(self, username: str, password: str, *, read_timeout_sec: int = 30, operation_timeout_sec: int = 20) -> winrm.Session:
         scheme = "https" if self._settings.winrm_use_https else "http"
         endpoint = f"{scheme}://{self._target_host}:{self._settings.winrm_port}/wsman"
         return winrm.Session(
@@ -89,6 +105,8 @@ class HyperVService:
             auth=(username, password),
             transport=self._settings.winrm_transport,
             server_cert_validation="validate" if self._settings.winrm_use_https else "ignore",
+            read_timeout_sec=read_timeout_sec,
+            operation_timeout_sec=operation_timeout_sec,
         )
 
     def _run_ps(self, session: winrm.Session, script: str) -> CommandResult:
@@ -111,7 +129,7 @@ class HyperVService:
             "[PSCustomObject]@{ ClusterName = $cluster.Name; Nodes = $nodes } | ConvertTo-Json -Depth 4"
         )
         try:
-            session = self._session(username, password)
+            session = self._session(username, password, read_timeout_sec=15, operation_timeout_sec=10)
             result = self._run_ps(session, script)
         except Exception as exc:  # WinRM-Transportfehler (Timeout, DNS, TLS, Auth) sind keine einheitliche Exception-Klasse
             raise HyperVConnectionError(str(exc)) from exc

@@ -83,6 +83,14 @@ export interface HyperVClusterCreate {
   password: string;
 }
 
+export interface HyperVClusterCreationPlan {
+  name: string;
+  managementAddress: string;
+  username: string;
+  password: string;
+  winrmPort: number;
+}
+
 export interface DiscoveryStep {
   step: string;
   success: boolean;
