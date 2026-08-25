@@ -884,6 +884,7 @@ export function StoragePage() {
                 <Table.Th>Cluster</Table.Th>
                 <Table.Th>Quelle</Table.Th>
                 <Table.Th>Ziel</Table.Th>
+                <Table.Th>Ziel-Cluster</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Healthy</Table.Th>
                 <Table.Th>Lag Time</Table.Th>
@@ -899,6 +900,18 @@ export function StoragePage() {
                   <Table.Td>{rel.cluster_name}</Table.Td>
                   <Table.Td>{rel.source_path}</Table.Td>
                   <Table.Td>{rel.destination_path}</Table.Td>
+                  <Table.Td>
+                    <Group gap={4} wrap="nowrap">
+                      <Text size="sm">{rel.destination_cluster_name ?? "-"}</Text>
+                      {rel.destination_cluster_name && !clusters?.some((c) => c.ontap_cluster_name === rel.destination_cluster_name) && (
+                        <Tooltip label="Nicht in dieser App registriert -- Policy/Schedule hier nicht editierbar">
+                          <Badge size="xs" color="gray" variant="light">
+                            extern
+                          </Badge>
+                        </Tooltip>
+                      )}
+                    </Group>
+                  </Table.Td>
                   <Table.Td>{rel.state}</Table.Td>
                   <Table.Td>
                     <Tooltip label={rel.last_transfer_error ?? ""} disabled={!rel.last_transfer_error}>
@@ -1196,6 +1209,7 @@ export function StoragePage() {
         opened={snapmirrorEditOpen}
         onClose={() => setSnapmirrorEditOpen(false)}
         relationship={selectedRelationship}
+        clusters={clusters}
         onSubmitPlan={(plan) => {
           setSnapmirrorEditOpen(false);
           setProcess({ title: "SnapMirror-Beziehung bearbeiten", steps: buildSnapmirrorEditSteps(plan) });

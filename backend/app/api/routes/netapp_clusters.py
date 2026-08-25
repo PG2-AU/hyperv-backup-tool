@@ -145,7 +145,7 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
                     destination_path=rel.destination_path, state=rel.state, healthy=rel.healthy,
                     lag_time=rel.lag_time, last_transfer_size_bytes=rel.last_transfer_size_bytes,
                     last_transfer_error=rel.last_transfer_error, schedule_name=rel.schedule_name,
-                    policy_name=rel.policy_name, last_seen_at=now,
+                    policy_name=rel.policy_name, destination_cluster_name=rel.destination_cluster_name, last_seen_at=now,
                 )
             )
 

@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
-import { Button, Group, Modal, Select, Stack, Text, TextInput } from "@mantine/core";
+import { Alert, Button, Group, Modal, Select, Stack, Text, TextInput } from "@mantine/core";
+import { IconAlertTriangle } from "@tabler/icons-react";
 
 import { useNetAppSchedules, useSnapmirrorPolicies } from "@/api/hooks";
 import { PolicyRulesEditor } from "@/components/PolicyRulesEditor";
 import { ScheduleCronPicker, type CronValue } from "@/components/ScheduleCronPicker";
-import type { SnapMirrorPolicyRuleWrite, SnapmirrorEditPlan, SnapMirrorRelationship, VaultType } from "@/api/types";
+import type { NetAppCluster, SnapMirrorPolicyRuleWrite, SnapmirrorEditPlan, SnapMirrorRelationship, VaultType } from "@/api/types";
 
 interface SnapmirrorEditModalProps {
   opened: boolean;
   onClose: () => void;
   relationship: SnapMirrorRelationship | null;
+  clusters: NetAppCluster[] | undefined;
   onSubmitPlan: (plan: SnapmirrorEditPlan) => void;
 }
 
@@ -17,7 +19,7 @@ const NEW_POLICY_VALUE = "__new_policy__";
 const NEW_SCHEDULE_VALUE = "__new_schedule__";
 const NO_SCHEDULE_VALUE = "__no_schedule__";
 
-export function SnapmirrorEditModal({ opened, onClose, relationship, onSubmitPlan }: SnapmirrorEditModalProps) {
+export function SnapmirrorEditModal({ opened, onClose, relationship, clusters, onSubmitPlan }: SnapmirrorEditModalProps) {
   const [policySelection, setPolicySelection] = useState<string | null>(null);
   const [newPolicyName, setNewPolicyName] = useState("");
   const [newPolicyVaultType, setNewPolicyVaultType] = useState<VaultType>("vault");
@@ -26,11 +28,18 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, onSubmitPla
   const [newScheduleName, setNewScheduleName] = useState("");
   const [newScheduleCron, setNewScheduleCron] = useState<CronValue>({ minutes: [0], hours: [], days: [], weekdays: [] });
 
-  const clusterId = relationship?.cluster_id ?? null;
+  // Die Policy/Schedule-Auswahl haengt vom ZIELCLUSTER der Beziehung ab (dort
+  // muss die Policy existieren) -- das ist nicht zwangslaeufig der Cluster,
+  // ueber den wir die Beziehung entdeckt haben (relationship.cluster_id kann
+  // auch der Quell-Cluster sein). Wir loesen daher ueber den echten ONTAP-
+  // Cluster-Namen ('destination_cluster_name') auf, welcher unserer
+  // registrierten Cluster das tatsaechlich ist.
+  const destinationCluster = (clusters ?? []).find((c) => c.ontap_cluster_name === relationship?.destination_cluster_name);
+  const destinationClusterId = destinationCluster?.id ?? null;
   const { data: allPolicies } = useSnapmirrorPolicies();
   const { data: allSchedules } = useNetAppSchedules();
-  const policies = (allPolicies ?? []).filter((p) => p.cluster_id === clusterId);
-  const schedules = (allSchedules ?? []).filter((s) => s.cluster_id === clusterId);
+  const policies = (allPolicies ?? []).filter((p) => p.cluster_id === destinationClusterId);
+  const schedules = (allSchedules ?? []).filter((s) => s.cluster_id === destinationClusterId);
 
   const destinationSvmName = relationship?.destination_path?.split(":")[0] ?? "";
 
@@ -66,13 +75,14 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, onSubmitPla
     (scheduleMode === "existing" && scheduleSelection === relationship.schedule_name) ||
     (scheduleMode === "none" && !relationship.schedule_name);
   const canSubmit =
-    (!policyUnchanged && (policyMode === "existing" ? !!policySelection : !!newPolicyName && validNewPolicyRules.length > 0)) ||
-    (!scheduleUnchanged && (scheduleMode !== "new" || (!!newScheduleName && newScheduleCron.minutes.length > 0)));
+    !!destinationClusterId &&
+    ((!policyUnchanged && (policyMode === "existing" ? !!policySelection : !!newPolicyName && validNewPolicyRules.length > 0)) ||
+      (!scheduleUnchanged && (scheduleMode !== "new" || (!!newScheduleName && newScheduleCron.minutes.length > 0))));
 
   function handleSubmit() {
-    if (!relationship || !canSubmit) return;
+    if (!relationship || !canSubmit || !destinationClusterId) return;
     onSubmitPlan({
-      clusterId: relationship.cluster_id,
+      clusterId: destinationClusterId,
       relationshipUuid: relationship.uuid ?? "",
       sourcePath: relationship.source_path ?? "",
       destinationSvmName,
@@ -94,10 +104,27 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, onSubmitPla
   return (
     <Modal opened={opened} onClose={onClose} title={`SnapMirror-Beziehung bearbeiten: ${relationship.source_path}`} size="lg">
       <Stack>
+        <Text size="xs" c="dimmed">
+          Zielcluster: <strong>{relationship.destination_cluster_name ?? "unbekannt"}</strong>
+        </Text>
+        {!destinationCluster && (
+          <Alert icon={<IconAlertTriangle size={16} />} color="orange" variant="light">
+            Der Zielcluster '{relationship.destination_cluster_name ?? "?"}' ist nicht in dieser App registriert.
+            Policy und Schedule leben auf dem Zielcluster und können daher hier nicht bearbeitet werden.
+          </Alert>
+        )}
         <Text size="sm" fw={600}>
           SnapMirror-Policy
         </Text>
-        <Select label="Policy" data={policyOptions} value={policySelection} onChange={setPolicySelection} required searchable />
+        <Select
+          label="Policy"
+          data={policyOptions}
+          value={policySelection}
+          onChange={setPolicySelection}
+          disabled={!destinationCluster}
+          required
+          searchable
+        />
         {policyMode === "new" && (
           <Stack gap="xs">
             <Group grow>
@@ -120,7 +147,14 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, onSubmitPla
         <Text size="sm" fw={600} mt="sm">
           Schedule
         </Text>
-        <Select label="Schedule" data={scheduleOptions} value={scheduleSelection} onChange={setScheduleSelection} searchable />
+        <Select
+          label="Schedule"
+          data={scheduleOptions}
+          value={scheduleSelection}
+          onChange={setScheduleSelection}
+          disabled={!destinationCluster}
+          searchable
+        />
         {scheduleMode === "new" && (
           <Stack gap="xs">
             <TextInput label="Name des neuen Schedules" value={newScheduleName} onChange={(e) => setNewScheduleName(e.currentTarget.value)} required />

@@ -87,6 +87,7 @@ class SnapMirrorRelationshipInfo:
     last_transfer_error: str | None = None
     schedule_name: str | None = None
     policy_name: str | None = None
+    destination_cluster_name: str | None = None
 
 
 @dataclass
@@ -514,6 +515,7 @@ class NetAppOntapService:
                                 last_transfer_error=last_error,
                                 schedule_name=_get_nested(rel, "transfer_schedule.name"),
                                 policy_name=_get_nested(rel, "policy.name"),
+                                destination_cluster_name=_get_nested(rel, "destination.cluster.name"),
                             )
                         )
                     results.append(

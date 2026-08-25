@@ -164,6 +164,7 @@ class NetAppSnapMirrorRelationshipRead(BaseModel):
     last_transfer_error: str | None = None
     schedule_name: str | None = None
     policy_name: str | None = None
+    destination_cluster_name: str | None = None
     last_seen_at: datetime
 
 

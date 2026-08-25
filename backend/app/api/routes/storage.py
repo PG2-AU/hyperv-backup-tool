@@ -143,7 +143,8 @@ def list_snapmirror_relationships(
             uuid=r.uuid, source_path=r.source_path, destination_path=r.destination_path,
             state=r.state, healthy=r.healthy, lag_time=r.lag_time,
             last_transfer_size_bytes=r.last_transfer_size_bytes, last_transfer_error=r.last_transfer_error,
-            schedule_name=r.schedule_name, policy_name=r.policy_name, last_seen_at=r.last_seen_at,
+            schedule_name=r.schedule_name, policy_name=r.policy_name,
+            destination_cluster_name=r.destination_cluster_name, last_seen_at=r.last_seen_at,
         )
         for r in db.query(NetAppSnapMirrorRelationship).all()
     ]

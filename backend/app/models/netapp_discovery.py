@@ -130,6 +130,7 @@ class NetAppSnapMirrorRelationship(Base):
     last_transfer_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     schedule_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     policy_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    destination_cluster_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

@@ -143,6 +143,7 @@ export interface SnapMirrorRelationship extends NetAppDiscoveredBase {
   last_transfer_error?: string | null;
   schedule_name?: string | null;
   policy_name?: string | null;
+  destination_cluster_name?: string | null;
 }
 
 export interface NetAppNetworkInterface extends NetAppDiscoveredBase {

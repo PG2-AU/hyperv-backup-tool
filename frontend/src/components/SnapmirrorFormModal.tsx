@@ -37,6 +37,7 @@ export function SnapmirrorFormModal({
   const [destinationClusterId, setDestinationClusterId] = useState<string | null>(null);
   const [destinationSvmName, setDestinationSvmName] = useState<string | null>(null);
   const [destinationPrefix, setDestinationPrefix] = useState("dst_");
+  const [destinationSuffix, setDestinationSuffix] = useState("");
   const [destinationAggregate, setDestinationAggregate] = useState<string | null>(null);
   const [policySelection, setPolicySelection] = useState<string | null>(null);
   const [newPolicyName, setNewPolicyName] = useState("");
@@ -61,6 +62,7 @@ export function SnapmirrorFormModal({
     setDestinationClusterId(src?.clusterId ?? clusters?.[0]?.id ?? null);
     setDestinationSvmName(null);
     setDestinationPrefix("dst_");
+    setDestinationSuffix("");
     setDestinationAggregate(null);
     setPolicySelection(null);
     setNewPolicyName("");
@@ -92,7 +94,7 @@ export function SnapmirrorFormModal({
   const sourceVolume = (volumes ?? []).find(
     (v) => v.cluster_id === sourceClusterId && v.svm_name === sourceSvmName && v.name === sourceVolumeName,
   );
-  const destinationVolumeName = sourceVolumeName ? `${destinationPrefix}${sourceVolumeName}` : "";
+  const destinationVolumeName = sourceVolumeName ? `${destinationPrefix}${sourceVolumeName}${destinationSuffix}` : "";
   const policyMode = policySelection === NEW_POLICY_VALUE ? "new" : "existing";
   const scheduleMode = scheduleSelection === NEW_SCHEDULE_VALUE ? "new" : scheduleSelection === NO_SCHEDULE_VALUE ? "none" : "existing";
   const validNewPolicyRules = newPolicyRules.filter((r) => r.label.trim() && r.count > 0);
@@ -176,11 +178,18 @@ export function SnapmirrorFormModal({
           required
         />
         <Select label="Ziel-SVM" data={destinationSvmOptions} value={destinationSvmName} onChange={setDestinationSvmName} required searchable />
-        <TextInput
-          label="Ziel-Volume-Präfix"
-          value={destinationPrefix}
-          onChange={(e) => setDestinationPrefix(e.currentTarget.value)}
-        />
+        <Group grow>
+          <TextInput
+            label="Ziel-Volume-Präfix"
+            value={destinationPrefix}
+            onChange={(e) => setDestinationPrefix(e.currentTarget.value)}
+          />
+          <TextInput
+            label="Ziel-Volume-Suffix"
+            value={destinationSuffix}
+            onChange={(e) => setDestinationSuffix(e.currentTarget.value)}
+          />
+        </Group>
         {sourceVolumeName && (
           <Text size="xs" c="dimmed">
             Ziel-Volume-Name: <strong>{destinationVolumeName}</strong>
