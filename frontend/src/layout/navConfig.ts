@@ -1,7 +1,6 @@
 import {
   IconDatabase,
   IconLayoutDashboard,
-  IconServer,
   IconServerCog,
   IconSettings,
   IconStack2,
@@ -38,16 +37,11 @@ export const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
-    label: "NetApp-Systeme",
-    icon: IconServer,
-    path: "/netapp-clusters",
-    searchContext: "netapp-clusters",
-  },
-  {
     label: "Storage",
     icon: IconDatabase,
     searchContext: "storage",
     children: [
+      { label: "Cluster", path: "/storage?tab=clusters", searchContext: "netapp-clusters" },
       { label: "Storage Virtual Machines", path: "/storage?tab=svms" },
       { label: "SnapMirror-Beziehungen", path: "/storage?tab=snapmirror" },
       { label: "MetroCluster-Status", path: "/storage?tab=metrocluster" },

@@ -26,11 +26,16 @@ from netapp_ontap.error import NetAppRestError
 from netapp_ontap.resources import (
     Account,
     Cluster,
+    ClusterPeer,
+    IpInterface,
+    Lun,
     Metrocluster,
     Node,
     SecurityCertificate,
     Snapshot,
     SnapmirrorRelationship,
+    Svm,
+    SvmPeer,
     Volume,
 )
 
@@ -66,6 +71,14 @@ class ClusterSummary:
     healthy_node_count: int
     healthy: bool
     is_metrocluster: bool
+
+
+@dataclass
+class DiscoveryStepResult:
+    step: str
+    success: bool
+    message: str
+    count: int | None = None
 
 
 @dataclass
@@ -136,6 +149,45 @@ class NetAppOntapService:
             raise NetAppConnectionError(str(exc)) from exc
         except Exception as exc:  # Transportfehler (Timeout, DNS, TLS, ...) sind keine NetAppRestError
             raise NetAppConnectionError(str(exc)) from exc
+
+    def run_discovery(self) -> list[DiscoveryStepResult]:
+        """Fuehrt eine mehrstufige Cluster-Discovery durch (Login, SVMs,
+        Volumes, LUNs, Cluster-Peers, SVM-Peers, SnapMirror-Beziehungen,
+        Netzwerk-Interfaces). Jeder Schritt wird einzeln abgesichert, damit
+        z.B. eine fehlende SnapMirror-Lizenz nicht die gesamte Discovery
+        abbricht -- der jeweilige Schritt wird dann nur als fehlgeschlagen
+        markiert, die uebrigen Schritte laufen weiter."""
+        results: list[DiscoveryStepResult] = []
+
+        try:
+            with self._connection():
+                try:
+                    cluster = Cluster()
+                    cluster.get(fields="name")
+                    results.append(DiscoveryStepResult("login", True, f"Angemeldet an Cluster '{cluster.name}'"))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("login", False, str(exc)))
+                    return results  # ohne erfolgreichen Login sind weitere Schritte zwecklos
+
+                steps: list[tuple[str, type, str]] = [
+                    ("svms", Svm, "Storage Virtual Machine(s)"),
+                    ("volumes", Volume, "Volume(s)"),
+                    ("luns", Lun, "LUN(s)"),
+                    ("cluster_peers", ClusterPeer, "Cluster-Peer-Beziehung(en)"),
+                    ("svm_peers", SvmPeer, "SVM-Peer-Beziehung(en)"),
+                    ("snapmirror", SnapmirrorRelationship, "SnapMirror-Beziehung(en)"),
+                    ("network_interfaces", IpInterface, "Netzwerk-Interface(s)"),
+                ]
+                for step_id, resource_cls, noun in steps:
+                    try:
+                        items = list(resource_cls.get_collection())
+                        results.append(DiscoveryStepResult(step_id, True, f"{len(items)} {noun} gefunden", len(items)))
+                    except NetAppRestError as exc:
+                        results.append(DiscoveryStepResult(step_id, False, str(exc)))
+        except Exception as exc:  # Verbindungsfehler wie bei get_cluster_summary behandeln
+            results.append(DiscoveryStepResult("login", False, str(exc)))
+
+        return results
 
     def install_client_certificate(self, common_name: str, cert_dir: Path, file_stem: str) -> tuple[str, str]:
         """Erzeugt ein selbstsigniertes Client-Zertifikat, installiert es auf

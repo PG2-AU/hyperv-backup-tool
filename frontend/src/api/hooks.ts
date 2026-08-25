@@ -6,6 +6,7 @@ import type {
   BackupPolicy,
   BackupScope,
   Csv,
+  DiscoveryStep,
   MetroClusterStatus,
   NetAppCluster,
   ResourceGroup,
@@ -295,6 +296,14 @@ export function useDeleteNetAppCluster() {
     mutationFn: async (id: string) => {
       await apiClient.delete(`/netapp/clusters/${id}`);
     },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["netapp-clusters"] }),
+  });
+}
+
+export function useDiscoverNetAppCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<DiscoveryStep[]>(`/netapp/clusters/${id}/discover`)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["netapp-clusters"] }),
   });
 }

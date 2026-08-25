@@ -46,7 +46,7 @@ def search(
                         id=cluster.id,
                         label=cluster.name,
                         subtitle=f"{cluster.management_lif} / {cluster.health.value}",
-                        route="/netapp-clusters",
+                        route="/storage?tab=clusters",
                     )
                 )
 

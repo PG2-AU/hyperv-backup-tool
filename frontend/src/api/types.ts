@@ -59,6 +59,13 @@ export interface NetAppCluster {
   created_at: string;
 }
 
+export interface DiscoveryStep {
+  step: string;
+  success: boolean;
+  message: string;
+  count?: number | null;
+}
+
 export interface SvmInfo {
   name: string;
   state: string;

@@ -26,7 +26,7 @@ from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster, NetAppClusterHealth
-from app.schemas.netapp_cluster import NetAppClusterCreate, NetAppClusterRead
+from app.schemas.netapp_cluster import DiscoveryStepRead, NetAppClusterCreate, NetAppClusterRead
 from app.services.netapp_service import NetAppConnectionError, NetAppOntapService
 
 router = APIRouter(prefix="/api/netapp/clusters", tags=["netapp-clusters"])
@@ -165,6 +165,17 @@ def enroll_certificate(
             "Zurueckgestuft auf Kennwort-Authentifizierung.",
         )
     return cluster
+
+
+@router.post("/{cluster_id}/discover", response_model=list[DiscoveryStepRead])
+def discover_cluster(
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+):
+    cluster = db.get(NetAppCluster, cluster_id)
+    if cluster is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster nicht gefunden")
+    service = _service_for(cluster)
+    return service.run_discovery()
 
 
 @router.delete("/{cluster_id}", status_code=status.HTTP_204_NO_CONTENT)

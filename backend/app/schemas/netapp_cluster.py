@@ -13,6 +13,13 @@ class NetAppClusterCreate(BaseModel):
     verify_ssl: bool = True
 
 
+class DiscoveryStepRead(BaseModel):
+    step: str
+    success: bool
+    message: str
+    count: int | None = None
+
+
 class NetAppClusterRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
