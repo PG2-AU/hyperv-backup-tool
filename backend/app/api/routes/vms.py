@@ -1,18 +1,22 @@
 """VM- und CSV-Uebersicht.
 
-TODO(iteration): Aktuell werden Demo-Daten zurueckgegeben, damit die GUI
-gegen eine stabile Schnittstelle entwickelt werden kann. Anbindung an
-HyperVService.list_vms/list_csvs folgt, sobald die Host-Verwaltung
-(gespeicherte Hyper-V-Hosts/Cluster + Credentials) implementiert ist.
+VMs kommen inzwischen aus der echten Hyper-V-Discovery (siehe
+hyperv_clusters.py discover_cluster/HyperVService.run_vm_discovery) --
+persistiert in den Tabellen hyperv_vms/hyperv_vhds, hier nur noch
+zusammengefuehrt und in die bestehende VmRead-Form gebracht.
+
+TODO(iteration): CSVs sind weiterhin Demo-Daten; folgt als eigener
+Discovery-Schritt (Get-ClusterSharedVolume, siehe HyperVService.list_csvs).
 
 Resource-Group- und Policy-Zuordnung (siehe app.api.routes.resource_groups)
-ist dagegen bereits real: sie wird pro VM/CSV anhand der Mitgliedschaft in
+ist bereits real: sie wird pro VM/CSV anhand der Mitgliedschaft in
 gespeicherten ResourceGroups berechnet. Eine VM gilt auch dann als
 "protected", wenn sie selbst in keiner VM-Resource-Group liegt, aber auf
 einem CSV liegt, das Mitglied einer CSV-Resource-Group ist (indirekter
 Schutz -- die VM-Sicherung erfolgt in diesem Fall ueber das CSV-Backup).
 """
 
+from collections import defaultdict
 from ntpath import basename as win_basename
 
 from fastapi import APIRouter, Depends
@@ -22,33 +26,12 @@ from app.api.deps import require_permission
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.backup_policy import BackupScope
+from app.models.hyperv_cluster import HyperVCluster
+from app.models.hyperv_discovery import HyperVVhd, HyperVVm
 from app.models.resource_group import ResourceGroup
 from app.schemas.vm import CsvRead, VhdInfo, VmRead
 
 router = APIRouter(prefix="/api/vms", tags=["vms"])
-
-_DEMO_VMS = [
-    VmRead(
-        id="vm-001", name="APP-SQL01", state="Running", host="HV-NODE01", cluster="HV-CLUSTER01",
-        csv_paths=["C:\\ClusterStorage\\CSV1"], vhdx_size_bytes=536_870_912_000,
-        vhds=[VhdInfo(name="APP-SQL01.vhdx", size_bytes=536_870_912_000, csv_path="C:\\ClusterStorage\\CSV1")],
-    ),
-    VmRead(
-        id="vm-002", name="APP-WEB01", state="Running", host="HV-NODE02", cluster="HV-CLUSTER01",
-        csv_paths=["C:\\ClusterStorage\\CSV2"], vhdx_size_bytes=107_374_182_400,
-        vhds=[VhdInfo(name="APP-WEB01.vhdx", size_bytes=107_374_182_400, csv_path="C:\\ClusterStorage\\CSV2")],
-    ),
-    VmRead(
-        id="vm-003", name="DC-01", state="Running", host="HV-NODE01", cluster="HV-CLUSTER01",
-        csv_paths=["C:\\ClusterStorage\\CSV1"], vhdx_size_bytes=64_424_509_440,
-        vhds=[VhdInfo(name="DC-01.vhdx", size_bytes=64_424_509_440, csv_path="C:\\ClusterStorage\\CSV1")],
-    ),
-    VmRead(
-        id="vm-004", name="FILESRV-01", state="Off", host="HV-NODE03", cluster="HV-CLUSTER02",
-        csv_paths=["C:\\ClusterStorage\\CSV3"], vhdx_size_bytes=2_199_023_255_552,
-        vhds=[VhdInfo(name="FILESRV-01.vhdx", size_bytes=2_199_023_255_552, csv_path="C:\\ClusterStorage\\CSV3")],
-    ),
-]
 
 _DEMO_CSVS = [
     CsvRead(
@@ -101,7 +84,38 @@ def _annotate_vm(vm: VmRead, groups: list[ResourceGroup]) -> VmRead:
 @router.get("", response_model=list[VmRead])
 def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_VIEW))) -> list[VmRead]:
     groups = db.query(ResourceGroup).all()
-    return [_annotate_vm(vm, groups) for vm in _DEMO_VMS]
+    cluster_names = {c.id: c.name for c in db.query(HyperVCluster).all()}
+
+    vhds_by_vm: dict[tuple[str, str | None], list[HyperVVhd]] = defaultdict(list)
+    for vhd in db.query(HyperVVhd).all():
+        vhds_by_vm[(vhd.cluster_id, vhd.vm_uuid)].append(vhd)
+
+    vms: list[VmRead] = []
+    for vm in db.query(HyperVVm).order_by(HyperVVm.name).all():
+        vhds = vhds_by_vm.get((vm.cluster_id, vm.vm_uuid), [])
+        # csv_path bleibt der CSV-ORDNERPFAD (nicht der volle VHDX-Pfad), damit
+        # bestehende Basename-Logik (_csv_names_for_vm, Frontend-CSV-Gruppierung)
+        # unveraendert weiterfunktioniert.
+        csv_paths = sorted({f"C:\\ClusterStorage\\{v.csv_name}" for v in vhds if v.csv_name})
+        vm_read = VmRead(
+            id=vm.id,
+            name=vm.name,
+            state=vm.state or "",
+            host=vm.host_name or "",
+            cluster=cluster_names.get(vm.cluster_id),
+            csv_paths=csv_paths,
+            vhdx_size_bytes=sum(v.size_bytes or 0 for v in vhds),
+            vhds=[
+                VhdInfo(
+                    name=win_basename(v.path),
+                    size_bytes=v.size_bytes or 0,
+                    csv_path=f"C:\\ClusterStorage\\{v.csv_name}" if v.csv_name else v.path,
+                )
+                for v in vhds
+            ],
+        )
+        vms.append(_annotate_vm(vm_read, groups))
+    return vms
 
 
 @router.get("/csvs", response_model=list[CsvRead])

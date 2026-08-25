@@ -418,6 +418,17 @@ export function useDeleteHyperVCluster() {
   });
 }
 
+export function useDiscoverHyperVCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<DiscoveryStep[]>(`/hyperv/clusters/${id}/discover`)).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["hyperv-clusters"] });
+      queryClient.invalidateQueries({ queryKey: ["vms"] });
+    },
+  });
+}
+
 export const DISCOVERY_QUERY_KEYS = [
   "netapp-clusters",
   "svms",

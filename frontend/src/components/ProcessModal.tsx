@@ -45,6 +45,8 @@ const STATUS_ICON: Record<StepStatus, React.ReactNode> = {
 export interface ProcessPlan {
   title: string;
   steps: ProcessStepDef[];
+  /** Runs once when all steps have settled (success or error), before the user closes the modal. */
+  onSettled?: (hasError: boolean) => void;
 }
 
 export function ProcessModal({ opened, onClose, plan }: { opened: boolean; onClose: () => void; plan: ProcessPlan | null }) {
@@ -87,6 +89,7 @@ export function ProcessModal({ opened, onClose, plan }: { opened: boolean; onClo
         // egal ob alle Schritte erfolgreich waren oder nur ein Teil, damit
         // bereits durchgefuehrte Aenderungen sofort sichtbar werden.
         for (const key of STORAGE_QUERY_KEYS) queryClient.invalidateQueries({ queryKey: [key] });
+        plan.onSettled?.(failed);
       }
     })();
 

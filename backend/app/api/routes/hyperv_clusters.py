@@ -5,6 +5,7 @@ Registriert wird der Cluster (Cluster Name Object / Management-IP), nicht die
 einzelnen Knoten -- vgl. NetApp-Cluster-Verwaltung in netapp_clusters.py.
 """
 
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,10 +17,19 @@ from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
+from app.models.hyperv_discovery import HyperVVhd, HyperVVm
 from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead, HyperVReachabilityCheck
+from app.schemas.netapp_cluster import DiscoveryStepRead
 from app.services.hyperv_service import HyperVConnectionError, HyperVService, check_reachability
 
 router = APIRouter(prefix="/api/hyperv/clusters", tags=["hyperv-clusters"])
+
+_CSV_NAME_RE = re.compile(r"ClusterStorage\\([^\\]+)\\", re.IGNORECASE)
+
+
+def _parse_csv_name(vhd_path: str) -> str | None:
+    match = _CSV_NAME_RE.search(vhd_path)
+    return match.group(1) if match else None
 
 
 def _get_cluster_or_404(db: Session, cluster_id: str) -> HyperVCluster:
@@ -121,3 +131,37 @@ def delete_cluster(
     cluster = _get_cluster_or_404(db, cluster_id)
     db.delete(cluster)
     db.commit()
+
+
+@router.post("/{cluster_id}/discover", response_model=list[DiscoveryStepRead])
+def discover_cluster(
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_MANAGE)),
+):
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    steps, data = service.run_vm_discovery(cluster.username, decrypt_secret(cluster.encrypted_password))
+
+    # Nur ersetzen, wenn mindestens ein Knoten erfolgreich abgefragt wurde --
+    # sonst wuerde ein voruebergehend nicht erreichbarer Cluster die bereits
+    # bekannten VMs faelschlich loeschen (analog zur NetApp-Discovery).
+    if any(s.success for s in steps if s.step == "vms"):
+        now = datetime.now(timezone.utc)
+        db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster.id).delete()
+        db.query(HyperVVm).filter(HyperVVm.cluster_id == cluster.id).delete()
+        for vm in data.vms:
+            db.add(
+                HyperVVm(
+                    cluster_id=cluster.id, vm_uuid=vm.id, name=vm.name, state=vm.state, host_name=vm.host, last_seen_at=now,
+                )
+            )
+            for vhd in vm.vhds:
+                db.add(
+                    HyperVVhd(
+                        cluster_id=cluster.id, vm_uuid=vm.id, vm_name=vm.name, path=vhd.path,
+                        csv_name=_parse_csv_name(vhd.path), size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
+                        last_seen_at=now,
+                    )
+                )
+        db.commit()
+
+    return steps

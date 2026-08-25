@@ -25,13 +25,19 @@ class ConsistencyType(StrEnum):
 
 
 @dataclass
+class VhdDetail:
+    path: str
+    size_bytes: int = 0
+    used_bytes: int = 0
+
+
+@dataclass
 class VirtualMachineInfo:
     name: str
     id: str
     state: str
     host: str
-    csv_paths: list[str] = field(default_factory=list)
-    vhdx_size_bytes: int = 0
+    vhds: list[VhdDetail] = field(default_factory=list)
 
 
 @dataclass
@@ -71,6 +77,19 @@ class HyperVClusterSummary:
     node_count: int
     healthy_node_count: int
     nodes: list[HyperVClusterNodeSummary] = field(default_factory=list)
+
+
+@dataclass
+class DiscoveryStepResult:
+    step: str
+    success: bool
+    message: str
+    count: int | None = None
+
+
+@dataclass
+class HyperVDiscoveryData:
+    vms: list[VirtualMachineInfo] = field(default_factory=list)
 
 
 class HyperVConnectionError(Exception):
@@ -134,9 +153,14 @@ class HyperVService:
         regelmaessige Aktualisierung der Cluster-Uebersicht genutzt.
         Verbindet zum Cluster Name Object (CNO) -- WinRM/PS-Remoting dorthin
         routet transparent zum jeweils aktiven Knoten."""
+        # WICHTIG: ConvertTo-Json serialisiert den ClusterNodeState-Enum ohne
+        # .ToString() als rohe Ganzzahl (0 = Up), nicht als "Up" -- gegen
+        # echte Hardware verifiziert (State kam als "0" zurueck, wurde daher
+        # faelschlich als "nicht Up" gewertet). Deshalb hier explizit
+        # stringifizieren, analog zu list_vms().
         script = (
             "$cluster = Get-Cluster; "
-            "$nodes = Get-ClusterNode | Select-Object Name, State; "
+            "$nodes = Get-ClusterNode | Select-Object Name, @{N='State';E={$_.State.ToString()}}; "
             "[PSCustomObject]@{ ClusterName = $cluster.Name; Nodes = $nodes } | ConvertTo-Json -Depth 4"
         )
         try:
@@ -165,12 +189,22 @@ class HyperVService:
         )
 
     def list_vms(self, session: winrm.Session) -> list[VirtualMachineInfo]:
+        # Get-VM liefert nur die auf DIESEM Host lokalen VMs -- fuer eine
+        # clusterweite Sicht wird diese Methode daher pro Knoten einzeln
+        # aufgerufen (siehe run_vm_discovery), nicht einmalig gegen den CNO.
+        # $env:COMPUTERNAME statt $vm.ComputerName, da wir wissen, mit
+        # welchem Knoten diese Session tatsaechlich verbunden ist.
         script = (
-            "Get-VM | Select-Object Name, Id, State, ComputerName, "
-            "@{N='CsvPaths';E={($_.HardDrives).Path}}, "
-            "@{N='VhdSizeBytes';E={"
-            "($_.HardDrives | ForEach-Object { (Get-VHD -Path $_.Path).Size } | Measure-Object -Sum).Sum"
-            "}} | ConvertTo-Json -Depth 4"
+            "$vms = Get-VM; "
+            "$hostName = $env:COMPUTERNAME; "
+            "$vms | ForEach-Object { "
+            "$vm = $_; "
+            "$vhds = @($vm.HardDrives | ForEach-Object { "
+            "$info = Get-VHD -Path $_.Path -ErrorAction SilentlyContinue; "
+            "[PSCustomObject]@{ Path = $_.Path; SizeBytes = $(if ($info) { $info.Size } else { 0 }); UsedBytes = $(if ($info) { $info.FileSize } else { 0 }) } "
+            "}); "
+            "[PSCustomObject]@{ Name = $vm.Name; Id = $vm.Id.ToString(); State = $vm.State.ToString(); ComputerName = $hostName; Vhds = $vhds } "
+            "} | ConvertTo-Json -Depth 5"
         )
         result = self._run_ps(session, script)
         if not result.success:
@@ -178,17 +212,81 @@ class HyperVService:
 
         raw = json.loads(result.output or "[]")
         entries = raw if isinstance(raw, list) else [raw]
-        return [
-            VirtualMachineInfo(
-                name=e["Name"],
-                id=e["Id"],
-                state=str(e["State"]),
-                host=e.get("ComputerName", self._target_host),
-                csv_paths=[p for p in (e.get("CsvPaths") or []) if p],
-                vhdx_size_bytes=int(e.get("VhdSizeBytes") or 0),
+        vms = []
+        for e in entries:
+            vhds_raw = e.get("Vhds") or []
+            vhds_raw = vhds_raw if isinstance(vhds_raw, list) else [vhds_raw]
+            vhds = [
+                VhdDetail(path=v["Path"], size_bytes=int(v.get("SizeBytes") or 0), used_bytes=int(v.get("UsedBytes") or 0))
+                for v in vhds_raw
+                if v.get("Path")
+            ]
+            vms.append(
+                VirtualMachineInfo(
+                    name=e["Name"], id=e["Id"], state=str(e["State"]), host=e.get("ComputerName", self._target_host), vhds=vhds,
+                )
             )
-            for e in entries
-        ]
+        return vms
+
+    def _node_management_ips(self, session: winrm.Session) -> dict[str, str]:
+        """Liefert je Knoten die IP-Adresse im 'ClusterAndClient'-Netzwerk
+        (dem Management-Netz, auf dem auch der CNO selbst erreichbar ist).
+        Vermeidet DNS-Aufloesung der (oft nur per NetBIOS/AD-DNS bekannten)
+        Knoten-Kurznamen -- gegen echte Hardware verifiziert: Knoten-Namen
+        waren vom Container aus nicht aufloesbar, die per
+        Get-ClusterNetworkInterface ermittelten IPs schon."""
+        script = (
+            "Get-ClusterNetworkInterface | Where-Object { $_.Network.Role.ToString() -eq 'ClusterAndClient' } "
+            "| Select-Object Node, Address | ConvertTo-Json -Depth 3"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            return {}
+        try:
+            raw = json.loads(result.output or "[]")
+        except json.JSONDecodeError:
+            return {}
+        entries = raw if isinstance(raw, list) else [raw]
+        return {e["Node"]: e["Address"] for e in entries if e.get("Node") and e.get("Address")}
+
+    def run_vm_discovery(self, username: str, password: str) -> tuple[list[DiscoveryStepResult], HyperVDiscoveryData]:
+        """Erkennt alle VMs im Cluster inkl. ihrer VHDs (Pfad/Speicherort +
+        Groesse) sowie des Knotens, auf dem sie laufen. Verbindet sich dazu
+        NICHT nur zum CNO, sondern zusaetzlich einzeln zu jedem Cluster-
+        Knoten: Get-VM liefert nur lokale VMs, und ein 'zweiter Hop' vom CNO
+        zu einem Knoten INNERHALB derselben Session wuerde bei NTLM (ohne
+        Credential-Delegation) fehlschlagen. Jeder Knoten wird daher per
+        eigener, direkter WinRM-Verbindung vom Container aus abgefragt --
+        ueber seine Management-IP statt seinen (oft nicht aufloesbaren)
+        Namen, siehe _node_management_ips."""
+        results: list[DiscoveryStepResult] = []
+        data = HyperVDiscoveryData()
+
+        try:
+            cno_session = self._session(username, password, read_timeout_sec=15, operation_timeout_sec=10)
+            summary = self.get_cluster_summary(username, password)
+            results.append(DiscoveryStepResult("login", True, f"Angemeldet an Cluster '{summary.cluster_name}'"))
+        except HyperVConnectionError as exc:
+            results.append(DiscoveryStepResult("login", False, str(exc)))
+            return results, data
+
+        node_ips = self._node_management_ips(cno_session)
+
+        for node in summary.nodes:
+            if node.state != "Up":
+                results.append(DiscoveryStepResult("vms", False, f"Knoten '{node.name}' übersprungen (Status: {node.state})"))
+                continue
+            target = node_ips.get(node.name, node.name)
+            try:
+                node_service = HyperVService(self._settings, target, use_https=self._use_https)
+                session = node_service._session(username, password)
+                vms = node_service.list_vms(session)
+                data.vms.extend(vms)
+                results.append(DiscoveryStepResult("vms", True, f"{len(vms)} VM(s) auf '{node.name}' gefunden", len(vms)))
+            except Exception as exc:
+                results.append(DiscoveryStepResult("vms", False, f"Knoten '{node.name}' ({target}): {exc}"))
+
+        return results, data
 
     def list_csvs(self, session: winrm.Session) -> list[ClusterSharedVolumeInfo]:
         script = (

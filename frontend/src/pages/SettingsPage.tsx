@@ -18,13 +18,14 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconEdit, IconInfoCircle, IconKey, IconPlus, IconRefresh, IconTrash, IconUserPlus } from "@tabler/icons-react";
+import { IconEdit, IconInfoCircle, IconKey, IconPlus, IconRadar2, IconRefresh, IconTrash, IconUserPlus } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
   useDeleteHyperVCluster,
   useDeleteSchedule,
   useDeleteSnapMirrorLabel,
+  useDiscoverHyperVCluster,
   useHyperVClusters,
   useNetAppClusters,
   useNetAppSchedules,
@@ -35,6 +36,7 @@ import {
   useVerifyHyperVCluster,
 } from "@/api/hooks";
 import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useUsers, type UserRead } from "@/api/hooks.settings";
+import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { HyperVClusterFormModal } from "@/components/HyperVClusterFormModal";
 import { NetAppScheduleFormModal } from "@/components/NetAppScheduleFormModal";
 import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
@@ -254,7 +256,19 @@ export function SettingsPage() {
   const { data: hyperVClusters } = useHyperVClusters();
   const verifyHyperVCluster = useVerifyHyperVCluster();
   const deleteHyperVCluster = useDeleteHyperVCluster();
+  const discoverHyperVCluster = useDiscoverHyperVCluster();
   const [hyperVFormOpen, setHyperVFormOpen] = useState(false);
+  const [hyperVDiscoveryOpen, setHyperVDiscoveryOpen] = useState(false);
+  const [hyperVDiscoveryClusterName, setHyperVDiscoveryClusterName] = useState<string | undefined>(undefined);
+
+  function runHyperVDiscovery(clusterId: string, clusterName: string) {
+    setHyperVDiscoveryClusterName(clusterName);
+    setHyperVDiscoveryOpen(true);
+    discoverHyperVCluster.mutate(clusterId, {
+      onError: (err) =>
+        notifications.show({ title: "Discovery fehlgeschlagen", message: apiErrorMessage(err, "Unbekannter Fehler."), color: "red" }),
+    });
+  }
 
   function handleVerifyHyperVCluster(cluster: HyperVCluster) {
     verifyHyperVCluster.mutate(cluster.id, {
@@ -682,6 +696,9 @@ export function SettingsPage() {
                           <ActionIcon variant="light" onClick={() => handleVerifyHyperVCluster(c)}>
                             <IconRefresh size={16} />
                           </ActionIcon>
+                          <ActionIcon variant="light" onClick={() => runHyperVDiscovery(c.id, c.name)}>
+                            <IconRadar2 size={16} />
+                          </ActionIcon>
                           <ActionIcon variant="light" color="red" onClick={() => handleDeleteHyperVCluster(c)}>
                             <IconTrash size={16} />
                           </ActionIcon>
@@ -703,8 +720,25 @@ export function SettingsPage() {
               onClose={() => setHyperVFormOpen(false)}
               onSubmitPlan={(plan) => {
                 setHyperVFormOpen(false);
-                setProcess({ title: "Hyper-V-Cluster hinzufügen", steps: buildHyperVClusterCreationSteps(plan) });
+                let createdClusterId: string | null = null;
+                setProcess({
+                  title: "Hyper-V-Cluster hinzufügen",
+                  steps: buildHyperVClusterCreationSteps(plan, (id) => {
+                    createdClusterId = id;
+                  }),
+                  onSettled: (hasError) => {
+                    if (!hasError && createdClusterId) runHyperVDiscovery(createdClusterId, plan.name);
+                  },
+                });
               }}
+            />
+
+            <DiscoveryModal
+              opened={hyperVDiscoveryOpen}
+              onClose={() => setHyperVDiscoveryOpen(false)}
+              clusterName={hyperVDiscoveryClusterName}
+              steps={discoverHyperVCluster.data}
+              isLoading={discoverHyperVCluster.isPending}
             />
 
             <Paper p="md" maw={520}>

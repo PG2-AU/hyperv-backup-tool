@@ -16,6 +16,13 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        # Discovery-Endpunkte (NetApp/Hyper-V) koennen bei mehreren Clustern/
+        # Knoten laenger als die nginx-Standardwerte (60s) dauern; ohne diese
+        # Erhoehung liefert nginx sonst ein generisches 504-Gateway-Timeout
+        # (HTML statt JSON), was im Frontend wie ein Absturz ohne
+        # Fehlermeldung wirkt.
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
     }
 
     location / {

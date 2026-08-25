@@ -19,6 +19,7 @@ const STEP_META: Record<string, { emoji: string; label: string }> = {
   network_interfaces: { emoji: "🌐", label: "Network Interfaces" },
   platforms: { emoji: "🖥️", label: "Sammle Plattform-Informationen" },
   aggregates: { emoji: "🪨", label: "Sammle Informationen über Aggregate" },
+  vms: { emoji: "💻", label: "Sammle Informationen über VMs" },
 };
 
 const REVEAL_DELAY_MS = 550;
