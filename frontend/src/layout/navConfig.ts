@@ -59,7 +59,7 @@ export const NAV_ITEMS: NavItem[] = [
     searchContext: "jobs",
     children: [
       { label: "Policies", path: "/jobs?tab=policies" },
-      { label: "Resource Groups", path: "/resource-groups", searchContext: "resource-groups" },
+      { label: "Protection Groups", path: "/resource-groups", searchContext: "resource-groups" },
       { label: "Job-Verlauf", path: "/jobs?tab=runs" },
     ],
   },

@@ -1,6 +1,7 @@
-"""Resource Groups: buendeln VMs oder CSVs zu einer benannten Gruppe (z.B.
-'Bronze'), die mit einer oder mehreren Backup-Policies verknuepft wird.
-Resource Group + Policy zusammen ergeben die Backup-Definition."""
+"""Protection Groups (intern weiterhin als ResourceGroup modelliert):
+buendeln VMs oder CSVs zu einer benannten Gruppe (z.B. 'Bronze'), die mit
+einer oder mehreren Backup-Policies verknuepft wird. Protection Group +
+Policy zusammen ergeben die Backup-Definition."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -40,7 +41,7 @@ def create_resource_group(
     user=Depends(require_permission(Permission.BACKUP_CREATE)),
 ) -> ResourceGroup:
     if db.query(ResourceGroup).filter(ResourceGroup.name == payload.name).first() is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Eine Resource Group mit diesem Namen existiert bereits")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Eine Protection Group mit diesem Namen existiert bereits")
 
     group = ResourceGroup(
         name=payload.name,
@@ -63,11 +64,11 @@ def update_resource_group(
 ) -> ResourceGroup:
     group = db.get(ResourceGroup, group_id)
     if group is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource Group nicht gefunden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Protection Group nicht gefunden")
 
     duplicate = db.query(ResourceGroup).filter(ResourceGroup.name == payload.name, ResourceGroup.id != group_id).first()
     if duplicate is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Eine Resource Group mit diesem Namen existiert bereits")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Eine Protection Group mit diesem Namen existiert bereits")
 
     group.name = payload.name
     group.scope = payload.scope
@@ -84,6 +85,6 @@ def delete_resource_group(
 ) -> None:
     group = db.get(ResourceGroup, group_id)
     if group is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource Group nicht gefunden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Protection Group nicht gefunden")
     db.delete(group)
     db.commit()

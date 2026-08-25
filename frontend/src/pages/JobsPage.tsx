@@ -68,7 +68,7 @@ export function JobsPage() {
 
   return (
     <Stack>
-      <Title order={3}>Backup-Jobs</Title>
+      <Title order={3}>Backup</Title>
 
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "policies" })}>
         <Tabs.List>

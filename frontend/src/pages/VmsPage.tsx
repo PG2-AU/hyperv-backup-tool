@@ -80,7 +80,7 @@ export function VmsPage() {
                 <Table.Th>Cluster</Table.Th>
                 <Table.Th>CSV-Pfade</Table.Th>
                 <Table.Th>VHDX-Größe</Table.Th>
-                <Table.Th>Resource Group</Table.Th>
+                <Table.Th>Protection Group</Table.Th>
                 <Table.Th>Protected</Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -121,7 +121,7 @@ export function VmsPage() {
                 <Table.Th>Belegung</Table.Th>
                 <Table.Th>LUN</Table.Th>
                 <Table.Th>Volume</Table.Th>
-                <Table.Th>Resource Group</Table.Th>
+                <Table.Th>Protection Group</Table.Th>
                 <Table.Th>Protected</Table.Th>
               </Table.Tr>
             </Table.Thead>

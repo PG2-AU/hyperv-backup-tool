@@ -66,13 +66,13 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
 
     mutation
       .then((saved) => {
-        notifications.show({ title: isEdit ? "Resource Group aktualisiert" : "Resource Group erstellt", message: saved.name, color: "green" });
+        notifications.show({ title: isEdit ? "Protection Group aktualisiert" : "Protection Group erstellt", message: saved.name, color: "green" });
         onClose();
       })
       .catch((err) => {
         notifications.show({
           title: "Fehler",
-          message: apiErrorMessage(err, "Resource Group konnte nicht gespeichert werden."),
+          message: apiErrorMessage(err, "Protection Group konnte nicht gespeichert werden."),
           color: "red",
         });
       });
@@ -81,7 +81,7 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
   const isPending = createGroup.isPending || updateGroup.isPending;
 
   return (
-    <Modal opened={opened} onClose={onClose} title={isEdit ? "Resource Group bearbeiten" : "Resource Group anlegen"} size="lg">
+    <Modal opened={opened} onClose={onClose} title={isEdit ? "Protection Group bearbeiten" : "Protection Group anlegen"} size="lg">
       <Stack>
         <TextInput label="Name" placeholder="z.B. Bronze" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
 

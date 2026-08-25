@@ -29,20 +29,20 @@ export function ResourceGroupsPage() {
   }
 
   function removeGroup(group: ResourceGroup) {
-    if (!window.confirm(`Resource Group '${group.name}' wirklich löschen?`)) return;
+    if (!window.confirm(`Protection Group '${group.name}' wirklich löschen?`)) return;
     deleteGroup.mutate(group.id, {
-      onSuccess: () => notifications.show({ title: "Resource Group gelöscht", message: group.name, color: "blue" }),
+      onSuccess: () => notifications.show({ title: "Protection Group gelöscht", message: group.name, color: "blue" }),
       onError: (err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Resource Group konnte nicht gelöscht werden."), color: "red" }),
+        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Protection Group konnte nicht gelöscht werden."), color: "red" }),
     });
   }
 
   return (
     <Stack>
       <Group justify="space-between">
-        <Title order={3}>Resource Groups</Title>
+        <Title order={3}>Protection Groups</Title>
         <Button leftSection={<IconPlus size={16} />} onClick={openCreate}>
-          Resource Group anlegen
+          Protection Group anlegen
         </Button>
       </Group>
 
@@ -93,7 +93,7 @@ export function ResourceGroupsPage() {
         </Table>
         {groups?.length === 0 && (
           <Text c="dimmed" size="sm" ta="center" py="md">
-            Noch keine Resource Groups angelegt.
+            Noch keine Protection Groups angelegt.
           </Text>
         )}
       </Paper>

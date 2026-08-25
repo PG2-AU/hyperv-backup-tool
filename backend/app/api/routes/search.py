@@ -61,7 +61,7 @@ def search(
     if context in (None, "jobs"):
         for policy in db.query(BackupPolicy).all():
             if needle in policy.name.lower():
-                subtitle = f"{len(policy.resource_groups)} Resource Group(s)" if policy.resource_groups else "keine Resource Group"
+                subtitle = f"{len(policy.resource_groups)} Protection Group(s)" if policy.resource_groups else "keine Protection Group"
                 results.append(SearchResult(type="Policy", id=policy.id, label=policy.name, subtitle=subtitle, route=f"/jobs/{policy.id}"))
 
     if context in (None, "resource-groups"):
@@ -69,10 +69,10 @@ def search(
             if needle in group.name.lower():
                 results.append(
                     SearchResult(
-                        type="Resource Group",
+                        type="Protection Group",
                         id=group.id,
                         label=group.name,
-                        subtitle=f"{group.scope.value} / {len(group.members)} Mitglieder",
+                        subtitle=f"{group.scope.value} / {len(group.members)} Objekte",
                         route="/resource-groups",
                     )
                 )
