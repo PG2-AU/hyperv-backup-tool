@@ -1,3 +1,9 @@
+export interface VhdInfo {
+  name: string;
+  size_bytes: number;
+  csv_path: string;
+}
+
 export interface Vm {
   id: string;
   name: string;
@@ -6,6 +12,7 @@ export interface Vm {
   cluster?: string | null;
   csv_paths: string[];
   vhdx_size_bytes?: number | null;
+  vhds: VhdInfo[];
   resource_group_names: string[];
   policy_names: string[];
   protected: boolean;
@@ -19,7 +26,13 @@ export interface Csv {
   capacity_bytes?: number | null;
   used_bytes?: number | null;
   lun_name?: string | null;
+  lun_capacity_bytes?: number | null;
+  lun_used_bytes?: number | null;
   volume_name?: string | null;
+  volume_capacity_bytes?: number | null;
+  volume_used_bytes?: number | null;
+  svm_name?: string | null;
+  netapp_cluster_name?: string | null;
   resource_group_names: string[];
   policy_names: string[];
   protected: boolean;
