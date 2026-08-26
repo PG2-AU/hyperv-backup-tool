@@ -20,6 +20,7 @@ const STEP_META: Record<string, { emoji: string; label: string }> = {
   platforms: { emoji: "🖥️", label: "Sammle Plattform-Informationen" },
   aggregates: { emoji: "🪨", label: "Sammle Informationen über Aggregate" },
   vms: { emoji: "💻", label: "Sammle Informationen über VMs" },
+  csvs: { emoji: "🗄️", label: "Sammle Informationen über CSVs" },
 };
 
 const REVEAL_DELAY_MS = 550;

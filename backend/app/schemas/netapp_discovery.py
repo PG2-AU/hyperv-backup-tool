@@ -108,6 +108,7 @@ class NetAppLunRead(BaseModel):
     size_bytes: int | None = None
     os_type: str | None = None
     mapped_igroups: str | None = None
+    serial_number: str | None = None
     last_seen_at: datetime
 
 

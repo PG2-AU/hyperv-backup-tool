@@ -425,6 +425,7 @@ export function useDiscoverHyperVCluster() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["hyperv-clusters"] });
       queryClient.invalidateQueries({ queryKey: ["vms"] });
+      queryClient.invalidateQueries({ queryKey: ["csvs"] });
     },
   });
 }

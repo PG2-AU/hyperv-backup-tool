@@ -17,7 +17,9 @@ from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
-from app.models.hyperv_discovery import HyperVVhd, HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
+from app.models.netapp_cluster import NetAppCluster
+from app.models.netapp_discovery import NetAppLun
 from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead, HyperVReachabilityCheck
 from app.schemas.netapp_cluster import DiscoveryStepRead
 from app.services.hyperv_service import HyperVConnectionError, HyperVService, check_reachability
@@ -139,7 +141,7 @@ def discover_cluster(
 ):
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
-    steps, data = service.run_vm_discovery(cluster.username, decrypt_secret(cluster.encrypted_password))
+    steps, data = service.run_discovery(cluster.username, decrypt_secret(cluster.encrypted_password))
 
     # Nur ersetzen, wenn mindestens ein Knoten erfolgreich abgefragt wurde --
     # sonst wuerde ein voruebergehend nicht erreichbarer Cluster die bereits
@@ -162,6 +164,34 @@ def discover_cluster(
                         last_seen_at=now,
                     )
                 )
+        db.commit()
+
+    if any(s.success for s in steps if s.step == "csvs"):
+        now = datetime.now(timezone.utc)
+        # Seriennummer -> NetApp-LUN ueber alle registrierten NetApp-Cluster
+        # hinweg (die Windows-Disk-Seriennummer entspricht ONTAP's
+        # lun.serial_number, siehe list_csvs()); Clustername separat
+        # aufloesen, da NetAppLun selbst nur die cluster_id speichert.
+        netapp_cluster_names = {c.id: c.ontap_cluster_name or c.name for c in db.query(NetAppCluster).all()}
+        luns_by_serial = {
+            lun.serial_number: lun for lun in db.query(NetAppLun).all() if lun.serial_number
+        }
+        db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster.id).delete()
+        for csv in data.csvs:
+            lun = luns_by_serial.get(csv.disk_serial_number) if csv.disk_serial_number else None
+            db.add(
+                HyperVCsv(
+                    cluster_id=cluster.id, name=csv.name, path=csv.volume_path, owner_node=csv.owner_node,
+                    state=csv.state, capacity_bytes=csv.capacity_bytes, used_bytes=csv.used_bytes,
+                    disk_serial_number=csv.disk_serial_number,
+                    netapp_lun_id=lun.id if lun else None,
+                    netapp_lun_name=lun.name if lun else None,
+                    netapp_volume_name=lun.volume_name if lun else None,
+                    netapp_svm_name=lun.svm_name if lun else None,
+                    netapp_cluster_name=netapp_cluster_names.get(lun.cluster_id) if lun else None,
+                    last_seen_at=now,
+                )
+            )
         db.commit()
 
     return steps

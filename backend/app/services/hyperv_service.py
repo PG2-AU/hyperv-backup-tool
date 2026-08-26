@@ -48,6 +48,8 @@ class ClusterSharedVolumeInfo:
     volume_path: str
     capacity_bytes: int = 0
     used_bytes: int = 0
+    disk_number: int | None = None
+    disk_serial_number: str | None = None
 
 
 @dataclass
@@ -90,6 +92,7 @@ class DiscoveryStepResult:
 @dataclass
 class HyperVDiscoveryData:
     vms: list[VirtualMachineInfo] = field(default_factory=list)
+    csvs: list[ClusterSharedVolumeInfo] = field(default_factory=list)
 
 
 class HyperVConnectionError(Exception):
@@ -249,16 +252,21 @@ class HyperVService:
         entries = raw if isinstance(raw, list) else [raw]
         return {e["Node"]: e["Address"] for e in entries if e.get("Node") and e.get("Address")}
 
-    def run_vm_discovery(self, username: str, password: str) -> tuple[list[DiscoveryStepResult], HyperVDiscoveryData]:
+    def run_discovery(self, username: str, password: str) -> tuple[list[DiscoveryStepResult], HyperVDiscoveryData]:
         """Erkennt alle VMs im Cluster inkl. ihrer VHDs (Pfad/Speicherort +
-        Groesse) sowie des Knotens, auf dem sie laufen. Verbindet sich dazu
+        Groesse) sowie des Knotens, auf dem sie laufen, sowie alle Cluster
+        Shared Volumes inkl. Pfad/Groesse/Belegung und (sofern zuordenbar)
+        des zugrunde liegenden physischen Datenraegers. Verbindet sich dazu
         NICHT nur zum CNO, sondern zusaetzlich einzeln zu jedem Cluster-
         Knoten: Get-VM liefert nur lokale VMs, und ein 'zweiter Hop' vom CNO
         zu einem Knoten INNERHALB derselben Session wuerde bei NTLM (ohne
         Credential-Delegation) fehlschlagen. Jeder Knoten wird daher per
         eigener, direkter WinRM-Verbindung vom Container aus abgefragt --
         ueber seine Management-IP statt seinen (oft nicht aufloesbaren)
-        Namen, siehe _node_management_ips."""
+        Namen, siehe _node_management_ips. Die CSVs selbst werden dagegen
+        (wie _node_management_ips) als Single-Hop-Abfrage direkt gegen die
+        bereits geoeffnete CNO-Session gelesen, da Get-ClusterSharedVolume
+        nur die Cluster-Datenbank abfragt."""
         results: list[DiscoveryStepResult] = []
         data = HyperVDiscoveryData()
 
@@ -286,16 +294,50 @@ class HyperVService:
             except Exception as exc:
                 results.append(DiscoveryStepResult("vms", False, f"Knoten '{node.name}' ({target}): {exc}"))
 
+        try:
+            csvs = self.list_csvs(cno_session)
+            data.csvs.extend(csvs)
+            results.append(DiscoveryStepResult("csvs", True, f"{len(csvs)} CSV(s) gefunden", len(csvs)))
+        except Exception as exc:
+            results.append(DiscoveryStepResult("csvs", False, str(exc)))
+
         return results, data
 
     def list_csvs(self, session: winrm.Session) -> list[ClusterSharedVolumeInfo]:
+        # Single-Hop-Abfrage gegen den CNO (liest nur die Cluster-DB, kein
+        # Fan-out zu Knoten noetig). Korrelation zur physischen Disk (und
+        # damit zum NetApp-LUN) erfolgt bereits hier in PowerShell: der
+        # CSV-Pfad (FriendlyVolumeName, z.B. "C:\ClusterStorage\CSV01\")
+        # taucht als einer von mehreren AccessPaths der Partition auf, deren
+        # DiskNumber wiederum in Get-Disk auf die SerialNumber verweist --
+        # gegen echte Hardware verifiziert: Get-Disk's SerialNumber fuer
+        # NetApp-LUN-Disks entspricht exakt ONTAP's eigenem
+        # lun.serial_number-REST-Feld (z.B. "80EEm]YMCOeO").
+        # WICHTIG: State ist ein Enum (ClusterSharedVolumeState) und muss
+        # explizit stringifiziert werden, sonst liefert ConvertTo-Json die
+        # rohe Ganzzahl (siehe get_cluster_summary fuer den identischen Bug
+        # bei ClusterNodeState).
         script = (
-            "Get-ClusterSharedVolume | Select-Object Name, State, "
-            "@{N='OwnerNode';E={$_.OwnerNode.Name}}, "
-            "@{N='VolumePath';E={$_.SharedVolumeInfo.FriendlyVolumeName}}, "
-            "@{N='CapacityBytes';E={$_.SharedVolumeInfo.Partition.Size}}, "
-            "@{N='FreeBytes';E={$_.SharedVolumeInfo.Partition.FreeSpace}} "
-            "| ConvertTo-Json -Depth 4"
+            "$disks = Get-Disk | Select-Object Number, SerialNumber; "
+            "$partitions = Get-Partition | Where-Object { $_.AccessPaths } | "
+            "Select-Object DiskNumber, @{N='AccessPaths';E={$_.AccessPaths -join '|'}}; "
+            "Get-ClusterSharedVolume | ForEach-Object { "
+            "$info = $_.SharedVolumeInfo; "
+            "$friendlyPath = $info.FriendlyVolumeName; "
+            "$part = $partitions | Where-Object { $_.AccessPaths -like ('*' + $friendlyPath + '*') } | Select-Object -First 1; "
+            "$disk = $null; "
+            "if ($part) { $disk = $disks | Where-Object { $_.Number -eq $part.DiskNumber } | Select-Object -First 1 }; "
+            "[PSCustomObject]@{ "
+            "Name = $_.Name; "
+            "State = $_.State.ToString(); "
+            "OwnerNode = $_.OwnerNode.Name; "
+            "VolumePath = $friendlyPath; "
+            "CapacityBytes = $info.Partition.Size; "
+            "FreeBytes = $info.Partition.FreeSpace; "
+            "DiskNumber = $(if ($part) { $part.DiskNumber } else { $null }); "
+            "DiskSerialNumber = $(if ($disk) { $disk.SerialNumber } else { $null }); "
+            "} "
+            "} | ConvertTo-Json -Depth 4"
         )
         result = self._run_ps(session, script)
         if not result.success:
@@ -310,6 +352,8 @@ class HyperVService:
                 volume_path=e.get("VolumePath") or "",
                 capacity_bytes=int(e.get("CapacityBytes") or 0),
                 used_bytes=int(e.get("CapacityBytes") or 0) - int(e.get("FreeBytes") or 0),
+                disk_number=e.get("DiskNumber"),
+                disk_serial_number=(e.get("DiskSerialNumber") or "").strip() or None,
             )
             for e in entries
         ]

@@ -44,3 +44,31 @@ class HyperVVhd(Base):
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class HyperVCsv(Base):
+    """Cluster Shared Volumes je Hyper-V-Cluster. Die Zuordnung zum
+    zugrunde liegenden NetApp-LUN/-Volume erfolgt beim Discovery-Lauf ueber
+    den Vergleich der Windows-Disk-Seriennummer (Get-Disk) mit dem
+    lun.serial_number-Feld der bereits registrierten NetApp-LUNs -- gegen
+    echte Hardware verifiziert, dass beide Werte identisch sind. Wird keine
+    passende LUN gefunden (z.B. NetApp-Cluster noch nicht registriert/
+    discovered), bleiben die netapp_*-Felder leer."""
+
+    __tablename__ = "hyperv_csvs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    cluster_id: Mapped[str] = mapped_column(String(36), ForeignKey("hyperv_clusters.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))
+    path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    owner_node: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    capacity_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    disk_serial_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    netapp_lun_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    netapp_lun_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    netapp_volume_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    netapp_svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    netapp_cluster_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

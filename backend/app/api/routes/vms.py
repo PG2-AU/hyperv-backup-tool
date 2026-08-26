@@ -1,12 +1,13 @@
 """VM- und CSV-Uebersicht.
 
-VMs kommen inzwischen aus der echten Hyper-V-Discovery (siehe
-hyperv_clusters.py discover_cluster/HyperVService.run_vm_discovery) --
-persistiert in den Tabellen hyperv_vms/hyperv_vhds, hier nur noch
-zusammengefuehrt und in die bestehende VmRead-Form gebracht.
-
-TODO(iteration): CSVs sind weiterhin Demo-Daten; folgt als eigener
-Discovery-Schritt (Get-ClusterSharedVolume, siehe HyperVService.list_csvs).
+VMs und CSVs kommen aus der echten Hyper-V-Discovery (siehe
+hyperv_clusters.py discover_cluster/HyperVService.run_discovery) --
+persistiert in den Tabellen hyperv_vms/hyperv_vhds/hyperv_csvs, hier nur
+noch zusammengefuehrt und in die bestehenden VmRead/CsvRead-Formen gebracht.
+Die NetApp-LUN/-Volume-Zuordnung eines CSVs wird bereits beim Discovery-Lauf
+ueber die Disk-Seriennummer aufgeloest (siehe hyperv_clusters.py); hier wird
+nur noch das zugehoerige NetAppVolume fuer dessen Kapazitaet/Belegung
+nachgeladen.
 
 Resource-Group- und Policy-Zuordnung (siehe app.api.routes.resource_groups)
 ist bereits real: sie wird pro VM/CSV anhand der Mitgliedschaft in
@@ -27,35 +28,12 @@ from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.backup_policy import BackupScope
 from app.models.hyperv_cluster import HyperVCluster
-from app.models.hyperv_discovery import HyperVVhd, HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
+from app.models.netapp_discovery import NetAppLun, NetAppVolume
 from app.models.resource_group import ResourceGroup
 from app.schemas.vm import CsvRead, VhdInfo, VmRead
 
 router = APIRouter(prefix="/api/vms", tags=["vms"])
-
-_DEMO_CSVS = [
-    CsvRead(
-        name="CSV1", owner_node="HV-NODE01", state="Online", volume_path="C:\\ClusterStorage\\CSV1",
-        capacity_bytes=2_199_023_255_552, used_bytes=1_374_389_534_720,
-        lun_name="lun_csv1", lun_capacity_bytes=2_199_023_255_552, lun_used_bytes=1_374_389_534_720,
-        volume_name="vol_csv1", volume_capacity_bytes=2_418_925_581_107, volume_used_bytes=1_511_828_488_192,
-        svm_name="svm-hyperv-prod", netapp_cluster_name="NETAPP-PROD",
-    ),
-    CsvRead(
-        name="CSV2", owner_node="HV-NODE02", state="Online", volume_path="C:\\ClusterStorage\\CSV2",
-        capacity_bytes=1_099_511_627_776, used_bytes=343_597_383_680,
-        lun_name="lun_csv2", lun_capacity_bytes=1_099_511_627_776, lun_used_bytes=343_597_383_680,
-        volume_name="vol_csv2", volume_capacity_bytes=1_209_462_790_554, volume_used_bytes=408_021_893_120,
-        svm_name="svm-hyperv-prod", netapp_cluster_name="NETAPP-PROD",
-    ),
-    CsvRead(
-        name="CSV3", owner_node="HV-NODE03", state="Online", volume_path="C:\\ClusterStorage\\CSV3",
-        capacity_bytes=4_398_046_511_104, used_bytes=3_848_290_697_216,
-        lun_name="lun_csv3", lun_capacity_bytes=4_398_046_511_104, lun_used_bytes=3_848_290_697_216,
-        volume_name="vol_csv3", volume_capacity_bytes=4_837_851_162_214, volume_used_bytes=4_194_451_128_320,
-        svm_name="svm-hyperv-dr", netapp_cluster_name="NETAPP-DR",
-    ),
-]
 
 
 def _csv_names_for_vm(vm: VmRead) -> set[str]:
@@ -121,4 +99,31 @@ def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Perm
 @router.get("/csvs", response_model=list[CsvRead])
 def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_VIEW))) -> list[CsvRead]:
     groups = db.query(ResourceGroup).all()
-    return [_annotate_csv(csv, groups) for csv in _DEMO_CSVS]
+
+    volumes_by_key: dict[tuple[str | None, str | None], NetAppVolume] = {
+        (v.svm_name, v.name): v for v in db.query(NetAppVolume).all()
+    }
+    luns_by_id: dict[str, NetAppLun] = {lun.id: lun for lun in db.query(NetAppLun).all()}
+
+    csvs: list[CsvRead] = []
+    for csv in db.query(HyperVCsv).order_by(HyperVCsv.name).all():
+        volume = volumes_by_key.get((csv.netapp_svm_name, csv.netapp_volume_name)) if csv.netapp_volume_name else None
+        lun = luns_by_id.get(csv.netapp_lun_id) if csv.netapp_lun_id else None
+        csv_read = CsvRead(
+            name=csv.name,
+            owner_node=csv.owner_node or "",
+            state=csv.state or "",
+            volume_path=csv.path or "",
+            capacity_bytes=csv.capacity_bytes,
+            used_bytes=csv.used_bytes,
+            lun_name=csv.netapp_lun_name,
+            lun_capacity_bytes=lun.size_bytes if lun else None,
+            lun_used_bytes=None,
+            volume_name=csv.netapp_volume_name,
+            volume_capacity_bytes=volume.size_bytes if volume else None,
+            volume_used_bytes=volume.used_bytes if volume else None,
+            svm_name=csv.netapp_svm_name,
+            netapp_cluster_name=csv.netapp_cluster_name,
+        )
+        csvs.append(_annotate_csv(csv_read, groups))
+    return csvs
