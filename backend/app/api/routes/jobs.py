@@ -23,7 +23,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
@@ -126,8 +126,15 @@ def delete_job(
 
 
 @router.get("/runs", response_model=list[BackupJobRun])
-def list_job_runs(db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW))) -> list[BackupJobRun]:
-    runs = db.query(BackupRun).order_by(BackupRun.started_at.desc()).all()
+def list_job_runs(
+    status_filter: JobStatus | None = Query(default=None, alias="status"),
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.BACKUP_VIEW)),
+) -> list[BackupJobRun]:
+    query = db.query(BackupRun)
+    if status_filter is not None:
+        query = query.filter(BackupRun.status == status_filter)
+    runs = query.order_by(BackupRun.started_at.desc()).all()
     return [_to_run_read(r) for r in runs]
 
 
@@ -357,7 +364,12 @@ def trigger_job_run(
         started_at=now,
     )
     db.add(run)
-    db.flush()
+    db.commit()
+    db.refresh(run)
+    # Sofort committen (statt erst am Ende), damit der Lauf mit Status
+    # "running" fuer andere Sessions/Tabs sichtbar ist, waehrend die
+    # eigentlichen Snapshot-Aufrufe noch laufen (siehe GET /jobs/runs?status=running,
+    # von der Laufende-Jobs-Anzeige im Frontend gepollt).
 
     clusters_by_id = {c.id: c for c in db.query(NetAppCluster).all()}
     volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}

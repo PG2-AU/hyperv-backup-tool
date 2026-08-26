@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.core.rbac import Permission
 from app.db.session import get_db
-from app.models.backup_policy import BackupScope
+from app.models.backup_policy import BackupPolicy, BackupScope
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_discovery import NetAppLun, NetAppVolume
@@ -40,11 +40,23 @@ def _csv_names_for_vm(vm: VmRead) -> set[str]:
     return {win_basename(p.rstrip("\\/")) for p in vm.csv_paths}
 
 
+def _matching_policies(groups: list[ResourceGroup]) -> list[BackupPolicy]:
+    by_id = {p.id: p for g in groups for p in g.policies}
+    return sorted(by_id.values(), key=lambda p: p.name)
+
+
 def _annotate_csv(csv: CsvRead, groups: list[ResourceGroup]) -> CsvRead:
     matching = [g for g in groups if g.scope == BackupScope.CSV and csv.name in g.members]
     group_names = sorted({g.name for g in matching})
-    policy_names = sorted({p.name for g in matching for p in g.policies})
-    return csv.model_copy(update={"resource_group_names": group_names, "policy_names": policy_names, "protected": bool(group_names)})
+    policies = _matching_policies(matching)
+    return csv.model_copy(
+        update={
+            "resource_group_names": group_names,
+            "policy_names": [p.name for p in policies],
+            "policy_ids": [p.id for p in policies],
+            "protected": bool(group_names),
+        }
+    )
 
 
 def _annotate_vm(vm: VmRead, groups: list[ResourceGroup]) -> VmRead:
@@ -55,8 +67,15 @@ def _annotate_vm(vm: VmRead, groups: list[ResourceGroup]) -> VmRead:
 
     matching = direct + indirect
     group_names = sorted({g.name for g in matching})
-    policy_names = sorted({p.name for g in matching for p in g.policies})
-    return vm.model_copy(update={"resource_group_names": group_names, "policy_names": policy_names, "protected": bool(group_names)})
+    policies = _matching_policies(matching)
+    return vm.model_copy(
+        update={
+            "resource_group_names": group_names,
+            "policy_names": [p.name for p in policies],
+            "policy_ids": [p.id for p in policies],
+            "protected": bool(group_names),
+        }
+    )
 
 
 @router.get("", response_model=list[VmRead])

@@ -5,14 +5,16 @@ import { notifications } from "@mantine/notifications";
 import { IconEdit, IconPlayerPlay, IconPlus, IconStack2, IconTerminal2, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useDeletePolicy, useDeleteResourceGroup, useJobRuns, usePolicies, useResourceGroups, useTriggerJobRun } from "@/api/hooks";
+import { useDeletePolicy, useDeleteResourceGroup, useJobRuns, usePolicies, useResourceGroups } from "@/api/hooks";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { LogViewer } from "@/components/LogViewer";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
+import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { ResourceGroupFormModal } from "@/components/ResourceGroupFormModal";
 import type { BackupJobRun, BackupPolicy, JobStatus, ResourceGroup } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatRetention, formatSchedule } from "@/utils/format";
+import { useRunPolicy } from "@/utils/runPolicy";
 
 const STATUS_COLOR: Record<JobStatus, string> = {
   succeeded: "green",
@@ -32,7 +34,7 @@ export function JobsPage() {
 
   const { data: policies } = usePolicies();
   const { data: runs } = useJobRuns();
-  const triggerRun = useTriggerJobRun();
+  const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
   const deletePolicy = useDeletePolicy();
   const policyMenu = useContextMenu<BackupPolicy>();
   const [logsOpened, { open: openLogs, close: closeLogs }] = useDisclosure(false);
@@ -49,16 +51,11 @@ export function JobsPage() {
   const [editingGroup, setEditingGroup] = useState<ResourceGroup | null>(null);
 
   function runNow(policy: BackupPolicy) {
-    triggerRun.mutate(policy.id, {
-      onSuccess: (run) =>
-        notifications.show({
-          title: run.status === "succeeded" ? "Job erfolgreich" : "Job fehlgeschlagen",
-          message: run.error_message ?? policy.name,
-          color: run.status === "succeeded" ? "green" : "red",
-        }),
-      onError: (err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Job konnte nicht gestartet werden."), color: "red" }),
-    });
+    runPolicy(policy);
+  }
+
+  function runGroupNow(group: ResourceGroup) {
+    runOrPick(group.policies);
   }
 
   function showSnapshots(run: BackupJobRun) {
@@ -304,6 +301,9 @@ export function JobsPage() {
 
       <ContextMenuDropdown position={groupMenu.state?.position ?? null} opened={!!groupMenu.state} onClose={groupMenu.close}>
         <Menu.Label>{groupMenu.state?.data.name}</Menu.Label>
+        <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => groupMenu.state && runGroupNow(groupMenu.state.data)}>
+          Jetzt ausfuehren
+        </Menu.Item>
         <Menu.Item leftSection={<IconEdit size={16} />} onClick={() => groupMenu.state && openEditGroup(groupMenu.state.data)}>
           Bearbeiten
         </Menu.Item>
@@ -362,6 +362,7 @@ export function JobsPage() {
 
       <PolicyFormModal opened={formOpen} onClose={() => setFormOpen(false)} policy={editingPolicy} />
       <ResourceGroupFormModal opened={groupFormOpen} onClose={() => setGroupFormOpen(false)} group={editingGroup} />
+      <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={runPolicy} />
     </Stack>
   );
 }

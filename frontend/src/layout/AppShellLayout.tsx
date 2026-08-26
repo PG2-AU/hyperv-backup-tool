@@ -20,6 +20,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import logo from "@/assets/logo.png";
 import { ContextSearch } from "@/components/ContextSearch";
 import { LogViewer } from "@/components/LogViewer";
+import { RunningJobsIndicator } from "@/components/RunningJobsIndicator";
 import { NAV_ITEMS, resolveSearchContext } from "@/layout/navConfig";
 import { useAuthStore } from "@/store/authStore";
 
@@ -63,6 +64,7 @@ export function AppShellLayout() {
 
           <Group wrap="nowrap">
             <ContextSearch />
+            <RunningJobsIndicator />
             <Tooltip label="Troubleshooting-Log">
               <ActionIcon variant="default" size="lg" onClick={openLogs}>
                 <IconTerminal2 size={18} />

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { ActionIcon, Badge, Box, Group, Menu, Paper, Progress, Stack, Table, Tabs, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import {
   IconChevronsRight,
   IconDatabase,
@@ -21,8 +20,10 @@ import { useSearchParams } from "react-router-dom";
 import { useCsvs, useVms } from "@/api/hooks";
 import { BackupsModal } from "@/components/BackupsModal";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
-import type { BackupScope, Csv, Vm } from "@/api/types";
+import { PolicyPickerModal } from "@/components/PolicyPickerModal";
+import type { BackupScope, Csv, PolicySummary, Vm } from "@/api/types";
 import { formatBytes } from "@/utils/format";
+import { useRunPolicy } from "@/utils/runPolicy";
 
 const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
 
@@ -242,6 +243,7 @@ export function VmsPage() {
   const [selectedVm, setSelectedVm] = useState<Vm | null>(null);
   const [selectedCsv, setSelectedCsv] = useState<Csv | null>(null);
   const [backupsTarget, setBackupsTarget] = useState<{ scope: BackupScope; name: string } | null>(null);
+  const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
 
   function showBackups(scope: BackupScope, name: string) {
     setBackupsTarget({ scope, name });
@@ -257,12 +259,16 @@ export function VmsPage() {
     setSelectedCsv((prev) => (prev?.name === csv.name ? null : csv));
   }
 
-  function runBackupNow(target: string) {
-    notifications.show({
-      title: "Backup ausgeloest",
-      message: `Ad-hoc Backup fuer '${target}' wurde in die Warteschlange gestellt.`,
-      color: "blue",
-    });
+  function policiesOf(names: string[], ids: string[]): PolicySummary[] {
+    return ids.map((id, i) => ({ id, name: names[i] }));
+  }
+
+  function runBackupNow(vm: Vm) {
+    runOrPick(policiesOf(vm.policy_names, vm.policy_ids));
+  }
+
+  function runBackupNowForCsv(csv: Csv) {
+    runOrPick(policiesOf(csv.policy_names, csv.policy_ids));
   }
 
   return (
@@ -398,7 +404,7 @@ export function VmsPage() {
 
       <ContextMenuDropdown position={vmMenu.state?.position ?? null} opened={!!vmMenu.state} onClose={vmMenu.close}>
         <Menu.Label>{vmMenu.state?.data.name}</Menu.Label>
-        <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => vmMenu.state && runBackupNow(vmMenu.state.data.name)}>
+        <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => vmMenu.state && runBackupNow(vmMenu.state.data)}>
           Backup jetzt starten
         </Menu.Item>
         <Menu.Item leftSection={<IconInfoCircle size={16} />} onClick={() => vmMenu.state && setSelectedVm(vmMenu.state.data)}>
@@ -415,7 +421,7 @@ export function VmsPage() {
 
       <ContextMenuDropdown position={csvMenu.state?.position ?? null} opened={!!csvMenu.state} onClose={csvMenu.close}>
         <Menu.Label>{csvMenu.state?.data.name}</Menu.Label>
-        <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => csvMenu.state && runBackupNow(csvMenu.state.data.name)}>
+        <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => csvMenu.state && runBackupNowForCsv(csvMenu.state.data)}>
           Backup jetzt starten (CSV-Scope)
         </Menu.Item>
         <Menu.Item leftSection={<IconInfoCircle size={16} />} onClick={() => csvMenu.state && setSelectedCsv(csvMenu.state.data)}>
@@ -435,6 +441,8 @@ export function VmsPage() {
         scope={backupsTarget?.scope ?? "vm"}
         name={backupsTarget?.name}
       />
+
+      <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={runPolicy} />
     </Stack>
   );
 }

@@ -18,6 +18,7 @@ class VmRead(BaseModel):
     vhds: list[VhdInfo] = []
     resource_group_names: list[str] = []
     policy_names: list[str] = []
+    policy_ids: list[str] = []
     protected: bool = False
 
 
@@ -38,4 +39,5 @@ class CsvRead(BaseModel):
     netapp_cluster_name: str | None = None
     resource_group_names: list[str] = []
     policy_names: list[str] = []
+    policy_ids: list[str] = []
     protected: bool = False

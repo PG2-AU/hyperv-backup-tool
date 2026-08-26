@@ -15,6 +15,7 @@ export interface Vm {
   vhds: VhdInfo[];
   resource_group_names: string[];
   policy_names: string[];
+  policy_ids: string[];
   protected: boolean;
 }
 
@@ -35,6 +36,7 @@ export interface Csv {
   netapp_cluster_name?: string | null;
   resource_group_names: string[];
   policy_names: string[];
+  policy_ids: string[];
   protected: boolean;
 }
 

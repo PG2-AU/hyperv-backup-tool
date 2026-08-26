@@ -162,6 +162,15 @@ export function useBackupsForObject(scope: BackupScope, name: string | undefined
   });
 }
 
+export function useRunningJobRuns(enabled: boolean) {
+  return useQuery({
+    queryKey: ["job-runs", "running"],
+    queryFn: async () => (await apiClient.get<BackupJobRun[]>("/jobs/runs", { params: { status: "running" } })).data,
+    enabled,
+    refetchInterval: 4000,
+  });
+}
+
 export function useTriggerJobRun() {
   const queryClient = useQueryClient();
   return useMutation({
