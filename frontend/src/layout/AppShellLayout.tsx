@@ -7,6 +7,7 @@ import {
   Group,
   Menu,
   NavLink,
+  ScrollArea,
   Text,
   Title,
   Tooltip,
@@ -21,6 +22,7 @@ import logo from "@/assets/logo.png";
 import { ContextSearch } from "@/components/ContextSearch";
 import { LogViewer } from "@/components/LogViewer";
 import { RunningJobsIndicator } from "@/components/RunningJobsIndicator";
+import { VersionFooter } from "@/components/VersionFooter";
 import { NAV_ITEMS, resolveSearchContext } from "@/layout/navConfig";
 import { useAuthStore } from "@/store/authStore";
 
@@ -103,41 +105,46 @@ export function AppShellLayout() {
       </AppShell.Header>
 
       <AppShell.Navbar p="xs">
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon;
-          if (!item.children) {
+        <AppShell.Section grow component={ScrollArea}>
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            if (!item.children) {
+              return (
+                <NavLink
+                  key={item.label}
+                  label={item.label}
+                  leftSection={<Icon size={18} stroke={1.5} />}
+                  component={Link}
+                  to={item.path!}
+                  active={isActive(item.path)}
+                />
+              );
+            }
+            const anyChildActive = item.children.some((c) => isActive(c.path));
             return (
               <NavLink
                 key={item.label}
                 label={item.label}
                 leftSection={<Icon size={18} stroke={1.5} />}
-                component={Link}
-                to={item.path!}
-                active={isActive(item.path)}
-              />
+                defaultOpened={anyChildActive}
+                childrenOffset={28}
+              >
+                {item.children.map((child) => (
+                  <NavLink
+                    key={child.path}
+                    label={child.label}
+                    component={Link}
+                    to={child.path}
+                    active={isActive(child.path)}
+                  />
+                ))}
+              </NavLink>
             );
-          }
-          const anyChildActive = item.children.some((c) => isActive(c.path));
-          return (
-            <NavLink
-              key={item.label}
-              label={item.label}
-              leftSection={<Icon size={18} stroke={1.5} />}
-              defaultOpened={anyChildActive}
-              childrenOffset={28}
-            >
-              {item.children.map((child) => (
-                <NavLink
-                  key={child.path}
-                  label={child.label}
-                  component={Link}
-                  to={child.path}
-                  active={isActive(child.path)}
-                />
-              ))}
-            </NavLink>
-          );
-        })}
+          })}
+        </AppShell.Section>
+        <AppShell.Section style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}>
+          <VersionFooter />
+        </AppShell.Section>
       </AppShell.Navbar>
 
       <AppShell.Main>

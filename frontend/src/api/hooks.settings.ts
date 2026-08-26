@@ -39,6 +39,12 @@ export interface PublicSettings {
   auto_update_interval_minutes: number;
 }
 
+export interface VersionInfo {
+  commit?: string | null;
+  commit_short?: string | null;
+  last_deploy_at?: string | null;
+}
+
 export interface UserCreatePayload {
   username: string;
   display_name?: string;
@@ -80,5 +86,13 @@ export function usePublicSettings() {
   return useQuery({
     queryKey: ["settings"],
     queryFn: async () => (await apiClient.get<PublicSettings>("/settings")).data,
+  });
+}
+
+export function useVersion() {
+  return useQuery({
+    queryKey: ["version"],
+    queryFn: async () => (await apiClient.get<VersionInfo>("/settings/version")).data,
+    staleTime: 5 * 60 * 1000,
   });
 }

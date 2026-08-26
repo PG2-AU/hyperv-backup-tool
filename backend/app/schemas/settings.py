@@ -1,6 +1,16 @@
 from pydantic import BaseModel
 
 
+class VersionInfo(BaseModel):
+    """Aktuell deployter Git-Commit + Zeitpunkt des letzten Deploys, fuer die
+    Fusszeile im Hauptmenue -- fuer alle angemeldeten Benutzer sichtbar
+    (keine sensiblen Daten), daher separat von PublicSettings/SETTINGS_MANAGE."""
+
+    commit: str | None = None
+    commit_short: str | None = None
+    last_deploy_at: str | None = None
+
+
 class PublicSettings(BaseModel):
     """Nicht-sensitive Teilmenge der Server-Konfiguration fuer die GUI."""
 
