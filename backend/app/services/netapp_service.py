@@ -32,6 +32,7 @@ from netapp_ontap.resources import (
     Cluster,
     ClusterPeer,
     Igroup,
+    IgroupInitiator,
     IpInterface,
     IscsiCredentials,
     IscsiService,
@@ -718,10 +719,13 @@ class NetAppOntapService:
             existing = {i.name for i in (igroup.initiators or [])}
             if initiator_iqn in existing:
                 return
-            ig = Igroup(uuid=igroup.uuid)
-            ig.initiators = [{"name": n} for n in existing | {initiator_iqn}]
+            # Ein PATCH der kompletten 'initiators'-Liste auf der Igroup selbst
+            # wird von ONTAP fuer bereits bestehende Igroups stillschweigend
+            # ignoriert (gegen echte Hardware verifiziert -- der Aufruf liefert
+            # 200 OK, aendert aber nichts); das Hinzufuegen muss ueber die
+            # dedizierte Initiator-Subressource erfolgen.
             try:
-                ig.patch()
+                IgroupInitiator(igroup_uuid=igroup.uuid, name=initiator_iqn).post()
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"Initiator konnte nicht zur Gruppe hinzugefuegt werden: {exc}") from exc
 

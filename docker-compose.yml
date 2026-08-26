@@ -6,13 +6,22 @@ services:
     image: hyperv-netapp-backup:local
     container_name: hvnb-backup
     restart: unless-stopped
-    ports:
-      - "8443:443"
+    # network_mode: host statt Port-Mapping: der VHDX-Restore-Workflow
+    # meldet sich per iSCSI direkt vom Container aus an (siehe Settings >
+    # Restore-Setup). Der WSL2-Kernel dieser Umgebung crasht iscsid beim
+    # Session-Aufbau (Netlink kcreate_session) innerhalb eines privaten
+    # Bridge-Netzwerk-Namespace ("sendmsg: bug? ctrl_fd") -- live per nsenter
+    # verifiziert, dass derselbe Login im Host-Netzwerk-Namespace
+    # klaglos funktioniert. nginx lauscht dafuer direkt auf Port 8443
+    # (siehe docker/nginx.conf.template), kein Port-Mapping noetig/moeglich.
+    network_mode: host
     cap_add:
       - SYS_ADMIN
       - NET_ADMIN
     devices:
       - /dev/fuse
+    device_cgroup_rules:
+      - "b 8:* rmw"
     env_file:
       - .env
     environment:
