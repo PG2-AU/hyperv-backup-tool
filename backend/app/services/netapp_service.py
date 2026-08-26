@@ -14,6 +14,7 @@ registrierte Cluster unabhaengig voneinander angesprochen werden koennen.
 from __future__ import annotations
 
 import json
+import socket
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,10 +28,12 @@ from netapp_ontap.error import NetAppRestError
 from netapp_ontap.resources import (
     Account,
     Aggregate,
+    BroadcastDomain,
     Cluster,
     ClusterPeer,
     Igroup,
     IpInterface,
+    IscsiCredentials,
     Lun,
     LunMap,
     Metrocluster,
@@ -48,6 +51,18 @@ from netapp_ontap.resources import (
 
 class NetAppConnectionError(Exception):
     """Verbindungsaufbau oder Authentifizierung gegen den Cluster fehlgeschlagen."""
+
+
+def tcp_port_open(host: str, port: int, timeout_sec: float = 3.0) -> bool:
+    """Reiner TCP-Connect-Test (kein ONTAP-Aufruf) -- fuer die Erreichbarkeits-
+    Pruefung von iSCSI-LIFs (Port 3260) und SMB-Freigaben (Port 445) vom
+    Container aus, bevor der Restore-Wizard einen echten Verbindungsversuch
+    unternimmt."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout_sec):
+            return True
+    except OSError:
+        return False
 
 
 def _get_nested(obj: object, path: str, default=None):
@@ -73,6 +88,34 @@ class SnapshotInfo:
     volume_name: str
     create_time: str
     snapmirror_label: str | None = None
+
+
+@dataclass
+class LunCloneInfo:
+    uuid: str
+    name: str
+    serial_number: str | None
+    size_bytes: int | None
+
+
+@dataclass
+class BroadcastDomainPort:
+    node_name: str
+    port_name: str
+
+
+@dataclass
+class BroadcastDomainInfo:
+    name: str
+    ipspace: str
+    ports: list[BroadcastDomainPort]
+
+
+@dataclass
+class IscsiLifInfo:
+    uuid: str
+    name: str
+    address: str
 
 
 @dataclass
@@ -643,6 +686,141 @@ class NetAppOntapService:
                 Igroup.from_dict(payload).post()
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"Initiator-Gruppe konnte nicht angelegt werden: {exc}") from exc
+
+    def ensure_igroup_initiator(self, svm_name: str, igroup_name: str, os_type: str, initiator_iqn: str) -> None:
+        """Legt eine Igroup an, falls sie noch nicht existiert, oder ergaenzt
+        eine bestehende um den Initiator -- idempotent, damit der
+        Restore-Setup-Wizard beliebig oft ausgefuehrt werden kann, ohne bei
+        bereits vorhandener Konfiguration fehlzuschlagen."""
+        with self._connection():
+            try:
+                igroup = Igroup.find(name=igroup_name, **{"svm.name": svm_name})
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Fehler beim Suchen der Initiator-Gruppe: {exc}") from exc
+
+            if igroup is None:
+                try:
+                    Igroup.from_dict(
+                        {
+                            "name": igroup_name,
+                            "svm": {"name": svm_name},
+                            "os_type": os_type,
+                            "protocol": "iscsi",
+                            "initiators": [{"name": initiator_iqn}],
+                        }
+                    ).post()
+                except NetAppRestError as exc:
+                    raise NetAppConnectionError(f"Initiator-Gruppe konnte nicht angelegt werden: {exc}") from exc
+                return
+
+            igroup.get(fields="initiators")
+            existing = {i.name for i in (igroup.initiators or [])}
+            if initiator_iqn in existing:
+                return
+            ig = Igroup(uuid=igroup.uuid)
+            ig.initiators = [{"name": n} for n in existing | {initiator_iqn}]
+            try:
+                ig.patch()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Initiator konnte nicht zur Gruppe hinzugefuegt werden: {exc}") from exc
+
+    def ensure_iscsi_credentials(self, svm_name: str, initiator_iqn: str, auth_type: str = "none") -> None:
+        """Ohne einen expliziten Eintrag greift die 'default'-Regel der SVM
+        (haeufig 'deny'), wodurch der Initiator schon bei der iSCSI-Discovery
+        mit 'authorization failure' abgewiesen wird -- gegen echte Hardware
+        verifiziert (DEMO7 hatte initiator='default' -> authentication_type=
+        'deny', alle bekannten Hyper-V-Knoten-IQNs dagegen einen eigenen
+        Eintrag mit 'none')."""
+        with self._connection():
+            try:
+                existing = IscsiCredentials.find(initiator=initiator_iqn, **{"svm.name": svm_name})
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Fehler beim Pruefen der iSCSI-Zugriffsberechtigung: {exc}") from exc
+            if existing:
+                return
+            try:
+                IscsiCredentials.from_dict(
+                    {"svm": {"name": svm_name}, "initiator": initiator_iqn, "authentication_type": auth_type}
+                ).post()
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"iSCSI-Zugriffsberechtigung konnte nicht angelegt werden: {exc}") from exc
+
+    def list_broadcast_domains(self) -> list[BroadcastDomainInfo]:
+        with self._connection():
+            try:
+                domains = list(BroadcastDomain.get_collection(fields="ipspace,ports"))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Broadcast-Domains konnten nicht abgerufen werden: {exc}") from exc
+            return [
+                BroadcastDomainInfo(
+                    name=bd.name,
+                    ipspace=_get_nested(bd, "ipspace.name") or "",
+                    ports=[
+                        BroadcastDomainPort(node_name=_get_nested(p, "node.name") or "", port_name=p.name)
+                        for p in (bd.ports or [])
+                    ],
+                )
+                for bd in domains
+            ]
+
+    def create_iscsi_lif(
+        self, svm_name: str, name: str, address: str, netmask: str,
+        broadcast_domain: str, home_node: str, home_port: str,
+    ) -> IscsiLifInfo:
+        """Legt ein neues, SVM-scoped Daten-Interface mit der Service-Policy
+        'default-data-iscsi' an -- Feldstruktur gegen ein echtes, vom Nutzer
+        manuell angelegtes iSCSI-Restore-Interface verifiziert (location.
+        broadcast_domain/home_node/home_port, kein 'subnet'-Feld noetig)."""
+        with self._connection():
+            payload = {
+                "svm": {"name": svm_name},
+                "name": name,
+                "ip": {"address": address, "netmask": netmask},
+                "location": {
+                    "broadcast_domain": {"name": broadcast_domain},
+                    "home_node": {"name": home_node},
+                    "home_port": {"name": home_port},
+                },
+                "service_policy": {"name": "default-data-iscsi"},
+                "scope": "svm",
+            }
+            try:
+                lif = IpInterface.from_dict(payload)
+                lif.post(hydrate=True)
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"iSCSI-Interface konnte nicht angelegt werden: {exc}") from exc
+            return IscsiLifInfo(uuid=lif.uuid, name=lif.name, address=address)
+
+    def clone_lun_from_snapshot(
+        self, volume_name: str, svm_name: str, source_lun_path: str, snapshot_name: str, new_lun_name: str,
+    ) -> LunCloneInfo:
+        """Klont eine LUN aus einem Volume-Snapshot fuer den VHDX-Restore.
+        Quelle und Klon muessen im selben Volume liegen (ONTAP-Vorgabe); die
+        Quelle wird ueber den '.snapshot/<name>'-Pfad referenziert -- gegen
+        echte Hardware verifiziert (POST /storage/luns mit
+        clone.source.name = '/vol/<vol>/.snapshot/<snap>/<lun-basename>')."""
+        with self._connection():
+            source_basename = source_lun_path.rsplit("/", 1)[-1]
+            destination_path = f"/vol/{volume_name}/{new_lun_name}"
+            source_snapshot_path = f"/vol/{volume_name}/.snapshot/{snapshot_name}/{source_basename}"
+            lun = Lun.from_dict(
+                {
+                    "svm": {"name": svm_name},
+                    "name": destination_path,
+                    "clone": {"source": {"name": source_snapshot_path}},
+                }
+            )
+            try:
+                lun.post(hydrate=True, poll=True, poll_timeout=180)
+                lun.get(fields="serial_number,space.size")
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN-Klon konnte nicht erstellt werden: {exc}") from exc
+            return LunCloneInfo(
+                uuid=lun.uuid,
+                name=lun.name,
+                serial_number=_get_nested(lun, "serial_number"),
+                size_bytes=_get_nested(lun, "space.size"),
+            )
 
     def create_volume(
         self, svm_name: str, name: str, aggregate_name: str, size_bytes: int,

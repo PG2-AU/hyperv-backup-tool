@@ -17,12 +17,27 @@ ENV LANG=C.UTF-8 \
 RUN dnf install -y --setopt=install_weak_deps=False \
         python3.12 python3.12-pip \
         git nginx openssl gettext shadow-utils \
+        epel-release \
     && dnf module -y reset nodejs \
     && dnf module -y install nodejs:20 \
+    && dnf install -y --setopt=install_weak_deps=False \
+        iscsi-initiator-utils cifs-utils samba-client ntfs-3g kpartx parted \
     && dnf clean all \
     && alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
     && python3 -m pip install --upgrade pip \
     && python3 -m pip install --no-cache-dir supervisor
+
+# Werkzeuge fuer den VHDX-Restore-Workflow (siehe restore_infra.py):
+# - iscsi-initiator-utils: iSCSI-Login zur geklonten LUN
+# - cifs-utils/samba-client: Kopieren der wiederhergestellten VHDX auf die
+#   Hyper-V-CSV per SMB (administrative Freigabe C$)
+# - ntfs-3g: Lesezugriff auf die NTFS/CSVFS-formatierte Partition der LUN
+# - kpartx/parted: Partitionstabelle der geklonten LUN erkennen/einbinden
+# Fuer echte iSCSI-/Mount-Operationen braucht der Container zusaetzlich
+# CAP_SYS_ADMIN und Blockgeraete-Zugriff -- das kann NICHT ueber dieses
+# Image/den Requirements-Wizard automatisiert werden, sondern erfordert eine
+# einmalige Anpassung der Container-Startparameter (siehe Settings >
+# Restore-Setup > Anforderungen fuer die exakten Flags).
 
 RUN useradd --system --create-home --home-dir /home/hvnb --shell /bin/bash hvnb
 

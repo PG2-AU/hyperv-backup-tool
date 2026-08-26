@@ -10,6 +10,7 @@ from app.api.routes import (
     logs,
     netapp_clusters,
     resource_groups,
+    restore_infra,
     schedules,
     search,
     settings as settings_routes,
@@ -58,6 +59,7 @@ app.include_router(logs.router)
 app.include_router(search.router)
 app.include_router(users.router)
 app.include_router(settings_routes.router)
+app.include_router(restore_infra.router)
 
 
 @app.get("/api/health")

@@ -26,6 +26,13 @@ import type {
   NetAppSvmPeer,
   NetAppVolume,
   ResourceGroup,
+  RestoreBroadcastDomain,
+  RestoreCreateLifPayload,
+  RestoreInfraConfig,
+  RestoreInfraSetupPayload,
+  RestoreInitiatorInfo,
+  RestoreLifCandidate,
+  RestoreRequirementsStatus,
   RetentionType,
   Schedule,
   ScheduleType,
@@ -494,5 +501,83 @@ export function useCreateSvmPeer() {
     mutationFn: async ({ clusterId, payload }: { clusterId: string; payload: SvmPeerCreate }) =>
       (await apiClient.post(`/netapp/clusters/${clusterId}/svm-peers`, payload)).data,
     onSuccess: () => DISCOVERY_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] })),
+  });
+}
+
+// --- Restore-Setup-Wizard ---------------------------------------------
+
+export function useRestoreRequirements() {
+  return useQuery({
+    queryKey: ["restore-requirements"],
+    queryFn: async () => (await apiClient.get<RestoreRequirementsStatus>("/restore-infra/requirements")).data,
+  });
+}
+
+export function useInstallRestoreRequirements() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await apiClient.post<DiscoveryStep[]>("/restore-infra/requirements/install")).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restore-requirements"] }),
+  });
+}
+
+export function useRestoreInitiator(enabled: boolean) {
+  return useQuery({
+    queryKey: ["restore-initiator"],
+    queryFn: async () => (await apiClient.get<RestoreInitiatorInfo>("/restore-infra/initiator")).data,
+    enabled,
+  });
+}
+
+export function useSvmLifCandidates(clusterId: string | undefined, svmName: string | undefined) {
+  return useQuery({
+    queryKey: ["restore-lif-candidates", clusterId, svmName],
+    queryFn: async () =>
+      (await apiClient.get<RestoreLifCandidate[]>(`/restore-infra/clusters/${clusterId}/svms/${svmName}/lifs`)).data,
+    enabled: !!clusterId && !!svmName,
+  });
+}
+
+export function useBroadcastDomains(clusterId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ["restore-broadcast-domains", clusterId],
+    queryFn: async () =>
+      (await apiClient.get<RestoreBroadcastDomain[]>(`/restore-infra/clusters/${clusterId}/broadcast-domains`)).data,
+    enabled: !!clusterId && enabled,
+  });
+}
+
+export function useCreateRestoreLif() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clusterId, payload }: { clusterId: string; payload: RestoreCreateLifPayload }) =>
+      (await apiClient.post<RestoreLifCandidate>(`/restore-infra/clusters/${clusterId}/lif`, payload)).data,
+    onSuccess: (_data, vars) => queryClient.invalidateQueries({ queryKey: ["restore-lif-candidates", vars.clusterId] }),
+  });
+}
+
+export function useSetupRestoreInfra() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clusterId, payload }: { clusterId: string; payload: RestoreInfraSetupPayload }) =>
+      (await apiClient.post<RestoreInfraConfig>(`/restore-infra/clusters/${clusterId}/setup`, payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restore-infra-configs"] }),
+  });
+}
+
+export function useRestoreInfraConfigs() {
+  return useQuery({
+    queryKey: ["restore-infra-configs"],
+    queryFn: async () => (await apiClient.get<RestoreInfraConfig[]>("/restore-infra/configs")).data,
+  });
+}
+
+export function useDeleteRestoreInfraConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/restore-infra/configs/${id}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restore-infra-configs"] }),
   });
 }

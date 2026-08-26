@@ -527,3 +527,68 @@ export interface BackupJobRun {
   error_message?: string | null;
   snapshots: BackupRunSnapshot[];
 }
+
+export interface RestoreRequirementCheck {
+  name: string;
+  label: string;
+  satisfied: boolean;
+  detail?: string | null;
+}
+
+export interface RestoreRequirementsStatus {
+  checks: RestoreRequirementCheck[];
+  all_packages_ok: boolean;
+  capability_ok: boolean;
+  capability_hint: string;
+}
+
+export interface RestoreInitiatorInfo {
+  configured: boolean;
+  iqn?: string | null;
+}
+
+export interface RestoreLifCandidate {
+  name: string;
+  address: string;
+  reachable: boolean;
+}
+
+export interface RestoreBroadcastDomainPort {
+  node_name: string;
+  port_name: string;
+}
+
+export interface RestoreBroadcastDomain {
+  name: string;
+  ipspace: string;
+  ports: RestoreBroadcastDomainPort[];
+}
+
+export interface RestoreCreateLifPayload {
+  svm_name: string;
+  name: string;
+  address: string;
+  netmask: string;
+  broadcast_domain: string;
+  home_node: string;
+  home_port: string;
+}
+
+export interface RestoreInfraSetupPayload {
+  svm_name: string;
+  iscsi_lif_name?: string | null;
+  iscsi_lif_address: string;
+  iscsi_lif_port?: number;
+  igroup_name?: string;
+}
+
+export interface RestoreInfraConfig {
+  id: string;
+  netapp_cluster_id: string;
+  svm_name: string;
+  iscsi_lif_name?: string | null;
+  iscsi_lif_address: string;
+  iscsi_lif_port: number;
+  igroup_name: string;
+  initiator_iqn: string;
+}
