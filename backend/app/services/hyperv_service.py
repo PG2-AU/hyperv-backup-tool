@@ -194,7 +194,7 @@ class HyperVService:
     def list_vms(self, session: winrm.Session) -> list[VirtualMachineInfo]:
         # Get-VM liefert nur die auf DIESEM Host lokalen VMs -- fuer eine
         # clusterweite Sicht wird diese Methode daher pro Knoten einzeln
-        # aufgerufen (siehe run_vm_discovery), nicht einmalig gegen den CNO.
+        # aufgerufen (siehe run_discovery), nicht einmalig gegen den CNO.
         # $env:COMPUTERNAME statt $vm.ComputerName, da wir wissen, mit
         # welchem Knoten diese Session tatsaechlich verbunden ist.
         script = (
