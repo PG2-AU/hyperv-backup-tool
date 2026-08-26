@@ -8,6 +8,11 @@ services:
     restart: unless-stopped
     ports:
       - "8443:443"
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    devices:
+      - /dev/fuse
     env_file:
       - .env
     environment:
