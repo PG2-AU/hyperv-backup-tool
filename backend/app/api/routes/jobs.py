@@ -37,7 +37,7 @@ from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun, NetAppVolume
 from app.models.schedule import Schedule
 from app.models.snapmirror_label import SnapMirrorLabel
-from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite
+from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite, BackupSnapshotRead
 from app.services.netapp_service import NetAppOntapService
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -162,6 +162,36 @@ class _VolumeTarget:
     vm_names: set[str] = field(default_factory=set)
 
 
+def _csv_index(db: Session) -> tuple[dict[str, HyperVCsv], dict[str, NetAppLun]]:
+    return (
+        {c.name: c for c in db.query(HyperVCsv).all()},
+        {lun.id: lun for lun in db.query(NetAppLun).all()},
+    )
+
+
+def _vhd_maps(db: Session) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """VM-Name -> Menge der CSV-Namen, auf denen seine VHDs liegen, und
+    umgekehrt CSV-Name -> Menge der VM-Namen darauf."""
+    vm_csvs: dict[str, set[str]] = defaultdict(set)
+    csv_vms: dict[str, set[str]] = defaultdict(set)
+    for vhd in db.query(HyperVVhd).all():
+        if vhd.vm_name and vhd.csv_name:
+            vm_csvs[vhd.vm_name].add(vhd.csv_name)
+            csv_vms[vhd.csv_name].add(vhd.vm_name)
+    return vm_csvs, csv_vms
+
+
+def _csv_volume_key(csv: HyperVCsv, luns_by_id: dict[str, NetAppLun]) -> tuple[str, str, str] | None:
+    """Loest ein CSV ueber die bei der Discovery gespeicherte LUN-Korrelation
+    zu seinem NetApp-Volume auf (cluster_id, svm_name, volume_name)."""
+    if not csv.netapp_lun_id or not csv.netapp_volume_name:
+        return None
+    lun = luns_by_id.get(csv.netapp_lun_id)
+    if lun is None:
+        return None
+    return (lun.cluster_id, csv.netapp_svm_name or "", csv.netapp_volume_name)
+
+
 def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTarget], list[str]]:
     """Loest die Resource Groups einer Policy zu den betroffenen NetApp-Volumes
     auf. Mehrere VMs/CSVs auf demselben Volume werden zu einem gemeinsamen
@@ -171,15 +201,8 @@ def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTar
     warnings: list[str] = []
     targets: dict[tuple[str, str, str], _VolumeTarget] = {}
 
-    csv_by_name: dict[str, HyperVCsv] = {c.name: c for c in db.query(HyperVCsv).all()}
-    luns_by_id: dict[str, NetAppLun] = {lun.id: lun for lun in db.query(NetAppLun).all()}
-
-    vm_csvs: dict[str, set[str]] = defaultdict(set)
-    csv_vms: dict[str, set[str]] = defaultdict(set)
-    for vhd in db.query(HyperVVhd).all():
-        if vhd.vm_name and vhd.csv_name:
-            vm_csvs[vhd.vm_name].add(vhd.csv_name)
-            csv_vms[vhd.csv_name].add(vhd.vm_name)
+    csv_by_name, luns_by_id = _csv_index(db)
+    vm_csvs, csv_vms = _vhd_maps(db)
 
     def _add(csv_name: str, vm_names: set[str]) -> None:
         csv = csv_by_name.get(csv_name)
@@ -189,16 +212,15 @@ def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTar
         if not csv.netapp_lun_id:
             warnings.append(f"CSV '{csv_name}': keine NetApp-LUN zugeordnet (Discovery pruefen)")
             return
-        lun = luns_by_id.get(csv.netapp_lun_id)
-        if lun is None or not csv.netapp_volume_name:
+        key = _csv_volume_key(csv, luns_by_id)
+        if key is None:
             warnings.append(f"CSV '{csv_name}': zugeordnete NetApp-LUN/-Volume nicht gefunden")
             return
 
-        key = (lun.cluster_id, csv.netapp_svm_name or "", csv.netapp_volume_name)
         target = targets.get(key)
         if target is None:
             target = _VolumeTarget(
-                netapp_cluster_id=lun.cluster_id,
+                netapp_cluster_id=key[0],
                 netapp_cluster_name=csv.netapp_cluster_name,
                 svm_name=csv.netapp_svm_name,
                 volume_name=csv.netapp_volume_name,
@@ -238,6 +260,66 @@ def _netapp_service_for(cluster: NetAppCluster) -> NetAppOntapService:
         username=cluster.username,
         password=decrypt_secret(cluster.encrypted_password) if cluster.encrypted_password else None,
     )
+
+
+def _resolve_volume_keys_for_object(db: Session, scope: BackupScope, name: str) -> list[tuple[str, str, str]]:
+    """Loest eine einzelne VM oder ein einzelnes CSV (aktueller Discovery-
+    Stand) zu den NetApp-Volumes auf, auf denen ihre Daten liegen -- fuer die
+    'vorhandene Backups anzeigen'-Funktion im Inventory, unabhaengig von
+    Resource Groups/Policies."""
+    csv_by_name, luns_by_id = _csv_index(db)
+
+    csv_names: set[str] = set()
+    if scope == BackupScope.VM:
+        vm_csvs, _ = _vhd_maps(db)
+        csv_names = vm_csvs.get(name, set())
+    elif scope == BackupScope.CSV:
+        csv_names = {name}
+
+    keys: set[tuple[str, str, str]] = set()
+    for csv_name in csv_names:
+        csv = csv_by_name.get(csv_name)
+        if csv is None:
+            continue
+        key = _csv_volume_key(csv, luns_by_id)
+        if key is not None:
+            keys.add(key)
+    return list(keys)
+
+
+@router.get("/backups", response_model=list[BackupSnapshotRead])
+def list_backups_for_object(
+    scope: BackupScope, name: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW)),
+) -> list[BackupSnapshotRead]:
+    """Vorhandene (erfolgreiche) Snapshots, die eine bestimmte VM oder ein
+    bestimmtes CSV abdecken -- unabhaengig davon, ueber welche Policy sie
+    entstanden sind. Wird vom Inventory (Rechtsklick -> Backups anzeigen)
+    verwendet."""
+    keys = set(_resolve_volume_keys_for_object(db, scope, name))
+    if not keys:
+        return []
+
+    rows = db.query(BackupRunSnapshot).filter(BackupRunSnapshot.success.is_(True)).all()
+    matched = [r for r in rows if (r.netapp_cluster_id, r.svm_name or "", r.volume_name or "") in keys]
+    matched.sort(key=lambda r: r.created_at, reverse=True)
+
+    return [
+        BackupSnapshotRead(
+            id=r.id,
+            run_id=r.run_id,
+            policy_name=r.run.policy_name,
+            consistency=r.run.consistency,
+            created_at=r.created_at,
+            netapp_cluster_name=r.netapp_cluster_name,
+            svm_name=r.svm_name,
+            volume_name=r.volume_name,
+            csv_names=r.csv_names or [],
+            vm_names=r.vm_names or [],
+            snapshot_name=r.snapshot_name,
+            snapshot_uuid=r.snapshot_uuid,
+        )
+        for r in matched
+    ]
 
 
 @router.post("/{job_id}/run", response_model=BackupJobRun)

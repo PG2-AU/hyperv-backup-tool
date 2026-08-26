@@ -498,6 +498,21 @@ export interface BackupRunSnapshot {
   error_message?: string | null;
 }
 
+export interface BackupSnapshot {
+  id: string;
+  run_id: string;
+  policy_name: string;
+  consistency: ConsistencyType;
+  created_at: string;
+  netapp_cluster_name?: string | null;
+  svm_name?: string | null;
+  volume_name?: string | null;
+  csv_names: string[];
+  vm_names: string[];
+  snapshot_name?: string | null;
+  snapshot_uuid?: string | null;
+}
+
 export interface BackupJobRun {
   id: string;
   job_id?: string | null;

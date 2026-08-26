@@ -71,6 +71,25 @@ class BackupRunSnapshotRead(BaseModel):
     error_message: str | None = None
 
 
+class BackupSnapshotRead(BaseModel):
+    """Ein vorhandener Snapshot, der eine bestimmte VM oder ein bestimmtes CSV
+    abdeckt (fuer die 'Backups anzeigen'-Funktion im Inventory) -- unabhaengig
+    davon, ueber welche Policy/Resource-Group er entstanden ist."""
+
+    id: str
+    run_id: str
+    policy_name: str
+    consistency: ConsistencyType
+    created_at: datetime
+    netapp_cluster_name: str | None = None
+    svm_name: str | None = None
+    volume_name: str | None = None
+    csv_names: list[str] = []
+    vm_names: list[str] = []
+    snapshot_name: str | None = None
+    snapshot_uuid: str | None = None
+
+
 class BackupJobRun(BaseModel):
     id: str
     job_id: str | None = None

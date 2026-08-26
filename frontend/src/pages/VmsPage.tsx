@@ -4,6 +4,7 @@ import { notifications } from "@mantine/notifications";
 import {
   IconChevronsRight,
   IconDatabase,
+  IconDatabaseExport,
   IconFileText,
   IconFolder,
   IconInfoCircle,
@@ -18,8 +19,9 @@ import {
 import { useSearchParams } from "react-router-dom";
 
 import { useCsvs, useVms } from "@/api/hooks";
+import { BackupsModal } from "@/components/BackupsModal";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
-import type { Csv, Vm } from "@/api/types";
+import type { BackupScope, Csv, Vm } from "@/api/types";
 import { formatBytes } from "@/utils/format";
 
 const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
@@ -239,6 +241,11 @@ export function VmsPage() {
   const csvMenu = useContextMenu<Csv>();
   const [selectedVm, setSelectedVm] = useState<Vm | null>(null);
   const [selectedCsv, setSelectedCsv] = useState<Csv | null>(null);
+  const [backupsTarget, setBackupsTarget] = useState<{ scope: BackupScope; name: string } | null>(null);
+
+  function showBackups(scope: BackupScope, name: string) {
+    setBackupsTarget({ scope, name });
+  }
 
   function toggleSelectedVm(vm: Vm) {
     setSelectedCsv(null);
@@ -397,6 +404,12 @@ export function VmsPage() {
         <Menu.Item leftSection={<IconInfoCircle size={16} />} onClick={() => vmMenu.state && setSelectedVm(vmMenu.state.data)}>
           Details anzeigen
         </Menu.Item>
+        <Menu.Item
+          leftSection={<IconDatabaseExport size={16} />}
+          onClick={() => vmMenu.state && showBackups("vm", vmMenu.state.data.name)}
+        >
+          Backups anzeigen
+        </Menu.Item>
         <Menu.Item leftSection={<IconTerminal2 size={16} />}>Log anzeigen</Menu.Item>
       </ContextMenuDropdown>
 
@@ -408,7 +421,20 @@ export function VmsPage() {
         <Menu.Item leftSection={<IconInfoCircle size={16} />} onClick={() => csvMenu.state && setSelectedCsv(csvMenu.state.data)}>
           Details anzeigen
         </Menu.Item>
+        <Menu.Item
+          leftSection={<IconDatabaseExport size={16} />}
+          onClick={() => csvMenu.state && showBackups("csv", csvMenu.state.data.name)}
+        >
+          Backups anzeigen
+        </Menu.Item>
       </ContextMenuDropdown>
+
+      <BackupsModal
+        opened={!!backupsTarget}
+        onClose={() => setBackupsTarget(null)}
+        scope={backupsTarget?.scope ?? "vm"}
+        name={backupsTarget?.name}
+      />
     </Stack>
   );
 }

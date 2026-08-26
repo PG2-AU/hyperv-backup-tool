@@ -5,6 +5,7 @@ import type {
   BackupJobRun,
   BackupPolicy,
   BackupScope,
+  BackupSnapshot,
   ClusterPeerCreate,
   Csv,
   DiscoveryStep,
@@ -150,6 +151,14 @@ export function useJobRuns() {
   return useQuery({
     queryKey: ["job-runs"],
     queryFn: async () => (await apiClient.get<BackupJobRun[]>("/jobs/runs")).data,
+  });
+}
+
+export function useBackupsForObject(scope: BackupScope, name: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ["backups", scope, name],
+    queryFn: async () => (await apiClient.get<BackupSnapshot[]>("/jobs/backups", { params: { scope, name } })).data,
+    enabled: enabled && !!name,
   });
 }
 
