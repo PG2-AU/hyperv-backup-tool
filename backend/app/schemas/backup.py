@@ -1,20 +1,11 @@
 from datetime import datetime
-from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.models.backup_policy import BackupScope, ConsistencyType, RetentionType
+from app.models.backup_run import JobStatus
 from app.schemas.schedule import ScheduleRead
 from app.schemas.snapmirror_label import SnapMirrorLabelRead
-
-
-class JobStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CLEANING_UP = "cleaning_up"
-    CLEANED_UP_AFTER_FAILURE = "cleaned_up_after_failure"
 
 
 class BackupPolicyWrite(BaseModel):
@@ -64,15 +55,30 @@ class BackupPolicyRead(BaseModel):
     created_at: datetime
 
 
+class BackupRunSnapshotRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    netapp_cluster_name: str | None = None
+    svm_name: str | None = None
+    volume_name: str | None = None
+    csv_names: list[str] = []
+    lun_names: list[str] = []
+    vm_names: list[str] = []
+    snapshot_name: str | None = None
+    snapshot_uuid: str | None = None
+    success: bool
+    error_message: str | None = None
+
+
 class BackupJobRun(BaseModel):
     id: str
-    job_id: str
+    job_id: str | None = None
     job_name: str
     status: JobStatus
     started_at: datetime
     finished_at: datetime | None = None
     scope: BackupScope | None = None
     targets: list[str]
-    created_snapshots: list[str] = []
-    created_checkpoints: list[str] = []
     error_message: str | None = None
+    snapshots: list[BackupRunSnapshotRead] = []

@@ -484,16 +484,29 @@ export interface ResourceGroup {
   created_at: string;
 }
 
+export interface BackupRunSnapshot {
+  id: string;
+  netapp_cluster_name?: string | null;
+  svm_name?: string | null;
+  volume_name?: string | null;
+  csv_names: string[];
+  lun_names: string[];
+  vm_names: string[];
+  snapshot_name?: string | null;
+  snapshot_uuid?: string | null;
+  success: boolean;
+  error_message?: string | null;
+}
+
 export interface BackupJobRun {
   id: string;
-  job_id: string;
+  job_id?: string | null;
   job_name: string;
   status: JobStatus;
   started_at: string;
   finished_at?: string | null;
   scope?: BackupScope | null;
   targets: string[];
-  created_snapshots: string[];
-  created_checkpoints: string[];
   error_message?: string | null;
+  snapshots: BackupRunSnapshot[];
 }

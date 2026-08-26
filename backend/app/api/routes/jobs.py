@@ -3,55 +3,44 @@
 Backup-Policies (Name, Zeitplan, Konsistenz, SnapMirror-Verhalten, Retention,
 Snapshot Locking) werden in der DB persistiert. Die VM/CSV-Zuordnung erfolgt
 ueber ResourceGroups, die mit einer Policy verknuepft werden (siehe
-app.api.routes.resource_groups). Die tatsaechliche Job-Ausfuehrung
-(HyperVService.create_checkpoint -> NetAppOntapService.create_snapshot ->
-SnapMirror-Update -> Checkpoint entfernen; bei Fehler: cleanup_checkpoints
-+ cleanup_snapshots) folgt als naechster Schritt -- Job-Laeufe (`_DEMO_RUNS`)
-sind daher weiterhin Demo-Daten.
+app.api.routes.resource_groups).
+
+Job-Ausfuehrung (aktueller Stand -- nur crashconsistent): pro betroffenem
+NetApp-Volume wird genau EIN Storage-Snapshot erstellt, auch wenn mehrere
+VMs/CSVs auf demselben Volume liegen. Die Aufloesung VM/CSV -> CSV -> LUN ->
+NetApp-Volume nutzt die bereits bei der Hyper-V-/NetApp-Discovery persistierte
+Korrelation (HyperVCsv.netapp_lun_id, siehe hyperv_clusters.py discover_cluster).
+Jeder Snapshot-Vorgang wird als eigener BackupRunSnapshot-Datensatz mit der
+vollstaendigen Zuordnungskette gespeichert.
+
+Applikationskonsistente Backups (VM-Checkpoint vor dem Storage-Snapshot,
+inkl. Best-Effort-Ueberspringen einzelner VMs und Checkpoint-Cleanup bei
+Fehlern) folgen als naechster Schritt.
 """
 
+import re
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
+from app.models.backup_run import BackupRun, BackupRunSnapshot, JobStatus
+from app.models.hyperv_discovery import HyperVCsv, HyperVVhd
+from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
+from app.models.netapp_discovery import NetAppLun, NetAppVolume
 from app.models.schedule import Schedule
 from app.models.snapmirror_label import SnapMirrorLabel
-from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite, JobStatus
+from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite
+from app.services.netapp_service import NetAppOntapService
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
-
-_DEMO_RUNS = [
-    BackupJobRun(
-        id="run-1001",
-        job_id="job-001",
-        job_name="SQL-Cluster taeglich 02:00",
-        status=JobStatus.SUCCEEDED,
-        started_at=datetime(2026, 8, 14, 2, 0, tzinfo=timezone.utc),
-        finished_at=datetime(2026, 8, 14, 2, 6, tzinfo=timezone.utc),
-        scope=BackupScope.VM,
-        targets=["APP-SQL01"],
-        created_snapshots=["daily.2026-08-14_0200"],
-        created_checkpoints=[],
-    ),
-    BackupJobRun(
-        id="run-1002",
-        job_id="job-002",
-        job_name="CSV1 stuendlich",
-        status=JobStatus.CLEANED_UP_AFTER_FAILURE,
-        started_at=datetime(2026, 8, 14, 5, 0, tzinfo=timezone.utc),
-        finished_at=datetime(2026, 8, 14, 5, 2, tzinfo=timezone.utc),
-        scope=BackupScope.CSV,
-        targets=["CSV1"],
-        created_snapshots=[],
-        created_checkpoints=[],
-        error_message="SnapMirror-Update fehlgeschlagen: destination volume offline. Checkpoints wurden automatisch entfernt.",
-    ),
-]
 
 
 def _validate_references(payload: BackupPolicyWrite, db: Session) -> None:
@@ -137,11 +126,121 @@ def delete_job(
 
 
 @router.get("/runs", response_model=list[BackupJobRun])
-def list_job_runs(user=Depends(require_permission(Permission.BACKUP_VIEW))) -> list[BackupJobRun]:
-    return _DEMO_RUNS
+def list_job_runs(db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW))) -> list[BackupJobRun]:
+    runs = db.query(BackupRun).order_by(BackupRun.started_at.desc()).all()
+    return [_to_run_read(r) for r in runs]
 
 
-@router.post("/{job_id}/run", response_model=BackupJobRun, status_code=status.HTTP_202_ACCEPTED)
+def _to_run_read(run: BackupRun) -> BackupJobRun:
+    return BackupJobRun(
+        id=run.id,
+        job_id=run.policy_id,
+        job_name=run.policy_name,
+        status=run.status,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        scope=run.scope,
+        targets=run.targets or [],
+        error_message=run.error_message,
+        snapshots=list(run.snapshots),
+    )
+
+
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower()
+    return slug or "policy"
+
+
+@dataclass
+class _VolumeTarget:
+    netapp_cluster_id: str
+    netapp_cluster_name: str | None
+    svm_name: str | None
+    volume_name: str | None
+    csv_names: set[str] = field(default_factory=set)
+    lun_names: set[str] = field(default_factory=set)
+    vm_names: set[str] = field(default_factory=set)
+
+
+def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTarget], list[str]]:
+    """Loest die Resource Groups einer Policy zu den betroffenen NetApp-Volumes
+    auf. Mehrere VMs/CSVs auf demselben Volume werden zu einem gemeinsamen
+    Ziel zusammengefasst (ein Snapshot deckt sie alle ab). Gibt zusaetzlich
+    Warnungen fuer Mitglieder zurueck, die sich keinem NetApp-Volume zuordnen
+    liessen (z.B. weil die Discovery noch nicht gelaufen ist)."""
+    warnings: list[str] = []
+    targets: dict[tuple[str, str, str], _VolumeTarget] = {}
+
+    csv_by_name: dict[str, HyperVCsv] = {c.name: c for c in db.query(HyperVCsv).all()}
+    luns_by_id: dict[str, NetAppLun] = {lun.id: lun for lun in db.query(NetAppLun).all()}
+
+    vm_csvs: dict[str, set[str]] = defaultdict(set)
+    csv_vms: dict[str, set[str]] = defaultdict(set)
+    for vhd in db.query(HyperVVhd).all():
+        if vhd.vm_name and vhd.csv_name:
+            vm_csvs[vhd.vm_name].add(vhd.csv_name)
+            csv_vms[vhd.csv_name].add(vhd.vm_name)
+
+    def _add(csv_name: str, vm_names: set[str]) -> None:
+        csv = csv_by_name.get(csv_name)
+        if csv is None:
+            warnings.append(f"CSV '{csv_name}' nicht gefunden (Hyper-V-Discovery pruefen)")
+            return
+        if not csv.netapp_lun_id:
+            warnings.append(f"CSV '{csv_name}': keine NetApp-LUN zugeordnet (Discovery pruefen)")
+            return
+        lun = luns_by_id.get(csv.netapp_lun_id)
+        if lun is None or not csv.netapp_volume_name:
+            warnings.append(f"CSV '{csv_name}': zugeordnete NetApp-LUN/-Volume nicht gefunden")
+            return
+
+        key = (lun.cluster_id, csv.netapp_svm_name or "", csv.netapp_volume_name)
+        target = targets.get(key)
+        if target is None:
+            target = _VolumeTarget(
+                netapp_cluster_id=lun.cluster_id,
+                netapp_cluster_name=csv.netapp_cluster_name,
+                svm_name=csv.netapp_svm_name,
+                volume_name=csv.netapp_volume_name,
+            )
+            targets[key] = target
+        target.csv_names.add(csv_name)
+        if csv.netapp_lun_name:
+            target.lun_names.add(csv.netapp_lun_name)
+        target.vm_names |= vm_names
+
+    for group in policy.resource_groups:
+        if group.scope == BackupScope.VM:
+            for vm_name in group.members:
+                csvs = vm_csvs.get(vm_name)
+                if not csvs:
+                    warnings.append(f"VM '{vm_name}': keine CSV/VHD-Zuordnung gefunden (Hyper-V-Discovery pruefen)")
+                    continue
+                for csv_name in csvs:
+                    _add(csv_name, {vm_name})
+        elif group.scope == BackupScope.CSV:
+            for csv_name in group.members:
+                _add(csv_name, csv_vms.get(csv_name, set()))
+        else:
+            warnings.append(f"Resource Group '{group.name}': Scope '{group.scope}' wird fuer Backup-Jobs nicht unterstuetzt")
+
+    return list(targets.values()), warnings
+
+
+def _netapp_service_for(cluster: NetAppCluster) -> NetAppOntapService:
+    if cluster.auth_method == NetAppAuthMethod.CERTIFICATE and cluster.client_cert_path and cluster.client_key_path:
+        return NetAppOntapService(
+            host=cluster.management_lif, verify_ssl=cluster.verify_ssl,
+            cert_path=cluster.client_cert_path, key_path=cluster.client_key_path,
+        )
+    return NetAppOntapService(
+        host=cluster.management_lif, verify_ssl=cluster.verify_ssl,
+        username=cluster.username,
+        password=decrypt_secret(cluster.encrypted_password) if cluster.encrypted_password else None,
+    )
+
+
+@router.post("/{job_id}/run", response_model=BackupJobRun)
 def trigger_job_run(
     job_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_RUN)),
 ) -> BackupJobRun:
@@ -149,16 +248,82 @@ def trigger_job_run(
     if policy is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
 
-    groups = policy.resource_groups
-    targets = sorted({member for group in groups for member in group.members})
-    scope = groups[0].scope if groups else None
+    if policy.consistency != ConsistencyType.CRASH_CONSISTENT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Applikationskonsistente Backups (VM-Checkpoints) sind noch nicht implementiert.",
+        )
 
-    return BackupJobRun(
-        id=f"run-{int(datetime.now(timezone.utc).timestamp())}",
-        job_id=policy.id,
-        job_name=policy.name,
-        status=JobStatus.PENDING,
-        started_at=datetime.now(timezone.utc),
-        scope=scope,
-        targets=targets,
+    targets, warnings = _resolve_targets(db, policy)
+    if not targets:
+        detail = "Keine gueltigen Backup-Ziele gefunden."
+        if warnings:
+            detail += " " + "; ".join(warnings)
+        else:
+            detail += " Der Policy ist keine Resource Group mit Zielen zugeordnet."
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    now = datetime.now(timezone.utc)
+    all_targets = sorted({vm for t in targets for vm in t.vm_names} | {csv for t in targets for csv in t.csv_names})
+    run = BackupRun(
+        policy_id=policy.id,
+        policy_name=policy.name,
+        status=JobStatus.RUNNING,
+        consistency=policy.consistency.value,
+        scope=policy.resource_groups[0].scope if policy.resource_groups else None,
+        targets=all_targets,
+        started_at=now,
     )
+    db.add(run)
+    db.flush()
+
+    clusters_by_id = {c.id: c for c in db.query(NetAppCluster).all()}
+    volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
+    snapshot_suffix = now.strftime("%Y%m%d%H%M%S")
+    slug = _slugify(policy.name)
+    label = policy.snapmirror_label.name if policy.snapmirror_label else None
+
+    errors: list[str] = list(warnings)
+    for target in targets:
+        row = BackupRunSnapshot(
+            run_id=run.id,
+            netapp_cluster_id=target.netapp_cluster_id,
+            netapp_cluster_name=target.netapp_cluster_name,
+            svm_name=target.svm_name,
+            volume_name=target.volume_name,
+            csv_names=sorted(target.csv_names),
+            lun_names=sorted(target.lun_names),
+            vm_names=sorted(target.vm_names),
+        )
+        cluster = clusters_by_id.get(target.netapp_cluster_id)
+        volume = volumes_by_key.get((target.netapp_cluster_id, target.svm_name, target.volume_name))
+        if volume is not None:
+            row.volume_uuid = volume.uuid
+
+        if cluster is None or not target.svm_name or not target.volume_name:
+            row.success = False
+            row.error_message = "NetApp-Cluster oder -Volume nicht auflösbar"
+            errors.append(f"{target.volume_name or '?'}: {row.error_message}")
+            db.add(row)
+            continue
+
+        snapshot_name = f"hvnb_{slug}_{snapshot_suffix}"
+        try:
+            service = _netapp_service_for(cluster)
+            snap = service.create_snapshot(target.volume_name, target.svm_name, snapshot_name, snapmirror_label=label)
+            row.snapshot_name = snap.name
+            row.snapshot_uuid = snap.uuid
+            row.success = True
+        except Exception as exc:
+            row.success = False
+            row.error_message = str(exc)
+            errors.append(f"{target.volume_name}: {exc}")
+        db.add(row)
+
+    run.finished_at = datetime.now(timezone.utc)
+    run.status = JobStatus.FAILED if errors else JobStatus.SUCCEEDED
+    run.error_message = "; ".join(errors) if errors else None
+    db.commit()
+    db.refresh(run)
+
+    return _to_run_read(run)

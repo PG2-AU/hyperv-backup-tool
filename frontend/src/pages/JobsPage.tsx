@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Badge, Button, Drawer, Group, Menu, Stack, Table, Tabs, Text, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconEdit, IconPlayerPlay, IconPlus, IconTerminal2, IconTrash } from "@tabler/icons-react";
+import { IconEdit, IconPlayerPlay, IconPlus, IconStack2, IconTerminal2, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import { useDeletePolicy, useDeleteResourceGroup, useJobRuns, usePolicies, useResourceGroups, useTriggerJobRun } from "@/api/hooks";
@@ -10,7 +10,7 @@ import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { LogViewer } from "@/components/LogViewer";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
 import { ResourceGroupFormModal } from "@/components/ResourceGroupFormModal";
-import type { BackupPolicy, JobStatus, ResourceGroup } from "@/api/types";
+import type { BackupJobRun, BackupPolicy, JobStatus, ResourceGroup } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatRetention, formatSchedule } from "@/utils/format";
 
@@ -39,6 +39,8 @@ export function JobsPage() {
   const [logContext, setLogContext] = useState<string | undefined>(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<BackupPolicy | null>(null);
+  const [snapshotsOpened, { open: openSnapshots, close: closeSnapshots }] = useDisclosure(false);
+  const [selectedRun, setSelectedRun] = useState<BackupJobRun | null>(null);
 
   const { data: groups } = useResourceGroups();
   const deleteGroup = useDeleteResourceGroup();
@@ -48,9 +50,20 @@ export function JobsPage() {
 
   function runNow(policy: BackupPolicy) {
     triggerRun.mutate(policy.id, {
-      onSuccess: () => notifications.show({ title: "Job gestartet", message: policy.name, color: "blue" }),
-      onError: () => notifications.show({ title: "Fehler", message: "Job konnte nicht gestartet werden", color: "red" }),
+      onSuccess: (run) =>
+        notifications.show({
+          title: run.status === "succeeded" ? "Job erfolgreich" : "Job fehlgeschlagen",
+          message: run.error_message ?? policy.name,
+          color: run.status === "succeeded" ? "green" : "red",
+        }),
+      onError: (err) =>
+        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Job konnte nicht gestartet werden."), color: "red" }),
     });
+  }
+
+  function showSnapshots(run: BackupJobRun) {
+    setSelectedRun(run);
+    openSnapshots();
   }
 
   function openCreate() {
@@ -72,7 +85,7 @@ export function JobsPage() {
     });
   }
 
-  function showLog(jobId: string) {
+  function showLog(jobId: string | undefined) {
     setLogContext(jobId);
     openLogs();
   }
@@ -251,9 +264,19 @@ export function JobsPage() {
                   <Table.Td>{run.finished_at ? new Date(run.finished_at).toLocaleString("de-DE") : "-"}</Table.Td>
                   <Table.Td>{run.error_message ?? "-"}</Table.Td>
                   <Table.Td>
-                    <Button size="xs" variant="subtle" leftSection={<IconTerminal2 size={14} />} onClick={() => showLog(run.job_id)}>
-                      Log
-                    </Button>
+                    <Group gap={4} wrap="nowrap">
+                      <Button size="xs" variant="subtle" leftSection={<IconStack2 size={14} />} onClick={() => showSnapshots(run)}>
+                        Snapshots
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        leftSection={<IconTerminal2 size={14} />}
+                        onClick={() => showLog(run.job_id ?? undefined)}
+                      >
+                        Log
+                      </Button>
+                    </Group>
                   </Table.Td>
                 </Table.Tr>
               ))}
@@ -291,6 +314,50 @@ export function JobsPage() {
 
       <Drawer opened={logsOpened} onClose={closeLogs} position="bottom" size="45%" title="Job-Log">
         <LogViewer context={logContext} />
+      </Drawer>
+
+      <Drawer
+        opened={snapshotsOpened}
+        onClose={closeSnapshots}
+        position="right"
+        size="lg"
+        title={selectedRun ? `Snapshots: ${selectedRun.job_name}` : "Snapshots"}
+      >
+        <Stack>
+          {selectedRun?.snapshots.length === 0 && (
+            <Text c="dimmed" size="sm">
+              Fuer diesen Lauf wurden keine Snapshots erstellt.
+            </Text>
+          )}
+          {selectedRun?.snapshots.map((snap) => (
+            <Stack key={snap.id} gap={4} p="sm" style={{ border: "1px solid var(--mantine-color-default-border)", borderRadius: 8 }}>
+              <Group justify="space-between">
+                <Text fw={600} size="sm">
+                  {snap.volume_name ?? "?"}
+                </Text>
+                <Badge color={snap.success ? "green" : "red"} variant="light">
+                  {snap.success ? "erfolgreich" : "fehlgeschlagen"}
+                </Badge>
+              </Group>
+              <Text size="xs" c="dimmed">
+                Cluster: {snap.netapp_cluster_name ?? "-"} / SVM: {snap.svm_name ?? "-"}
+              </Text>
+              <Text size="xs">CSVs: {snap.csv_names.length ? snap.csv_names.join(", ") : "-"}</Text>
+              <Text size="xs">LUNs: {snap.lun_names.length ? snap.lun_names.join(", ") : "-"}</Text>
+              <Text size="xs">VMs: {snap.vm_names.length ? snap.vm_names.join(", ") : "-"}</Text>
+              {snap.snapshot_name && (
+                <Text size="xs" ff="monospace">
+                  Snapshot: {snap.snapshot_name}
+                </Text>
+              )}
+              {snap.error_message && (
+                <Text size="xs" c="red">
+                  {snap.error_message}
+                </Text>
+              )}
+            </Stack>
+          ))}
+        </Stack>
       </Drawer>
 
       <PolicyFormModal opened={formOpen} onClose={() => setFormOpen(false)} policy={editingPolicy} />
