@@ -5,6 +5,7 @@ import { useNetAppSchedules, useSnapmirrorPolicies } from "@/api/hooks";
 import { PolicyRulesEditor } from "@/components/PolicyRulesEditor";
 import { ScheduleCronPicker, type CronValue } from "@/components/ScheduleCronPicker";
 import type { NetAppAggregate, NetAppCluster, NetAppSvm, NetAppVolume, SnapMirrorPolicyRuleWrite, SnapmirrorCreationPlan, VaultType } from "@/api/types";
+import { dedupeOptions } from "@/utils/selectOptions";
 
 interface InitialSource {
   clusterId: string;
@@ -50,8 +51,19 @@ export function SnapmirrorFormModal({
 
   const { data: allPolicies } = useSnapmirrorPolicies();
   const { data: allSchedules } = useNetAppSchedules();
-  const policies = (allPolicies ?? []).filter((p) => p.cluster_id === destinationClusterId);
-  const schedules = (allSchedules ?? []).filter((s) => s.cluster_id === destinationClusterId);
+  // Policies/Schedules gehoeren entweder zur gewaehlten Ziel-SVM oder sind
+  // clusterweit (kein svm_name) -- beide sind fuer die Beziehung gueltig.
+  // ONTAP legt fuer viele SVM-scoped Default-Policies/-Schedules (z.B.
+  // "daily") pro SVM eine EIGENE Kopie mit demselben Namen an; ohne diese
+  // Eingrenzung auf die Ziel-SVM wuerden bei mehreren SVMs auf dem
+  // Ziel-Cluster Namensdubletten in der Auswahlliste landen (siehe
+  // dedupeOptions unten fuer den zusaetzlichen Schutz davor).
+  const policies = (allPolicies ?? []).filter(
+    (p) => p.cluster_id === destinationClusterId && (!p.svm_name || p.svm_name === destinationSvmName),
+  );
+  const schedules = (allSchedules ?? []).filter(
+    (s) => s.cluster_id === destinationClusterId && (!s.svm_name || s.svm_name === destinationSvmName),
+  );
 
   useEffect(() => {
     if (!opened) return;
@@ -74,22 +86,30 @@ export function SnapmirrorFormModal({
     setAutoInitialize(true);
   }, [opened, clusters, initialSource]);
 
-  const sourceSvmOptions = (svms ?? []).filter((s) => s.cluster_id === sourceClusterId).map((s) => ({ value: s.name, label: s.name }));
-  const sourceVolumeOptions = (volumes ?? [])
-    .filter((v) => v.cluster_id === sourceClusterId && v.svm_name === sourceSvmName)
-    .map((v) => ({ value: v.name, label: v.name }));
-  const destinationSvmOptions = (svms ?? []).filter((s) => s.cluster_id === destinationClusterId).map((s) => ({ value: s.name, label: s.name }));
-  const destinationAggregateOptions = (aggregates ?? []).filter((a) => a.cluster_id === destinationClusterId).map((a) => ({ value: a.name, label: a.name }));
+  const sourceSvmOptions = dedupeOptions(
+    (svms ?? []).filter((s) => s.cluster_id === sourceClusterId).map((s) => ({ value: s.name, label: s.name })),
+  );
+  const sourceVolumeOptions = dedupeOptions(
+    (volumes ?? [])
+      .filter((v) => v.cluster_id === sourceClusterId && v.svm_name === sourceSvmName)
+      .map((v) => ({ value: v.name, label: v.name })),
+  );
+  const destinationSvmOptions = dedupeOptions(
+    (svms ?? []).filter((s) => s.cluster_id === destinationClusterId).map((s) => ({ value: s.name, label: s.name })),
+  );
+  const destinationAggregateOptions = dedupeOptions(
+    (aggregates ?? []).filter((a) => a.cluster_id === destinationClusterId).map((a) => ({ value: a.name, label: a.name })),
+  );
 
-  const policyOptions = [
+  const policyOptions = dedupeOptions([
     ...policies.map((p) => ({ value: p.name, label: `${p.name} (${p.svm_name ?? p.scope})` })),
     { value: NEW_POLICY_VALUE, label: "+ Neue Policy anlegen" },
-  ];
-  const scheduleOptions = [
+  ]);
+  const scheduleOptions = dedupeOptions([
     { value: NO_SCHEDULE_VALUE, label: "Kein Schedule" },
     ...schedules.map((s) => ({ value: s.name, label: s.name })),
     { value: NEW_SCHEDULE_VALUE, label: "+ Neuen Schedule anlegen" },
-  ];
+  ]);
 
   const sourceVolume = (volumes ?? []).find(
     (v) => v.cluster_id === sourceClusterId && v.svm_name === sourceSvmName && v.name === sourceVolumeName,

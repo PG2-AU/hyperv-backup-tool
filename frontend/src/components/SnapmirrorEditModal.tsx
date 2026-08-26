@@ -6,6 +6,7 @@ import { useNetAppSchedules, useSnapmirrorPolicies } from "@/api/hooks";
 import { PolicyRulesEditor } from "@/components/PolicyRulesEditor";
 import { ScheduleCronPicker, type CronValue } from "@/components/ScheduleCronPicker";
 import type { NetAppCluster, SnapMirrorPolicyRuleWrite, SnapmirrorEditPlan, SnapMirrorRelationship, VaultType } from "@/api/types";
+import { dedupeOptions } from "@/utils/selectOptions";
 
 interface SnapmirrorEditModalProps {
   opened: boolean;
@@ -36,12 +37,20 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, clusters, o
   // registrierten Cluster das tatsaechlich ist.
   const destinationCluster = (clusters ?? []).find((c) => c.ontap_cluster_name === relationship?.destination_cluster_name);
   const destinationClusterId = destinationCluster?.id ?? null;
+  const destinationSvmName = relationship?.destination_path?.split(":")[0] ?? "";
   const { data: allPolicies } = useSnapmirrorPolicies();
   const { data: allSchedules } = useNetAppSchedules();
-  const policies = (allPolicies ?? []).filter((p) => p.cluster_id === destinationClusterId);
-  const schedules = (allSchedules ?? []).filter((s) => s.cluster_id === destinationClusterId);
-
-  const destinationSvmName = relationship?.destination_path?.split(":")[0] ?? "";
+  // Policies/Schedules gehoeren entweder zur Ziel-SVM oder sind clusterweit
+  // (kein svm_name) -- siehe SnapmirrorFormModal fuer die ausfuehrliche
+  // Begruendung (ONTAP dupliziert SVM-scoped Default-Policies/-Schedules pro
+  // SVM unter demselben Namen, was sonst zu Namensdubletten in der
+  // Auswahlliste fuehrt und Mantines Select hart zum Absturz bringt).
+  const policies = (allPolicies ?? []).filter(
+    (p) => p.cluster_id === destinationClusterId && (!p.svm_name || p.svm_name === destinationSvmName),
+  );
+  const schedules = (allSchedules ?? []).filter(
+    (s) => s.cluster_id === destinationClusterId && (!s.svm_name || s.svm_name === destinationSvmName),
+  );
 
   useEffect(() => {
     if (!opened || !relationship) return;
@@ -56,15 +65,15 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, clusters, o
 
   if (!relationship) return null;
 
-  const policyOptions = [
+  const policyOptions = dedupeOptions([
     ...policies.map((p) => ({ value: p.name, label: `${p.name} (${p.svm_name ?? p.scope})` })),
     { value: NEW_POLICY_VALUE, label: "+ Neue Policy anlegen" },
-  ];
-  const scheduleOptions = [
+  ]);
+  const scheduleOptions = dedupeOptions([
     { value: NO_SCHEDULE_VALUE, label: "Kein Schedule" },
     ...schedules.map((s) => ({ value: s.name, label: s.name })),
     { value: NEW_SCHEDULE_VALUE, label: "+ Neuen Schedule anlegen" },
-  ];
+  ]);
 
   const policyMode = policySelection === NEW_POLICY_VALUE ? "new" : "existing";
   const scheduleMode = scheduleSelection === NEW_SCHEDULE_VALUE ? "new" : scheduleSelection === NO_SCHEDULE_VALUE ? "none" : "existing";
