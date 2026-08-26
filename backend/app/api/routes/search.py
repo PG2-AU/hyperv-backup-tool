@@ -9,10 +9,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.routes.vms import _DEMO_CSVS
 from app.db.session import get_db
 from app.models.backup_policy import BackupPolicy
-from app.models.hyperv_discovery import HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVVm
 from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppSnapMirrorRelationship, NetAppSvm
 from app.models.resource_group import ResourceGroup
@@ -60,9 +59,13 @@ def search(
                         subtitle=f"{vm.host_name or '?'} / {vm.state or '?'}", route="/vms",
                     )
                 )
-        for csv in _DEMO_CSVS:
+        for csv in db.query(HyperVCsv).all():
             if needle in csv.name.lower():
-                results.append(SearchResult(type="CSV", id=csv.name, label=csv.name, subtitle=csv.owner_node, route="/vms?tab=csv"))
+                results.append(
+                    SearchResult(
+                        type="CSV", id=csv.id, label=csv.name, subtitle=csv.owner_node or "", route="/vms?tab=csv",
+                    )
+                )
 
     if context in (None, "jobs"):
         for policy in db.query(BackupPolicy).all():
