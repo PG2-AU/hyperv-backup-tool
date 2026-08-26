@@ -72,7 +72,7 @@ export const NAV_ITEMS: NavItem[] = [
     searchContext: "restore",
     children: [
       { label: "Wiederherstellen", path: "/restore" },
-      { label: "Setup", path: "/settings?tab=restore-setup" },
+      { label: "Setup", path: "/restore?tab=setup" },
     ],
   },
   {

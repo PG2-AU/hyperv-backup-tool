@@ -66,7 +66,7 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
       opened={opened}
       onClose={done || active < 3 ? onClose : () => {}}
       title={`VM wiederherstellen: ${vm?.name ?? ""}`}
-      size="lg"
+      size="xl"
       closeOnClickOutside={done || active < 3}
       closeOnEscape={done || active < 3}
     >

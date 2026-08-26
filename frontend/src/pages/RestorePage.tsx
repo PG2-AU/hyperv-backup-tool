@@ -1,9 +1,17 @@
 import { useState } from "react";
-import { Badge, Button, Stack, Table, Text, Title } from "@mantine/core";
+import { ActionIcon, Alert, Badge, Button, Group, Paper, Stack, Table, Tabs, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconDatabaseImport, IconTrash } from "@tabler/icons-react";
+import { IconDatabaseImport, IconInfoCircle, IconPlus, IconTrash } from "@tabler/icons-react";
+import { useSearchParams } from "react-router-dom";
 
-import { useCleanupRestoreRun, useRestoreRuns, useVmsWithBackups } from "@/api/hooks";
+import {
+  useCleanupRestoreRun,
+  useDeleteRestoreInfraConfig,
+  useRestoreInfraConfigs,
+  useRestoreRuns,
+  useVmsWithBackups,
+} from "@/api/hooks";
+import { RestoreSetupWizardModal } from "@/components/RestoreSetupWizardModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import type { VmWithBackups } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
@@ -11,10 +19,17 @@ import { apiErrorMessage } from "@/utils/errors";
 const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
 
 export function RestorePage() {
+  const [params, setParams] = useSearchParams();
+  const activeTab = params.get("tab") ?? "overview";
+
   const { data: vms } = useVmsWithBackups();
   const { data: runs } = useRestoreRuns();
   const cleanupRun = useCleanupRestoreRun();
   const [wizardVm, setWizardVm] = useState<VmWithBackups | null>(null);
+
+  const { data: restoreConfigs } = useRestoreInfraConfigs();
+  const deleteRestoreConfig = useDeleteRestoreInfraConfig();
+  const [restoreWizardOpen, setRestoreWizardOpen] = useState(false);
 
   const cleanupPending = runs?.filter((r) => r.cleanup_needed) ?? [];
 
@@ -29,6 +44,15 @@ export function RestorePage() {
   return (
     <Stack>
       <Title order={3}>Restore</Title>
+
+      <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "overview" })}>
+        <Tabs.List>
+          <Tabs.Tab value="overview">Wiederherstellen</Tabs.Tab>
+          <Tabs.Tab value="setup">Setup</Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="overview" pt="md">
+          <Stack>
 
       {cleanupPending.length > 0 && (
         <Stack gap="xs">
@@ -115,8 +139,76 @@ export function RestorePage() {
           Noch keine VM mit vorhandenen Backups.
         </Text>
       )}
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="setup" pt="md">
+          <Stack>
+            <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
+              Der VHDX-Restore-Workflow klont eine LUN aus einem Snapshot und meldet sich per iSCSI direkt vom
+              Container aus bei der NetApp-SVM an, um die wiederhergestellte VHDX per SMB auf die Ziel-CSV zu
+              kopieren. Voraussetzungen: der Container braucht Netzwerkzugriff auf ein iSCSI-Interface der Ziel-SVM
+              sowie auf Port 445 (SMB) eines Hyper-V-Knotens, und zusätzlich erweiterte Container-Rechte
+              (CAP_SYS_ADMIN + Blockgeräte-Zugriff) für echte iSCSI-/Mount-Operationen -- letzteres kann nur durch
+              eine einmalige Anpassung der Container-Startparameter erfüllt werden, siehe Assistent unten.
+            </Alert>
+            <Paper p="md">
+              <Group justify="space-between" mb="sm">
+                <Title order={5}>Konfigurierte SVMs</Title>
+                <Button leftSection={<IconPlus size={16} />} onClick={() => setRestoreWizardOpen(true)}>
+                  Restore-Infrastruktur einrichten
+                </Button>
+              </Group>
+              <Table striped highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>SVM</Table.Th>
+                    <Table.Th>iSCSI-Interface</Table.Th>
+                    <Table.Th>Igroup</Table.Th>
+                    <Table.Th>Initiator</Table.Th>
+                    <Table.Th />
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {restoreConfigs?.map((c) => (
+                    <Table.Tr key={c.id}>
+                      <Table.Td>{c.svm_name}</Table.Td>
+                      <Table.Td>
+                        {c.iscsi_lif_name ?? "-"} ({c.iscsi_lif_address}:{c.iscsi_lif_port})
+                      </Table.Td>
+                      <Table.Td>{c.igroup_name}</Table.Td>
+                      <Table.Td ff="monospace" fz="xs">
+                        {c.initiator_iqn}
+                      </Table.Td>
+                      <Table.Td>
+                        <ActionIcon
+                          color="red"
+                          variant="subtle"
+                          onClick={() => {
+                            if (window.confirm(`Restore-Setup für '${c.svm_name}' entfernen?`)) {
+                              deleteRestoreConfig.mutate(c.id);
+                            }
+                          }}
+                        >
+                          <IconTrash size={16} />
+                        </ActionIcon>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+              {restoreConfigs?.length === 0 && (
+                <Text c="dimmed" size="sm" ta="center" py="md">
+                  Noch keine SVM für Restore eingerichtet.
+                </Text>
+              )}
+            </Paper>
+          </Stack>
+        </Tabs.Panel>
+      </Tabs>
 
       <RestoreWizardModal opened={!!wizardVm} onClose={() => setWizardVm(null)} vm={wizardVm} />
+      <RestoreSetupWizardModal opened={restoreWizardOpen} onClose={() => setRestoreWizardOpen(false)} />
     </Stack>
   );
 }
