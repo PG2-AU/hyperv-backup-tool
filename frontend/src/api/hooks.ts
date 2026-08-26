@@ -33,6 +33,9 @@ import type {
   RestoreInitiatorInfo,
   RestoreLifCandidate,
   RestoreRequirementsStatus,
+  RestoreRun,
+  TriggerRestorePayload,
+  VmWithBackups,
   RetentionType,
   Schedule,
   ScheduleType,
@@ -579,5 +582,47 @@ export function useDeleteRestoreInfraConfig() {
       await apiClient.delete(`/restore-infra/configs/${id}`);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restore-infra-configs"] }),
+  });
+}
+
+// --- Restore-Ausführung --------------------------------------------------
+
+export function useVmsWithBackups() {
+  return useQuery({
+    queryKey: ["restore-vms"],
+    queryFn: async () => (await apiClient.get<VmWithBackups[]>("/restore/vms")).data,
+  });
+}
+
+export function useTriggerRestore() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: TriggerRestorePayload) => (await apiClient.post<RestoreRun>("/restore/runs", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restore-runs"] }),
+  });
+}
+
+export function useRestoreRun(id: string | undefined, poll: boolean) {
+  return useQuery({
+    queryKey: ["restore-run", id],
+    queryFn: async () => (await apiClient.get<RestoreRun>(`/restore/runs/${id}`)).data,
+    enabled: !!id,
+    refetchInterval: (query) => (poll && query.state.data?.status === "running" ? 3000 : false),
+  });
+}
+
+export function useRestoreRuns() {
+  return useQuery({
+    queryKey: ["restore-runs"],
+    queryFn: async () => (await apiClient.get<RestoreRun[]>("/restore/runs")).data,
+    refetchInterval: 15_000,
+  });
+}
+
+export function useCleanupRestoreRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<RestoreRun>(`/restore/runs/${id}/cleanup`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restore-runs"] }),
   });
 }

@@ -2,6 +2,7 @@ export interface VhdInfo {
   name: string;
   size_bytes: number;
   csv_path: string;
+  full_path: string;
 }
 
 export interface Vm {
@@ -580,6 +581,44 @@ export interface RestoreInfraSetupPayload {
   iscsi_lif_address: string;
   iscsi_lif_port?: number;
   igroup_name?: string;
+}
+
+export type RestoreMode = "replace" | "add";
+
+export interface VmWithBackups {
+  name: string;
+  host?: string | null;
+  state?: string | null;
+  cluster?: string | null;
+  backup_count: number;
+}
+
+export interface RestoreRunStep {
+  step: string;
+  label: string;
+  status: "pending" | "running" | "success" | "error" | "skipped";
+  message?: string | null;
+}
+
+export interface RestoreRun {
+  id: string;
+  vm_name: string;
+  mode: RestoreMode;
+  status: "running" | "succeeded" | "failed" | "cleaned_up";
+  source_vhd_path: string;
+  restored_vhd_path?: string | null;
+  cleanup_needed: boolean;
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: RestoreRunStep[];
+}
+
+export interface TriggerRestorePayload {
+  vm_name: string;
+  snapshot_id: string;
+  source_vhd_path: string;
+  mode: RestoreMode;
 }
 
 export interface RestoreInfraConfig {

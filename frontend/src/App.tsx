@@ -7,6 +7,7 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { VmsPage } from "@/pages/VmsPage";
 import { StoragePage } from "@/pages/StoragePage";
 import { JobsPage } from "@/pages/JobsPage";
+import { RestorePage } from "@/pages/RestorePage";
 import { SettingsPage } from "@/pages/SettingsPage";
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/vms" element={<VmsPage />} />
         <Route path="/storage" element={<StoragePage />} />
         <Route path="/jobs" element={<JobsPage />} />
+        <Route path="/restore" element={<RestorePage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

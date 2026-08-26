@@ -1,5 +1,6 @@
 import {
   IconDatabase,
+  IconDatabaseImport,
   IconLayoutDashboard,
   IconServerCog,
   IconSettings,
@@ -63,6 +64,15 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Policies", path: "/jobs?tab=policies" },
       { label: "Protection Groups", path: "/jobs?tab=protection-groups", searchContext: "resource-groups" },
       { label: "Job-Verlauf", path: "/jobs?tab=runs" },
+    ],
+  },
+  {
+    label: "Restore",
+    icon: IconDatabaseImport,
+    searchContext: "restore",
+    children: [
+      { label: "Wiederherstellen", path: "/restore" },
+      { label: "Setup", path: "/settings?tab=restore-setup" },
     ],
   },
   {

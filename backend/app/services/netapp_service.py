@@ -34,6 +34,7 @@ from netapp_ontap.resources import (
     Igroup,
     IpInterface,
     IscsiCredentials,
+    IscsiService,
     Lun,
     LunMap,
     Metrocluster,
@@ -790,6 +791,22 @@ class NetAppOntapService:
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"iSCSI-Interface konnte nicht angelegt werden: {exc}") from exc
             return IscsiLifInfo(uuid=lif.uuid, name=lif.name, address=address)
+
+    def get_iscsi_target_iqn(self, svm_name: str) -> str:
+        """Die eigene iSCSI-Ziel-IQN der SVM (fuer den 'iscsiadm --login' der
+        lokalen Restore-Ausfuehrung) -- z.B. 'iqn.1992-08.com.netapp:demo7...'."""
+        with self._connection():
+            try:
+                svc = IscsiService.find(**{"svm.name": svm_name})
+                if svc is None:
+                    raise NetAppConnectionError(f"iSCSI-Service fuer SVM '{svm_name}' nicht gefunden")
+                svc.get(fields="target")
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"iSCSI-Ziel-IQN konnte nicht ermittelt werden: {exc}") from exc
+            iqn = _get_nested(svc, "target.name")
+            if not iqn:
+                raise NetAppConnectionError(f"SVM '{svm_name}' hat keine iSCSI-Ziel-IQN")
+            return iqn
 
     def clone_lun_from_snapshot(
         self, volume_name: str, svm_name: str, source_lun_path: str, snapshot_name: str, new_lun_name: str,

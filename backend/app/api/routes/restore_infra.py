@@ -53,11 +53,14 @@ REQUIRED_BINARIES = [
 ]
 
 REQUIRED_CAPABILITIES_HINT = (
-    "Der Container braucht zusaetzlich CAP_SYS_ADMIN sowie Zugriff auf neu "
-    "erscheinende Blockgeraete fuer echte iSCSI-Logins und Mount-Operationen. "
+    "Der Container braucht zusaetzlich CAP_SYS_ADMIN (Mount-Operationen, "
+    "gegen den echten Container verifiziert) und CAP_NET_ADMIN (iscsid kann "
+    "sonst den NETLINK_ISCSI-Socket nicht binden -- 'can not bind "
+    "NETLINK_ISCSI socket [Operation not permitted]', live am echten "
+    "Container reproduziert) sowie Zugriff auf neu erscheinende Blockgeraete. "
     "Das kann nicht zur Laufzeit nachgeruestet werden -- der Container muss "
     "einmalig mit zusaetzlichen Rechten neu erstellt werden, z.B.: "
-    "podman run ... --cap-add=SYS_ADMIN --device /dev/fuse "
+    "podman run ... --cap-add=SYS_ADMIN --cap-add=NET_ADMIN --device /dev/fuse "
     "--device-cgroup-rule='b 8:* rmw' ..."
 )
 

@@ -142,6 +142,12 @@ class HyperVService:
             operation_timeout_sec=operation_timeout_sec,
         )
 
+    def connect(self, username: str, password: str, *, read_timeout_sec: int = 30, operation_timeout_sec: int = 20) -> winrm.Session:
+        """Oeffentlicher Wrapper um _session fuer Aufrufer ausserhalb dieser
+        Klasse (siehe app.api.routes.restore), die mehrere Aufrufe ueber
+        dieselbe Verbindung buendeln muessen."""
+        return self._session(username, password, read_timeout_sec=read_timeout_sec, operation_timeout_sec=operation_timeout_sec)
+
     def _run_ps(self, session: winrm.Session, script: str) -> CommandResult:
         result = session.run_ps(script)
         return CommandResult(
@@ -400,3 +406,57 @@ class HyperVService:
     def cleanup_checkpoints(self, session: winrm.Session, checkpoints: list[tuple[str, str]]) -> list[CommandResult]:
         """Best-effort Rollback ueber mehrere VM-Checkpoints (vm_name, checkpoint_name)."""
         return [self.remove_checkpoint(session, vm_name, cp_name) for vm_name, cp_name in checkpoints]
+
+    # --- VM-Restore: Disk anhaengen/ersetzen -------------------------------
+
+    def resolve_node_address(self, cno_session: winrm.Session, node_name: str) -> str:
+        """Oeffentlicher Wrapper um _node_management_ips fuer Aufrufer
+        ausserhalb dieser Klasse (siehe app.api.routes.restore) -- loest den
+        Knotennamen zur Management-IP auf, faellt auf den Namen selbst
+        zurueck, falls nicht auflösbar (DNS ggf. vorhanden)."""
+        ips = self._node_management_ips(cno_session)
+        return ips.get(node_name, node_name)
+
+    def get_vm_state(self, session: winrm.Session, vm_name: str) -> str:
+        result = self._run_ps(session, f"(Get-VM -Name '{vm_name}').State.ToString()")
+        if not result.success:
+            raise RuntimeError(f"Status von '{vm_name}' konnte nicht ermittelt werden: {result.error}")
+        return result.output.strip()
+
+    def stop_vm(self, session: winrm.Session, vm_name: str) -> CommandResult:
+        return self._run_ps(session, f"Stop-VM -Name '{vm_name}' -Confirm:$false -ErrorAction Stop")
+
+    def start_vm(self, session: winrm.Session, vm_name: str) -> CommandResult:
+        return self._run_ps(session, f"Start-VM -Name '{vm_name}' -Confirm:$false -ErrorAction Stop")
+
+    def attach_vhd(self, session: winrm.Session, vm_name: str, vhd_path: str) -> dict:
+        """Haengt eine VHDX als zusaetzliche Disk an die VM. Liefert die
+        Controller-Position zurueck (fuer ein spaeteres praezises Abhaengen
+        beim Cleanup, siehe restore.py)."""
+        escaped = vhd_path.replace("'", "''")
+        script = (
+            f"Add-VMHardDiskDrive -VMName '{vm_name}' -Path '{escaped}' -Passthru | "
+            "Select-Object ControllerType, ControllerNumber, ControllerLocation, Path | ConvertTo-Json"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"VHDX konnte nicht an '{vm_name}' angehaengt werden: {result.error}")
+        data = json.loads(result.output)
+        return {
+            "controller_type": data.get("ControllerType"),
+            "controller_number": data.get("ControllerNumber"),
+            "controller_location": data.get("ControllerLocation"),
+            "path": data.get("Path"),
+        }
+
+    def detach_vhd(self, session: winrm.Session, vm_name: str, vhd_path: str) -> CommandResult:
+        escaped = vhd_path.replace("'", "''")
+        script = (
+            f"Get-VMHardDiskDrive -VMName '{vm_name}' | Where-Object {{ $_.Path -eq '{escaped}' }} | "
+            "Remove-VMHardDiskDrive -Confirm:$false -ErrorAction Stop"
+        )
+        return self._run_ps(session, script)
+
+    def delete_file(self, session: winrm.Session, path: str) -> CommandResult:
+        escaped = path.replace("'", "''")
+        return self._run_ps(session, f"Remove-Item -Path '{escaped}' -Force -ErrorAction Stop")

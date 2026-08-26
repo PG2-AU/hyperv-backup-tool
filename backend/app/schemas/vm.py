@@ -5,6 +5,7 @@ class VhdInfo(BaseModel):
     name: str
     size_bytes: int
     csv_path: str
+    full_path: str
 
 
 class VmRead(BaseModel):
