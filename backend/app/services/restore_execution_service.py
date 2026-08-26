@@ -14,6 +14,8 @@ administrative C$-Freigabe des Hyper-V-Knotens.
 from __future__ import annotations
 
 import json
+import os
+import stat
 import subprocess
 import time
 from dataclasses import dataclass
@@ -49,6 +51,27 @@ def iscsi_logout(portal_ip: str, portal_port: int, target_iqn: str) -> None:
     )
 
 
+def _ensure_dev_node(device_name: str) -> None:
+    """Legt den Geraeteknoten unter /dev an, falls er fehlt. Der Container
+    nutzt ein einfaches tmpfs statt devtmpfs fuer /dev, daher legt der Kernel
+    bei neu erscheinenden SCSI-Geraeten (iSCSI-Login, Partitions-Scan) nur den
+    sysfs-Eintrag an, aber keinen /dev-Knoten -- gegen echte Hardware
+    verifiziert (/sys/block/<dev>/dev enthaelt Major:Minor, /dev/<dev> fehlte
+    komplett). Ohne diesen Knoten scheitert jeder Zugriff ueber den Pfad
+    (lsblk, mount, ntfs-3g) mit 'not a block device'."""
+    dev_path = Path(f"/dev/{device_name}")
+    if dev_path.exists():
+        return
+    sysfs_dev = Path(f"/sys/block/{device_name}/dev")
+    if not sysfs_dev.exists():
+        # Partition eines bereits bekannten Laufwerks, z.B. sde1 -> sysfs
+        # liegt unter dem Eltern-Geraet: /sys/block/sde/sde1/dev
+        parent = "".join(ch for ch in device_name if not ch.isdigit()).rstrip("p")
+        sysfs_dev = Path(f"/sys/block/{parent}/{device_name}/dev")
+    major_str, minor_str = sysfs_dev.read_text().strip().split(":")
+    os.mknod(dev_path, mode=stat.S_IFBLK | 0o660, device=os.makedev(int(major_str), int(minor_str)))
+
+
 def _read_vpd_serial(device_name: str) -> str | None:
     """Liest die SCSI-Seriennummer direkt aus der VPD-Page 0x80 im sysfs
     (/sys/block/<dev>/device/vpd_pg80), ohne udev/lsblk-Metadaten -- der
@@ -82,6 +105,7 @@ def find_disk_by_serial(serial: str, timeout_sec: float = 30.0) -> str:
             for dev in data.get("blockdevices", []):
                 name = dev["name"]
                 if _read_vpd_serial(name) == serial:
+                    _ensure_dev_node(name)
                     return f"/dev/{name}"
         except RestoreExecutionError as exc:
             last_error = str(exc)
@@ -97,7 +121,7 @@ def find_largest_partition(device_path: str, timeout_sec: float = 15.0) -> str:
     device_name = Path(device_path).name
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
-        result = _run(["lsblk", "-J", "-o", "NAME,SIZE,TYPE", device_path], timeout=10, check=False)
+        result = _run(["lsblk", "-b", "-J", "-o", "NAME,SIZE,TYPE", device_path], timeout=10, check=False)
         if result.returncode == 0:
             try:
                 data = json.loads(result.stdout)
@@ -105,7 +129,8 @@ def find_largest_partition(device_path: str, timeout_sec: float = 15.0) -> str:
                 partitions = devices[0].get("children", []) if devices else []
                 candidates = [p for p in partitions if p.get("type") == "part"]
                 if candidates:
-                    largest = max(candidates, key=lambda p: p.get("size", 0))
+                    largest = max(candidates, key=lambda p: int(p.get("size") or 0))
+                    _ensure_dev_node(largest["name"])
                     return f"/dev/{largest['name']}"
             except (json.JSONDecodeError, KeyError, IndexError):
                 pass
