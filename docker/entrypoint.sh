@@ -10,6 +10,15 @@ GIT_BRANCH="${HVNB_GIT_BRANCH:-main}"
 
 log() { echo "[entrypoint] $(date -u +%FT%TZ) $*"; }
 
+# Podman mountet /sys standardmaessig read-only in den Container (auch
+# rootful, auch mit CAP_SYS_ADMIN). Der Kernel registriert neu erscheinende
+# iSCSI-Blockgeraete zwar trotzdem, aber der VHDX-Restore-Workflow braucht
+# Schreibzugriff auf sysfs fuer den Scan-Trigger; ohne Remount blieb die
+# geklonte LUN unauffindbar (gegen echte Hardware verifiziert). CAP_SYS_ADMIN
+# ist bereits Voraussetzung fuer den Mount-Schritt des Restores, daher kein
+# zusaetzliches Risiko.
+mount -o remount,rw /sys 2>/dev/null || log "WARNUNG: /sys konnte nicht read-write remountet werden (Restore-iSCSI-Scan koennte fehlschlagen)."
+
 # Unter rootless Podman/Docker kann der abgebildete UID-Bereich vom
 # Dateibesitzer der gemounteten/erstellten Verzeichnisse abweichen; git
 # verweigert Operationen dann mit "dubious ownership". APP_DIR ist unser

@@ -49,8 +49,26 @@ def iscsi_logout(portal_ip: str, portal_port: int, target_iqn: str) -> None:
     )
 
 
+def _read_vpd_serial(device_name: str) -> str | None:
+    """Liest die SCSI-Seriennummer direkt aus der VPD-Page 0x80 im sysfs
+    (/sys/block/<dev>/device/vpd_pg80), ohne udev/lsblk-Metadaten -- der
+    Container laeuft ohne udevd, daher liefert 'lsblk -o SERIAL' hier immer
+    NULL (gegen echte Hardware verifiziert: eine echte NetApp-LUN exponiert
+    vpd_pg80, rein virtuelle Container-Root-Disks dagegen nicht). Format:
+    Byte 0-1 Header, Byte 3 Laenge, danach die ASCII-Seriennummer."""
+    path = Path(f"/sys/block/{device_name}/device/vpd_pg80")
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if len(raw) < 4:
+        return None
+    length = raw[3]
+    return raw[4 : 4 + length].decode("ascii", errors="replace").strip()
+
+
 def find_disk_by_serial(serial: str, timeout_sec: float = 30.0) -> str:
-    """Pollt lsblk, bis die per Seriennummer identifizierte Disk erscheint --
+    """Pollt sysfs, bis die per Seriennummer identifizierte Disk erscheint --
     nach dem iSCSI-Login kann die Geraeteerkennung einen Moment dauern. Gegen
     echte Hardware verifiziert: dieselbe LUN kann kurzzeitig als Pfad-Artefakt
     doppelt auftauchen (einmal ohne zugewiesenen Geraetenamen); es wird der
@@ -59,11 +77,12 @@ def find_disk_by_serial(serial: str, timeout_sec: float = 30.0) -> str:
     last_error: str | None = None
     while time.time() < deadline:
         try:
-            result = _run(["lsblk", "-J", "-o", "NAME,SERIAL"], timeout=10)
+            result = _run(["lsblk", "-J", "-o", "NAME"], timeout=10)
             data = json.loads(result.stdout)
             for dev in data.get("blockdevices", []):
-                if (dev.get("serial") or "").strip() == serial:
-                    return f"/dev/{dev['name']}"
+                name = dev["name"]
+                if _read_vpd_serial(name) == serial:
+                    return f"/dev/{name}"
         except RestoreExecutionError as exc:
             last_error = str(exc)
         time.sleep(1)
