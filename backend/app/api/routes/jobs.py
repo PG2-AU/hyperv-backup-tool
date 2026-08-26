@@ -169,11 +169,21 @@ class _VolumeTarget:
     vm_names: set[str] = field(default_factory=set)
 
 
-def _csv_index(db: Session) -> tuple[dict[str, HyperVCsv], dict[str, NetAppLun]]:
-    return (
-        {c.name: c for c in db.query(HyperVCsv).all()},
-        {lun.id: lun for lun in db.query(NetAppLun).all()},
-    )
+def _csv_index(db: Session) -> tuple[dict[str, HyperVCsv], dict[str, NetAppLun], dict[str, str]]:
+    """csv_by_name, luns_by_serial, cluster_names_by_id.
+
+    luns_by_serial ist bewusst ueber die (stabile) Disk-Seriennummer indiziert
+    und NICHT ueber die bei der Hyper-V-Discovery gespeicherte
+    HyperVCsv.netapp_lun_id: NetAppLun.id ist eine bei JEDER NetApp-Discovery
+    neu vergebene UUID (delete-then-reinsert), wird ein NetApp-Cluster also
+    unabhaengig vom Hyper-V-Cluster neu discovert, waere die gespeicherte
+    netapp_lun_id sofort veraltet und jede Backup-Ausfuehrung wuerde
+    faelschlich "LUN nicht gefunden" melden. Die Seriennummer bleibt dagegen
+    ueber Rediscoveries hinweg stabil (echte Hardware-Eigenschaft der LUN)."""
+    csv_by_name = {c.name: c for c in db.query(HyperVCsv).all()}
+    luns_by_serial = {lun.serial_number: lun for lun in db.query(NetAppLun).all() if lun.serial_number}
+    cluster_names_by_id = {c.id: c.ontap_cluster_name or c.name for c in db.query(NetAppCluster).all()}
+    return csv_by_name, luns_by_serial, cluster_names_by_id
 
 
 def _vhd_maps(db: Session) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
@@ -188,15 +198,16 @@ def _vhd_maps(db: Session) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     return vm_csvs, csv_vms
 
 
-def _csv_volume_key(csv: HyperVCsv, luns_by_id: dict[str, NetAppLun]) -> tuple[str, str, str] | None:
-    """Loest ein CSV ueber die bei der Discovery gespeicherte LUN-Korrelation
-    zu seinem NetApp-Volume auf (cluster_id, svm_name, volume_name)."""
-    if not csv.netapp_lun_id or not csv.netapp_volume_name:
+def _csv_volume_key(csv: HyperVCsv, luns_by_serial: dict[str, NetAppLun]) -> tuple[str, str, str] | None:
+    """Loest ein CSV LIVE (nicht ueber gespeicherte IDs) ueber seine
+    Disk-Seriennummer zu seinem aktuellen NetApp-Volume auf
+    (cluster_id, svm_name, volume_name). Siehe _csv_index."""
+    if not csv.disk_serial_number:
         return None
-    lun = luns_by_id.get(csv.netapp_lun_id)
-    if lun is None:
+    lun = luns_by_serial.get(csv.disk_serial_number)
+    if lun is None or not lun.volume_name:
         return None
-    return (lun.cluster_id, csv.netapp_svm_name or "", csv.netapp_volume_name)
+    return (lun.cluster_id, lun.svm_name or "", lun.volume_name)
 
 
 def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTarget], list[str]]:
@@ -208,7 +219,7 @@ def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTar
     warnings: list[str] = []
     targets: dict[tuple[str, str, str], _VolumeTarget] = {}
 
-    csv_by_name, luns_by_id = _csv_index(db)
+    csv_by_name, luns_by_serial, cluster_names_by_id = _csv_index(db)
     vm_csvs, csv_vms = _vhd_maps(db)
 
     def _add(csv_name: str, vm_names: set[str]) -> None:
@@ -216,26 +227,30 @@ def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTar
         if csv is None:
             warnings.append(f"CSV '{csv_name}' nicht gefunden (Hyper-V-Discovery pruefen)")
             return
-        if not csv.netapp_lun_id:
-            warnings.append(f"CSV '{csv_name}': keine NetApp-LUN zugeordnet (Discovery pruefen)")
+        if not csv.disk_serial_number:
+            warnings.append(f"CSV '{csv_name}': keine Disk-Seriennummer ermittelt (Hyper-V-Discovery pruefen)")
             return
-        key = _csv_volume_key(csv, luns_by_id)
-        if key is None:
-            warnings.append(f"CSV '{csv_name}': zugeordnete NetApp-LUN/-Volume nicht gefunden")
+        lun = luns_by_serial.get(csv.disk_serial_number)
+        if lun is None or not lun.volume_name:
+            warnings.append(
+                f"CSV '{csv_name}': keine passende NetApp-LUN gefunden (Seriennummer {csv.disk_serial_number}) -- "
+                "NetApp-Cluster erneut discovern?"
+            )
             return
+        key = (lun.cluster_id, lun.svm_name or "", lun.volume_name)
 
         target = targets.get(key)
         if target is None:
             target = _VolumeTarget(
                 netapp_cluster_id=key[0],
-                netapp_cluster_name=csv.netapp_cluster_name,
-                svm_name=csv.netapp_svm_name,
-                volume_name=csv.netapp_volume_name,
+                netapp_cluster_name=cluster_names_by_id.get(lun.cluster_id),
+                svm_name=lun.svm_name,
+                volume_name=lun.volume_name,
             )
             targets[key] = target
         target.csv_names.add(csv_name)
-        if csv.netapp_lun_name:
-            target.lun_names.add(csv.netapp_lun_name)
+        if lun.name:
+            target.lun_names.add(lun.name)
         target.vm_names |= vm_names
 
     for group in policy.resource_groups:
@@ -274,7 +289,7 @@ def _resolve_volume_keys_for_object(db: Session, scope: BackupScope, name: str) 
     Stand) zu den NetApp-Volumes auf, auf denen ihre Daten liegen -- fuer die
     'vorhandene Backups anzeigen'-Funktion im Inventory, unabhaengig von
     Resource Groups/Policies."""
-    csv_by_name, luns_by_id = _csv_index(db)
+    csv_by_name, luns_by_serial, _ = _csv_index(db)
 
     csv_names: set[str] = set()
     if scope == BackupScope.VM:
@@ -288,7 +303,7 @@ def _resolve_volume_keys_for_object(db: Session, scope: BackupScope, name: str) 
         csv = csv_by_name.get(csv_name)
         if csv is None:
             continue
-        key = _csv_volume_key(csv, luns_by_id)
+        key = _csv_volume_key(csv, luns_by_serial)
         if key is not None:
             keys.add(key)
     return list(keys)
