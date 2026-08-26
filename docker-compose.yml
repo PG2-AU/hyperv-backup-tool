@@ -18,6 +18,12 @@ services:
     cap_add:
       - SYS_ADMIN
       - NET_ADMIN
+      # Fuer das Anlegen fehlender /dev-Geraeteknoten der per iSCSI
+      # erscheinenden LUN (Container nutzt tmpfs statt devtmpfs fuer /dev,
+      # daher kein automatisches Node-Erstellen durch den Kernel/udev) --
+      # ohne diese Capability schlaegt mknod() fuer Blockgeraete mit
+      # 'Operation not permitted' fehl, gegen echten Container verifiziert.
+      - MKNOD
     devices:
       - /dev/fuse
     device_cgroup_rules:

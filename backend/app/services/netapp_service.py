@@ -725,7 +725,7 @@ class NetAppOntapService:
             # 200 OK, aendert aber nichts); das Hinzufuegen muss ueber die
             # dedizierte Initiator-Subressource erfolgen.
             try:
-                IgroupInitiator(igroup_uuid=igroup.uuid, name=initiator_iqn).post()
+                IgroupInitiator(igroup={"uuid": igroup.uuid}, name=initiator_iqn).post()
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"Initiator konnte nicht zur Gruppe hinzugefuegt werden: {exc}") from exc
 
