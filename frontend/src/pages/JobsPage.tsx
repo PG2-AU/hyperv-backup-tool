@@ -12,6 +12,7 @@ import { PolicyFormModal } from "@/components/PolicyFormModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { ResourceGroupFormModal } from "@/components/ResourceGroupFormModal";
 import type { BackupJobRun, BackupPolicy, JobStatus, ResourceGroup } from "@/api/types";
+import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatRetention, formatSchedule } from "@/utils/format";
 import { useRunPolicy } from "@/utils/runPolicy";
@@ -74,11 +75,16 @@ export function JobsPage() {
   }
 
   function removePolicy(policy: BackupPolicy) {
-    if (!window.confirm(`Backup-Policy '${policy.name}' wirklich löschen?`)) return;
-    deletePolicy.mutate(policy.id, {
-      onSuccess: () => notifications.show({ title: "Policy gelöscht", message: policy.name, color: "blue" }),
-      onError: (err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Policy konnte nicht gelöscht werden."), color: "red" }),
+    confirmAction({
+      title: "Backup-Policy löschen",
+      message: `Backup-Policy '${policy.name}' wirklich löschen?`,
+      confirmLabel: "Löschen",
+      onConfirm: () =>
+        deletePolicy.mutate(policy.id, {
+          onSuccess: () => notifications.show({ title: "Policy gelöscht", message: policy.name, color: "blue" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Policy konnte nicht gelöscht werden."), color: "red" }),
+        }),
     });
   }
 
@@ -98,11 +104,16 @@ export function JobsPage() {
   }
 
   function removeGroup(group: ResourceGroup) {
-    if (!window.confirm(`Protection Group '${group.name}' wirklich löschen?`)) return;
-    deleteGroup.mutate(group.id, {
-      onSuccess: () => notifications.show({ title: "Protection Group gelöscht", message: group.name, color: "blue" }),
-      onError: (err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Protection Group konnte nicht gelöscht werden."), color: "red" }),
+    confirmAction({
+      title: "Protection Group löschen",
+      message: `Protection Group '${group.name}' wirklich löschen?`,
+      confirmLabel: "Löschen",
+      onConfirm: () =>
+        deleteGroup.mutate(group.id, {
+          onSuccess: () => notifications.show({ title: "Protection Group gelöscht", message: group.name, color: "blue" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Protection Group konnte nicht gelöscht werden."), color: "red" }),
+        }),
     });
   }
 

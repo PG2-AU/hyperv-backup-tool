@@ -45,6 +45,7 @@ import { SnapMirrorLabelFormModal } from "@/components/SnapMirrorLabelFormModal"
 import { SnapMirrorPolicyEditModal } from "@/components/SnapMirrorPolicyEditModal";
 import { SnapMirrorPolicyFormModal } from "@/components/SnapMirrorPolicyFormModal";
 import type { HyperVCluster, NetAppSnapMirrorPolicy, Schedule, SnapMirrorLabel } from "@/api/types";
+import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatSchedule } from "@/utils/format";
 import { buildHyperVClusterCreationSteps } from "@/utils/hypervSteps";
@@ -221,11 +222,16 @@ export function SettingsPage() {
   }
 
   function removeSchedule(schedule: Schedule) {
-    if (!window.confirm(`Zeitplan '${schedule.name}' wirklich löschen?`)) return;
-    deleteSchedule.mutate(schedule.id, {
-      onSuccess: () => notifications.show({ title: "Zeitplan gelöscht", message: schedule.name, color: "blue" }),
-      onError: (err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Zeitplan konnte nicht gelöscht werden."), color: "red" }),
+    confirmAction({
+      title: "Zeitplan löschen",
+      message: `Zeitplan '${schedule.name}' wirklich löschen?`,
+      confirmLabel: "Löschen",
+      onConfirm: () =>
+        deleteSchedule.mutate(schedule.id, {
+          onSuccess: () => notifications.show({ title: "Zeitplan gelöscht", message: schedule.name, color: "blue" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Zeitplan konnte nicht gelöscht werden."), color: "red" }),
+        }),
     });
   }
 
@@ -245,11 +251,16 @@ export function SettingsPage() {
   }
 
   function removeLabel(label: SnapMirrorLabel) {
-    if (!window.confirm(`Label '${label.name}' wirklich löschen?`)) return;
-    deleteLabel.mutate(label.id, {
-      onSuccess: () => notifications.show({ title: "Label gelöscht", message: label.name, color: "blue" }),
-      onError: (err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Label konnte nicht gelöscht werden."), color: "red" }),
+    confirmAction({
+      title: "Label löschen",
+      message: `Label '${label.name}' wirklich löschen?`,
+      confirmLabel: "Löschen",
+      onConfirm: () =>
+        deleteLabel.mutate(label.id, {
+          onSuccess: () => notifications.show({ title: "Label gelöscht", message: label.name, color: "blue" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Label konnte nicht gelöscht werden."), color: "red" }),
+        }),
     });
   }
 
@@ -283,11 +294,16 @@ export function SettingsPage() {
   }
 
   function handleDeleteHyperVCluster(cluster: HyperVCluster) {
-    if (!window.confirm(`Hyper-V-Cluster '${cluster.name}' wirklich entfernen? Die gespeicherten Zugangsdaten werden gelöscht.`)) return;
-    deleteHyperVCluster.mutate(cluster.id, {
-      onSuccess: () => notifications.show({ title: "Cluster entfernt", message: cluster.name, color: "blue" }),
-      onError: (err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Cluster konnte nicht entfernt werden."), color: "red" }),
+    confirmAction({
+      title: "Hyper-V-Cluster entfernen",
+      message: `Hyper-V-Cluster '${cluster.name}' wirklich entfernen? Die gespeicherten Zugangsdaten werden gelöscht.`,
+      confirmLabel: "Entfernen",
+      onConfirm: () =>
+        deleteHyperVCluster.mutate(cluster.id, {
+          onSuccess: () => notifications.show({ title: "Cluster entfernt", message: cluster.name, color: "blue" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Cluster konnte nicht entfernt werden."), color: "red" }),
+        }),
     });
   }
 

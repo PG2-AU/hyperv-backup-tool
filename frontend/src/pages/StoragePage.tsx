@@ -67,6 +67,7 @@ import { SvmPeerFormModal } from "@/components/SvmPeerFormModal";
 import { VolumeEditModal } from "@/components/VolumeEditModal";
 import { VolumeFormModal } from "@/components/VolumeFormModal";
 import type { NetAppCluster, NetAppClusterPeer, NetAppLun, NetAppVolume, SnapMirrorRelationship } from "@/api/types";
+import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, formatLagTime } from "@/utils/format";
 import {
@@ -258,11 +259,16 @@ function ClusterTab() {
   }
 
   function handleDelete(cluster: NetAppCluster) {
-    if (!window.confirm(`Cluster '${cluster.name}' wirklich entfernen? Die gespeicherten Zugangsdaten werden geloescht.`)) return;
-    deleteCluster.mutate(cluster.id, {
-      onSuccess: () => notifications.show({ title: "Cluster entfernt", message: cluster.name, color: "blue" }),
-      onError: (err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Cluster konnte nicht entfernt werden."), color: "red" }),
+    confirmAction({
+      title: "Cluster entfernen",
+      message: `Cluster '${cluster.name}' wirklich entfernen? Die gespeicherten Zugangsdaten werden gelöscht.`,
+      confirmLabel: "Entfernen",
+      onConfirm: () =>
+        deleteCluster.mutate(cluster.id, {
+          onSuccess: () => notifications.show({ title: "Cluster entfernt", message: cluster.name, color: "blue" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Cluster konnte nicht entfernt werden."), color: "red" }),
+        }),
     });
   }
 
@@ -471,13 +477,21 @@ export function StoragePage() {
   }
 
   function handleDeleteVolume(vol: NetAppVolume) {
-    if (!window.confirm(`Volume '${vol.name}' wirklich löschen? Dies kann nicht rückgängig gemacht werden.`)) return;
-    setProcess({ title: "Volume löschen", steps: buildVolumeDeleteSteps(vol.cluster_id, vol.uuid ?? "") });
+    confirmAction({
+      title: "Volume löschen",
+      message: `Volume '${vol.name}' wirklich löschen? Dies kann nicht rückgängig gemacht werden.`,
+      confirmLabel: "Löschen",
+      onConfirm: () => setProcess({ title: "Volume löschen", steps: buildVolumeDeleteSteps(vol.cluster_id, vol.uuid ?? "") }),
+    });
   }
 
   function handleDeleteLun(lun: NetAppLun) {
-    if (!window.confirm(`LUN '${lun.name}' wirklich löschen? Dies kann nicht rückgängig gemacht werden.`)) return;
-    setProcess({ title: "LUN löschen", steps: buildLunDeleteSteps(lun.cluster_id, lun.uuid ?? "") });
+    confirmAction({
+      title: "LUN löschen",
+      message: `LUN '${lun.name}' wirklich löschen? Dies kann nicht rückgängig gemacht werden.`,
+      confirmLabel: "Löschen",
+      onConfirm: () => setProcess({ title: "LUN löschen", steps: buildLunDeleteSteps(lun.cluster_id, lun.uuid ?? "") }),
+    });
   }
 
   function openSnapmirrorForVolume(vol: NetAppVolume) {

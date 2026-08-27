@@ -14,6 +14,7 @@ import {
 import { RestoreSetupWizardModal } from "@/components/RestoreSetupWizardModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import type { VmWithBackups } from "@/api/types";
+import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 
 const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
@@ -36,10 +37,15 @@ export function RestorePage() {
   const filteredVms = (vms ?? []).filter((vm) => vm.name.toLowerCase().includes(vmSearch.trim().toLowerCase()));
 
   function handleCleanup(runId: string, vmName: string) {
-    if (!window.confirm(`Zusatzdisk für '${vmName}' abhängen und löschen?`)) return;
-    cleanupRun.mutate(runId, {
-      onSuccess: () => notifications.show({ title: "Cleanup abgeschlossen", message: vmName, color: "blue" }),
-      onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Cleanup fehlgeschlagen."), color: "red" }),
+    confirmAction({
+      title: "Cleanup durchführen",
+      message: `Zusatzdisk für '${vmName}' abhängen und löschen?`,
+      confirmLabel: "Abhängen & löschen",
+      onConfirm: () =>
+        cleanupRun.mutate(runId, {
+          onSuccess: () => notifications.show({ title: "Cleanup abgeschlossen", message: vmName, color: "blue" }),
+          onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Cleanup fehlgeschlagen."), color: "red" }),
+        }),
     });
   }
 
@@ -221,11 +227,14 @@ export function RestorePage() {
                         <ActionIcon
                           color="red"
                           variant="subtle"
-                          onClick={() => {
-                            if (window.confirm(`Restore-Setup für '${c.svm_name}' entfernen?`)) {
-                              deleteRestoreConfig.mutate(c.id);
-                            }
-                          }}
+                          onClick={() =>
+                            confirmAction({
+                              title: "Restore-Setup entfernen",
+                              message: `Restore-Setup für '${c.svm_name}' entfernen?`,
+                              confirmLabel: "Entfernen",
+                              onConfirm: () => deleteRestoreConfig.mutate(c.id),
+                            })
+                          }
                         >
                           <IconTrash size={16} />
                         </ActionIcon>
