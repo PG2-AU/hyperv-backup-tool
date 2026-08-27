@@ -173,6 +173,26 @@ export function useBackupsForObject(scope: BackupScope, name: string | undefined
   });
 }
 
+export function useDeleteBackupSnapshot(scope: BackupScope, name: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (snapshotId: string) => {
+      await apiClient.delete(`/jobs/backups/${snapshotId}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["backups", scope, name] }),
+  });
+}
+
+export function useDetachVmFromBackupSnapshot(scope: BackupScope, name: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ snapshotId, vmName }: { snapshotId: string; vmName: string }) => {
+      await apiClient.post(`/jobs/backups/${snapshotId}/detach-vm`, null, { params: { vm_name: vmName } });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["backups", scope, name] }),
+  });
+}
+
 export function useRunningJobRuns(enabled: boolean) {
   return useQuery({
     queryKey: ["job-runs", "running"],

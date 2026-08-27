@@ -323,6 +323,13 @@ def list_backups_for_object(
 
     rows = db.query(BackupRunSnapshot).filter(BackupRunSnapshot.success.is_(True)).all()
     matched = [r for r in rows if (r.netapp_cluster_id, r.svm_name or "", r.volume_name or "") in keys]
+    if scope == BackupScope.VM:
+        # Ein Snapshot deckt ggf. mehrere VMs ab (gemeinsames CSV/Volume) --
+        # per detach-vm kann eine VM manuell aus vm_names entfernt werden
+        # (siehe unten), ohne den Snapshot selbst anzutasten. Ohne diesen
+        # Filter wuerde sie ihn trotzdem weiterhin sehen, da oben nur ueber
+        # den Volume-Key gematcht wird.
+        matched = [r for r in matched if name in (r.vm_names or [])]
     matched.sort(key=lambda r: r.created_at, reverse=True)
 
     return [
@@ -342,6 +349,53 @@ def list_backups_for_object(
         )
         for r in matched
     ]
+
+
+@router.delete("/backups/{snapshot_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_backup_snapshot(
+    snapshot_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_DELETE)),
+) -> None:
+    """Loescht einen Snapshot vollstaendig -- auf der NetApp *und* seinen
+    BackupRunSnapshot-Datensatz (Hard-Delete, bewusst anders als der
+    automatische Abgleich in app.core.scheduler, der bei unerwartet
+    verschwundenen Snapshots nur success=False setzt: hier loest der Nutzer
+    die Loeschung explizit selbst aus). Betrifft alle in vm_names gelisteten
+    VMs -- die Bestaetigung dafuer erfolgt im Frontend."""
+    row = db.get(BackupRunSnapshot, snapshot_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot nicht gefunden")
+    if not row.volume_uuid or not row.snapshot_uuid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Snapshot hat keine Volume-/Snapshot-UUID")
+
+    cluster = db.get(NetAppCluster, row.netapp_cluster_id) if row.netapp_cluster_id else None
+    if cluster is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="NetApp-Cluster des Snapshots nicht gefunden")
+
+    service = _netapp_service_for(cluster)
+    result = service.delete_snapshot(row.volume_uuid, row.snapshot_uuid)
+    if not result.success:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Snapshot konnte nicht geloescht werden: {result.message}")
+
+    db.delete(row)
+    db.commit()
+
+
+@router.post("/backups/{snapshot_id}/detach-vm", response_model=BackupSnapshotRead)
+def detach_vm_from_backup_snapshot(
+    snapshot_id: str, vm_name: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_DELETE)),
+) -> BackupRunSnapshot:
+    """Entfernt nur die Zuordnung einer VM zu diesem Snapshot aus der DB --
+    der Snapshot selbst bleibt auf der NetApp und fuer andere VMs/das CSV
+    unveraendert bestehen. Fuer den Fall, dass ein Snapshot mehrere VMs
+    abdeckt (gemeinsames CSV/Volume) und nur eine davon aus der Historie
+    verschwinden soll."""
+    row = db.get(BackupRunSnapshot, snapshot_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot nicht gefunden")
+    row.vm_names = [v for v in (row.vm_names or []) if v != vm_name]
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 @router.post("/{job_id}/run", response_model=BackupJobRun)
