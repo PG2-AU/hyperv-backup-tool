@@ -5,18 +5,24 @@ Snapshot Locking) werden in der DB persistiert. Die VM/CSV-Zuordnung erfolgt
 ueber ResourceGroups, die mit einer Policy verknuepft werden (siehe
 app.api.routes.resource_groups).
 
-Job-Ausfuehrung (aktueller Stand -- nur crashconsistent): pro betroffenem
-NetApp-Volume wird genau EIN Storage-Snapshot erstellt, auch wenn mehrere
-VMs/CSVs auf demselben Volume liegen. Die Aufloesung VM/CSV -> CSV -> LUN ->
-NetApp-Volume nutzt die bereits bei der Hyper-V-/NetApp-Discovery persistierte
-Korrelation (HyperVCsv.netapp_lun_id, siehe hyperv_clusters.py discover_cluster).
-Jeder Snapshot-Vorgang wird als eigener BackupRunSnapshot-Datensatz mit der
+Job-Ausfuehrung: pro betroffenem NetApp-Volume wird genau EIN Storage-
+Snapshot erstellt, auch wenn mehrere VMs/CSVs auf demselben Volume liegen.
+Die Aufloesung VM/CSV -> CSV -> LUN -> NetApp-Volume nutzt die bereits bei
+der Hyper-V-/NetApp-Discovery persistierte Korrelation
+(HyperVCsv.netapp_lun_id, siehe hyperv_clusters.py discover_cluster). Jeder
+Snapshot-Vorgang wird als eigener BackupRunSnapshot-Datensatz mit der
 vollstaendigen Zuordnungskette gespeichert.
 
-Applikationskonsistente Backups (VM-Checkpoint vor dem Storage-Snapshot,
-inkl. Best-Effort-Ueberspringen einzelner VMs und Checkpoint-Cleanup bei
-Fehlern) folgen als naechster Schritt.
-"""
+Applikationskonsistente Backups erzeugen zusaetzlich VORHER auf jeder
+betroffenen VM einen Hyper-V-Production-Checkpoint (VSS-Quiesce) und
+entfernen ihn NACH dem Storage-Snapshot wieder (Merge der dabei
+entstandenen Differencing-Disk zurueck in die Basis-VHDX) -- die Basis-VHDX
+selbst wird durch den Checkpoint eingefroren und enthaelt bereits den
+applikationskonsistenten Stand, ein Restore braucht daher keinen
+Delta-Merge (siehe Chat-Verlauf). Scheitert der Checkpoint fuer eine
+einzelne VM, wird das als Fehler vermerkt, das Backup laeuft fuer diese VM
+aber trotzdem (crash-konsistent) weiter, statt den gesamten Lauf
+abzubrechen -- Best-Effort pro VM, analog zum Rest dieser Funktion."""
 
 import re
 from collections import defaultdict
@@ -28,17 +34,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
 from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunVmConfig, JobStatus
+from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun, NetAppVolume
 from app.models.schedule import Schedule
 from app.models.snapmirror_label import SnapMirrorLabel
 from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite, BackupSnapshotRead, BackupSnapshotVhdRead
+from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppOntapService
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -429,12 +438,6 @@ def trigger_job_run(
     if policy is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
 
-    if policy.consistency != ConsistencyType.CRASH_CONSISTENT:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Applikationskonsistente Backups (VM-Checkpoints) sind noch nicht implementiert.",
-        )
-
     targets, warnings = _resolve_targets(db, policy)
     if not targets:
         detail = "Keine gueltigen Backup-Ziele gefunden."
@@ -531,6 +534,40 @@ def trigger_job_run(
         db.commit()
 
     errors: list[str] = list(warnings)
+
+    # Applikationskonsistenz: pro betroffener VM VORHER einen Hyper-V-
+    # Production-Checkpoint erzeugen (VSS-Quiesce) -- die dabei eingefrorene
+    # Basis-VHDX enthaelt danach exakt den konsistenten Stand, den der
+    # gleich folgende Storage-Snapshot festhaelt. Alle Checkpoints werden
+    # erst NACH allen Snapshots (unten) wieder entfernt, damit eine VM mit
+    # Disks auf mehreren Volumes fuer alle ihre Snapshots denselben
+    # eingefrorenen Stand zeigt. Scheitert der Checkpoint fuer eine VM, wird
+    # das vermerkt, die VM wird aber trotzdem (crash-konsistent) gesichert
+    # statt den ganzen Lauf abzubrechen.
+    checkpoint_name = f"hvnb_{slug}_{snapshot_suffix}"
+    active_checkpoints: list[tuple[HyperVService, object, str]] = []
+    if policy.consistency == ConsistencyType.APPLICATION_CONSISTENT and vm_names_in_run:
+        settings = get_settings()
+        hyperv_clusters_by_id = {c.id: c for c in db.query(HyperVCluster).all()}
+        for vm_name in vm_names_in_run:
+            hv_vm = hyperv_vms_by_name.get(vm_name)
+            hv_cluster = hyperv_clusters_by_id.get(hv_vm.cluster_id) if hv_vm else None
+            if hv_vm is None or hv_cluster is None:
+                errors.append(f"VM '{vm_name}': Hyper-V-Cluster nicht gefunden, Checkpoint uebersprungen (Backup laeuft crash-konsistent weiter)")
+                continue
+            try:
+                hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
+                hv_password = decrypt_secret(hv_cluster.encrypted_password)
+                cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
+                owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or hv_vm.host_name
+                node_address = hv_service.resolve_node_address(cno_session, owner_node)
+                node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
+                node_session = node_service.connect(hv_cluster.username, hv_password)
+                node_service.create_checkpoint(node_session, vm_name, checkpoint_name, policy.consistency)
+                active_checkpoints.append((node_service, node_session, vm_name))
+            except Exception as exc:
+                errors.append(f"VM '{vm_name}': Checkpoint konnte nicht erstellt werden ({exc}) -- Backup laeuft crash-konsistent weiter")
+
     for target in targets:
         row = BackupRunSnapshot(
             run_id=run.id,
@@ -566,6 +603,14 @@ def trigger_job_run(
             row.error_message = str(exc)
             errors.append(f"{target.volume_name}: {exc}")
         db.add(row)
+
+    for node_service, node_session, vm_name in active_checkpoints:
+        try:
+            result = node_service.remove_checkpoint(node_session, vm_name, checkpoint_name)
+            if not result.success:
+                errors.append(f"VM '{vm_name}': Checkpoint konnte nicht entfernt werden: {result.error}")
+        except Exception as exc:
+            errors.append(f"VM '{vm_name}': Checkpoint-Entfernung fehlgeschlagen: {exc}")
 
     run.finished_at = datetime.now(timezone.utc)
     run.status = JobStatus.FAILED if errors else JobStatus.SUCCEEDED
