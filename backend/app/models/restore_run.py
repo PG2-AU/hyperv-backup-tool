@@ -9,7 +9,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -75,11 +75,6 @@ class RestoreRunStep(Base):
     label: Mapped[str] = mapped_column(String(255))
     status: Mapped[RestoreStepStatus] = mapped_column(String(20), default=RestoreStepStatus.PENDING)
     message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
-    # Bytes-kopiert/Gesamtbytes fuer den Copy-Schritt, damit das Frontend
-    # waehrend des laufenden Kopiervorgangs einen echten Fortschrittsbalken
-    # zeigen kann (siehe HyperVService.copy_file_to_share_with_progress).
-    progress_current: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    progress_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     run = relationship("RestoreRun", back_populates="steps")

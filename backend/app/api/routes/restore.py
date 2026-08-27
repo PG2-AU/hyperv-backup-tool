@@ -81,8 +81,6 @@ class RestoreRunStepRead(BaseModel):
     label: str
     status: str
     message: str | None = None
-    progress_current: int | None = None
-    progress_total: int | None = None
 
     class Config:
         from_attributes = True
@@ -159,16 +157,6 @@ class _StepCtx:
 
     def __enter__(self) -> "_StepCtx":
         return self
-
-    def set_progress(self, current: int, total: int) -> None:
-        """Schreibt Zwischenfortschritt (z.B. beim Kopieren) sofort in die DB,
-        anders als eine blosse 'self.row.message = ...'-Zuweisung im
-        with-Block, die erst bei __exit__ committet -- und dort ohnehin durch
-        'OK' ueberschrieben wird. Damit sieht das per Polling angebundene
-        Frontend den Fortschritt waehrend der Schritt noch laeuft."""
-        self.row.progress_current = current
-        self.row.progress_total = total
-        self.db.commit()
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         if exc is None:
@@ -343,7 +331,6 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 remote_size = proxy_service.copy_file_to_share(
                     proxy_session, local_path, node_address, remote_dir, new_filename,
                     hv_cluster.username, hv_password,
-                    on_progress=lambda current, total: ctx.set_progress(current, total),
                 )
                 ctx.row.message = f"{remote_size} Bytes kopiert"
             run.restored_vhd_path = restored_vhd_path

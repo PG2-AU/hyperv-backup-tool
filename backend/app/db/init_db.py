@@ -45,27 +45,10 @@ def _migrate_legacy_backup_policies_finish(engine) -> None:
         conn.commit()
 
 
-def _migrate_restore_run_step_progress_columns(engine) -> None:
-    """Ergaenzt progress_current/progress_total auf einer bereits
-    existierenden restore_run_steps-Tabelle -- anders als beim Entfernen
-    einer Spalte (siehe backup_policies oben) kann SQLite neue, nullable
-    Spalten per simplem ALTER TABLE ADD COLUMN ergaenzen."""
-    with engine.connect() as conn:
-        existing_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(restore_run_steps)"))]
-        if not existing_cols:
-            return
-        if "progress_current" not in existing_cols:
-            conn.execute(text("ALTER TABLE restore_run_steps ADD COLUMN progress_current INTEGER"))
-        if "progress_total" not in existing_cols:
-            conn.execute(text("ALTER TABLE restore_run_steps ADD COLUMN progress_total INTEGER"))
-        conn.commit()
-
-
 def init_db(db: Session) -> None:
     _migrate_legacy_backup_policies_start(engine)
     Base.metadata.create_all(bind=engine)
     _migrate_legacy_backup_policies_finish(engine)
-    _migrate_restore_run_step_progress_columns(engine)
 
     for role_name, permissions in DEFAULT_ROLES.items():
         existing = db.query(Role).filter(Role.name == role_name).first()
