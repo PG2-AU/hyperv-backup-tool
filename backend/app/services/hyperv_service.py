@@ -570,14 +570,20 @@ class HyperVService:
         remote_dir: str, remote_filename: str, share_username: str, share_password: str,
     ) -> int:
         """Kopiert eine Datei vom Restore-Proxy-Host auf die administrative
-        C$-Freigabe eines Hyper-V-Knotens. Bindet das Ziel explizit per
-        New-SmbMapping mit eigenen Zugangsdaten ein statt die
-        WinRM-Sitzungsidentitaet zu delegieren -- WinRM/NTLM erlaubt keine
-        Weitergabe der eingehenden Authentifizierung an einen dritten Host
-        ('Double-Hop'-Problem), daher dieselbe explizite Credential-
-        Praesentation wie zuvor beim Linux-smbclient-Ansatz. Prueft die
-        Zielgroesse nach dem Kopieren (Copy-Item meldet Erfolg nicht
-        zuverlaessig genug bei Netzwerkproblemen)."""
+        C$-Freigabe eines Hyper-V-Knotens. Bindet das Ziel explizit mit
+        eigenen Zugangsdaten ein statt die WinRM-Sitzungsidentitaet zu
+        delegieren -- WinRM/NTLM erlaubt keine Weitergabe der eingehenden
+        Authentifizierung an einen dritten Host ('Double-Hop'-Problem).
+
+        Nutzt dafuer 'net use' statt New-SmbMapping: Letzteres ist
+        CIM/WMI-basiert und schlaegt innerhalb einer per WinRM/NTLM
+        aufgebauten PowerShell-Sitzung reproduzierbar mit 'A specified logon
+        session does not exist' (Windows-Fehler 1312) fehl, da ein
+        NTLM-Netzwerklogon-Token keine weiteren Logon-Sessions erzeugen darf
+        -- genau das braucht New-SmbMapping intern (verifiziert live gegen
+        einen echten Restore-Proxy-Host). net.exe umgeht das, da es ohne CIM
+        auskommt. Prueft die Zielgroesse nach dem Kopieren (Copy-Item meldet
+        Erfolg nicht zuverlaessig genug bei Netzwerkproblemen)."""
         escaped_src = source_path.replace("'", "''")
         escaped_dir = remote_dir.replace("'", "''")
         escaped_file = remote_filename.replace("'", "''")
@@ -586,15 +592,15 @@ class HyperVService:
         share = f"\\\\{node_address}\\C$"
         dest = f"{share}\\{escaped_dir}\\{escaped_file}"
         script = (
-            f"$pw = ConvertTo-SecureString '{escaped_pw}' -AsPlainText -Force; "
-            f"$cred = New-Object System.Management.Automation.PSCredential('{escaped_user}', $pw); "
-            f"Remove-SmbMapping -RemotePath '{share}' -Force -Confirm:$false -ErrorAction SilentlyContinue; "
-            f"New-SmbMapping -RemotePath '{share}' -Credential $cred -Persistent $false -ErrorAction Stop | Out-Null; "
+            f"$share = '{share}'; "
+            "net use $share /delete /y 2>&1 | Out-Null; "
+            f"net use $share '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1 | Out-Null; "
+            "if ($LASTEXITCODE -ne 0) { throw \"net use fehlgeschlagen (Exit $LASTEXITCODE)\" }; "
             "try { "
             f"Copy-Item -Path '{escaped_src}' -Destination '{dest}' -Force -ErrorAction Stop; "
             f"(Get-Item -Path '{dest}').Length "
             "} finally { "
-            f"Remove-SmbMapping -RemotePath '{share}' -Force -Confirm:$false -ErrorAction SilentlyContinue "
+            "net use $share /delete /y 2>&1 | Out-Null "
             "}"
         )
         result = self._run_ps(session, script)
