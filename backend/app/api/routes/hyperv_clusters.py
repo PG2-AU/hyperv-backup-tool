@@ -135,11 +135,10 @@ def delete_cluster(
     db.commit()
 
 
-@router.post("/{cluster_id}/discover", response_model=list[DiscoveryStepRead])
-def discover_cluster(
-    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_MANAGE)),
-):
-    cluster = _get_cluster_or_404(db, cluster_id)
+def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
+    """Kernlogik von discover_cluster() -- ausgelagert, damit der periodische
+    Discovery-Job (app.core.scheduler) und der manuelle 'Discover'-Button in
+    der GUI exakt denselben Code nutzen, statt ihn zu duplizieren."""
     service = _service_for(cluster)
     steps, data = service.run_discovery(cluster.username, decrypt_secret(cluster.encrypted_password))
 
@@ -195,3 +194,11 @@ def discover_cluster(
         db.commit()
 
     return steps
+
+
+@router.post("/{cluster_id}/discover", response_model=list[DiscoveryStepRead])
+def discover_cluster(
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_MANAGE)),
+):
+    cluster = _get_cluster_or_404(db, cluster_id)
+    return _run_discovery(db, cluster)

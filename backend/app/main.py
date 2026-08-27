@@ -21,6 +21,7 @@ from app.api.routes import (
     vms,
 )
 from app.core.config import get_settings
+from app.core.scheduler import shutdown_scheduler, start_scheduler
 from app.db.init_db import init_db
 from app.db.session import SessionLocal
 
@@ -32,7 +33,11 @@ async def lifespan(app: FastAPI):
         init_db(db)
     finally:
         db.close()
-    yield
+    start_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_scheduler()
 
 
 settings = get_settings()

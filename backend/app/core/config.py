@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     winrm_use_https: bool = True
     winrm_port: int = 5986
 
+    # --- Periodischer Hintergrundabgleich (app.core.scheduler) ---
+    healthcheck_interval_minutes: int = 15
+    discovery_interval_minutes: int = 240
+    snapshot_reconcile_hour: int = 2  # 0-23, taeglich zu dieser Stunde (UTC)
+
     # --- HTTPS / GUI ---
     tls_cert_path: str = "/etc/hvnb/certs/server.crt"
     tls_key_path: str = "/etc/hvnb/certs/server.key"

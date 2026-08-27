@@ -1226,6 +1226,24 @@ class NetAppOntapService:
                 snapmirror_label=snapmirror_label,
             )
 
+    def list_snapshot_names(self, volume_uuid: str) -> set[str]:
+        """Fragt die tatsaechlich auf dem Volume vorhandenen Snapshot-Namen ab
+        -- fuer den periodischen Abgleich (app.core.scheduler), der DB-Zeilen
+        erkennt, deren Snapshot ausserhalb der App (ONTAP-Retention, manuelles
+        Aufraeumen) geloescht wurde."""
+        with self._connection():
+            try:
+                # Snapshot ist ein Kindobjekt von Volume (Pfad
+                # /storage/volumes/{volume.uuid}/snapshots) -- die
+                # Volume-UUID muss wie bei Snapshot(volume_uuid, uuid=...)
+                # in delete_snapshot() als positionales Parent-Key-Argument
+                # uebergeben werden, nicht als 'volume.uuid'-Filter (gegen
+                # echtes ONTAP verifiziert: letzteres schlaegt fehl mit
+                # "The 'volume' field has not been set on the Snapshot").
+                return {s.name for s in Snapshot.get_collection(volume_uuid)}
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Snapshots konnten nicht abgerufen werden: {exc}") from exc
+
     def delete_snapshot(self, volume_uuid: str, snapshot_uuid: str) -> OperationResult:
         """Wird u.a. beim automatischen Aufraeumen nach einem fehlgeschlagenen Backup verwendet."""
         with self._connection():
