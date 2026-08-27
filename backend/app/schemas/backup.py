@@ -71,6 +71,18 @@ class BackupRunSnapshotRead(BaseModel):
     error_message: str | None = None
 
 
+class BackupSnapshotVhdRead(BaseModel):
+    """Eine VHDX dieser VM, wie sie zum Backup-Zeitpunkt vorlag (aus
+    BackupRunVmConfig) -- damit der Restore-Wizard nur VHDs zur Auswahl
+    anbietet, die in diesem konkreten Snapshot tatsaechlich enthalten sind,
+    statt aus dem aktuell-live VM-Zustand (der sich seitdem geaendert haben
+    kann, z.B. neue Disks oder ein CSV/LUN-Umzug)."""
+
+    name: str
+    path: str
+    size_bytes: int | None = None
+
+
 class BackupSnapshotRead(BaseModel):
     """Ein vorhandener Snapshot, der eine bestimmte VM oder ein bestimmtes CSV
     abdeckt (fuer die 'Backups anzeigen'-Funktion im Inventory) -- unabhaengig
@@ -88,6 +100,7 @@ class BackupSnapshotRead(BaseModel):
     vm_names: list[str] = []
     snapshot_name: str | None = None
     snapshot_uuid: str | None = None
+    vhds: list[BackupSnapshotVhdRead] = []
 
 
 class BackupJobRun(BaseModel):

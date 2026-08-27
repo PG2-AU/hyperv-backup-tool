@@ -6,7 +6,7 @@ Strategie), analog zur NetApp-Discovery in netapp_discovery.py."""
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -29,6 +29,17 @@ class HyperVVm(Base):
     name: Mapped[str] = mapped_column(String(255))
     state: Mapped[str | None] = mapped_column(String(50), nullable=True)
     host_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # VM-Konfiguration (siehe HyperVService.list_vms) -- fuer die VM-Details
+    # im Inventory sowie als Quelle fuer die pro Backup-Lauf kopierte
+    # BackupRunVmConfig (siehe app.models.backup_run).
+    cpu_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_startup_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_minimum_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_maximum_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dynamic_memory_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    network_adapters: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    pci_devices: Mapped[list | None] = mapped_column(JSON, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

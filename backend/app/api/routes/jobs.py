@@ -22,6 +22,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from ntpath import basename as win_basename
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -31,13 +32,13 @@ from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
-from app.models.backup_run import BackupRun, BackupRunSnapshot, JobStatus
-from app.models.hyperv_discovery import HyperVCsv, HyperVVhd
+from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunVmConfig, JobStatus
+from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun, NetAppVolume
 from app.models.schedule import Schedule
 from app.models.snapmirror_label import SnapMirrorLabel
-from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite, BackupSnapshotRead
+from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite, BackupSnapshotRead, BackupSnapshotVhdRead
 from app.services.netapp_service import NetAppOntapService
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -332,6 +333,24 @@ def list_backups_for_object(
         matched = [r for r in matched if name in (r.vm_names or [])]
     matched.sort(key=lambda r: r.created_at, reverse=True)
 
+    # Fuer VM-Scope zusaetzlich die zum Backup-Zeitpunkt gespeicherte VHD-
+    # Liste dieser VM nachladen (BackupRunVmConfig, siehe trigger_job_run) --
+    # der Restore-Wizard bietet darueber nur VHDs an, die in diesem
+    # konkreten Snapshot tatsaechlich enthalten waren.
+    vhds_by_run_id: dict[str, list[BackupSnapshotVhdRead]] = {}
+    if scope == BackupScope.VM and matched:
+        run_ids = {r.run_id for r in matched}
+        configs = (
+            db.query(BackupRunVmConfig)
+            .filter(BackupRunVmConfig.run_id.in_(run_ids), BackupRunVmConfig.vm_name == name)
+            .all()
+        )
+        for cfg in configs:
+            vhds_by_run_id[cfg.run_id] = [
+                BackupSnapshotVhdRead(name=v.get("name", ""), path=v.get("path", ""), size_bytes=v.get("size_bytes"))
+                for v in (cfg.vhds or [])
+            ]
+
     return [
         BackupSnapshotRead(
             id=r.id,
@@ -346,6 +365,7 @@ def list_backups_for_object(
             vm_names=r.vm_names or [],
             snapshot_name=r.snapshot_name,
             snapshot_uuid=r.snapshot_uuid,
+            vhds=vhds_by_run_id.get(r.run_id, []),
         )
         for r in matched
     ]
@@ -448,6 +468,66 @@ def trigger_job_run(
     snapshot_suffix = now.strftime("%Y%m%d%H%M%S")
     slug = _slugify(policy.name)
     label = policy.snapmirror_label.name if policy.snapmirror_label else None
+
+    # VM-Konfiguration zum Backup-Zeitpunkt sichern (CPU/RAM/NICs/PCI/VHD-
+    # Liste inkl. CSV/LUN-Zuordnung) -- kopiert aus der zuletzt discoverten
+    # HyperVVm/HyperVVhd/HyperVCsv-DB, bewusst OHNE eigenen WinRM-Aufruf hier
+    # (der Backup-Pfad soll die einfache, robuste storage-seitige
+    # Snapshot-Erstellung bleiben). Grundlage fuer eine spaetere komplette
+    # VM-Wiederherstellung sowie fuer die praezise VHD->LUN-Aufloesung beim
+    # Restore (siehe BackupRunVmConfig, _execute_restore in
+    # app.api.routes.restore) -- unabhaengig von einem zwischenzeitlichen
+    # CSV/LUN-Umzug der VM. Eine fehlende/veraltete Discovery fuer eine VM
+    # fuehrt nur zu einer unvollstaendigen Zeile, nicht zum Abbruch des Laufs.
+    vm_names_in_run = sorted({vm for t in targets for vm in t.vm_names})
+    if vm_names_in_run:
+        cluster_ids_by_name: dict[str, str] = {}
+        for cid, c in clusters_by_id.items():
+            cluster_ids_by_name[c.name] = cid
+            if c.ontap_cluster_name:
+                cluster_ids_by_name[c.ontap_cluster_name] = cid
+
+        hyperv_vms_by_name = {v.name: v for v in db.query(HyperVVm).filter(HyperVVm.name.in_(vm_names_in_run)).all()}
+        hyperv_vhds_by_vm_uuid: dict[str, list[HyperVVhd]] = defaultdict(list)
+        for vhd in db.query(HyperVVhd).all():
+            if vhd.vm_uuid:
+                hyperv_vhds_by_vm_uuid[vhd.vm_uuid].append(vhd)
+        hyperv_csv_by_name = {c.name: c for c in db.query(HyperVCsv).all()}
+
+        for vm_name in vm_names_in_run:
+            hv_vm = hyperv_vms_by_name.get(vm_name)
+            vhd_entries = []
+            for vhd in (hyperv_vhds_by_vm_uuid.get(hv_vm.vm_uuid, []) if hv_vm and hv_vm.vm_uuid else []):
+                csv = hyperv_csv_by_name.get(vhd.csv_name) if vhd.csv_name else None
+                vhd_entries.append(
+                    {
+                        "name": win_basename(vhd.path),
+                        "path": vhd.path,
+                        "size_bytes": vhd.size_bytes,
+                        "csv_name": vhd.csv_name,
+                        "netapp_cluster_id": cluster_ids_by_name.get(csv.netapp_cluster_name) if csv and csv.netapp_cluster_name else None,
+                        "netapp_cluster_name": csv.netapp_cluster_name if csv else None,
+                        "svm_name": csv.netapp_svm_name if csv else None,
+                        "volume_name": csv.netapp_volume_name if csv else None,
+                        "lun_name": csv.netapp_lun_name if csv else None,
+                    }
+                )
+            db.add(
+                BackupRunVmConfig(
+                    run_id=run.id, vm_name=vm_name, vm_uuid=hv_vm.vm_uuid if hv_vm else None,
+                    cpu_count=hv_vm.cpu_count if hv_vm else None,
+                    memory_startup_bytes=hv_vm.memory_startup_bytes if hv_vm else None,
+                    memory_minimum_bytes=hv_vm.memory_minimum_bytes if hv_vm else None,
+                    memory_maximum_bytes=hv_vm.memory_maximum_bytes if hv_vm else None,
+                    dynamic_memory_enabled=hv_vm.dynamic_memory_enabled if hv_vm else None,
+                    generation=hv_vm.generation if hv_vm else None,
+                    host_name=hv_vm.host_name if hv_vm else None,
+                    network_adapters=hv_vm.network_adapters if hv_vm else None,
+                    pci_devices=hv_vm.pci_devices if hv_vm else None,
+                    vhds=vhd_entries,
+                )
+            )
+        db.commit()
 
     errors: list[str] = list(warnings)
     for target in targets:

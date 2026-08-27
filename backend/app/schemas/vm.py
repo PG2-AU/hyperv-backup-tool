@@ -8,6 +8,13 @@ class VhdInfo(BaseModel):
     full_path: str
 
 
+class NetworkAdapterRead(BaseModel):
+    name: str
+    mac_address: str | None = None
+    switch_name: str | None = None
+    vlan_id: int | None = None
+
+
 class VmRead(BaseModel):
     id: str
     name: str
@@ -21,6 +28,14 @@ class VmRead(BaseModel):
     policy_names: list[str] = []
     policy_ids: list[str] = []
     protected: bool = False
+    cpu_count: int | None = None
+    generation: int | None = None
+    memory_startup_bytes: int | None = None
+    memory_minimum_bytes: int | None = None
+    memory_maximum_bytes: int | None = None
+    dynamic_memory_enabled: bool | None = None
+    network_adapters: list[NetworkAdapterRead] = []
+    pci_devices: list[str] = []
 
 
 class CsvRead(BaseModel):

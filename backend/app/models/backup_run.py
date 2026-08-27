@@ -8,7 +8,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, JSON, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -47,6 +47,7 @@ class BackupRun(Base):
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
 
     snapshots = relationship("BackupRunSnapshot", back_populates="run", cascade="all, delete-orphan")
+    vm_configs = relationship("BackupRunVmConfig", back_populates="run", cascade="all, delete-orphan")
 
 
 class BackupRunSnapshot(Base):
@@ -73,3 +74,38 @@ class BackupRunSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     run = relationship("BackupRun", back_populates="snapshots")
+
+
+class BackupRunVmConfig(Base):
+    """Momentaufnahme der Hyper-V-VM-Konfiguration (CPU/RAM/NICs/PCI-Devices/
+    VHD-Liste inkl. CSV/LUN-Zuordnung) zum Zeitpunkt eines Backup-Laufs --
+    kopiert aus der zuletzt discoverten HyperVVm/HyperVVhd/HyperVCsv-DB
+    (kein zusaetzlicher WinRM-Aufruf waehrend des Backups, siehe
+    trigger_job_run in app.api.routes.jobs). Grundlage fuer eine kuenftige
+    komplette VM-Wiederherstellung und fuer die praezise VHD->LUN-Aufloesung
+    beim Restore (siehe _execute_restore in app.api.routes.restore) --
+    unabhaengig davon, ob die VM zwischenzeitlich auf eine andere CSV/LUN
+    umgezogen ist."""
+
+    __tablename__ = "backup_run_vm_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("backup_runs.id", ondelete="CASCADE"))
+    vm_name: Mapped[str] = mapped_column(String(255))
+    vm_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    cpu_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_startup_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_minimum_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_maximum_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dynamic_memory_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    host_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    network_adapters: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    pci_devices: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Liste von {name, path, size_bytes, csv_name, netapp_cluster_id,
+    # netapp_cluster_name, svm_name, volume_name, lun_name} -- eine Zeile
+    # pro VHD dieser VM zum Backup-Zeitpunkt.
+    vhds: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    run = relationship("BackupRun", back_populates="vm_configs")

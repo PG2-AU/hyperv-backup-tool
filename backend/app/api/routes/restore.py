@@ -42,7 +42,7 @@ from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import SessionLocal, get_db
-from app.models.backup_run import BackupRunSnapshot
+from app.models.backup_run import BackupRunSnapshot, BackupRunVmConfig
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
@@ -206,38 +206,73 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 csv_name = _parse_csv_name(run.source_vhd_path)
                 if not csv_name:
                     raise RuntimeError(f"CSV konnte nicht aus '{run.source_vhd_path}' ermittelt werden")
-                csv = db.query(HyperVCsv).filter(
-                    HyperVCsv.cluster_id == run.hyperv_cluster_id, HyperVCsv.name == csv_name,
-                ).first()
-                if csv is None or not csv.disk_serial_number:
-                    raise RuntimeError(f"CSV '{csv_name}' hat keine Disk-Seriennummer (Hyper-V-Discovery prüfen)")
-                # LIVE ueber die Seriennummer aufloesen, nicht ueber die bei
-                # der Discovery gespeicherte HyperVCsv.netapp_lun_id -- die
-                # ist eine bei jeder NetApp-Discovery neu vergebene UUID und
-                # damit nach einer unabhaengigen Rediscovery veraltet (siehe
-                # Chat-Verlauf, identischer Bug wurde bereits in jobs.py
-                # gefunden und behoben).
-                lun = db.query(NetAppLun).filter(NetAppLun.serial_number == csv.disk_serial_number).first()
-                if lun is None or not lun.volume_name or not lun.svm_name:
-                    raise RuntimeError(
-                        f"Keine passende NetApp-LUN für CSV '{csv_name}' gefunden (Seriennummer "
-                        f"{csv.disk_serial_number}) -- NetApp-Cluster erneut discovern?"
-                    )
+
                 snapshot = db.get(BackupRunSnapshot, run.source_snapshot_id) if run.source_snapshot_id else None
                 if snapshot is None or not snapshot.snapshot_name:
                     raise RuntimeError("Gewählter Snapshot nicht gefunden")
 
-                netapp_cluster = db.get(NetAppCluster, lun.cluster_id)
+                # Bevorzugt die zum Backup-Zeitpunkt gespeicherte VHD->LUN-
+                # Zuordnung nutzen (BackupRunVmConfig, siehe trigger_job_run
+                # in jobs.py) statt live ueber die aktuelle Disk-Seriennummer
+                # aufzuloesen -- ist die VM zwischen Backup und Restore auf
+                # eine andere CSV/LUN umgezogen, wuerde die Live-Aufloesung
+                # sonst faelschlich "keine passende LUN" melden, obwohl der
+                # Snapshot auf dem urspruenglichen (weiterhin existierenden)
+                # Volume noch vorhanden ist. Fallback auf die bisherige
+                # Live-Aufloesung fuer Backups von vor diesem Feature (kein
+                # BackupRunVmConfig vorhanden).
+                svm_name = None
+                volume_name: str | None = None
+                lun_path: str | None = None
+                netapp_cluster_id: str | None = None
+
+                vm_config = (
+                    db.query(BackupRunVmConfig)
+                    .filter(BackupRunVmConfig.run_id == snapshot.run_id, BackupRunVmConfig.vm_name == run.vm_name)
+                    .first()
+                )
+                if vm_config and vm_config.vhds:
+                    vhd_entry = next((v for v in vm_config.vhds if v.get("path") == run.source_vhd_path), None)
+                    if vhd_entry and vhd_entry.get("svm_name") and vhd_entry.get("volume_name") and vhd_entry.get("lun_name"):
+                        svm_name = vhd_entry["svm_name"]
+                        volume_name = vhd_entry["volume_name"]
+                        lun_path = vhd_entry["lun_name"]
+                        netapp_cluster_id = vhd_entry.get("netapp_cluster_id")
+
+                if not (svm_name and volume_name and lun_path and netapp_cluster_id):
+                    csv = db.query(HyperVCsv).filter(
+                        HyperVCsv.cluster_id == run.hyperv_cluster_id, HyperVCsv.name == csv_name,
+                    ).first()
+                    if csv is None or not csv.disk_serial_number:
+                        raise RuntimeError(f"CSV '{csv_name}' hat keine Disk-Seriennummer (Hyper-V-Discovery prüfen)")
+                    # LIVE ueber die Seriennummer aufloesen, nicht ueber die bei
+                    # der Discovery gespeicherte HyperVCsv.netapp_lun_id -- die
+                    # ist eine bei jeder NetApp-Discovery neu vergebene UUID und
+                    # damit nach einer unabhaengigen Rediscovery veraltet (siehe
+                    # Chat-Verlauf, identischer Bug wurde bereits in jobs.py
+                    # gefunden und behoben).
+                    lun = db.query(NetAppLun).filter(NetAppLun.serial_number == csv.disk_serial_number).first()
+                    if lun is None or not lun.volume_name or not lun.svm_name:
+                        raise RuntimeError(
+                            f"Keine passende NetApp-LUN für CSV '{csv_name}' gefunden (Seriennummer "
+                            f"{csv.disk_serial_number}) -- NetApp-Cluster erneut discovern?"
+                        )
+                    svm_name = lun.svm_name
+                    volume_name = lun.volume_name
+                    lun_path = lun.name
+                    netapp_cluster_id = lun.cluster_id
+
+                netapp_cluster = db.get(NetAppCluster, netapp_cluster_id)
                 if netapp_cluster is None:
                     raise RuntimeError("NetApp-Cluster der LUN nicht gefunden")
                 infra_config = (
                     db.query(RestoreInfraConfig)
-                    .filter(RestoreInfraConfig.netapp_cluster_id == netapp_cluster.id, RestoreInfraConfig.svm_name == lun.svm_name)
+                    .filter(RestoreInfraConfig.netapp_cluster_id == netapp_cluster.id, RestoreInfraConfig.svm_name == svm_name)
                     .first()
                 )
                 if infra_config is None:
                     raise RuntimeError(
-                        f"Keine Restore-Infrastruktur für SVM '{lun.svm_name}' eingerichtet "
+                        f"Keine Restore-Infrastruktur für SVM '{svm_name}' eingerichtet "
                         "(Einstellungen > Restore-Setup)."
                     )
                 hv_cluster = db.get(HyperVCluster, run.hyperv_cluster_id)
@@ -249,7 +284,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 if vm is None or not vm.host_name:
                     raise RuntimeError(f"VM '{run.vm_name}' bzw. deren Knoten nicht gefunden")
 
-                ctx.row.message = f"CSV {csv_name} -> Volume {lun.volume_name} @ {lun.svm_name}"
+                ctx.row.message = f"CSV {csv_name} -> Volume {volume_name} @ {svm_name}"
 
             settings = get_settings()
             proxy = db.query(RestoreProxyHost).first()
@@ -279,7 +314,6 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 ctx.row.message = proxy.address
 
             netapp_service = _netapp_service_for(netapp_cluster)
-            svm_name = lun.svm_name
             igroup_name = infra_config.igroup_name
             lif_address = infra_config.iscsi_lif_address
             lif_port = infra_config.iscsi_lif_port
@@ -290,7 +324,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
 
             with _StepCtx(db, run.id, "clone-lun", "LUN aus Snapshot klonen") as ctx:
                 clone = netapp_service.clone_lun_from_snapshot(
-                    volume_name=lun.volume_name, svm_name=svm_name, source_lun_path=lun.name,
+                    volume_name=volume_name, svm_name=svm_name, source_lun_path=lun_path,
                     snapshot_name=snapshot.snapshot_name, new_lun_name=new_lun_name,
                 )
                 clone_lun_uuid = clone.uuid

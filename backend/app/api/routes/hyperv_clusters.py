@@ -153,6 +153,14 @@ def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
             db.add(
                 HyperVVm(
                     cluster_id=cluster.id, vm_uuid=vm.id, name=vm.name, state=vm.state, host_name=vm.host, last_seen_at=now,
+                    cpu_count=vm.cpu_count, generation=vm.generation,
+                    memory_startup_bytes=vm.memory_startup_bytes, memory_minimum_bytes=vm.memory_minimum_bytes,
+                    memory_maximum_bytes=vm.memory_maximum_bytes, dynamic_memory_enabled=vm.dynamic_memory_enabled,
+                    network_adapters=[
+                        {"name": n.name, "mac_address": n.mac_address, "switch_name": n.switch_name, "vlan_id": n.vlan_id}
+                        for n in vm.network_adapters
+                    ],
+                    pci_devices=vm.pci_devices,
                 )
             )
             for vhd in vm.vhds:

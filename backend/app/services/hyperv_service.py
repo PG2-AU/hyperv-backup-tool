@@ -32,12 +32,28 @@ class VhdDetail:
 
 
 @dataclass
+class NetworkAdapterDetail:
+    name: str
+    mac_address: str | None = None
+    switch_name: str | None = None
+    vlan_id: int | None = None
+
+
+@dataclass
 class VirtualMachineInfo:
     name: str
     id: str
     state: str
     host: str
     vhds: list[VhdDetail] = field(default_factory=list)
+    cpu_count: int | None = None
+    generation: int | None = None
+    memory_startup_bytes: int | None = None
+    memory_minimum_bytes: int | None = None
+    memory_maximum_bytes: int | None = None
+    dynamic_memory_enabled: bool | None = None
+    network_adapters: list[NetworkAdapterDetail] = field(default_factory=list)
+    pci_devices: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -203,6 +219,15 @@ class HyperVService:
         # aufgerufen (siehe run_discovery), nicht einmalig gegen den CNO.
         # $env:COMPUTERNAME statt $vm.ComputerName, da wir wissen, mit
         # welchem Knoten diese Session tatsaechlich verbunden ist.
+        #
+        # Erfasst zusaetzlich zur reinen Inventarisierung auch CPU/RAM/
+        # Generation/Netzwerkadapter/PCI-Passthrough-Devices -- fuer die
+        # VM-Details im Inventory sowie als Grundlage fuer die pro Backup-Lauf
+        # gespeicherte VM-Konfiguration (siehe app.api.routes.jobs
+        # trigger_job_run). Get-VMAssignableDevice/Get-VMNetworkAdapterVlan
+        # koennen je nach Hyper-V-Version/DDA-Konfiguration fehlschlagen,
+        # daher mit -ErrorAction SilentlyContinue bzw. try/catch abgesichert
+        # statt den gesamten Discovery-Lauf daran scheitern zu lassen.
         script = (
             "$vms = Get-VM; "
             "$hostName = $env:COMPUTERNAME; "
@@ -212,8 +237,19 @@ class HyperVService:
             "$info = Get-VHD -Path $_.Path -ErrorAction SilentlyContinue; "
             "[PSCustomObject]@{ Path = $_.Path; SizeBytes = $(if ($info) { $info.Size } else { 0 }); UsedBytes = $(if ($info) { $info.FileSize } else { 0 }) } "
             "}); "
-            "[PSCustomObject]@{ Name = $vm.Name; Id = $vm.Id.ToString(); State = $vm.State.ToString(); ComputerName = $hostName; Vhds = $vhds } "
-            "} | ConvertTo-Json -Depth 5"
+            "$nics = @(Get-VMNetworkAdapter -VM $vm -ErrorAction SilentlyContinue | ForEach-Object { "
+            "$vlanId = $null; "
+            "try { $vlanId = (Get-VMNetworkAdapterVlan -VMNetworkAdapter $_ -ErrorAction Stop).AccessVlanId } catch {}; "
+            "[PSCustomObject]@{ Name = $_.Name; MacAddress = $_.MacAddress; SwitchName = $_.SwitchName; VlanId = $vlanId } "
+            "}); "
+            "$pci = @(Get-VMAssignableDevice -VM $vm -ErrorAction SilentlyContinue | ForEach-Object { $_.InstancePath }); "
+            "[PSCustomObject]@{ "
+            "Name = $vm.Name; Id = $vm.Id.ToString(); State = $vm.State.ToString(); ComputerName = $hostName; Vhds = $vhds; "
+            "ProcessorCount = $vm.ProcessorCount; Generation = $vm.Generation; "
+            "MemoryStartupBytes = $vm.MemoryStartup; MemoryMinimumBytes = $vm.MemoryMinimum; MemoryMaximumBytes = $vm.MemoryMaximum; "
+            "DynamicMemoryEnabled = $vm.DynamicMemoryEnabled; NetworkAdapters = $nics; PciDevices = $pci "
+            "} "
+            "} | ConvertTo-Json -Depth 6"
         )
         result = self._run_ps(session, script)
         if not result.success:
@@ -230,9 +266,24 @@ class HyperVService:
                 for v in vhds_raw
                 if v.get("Path")
             ]
+            nics_raw = e.get("NetworkAdapters") or []
+            nics_raw = nics_raw if isinstance(nics_raw, list) else [nics_raw]
+            nics = [
+                NetworkAdapterDetail(
+                    name=n.get("Name") or "", mac_address=n.get("MacAddress"),
+                    switch_name=n.get("SwitchName"), vlan_id=n.get("VlanId"),
+                )
+                for n in nics_raw
+            ]
+            pci_raw = e.get("PciDevices") or []
+            pci_devices = pci_raw if isinstance(pci_raw, list) else [pci_raw]
             vms.append(
                 VirtualMachineInfo(
                     name=e["Name"], id=e["Id"], state=str(e["State"]), host=e.get("ComputerName", self._target_host), vhds=vhds,
+                    cpu_count=e.get("ProcessorCount"), generation=e.get("Generation"),
+                    memory_startup_bytes=e.get("MemoryStartupBytes"), memory_minimum_bytes=e.get("MemoryMinimumBytes"),
+                    memory_maximum_bytes=e.get("MemoryMaximumBytes"), dynamic_memory_enabled=e.get("DynamicMemoryEnabled"),
+                    network_adapters=nics, pci_devices=[p for p in pci_devices if p],
                 )
             )
         return vms
