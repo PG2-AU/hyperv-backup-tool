@@ -61,7 +61,7 @@ COPY docker/supervisord.conf /etc/supervisord.conf
 
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/updater.sh /usr/local/bin/gen-selfsigned-cert.sh
 
-EXPOSE 8443
+EXPOSE 443
 
 VOLUME ["/data", "/etc/hvnb/certs"]
 
