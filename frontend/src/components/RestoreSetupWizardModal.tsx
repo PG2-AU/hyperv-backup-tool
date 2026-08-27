@@ -6,9 +6,11 @@ import {
   Group,
   Loader,
   Modal,
+  PasswordInput,
   Select,
   Stack,
   Stepper,
+  Switch,
   Text,
   TextInput,
 } from "@mantine/core";
@@ -20,6 +22,8 @@ import {
   useCreateRestoreLif,
   useNetAppClusters,
   useRestoreInitiator,
+  useRestoreProxyHost,
+  useSaveRestoreProxyHost,
   useSetupRestoreInfra,
   useSvmLifCandidates,
   useSvms,
@@ -46,7 +50,14 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
   const [newLifDomain, setNewLifDomain] = useState<string | null>(null);
   const [showCreateLif, setShowCreateLif] = useState(false);
 
+  const [proxyAddress, setProxyAddress] = useState("");
+  const [proxyUsername, setProxyUsername] = useState("");
+  const [proxyPassword, setProxyPassword] = useState("");
+  const [proxyUseHttps, setProxyUseHttps] = useState(true);
+
   const { data: initiator, isLoading: initiatorLoading } = useRestoreInitiator(opened);
+  const { data: proxyHost } = useRestoreProxyHost(opened);
+  const saveProxyHost = useSaveRestoreProxyHost();
   const { data: clusters } = useNetAppClusters();
   const { data: svms } = useSvms();
   const { data: lifCandidates, refetch: refetchLifs, isFetching: lifsLoading } = useSvmLifCandidates(
@@ -66,8 +77,30 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
       setSelectedLifName(null);
       setIgroupName("hvnb_restore");
       setShowCreateLif(false);
+      setProxyPassword("");
     }
   }, [opened]);
+
+  useEffect(() => {
+    if (proxyHost?.configured) {
+      setProxyAddress(proxyHost.address ?? "");
+      setProxyUsername(proxyHost.username ?? "");
+      setProxyUseHttps(proxyHost.use_https);
+    }
+  }, [proxyHost]);
+
+  function handleSaveProxyHost() {
+    saveProxyHost.mutate(
+      { address: proxyAddress, username: proxyUsername, password: proxyPassword || null, use_https: proxyUseHttps },
+      {
+        onSuccess: () => {
+          notifications.show({ title: "Gespeichert", message: "Restore-Proxy-Host wurde gespeichert.", color: "green" });
+          setProxyPassword("");
+        },
+        onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Proxy-Host konnte nicht gespeichert werden."), color: "red" }),
+      },
+    );
+  }
 
   const svmOptions = dedupeOptions(
     (svms ?? []).filter((s) => s.cluster_id === clusterId).map((s) => ({ value: s.name, label: s.name })),
@@ -129,6 +162,40 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
       <Stepper active={active} onStepClick={setActive} size="sm">
         <Stepper.Step label="Proxy-Host" description="Windows-iSCSI-Initiator">
           <Stack mt="md">
+            <TextInput
+              label="Adresse"
+              placeholder="z.B. 10.93.70.13 oder hostname"
+              value={proxyAddress}
+              onChange={(e) => setProxyAddress(e.currentTarget.value)}
+            />
+            <TextInput
+              label="Benutzername"
+              placeholder="z.B. .\Administrator oder domain\user"
+              value={proxyUsername}
+              onChange={(e) => setProxyUsername(e.currentTarget.value)}
+            />
+            <PasswordInput
+              label="Passwort"
+              placeholder={proxyHost?.configured ? "leer lassen, um bestehendes Passwort zu behalten" : ""}
+              value={proxyPassword}
+              onChange={(e) => setProxyPassword(e.currentTarget.value)}
+            />
+            <Switch
+              label="WinRM ueber HTTPS"
+              checked={proxyUseHttps}
+              onChange={(e) => setProxyUseHttps(e.currentTarget.checked)}
+            />
+            <Group justify="flex-start">
+              <Button
+                variant="default"
+                onClick={handleSaveProxyHost}
+                loading={saveProxyHost.isPending}
+                disabled={!proxyAddress || !proxyUsername}
+              >
+                Speichern
+              </Button>
+            </Group>
+
             {initiatorLoading && <Loader size="sm" />}
             {initiator?.configured ? (
               <Text size="sm" ff="monospace">
@@ -136,7 +203,7 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
               </Text>
             ) : (
               <Alert icon={<IconAlertTriangle size={16} />} color="orange" variant="light">
-                {initiator?.error ?? "Restore-Proxy-Host nicht erreichbar oder nicht konfiguriert (HVNB_RESTORE_PROXY_*)."}
+                {initiator?.error ?? "Restore-Proxy-Host nicht erreichbar oder nicht konfiguriert."}
               </Alert>
             )}
             <Group justify="flex-end">

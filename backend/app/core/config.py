@@ -43,21 +43,6 @@ class Settings(BaseSettings):
     winrm_use_https: bool = True
     winrm_port: int = 5986
 
-    # --- Restore-Proxy-Host (Windows) ---
-    # Der VHDX-Restore-Workflow braucht einen nativen Windows-iSCSI-Initiator
-    # (New-/Connect-IscsiTarget), um die per Snapshot geklonte LUN zu mounten
-    # -- ein Linux-Container kann das nicht zuverlaessig (siehe Chat-Verlauf:
-    # rootless/rootful Podman, WSL2-Netlink-Inkompatibilitaeten, fehlendes
-    # devtmpfs). Stattdessen fuehrt der Container diesen Schritt per WinRM
-    # auf einem dedizierten Windows-Host aus -- in der Referenz-Deployment
-    # ist das derselbe Windows-Server, auf dem WSL2/der Container laeuft,
-    # muss es aber nicht sein. Eigene Zugangsdaten statt Wiederverwendung der
-    # Hyper-V-Cluster-Credentials, da es sich um einen eigenstaendigen Host
-    # handelt (typischerweise ein lokales Administrator-Konto).
-    restore_proxy_address: str = ""
-    restore_proxy_username: str = ""
-    restore_proxy_password: str = ""
-
     # --- HTTPS / GUI ---
     tls_cert_path: str = "/etc/hvnb/certs/server.crt"
     tls_key_path: str = "/etc/hvnb/certs/server.key"

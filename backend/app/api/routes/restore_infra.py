@@ -23,9 +23,10 @@ from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.restore_infra import RestoreInfraConfig
+from app.models.restore_proxy_host import RestoreProxyHost
 from app.services.hyperv_service import HyperVConnectionError, HyperVService
 from app.services.netapp_service import NetAppConnectionError, NetAppOntapService, tcp_port_open
-from app.core.crypto import decrypt_secret
+from app.core.crypto import decrypt_secret, encrypt_secret
 
 router = APIRouter(prefix="/api/restore-infra", tags=["restore-infra"])
 
@@ -85,34 +86,77 @@ class RestoreInfraConfigRead(BaseModel):
         from_attributes = True
 
 
-def _proxy_service_and_session():
+class ProxyHostRead(BaseModel):
+    configured: bool
+    address: str | None = None
+    username: str | None = None
+    use_https: bool = True
+
+
+class ProxyHostWrite(BaseModel):
+    address: str
+    username: str
+    password: str | None = None
+    use_https: bool = True
+
+
+def _proxy_service_and_session(db: Session):
     """Verbindet zum Restore-Proxy-Host (WinRM). Wirft HTTPException, falls
     nicht konfiguriert oder nicht erreichbar -- wird von mehreren Routen
     dieses Wizards gebraucht (Initiator lesen, spaeter Setup)."""
-    settings = get_settings()
-    if not settings.restore_proxy_address or not settings.restore_proxy_username:
+    proxy = db.query(RestoreProxyHost).first()
+    if proxy is None or not proxy.address or not proxy.username:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Kein Restore-Proxy-Host konfiguriert (HVNB_RESTORE_PROXY_ADDRESS/"
-                "HVNB_RESTORE_PROXY_USERNAME/HVNB_RESTORE_PROXY_PASSWORD in der .env)."
-            ),
+            detail="Kein Restore-Proxy-Host konfiguriert (Restore > Setup > Restore-Infrastruktur einrichten).",
         )
-    service = HyperVService(settings, settings.restore_proxy_address, use_https=settings.winrm_use_https)
+    settings = get_settings()
+    service = HyperVService(settings, proxy.address, use_https=proxy.use_https)
+    password = decrypt_secret(proxy.encrypted_password) if proxy.encrypted_password else ""
     try:
-        session = service.connect(settings.restore_proxy_username, settings.restore_proxy_password, read_timeout_sec=15, operation_timeout_sec=10)
+        session = service.connect(proxy.username, password, read_timeout_sec=15, operation_timeout_sec=10)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Restore-Proxy-Host nicht erreichbar: {exc}") from exc
     return service, session
 
 
+@router.get("/proxy-host", response_model=ProxyHostRead)
+def get_proxy_host(db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE))) -> ProxyHostRead:
+    proxy = db.query(RestoreProxyHost).first()
+    if proxy is None:
+        return ProxyHostRead(configured=False)
+    return ProxyHostRead(configured=True, address=proxy.address, username=proxy.username, use_https=proxy.use_https)
+
+
+@router.put("/proxy-host", response_model=ProxyHostRead)
+def save_proxy_host(
+    payload: ProxyHostWrite, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> ProxyHostRead:
+    """Legt die (einzige) Restore-Proxy-Host-Konfiguration an oder aktualisiert
+    sie. Ein leeres Passwort laesst ein bereits gespeichertes unveraendert --
+    so lassen sich Adresse/Username aendern, ohne das Passwort neu einzugeben."""
+    proxy = db.query(RestoreProxyHost).first()
+    if proxy is None:
+        proxy = RestoreProxyHost(address=payload.address, username=payload.username, use_https=payload.use_https)
+        db.add(proxy)
+    else:
+        proxy.address = payload.address
+        proxy.username = payload.username
+        proxy.use_https = payload.use_https
+    if payload.password:
+        proxy.encrypted_password = encrypt_secret(payload.password)
+    db.commit()
+    db.refresh(proxy)
+    return ProxyHostRead(configured=True, address=proxy.address, username=proxy.username, use_https=proxy.use_https)
+
+
 @router.get("/initiator", response_model=InitiatorInfo)
-def get_initiator(user=Depends(require_permission(Permission.STORAGE_MANAGE))) -> InitiatorInfo:
+def get_initiator(db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE))) -> InitiatorInfo:
     """Fragt die iSCSI-Initiator-IQN des Restore-Proxy-Hosts per WinRM ab
     (startet dabei bei Bedarf den MSiSCSI-Dienst -- auf einem frischen
     Windows Server ist er standardmaessig deaktiviert)."""
     try:
-        service, session = _proxy_service_and_session()
+        service, session = _proxy_service_and_session(db)
         iqn = service.get_initiator_iqn(session)
     except HTTPException as exc:
         return InitiatorInfo(configured=False, error=exc.detail)
@@ -212,7 +256,7 @@ def setup_restore_infra(
     und die Igroup dafuer an, und speichert die Konfiguration fuer spaetere
     Restore-Laeufe."""
     cluster = _get_cluster_or_404(db, cluster_id)
-    proxy_service, proxy_session = _proxy_service_and_session()
+    proxy_service, proxy_session = _proxy_service_and_session(db)
     try:
         iqn = proxy_service.get_initiator_iqn(proxy_session)
     except RuntimeError as exc:

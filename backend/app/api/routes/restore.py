@@ -1,6 +1,7 @@
 """VM-Restore: klont eine LUN aus einem Backup-Snapshot, meldet sich per
-nativem Windows-iSCSI-Initiator auf dem Restore-Proxy-Host (siehe
-HVNB_RESTORE_PROXY_*) an der Ziel-SVM an, kopiert die wiederhergestellte
+nativem Windows-iSCSI-Initiator auf dem Restore-Proxy-Host (Konfiguration
+siehe Restore > Setup > Restore-Infrastruktur einrichten, Modell
+RestoreProxyHost) an der Ziel-SVM an, kopiert die wiederhergestellte
 VHDX von dort per SMB auf die Ziel-CSV, und haengt sie an die VM an (neue
 Zusatzdisk, mode='add') oder ersetzt die laufende VHDX damit (mode='replace'
 -- VM wird dafuer kurz gestoppt, die alte Datei wird geloescht, nicht nur
@@ -47,6 +48,7 @@ from app.models.hyperv_discovery import HyperVCsv, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun
 from app.models.restore_infra import RestoreInfraConfig
+from app.models.restore_proxy_host import RestoreProxyHost
 from app.models.restore_run import RestoreMode, RestoreRun, RestoreRunStep, RestoreStatus, RestoreStepStatus
 from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppConnectionError, NetAppOntapService
@@ -250,10 +252,10 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 ctx.row.message = f"CSV {csv_name} -> Volume {lun.volume_name} @ {lun.svm_name}"
 
             settings = get_settings()
-            if not settings.restore_proxy_address or not settings.restore_proxy_username:
+            proxy = db.query(RestoreProxyHost).first()
+            if proxy is None or not proxy.address or not proxy.username:
                 raise RuntimeError(
-                    "Kein Restore-Proxy-Host konfiguriert (HVNB_RESTORE_PROXY_ADDRESS/"
-                    "HVNB_RESTORE_PROXY_USERNAME/HVNB_RESTORE_PROXY_PASSWORD)."
+                    "Kein Restore-Proxy-Host konfiguriert (Restore > Setup > Restore-Infrastruktur einrichten)."
                 )
             hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
             hv_password = decrypt_secret(hv_cluster.encrypted_password)
@@ -271,9 +273,10 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 ctx.row.message = node_address
 
             with _StepCtx(db, run.id, "connect-proxy", "Verbindung zum Restore-Proxy-Host") as ctx:
-                proxy_service = HyperVService(settings, settings.restore_proxy_address, use_https=settings.winrm_use_https)
-                proxy_session = proxy_service.connect(settings.restore_proxy_username, settings.restore_proxy_password)
-                ctx.row.message = settings.restore_proxy_address
+                proxy_service = HyperVService(settings, proxy.address, use_https=proxy.use_https)
+                proxy_password = decrypt_secret(proxy.encrypted_password) if proxy.encrypted_password else ""
+                proxy_session = proxy_service.connect(proxy.username, proxy_password)
+                ctx.row.message = proxy.address
 
             netapp_service = _netapp_service_for(netapp_cluster)
             svm_name = lun.svm_name

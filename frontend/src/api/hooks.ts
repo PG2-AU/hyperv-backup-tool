@@ -32,6 +32,8 @@ import type {
   RestoreInfraSetupPayload,
   RestoreInitiatorInfo,
   RestoreLifCandidate,
+  RestoreProxyHostConfig,
+  RestoreProxyHostWrite,
   RestoreRun,
   TriggerRestorePayload,
   VmWithBackups,
@@ -513,6 +515,26 @@ export function useRestoreInitiator(enabled: boolean) {
     queryKey: ["restore-initiator"],
     queryFn: async () => (await apiClient.get<RestoreInitiatorInfo>("/restore-infra/initiator")).data,
     enabled,
+  });
+}
+
+export function useRestoreProxyHost(enabled: boolean) {
+  return useQuery({
+    queryKey: ["restore-proxy-host"],
+    queryFn: async () => (await apiClient.get<RestoreProxyHostConfig>("/restore-infra/proxy-host")).data,
+    enabled,
+  });
+}
+
+export function useSaveRestoreProxyHost() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: RestoreProxyHostWrite) =>
+      (await apiClient.put<RestoreProxyHostConfig>("/restore-infra/proxy-host", payload)).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["restore-proxy-host"] });
+      queryClient.invalidateQueries({ queryKey: ["restore-initiator"] });
+    },
   });
 }
 

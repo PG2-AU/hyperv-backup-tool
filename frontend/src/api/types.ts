@@ -535,6 +535,20 @@ export interface RestoreInitiatorInfo {
   error?: string | null;
 }
 
+export interface RestoreProxyHostConfig {
+  configured: boolean;
+  address?: string | null;
+  username?: string | null;
+  use_https: boolean;
+}
+
+export interface RestoreProxyHostWrite {
+  address: string;
+  username: string;
+  password?: string | null;
+  use_https: boolean;
+}
+
 export interface RestoreLifCandidate {
   name: string;
   address: string;
