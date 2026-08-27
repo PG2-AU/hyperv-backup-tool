@@ -12,7 +12,16 @@ ENV LANG=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
     APP_DIR=/opt/app \
     HVNB_TLS_CERT_PATH=/etc/hvnb/certs/server.crt \
-    HVNB_TLS_KEY_PATH=/etc/hvnb/certs/server.key
+    HVNB_TLS_KEY_PATH=/etc/hvnb/certs/server.key \
+    NODE_OPTIONS=--dns-result-order=ipv4first
+
+# Unter network_mode: host (siehe docker-compose.yml, fuer den iSCSI-Restore-
+# Workflow noetig) sieht der Container die IPv6-Adressen des Hosts, die in
+# dieser Umgebung nicht tatsaechlich geroutet werden -- Node/npm versuchen
+# ohne diese Option zuerst IPv6 und haengen minutenlang, bevor sie auf IPv4
+# zurueckfallen (gegen echten Build verifiziert: 'npm ci' ging von >5 Minuten
+# Haenger auf 7 Sekunden). curl/plain DNS sind davon nicht betroffen, nur
+# Nodes eigener dualstack-Resolver.
 
 RUN dnf install -y --setopt=install_weak_deps=False \
         python3.12 python3.12-pip \
