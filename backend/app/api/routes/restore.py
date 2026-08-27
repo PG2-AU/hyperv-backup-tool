@@ -237,6 +237,22 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
 
                 ctx.row.message = f"CSV {csv_name} -> Volume {lun.volume_name} @ {lun.svm_name}"
 
+            settings = get_settings()
+            hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
+            hv_password = decrypt_secret(hv_cluster.encrypted_password)
+
+            with _StepCtx(db, run.id, "connect-node", f"Verbindung zu Knoten '{vm.host_name}'") as ctx:
+                cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
+                # Die administrative C$-Freigabe fuer den SMB-Kopiervorgang
+                # existiert nur auf einem echten Knoten, nicht auf dem
+                # Cluster-Zugriffspunkt (hv_cluster.management_address) --
+                # sonst schlaegt der Tree-Connect mit NT_STATUS_BAD_NETWORK_NAME
+                # fehl (gegen echten Cluster verifiziert).
+                node_address = hv_service.resolve_node_address(cno_session, vm.host_name)
+                node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
+                node_session = node_service.connect(hv_cluster.username, hv_password)
+                ctx.row.message = node_address
+
             netapp_service = _netapp_service_for(netapp_cluster)
             svm_name = lun.svm_name
             igroup_name = infra_config.igroup_name
@@ -290,8 +306,8 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
 
             with _StepCtx(db, run.id, "copy", f"VHDX auf CSV kopieren ({new_filename})") as ctx:
                 copy_result = exec_svc.copy_via_smb(
-                    str(local_path), hv_cluster.management_address, hv_cluster.username,
-                    decrypt_secret(hv_cluster.encrypted_password), remote_dir, new_filename,
+                    str(local_path), node_address, hv_cluster.username,
+                    hv_password, remote_dir, new_filename,
                 )
                 ctx.row.message = f"{copy_result.remote_size_bytes} Bytes kopiert"
             run.restored_vhd_path = restored_vhd_path
@@ -304,17 +320,6 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 netapp_service.delete_lun_map(clone_lun_uuid, igroup_name, svm_name)
                 netapp_service.delete_lun(clone_lun_uuid)
                 clone_lun_uuid = None
-
-            settings = get_settings()
-            hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
-            hv_password = decrypt_secret(hv_cluster.encrypted_password)
-
-            with _StepCtx(db, run.id, "connect-node", f"Verbindung zu Knoten '{vm.host_name}'") as ctx:
-                cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
-                node_address = hv_service.resolve_node_address(cno_session, vm.host_name)
-                node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
-                node_session = node_service.connect(hv_cluster.username, hv_password)
-                ctx.row.message = node_address
 
             if run.mode == RestoreMode.ADD:
                 with _StepCtx(db, run.id, "attach", "VHDX als Zusatzdisk anhängen") as ctx:
