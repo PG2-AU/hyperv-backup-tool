@@ -9,12 +9,15 @@ Checkpoints" (VSS-basiert) verwendet, fuer crash-konsistente Sicherungen
 
 from __future__ import annotations
 
+import base64
 import json
 import socket
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 import winrm
+import winrm.exceptions
 
 from app.core.config import Settings
 
@@ -575,9 +578,17 @@ class HyperVService:
         )
         self._run_ps(session, script)
 
+    def get_file_size(self, session: winrm.Session, path: str) -> int:
+        escaped = path.replace("'", "''")
+        result = self._run_ps(session, f"(Get-Item -Path '{escaped}').Length")
+        if not result.success:
+            raise RuntimeError(f"Groesse von '{path}' konnte nicht ermittelt werden: {result.error}")
+        return int(result.output.strip())
+
     def copy_file_to_share(
         self, session: winrm.Session, source_path: str, node_address: str,
         remote_dir: str, remote_filename: str, share_username: str, share_password: str,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> int:
         """Kopiert eine Datei vom Restore-Proxy-Host auf die administrative
         C$-Freigabe eines Hyper-V-Knotens. Bindet das Ziel explizit mit
@@ -592,8 +603,25 @@ class HyperVService:
         NTLM-Netzwerklogon-Token keine weiteren Logon-Sessions erzeugen darf
         -- genau das braucht New-SmbMapping intern (verifiziert live gegen
         einen echten Restore-Proxy-Host). net.exe umgeht das, da es ohne CIM
-        auskommt. Prueft die Zielgroesse nach dem Kopieren (Copy-Item meldet
-        Erfolg nicht zuverlaessig genug bei Netzwerkproblemen)."""
+        auskommt.
+
+        Der eigentliche Copy-Item laeuft als Start-Job im Hintergrund,
+        waehrend dasselbe Skript die Zielgroesse periodisch abfragt und als
+        'PROGRESS <bytes>'-Zeile ausgibt -- alles innerhalb EINES einzigen
+        WinRM-Kommandos, da die 'net use'-Einbindung nur fuer dessen
+        Laufzeit gilt (eine neue WinRM-Shell haette keinen Zugriff mehr auf
+        die Freigabe). pywinrm's Session.run_ps() wartet aber immer auf das
+        Gesamtergebnis; um die Zwischenzeilen dennoch live mitzubekommen,
+        wird hier direkt die Protocol-Low-Level-API verwendet (die gleiche,
+        die run_ps() intern nutzt) und der Output zeilenweise gelesen,
+        sobald er eintrifft, statt gesammelt am Ende. on_progress wird mit
+        (kopierte_bytes, gesamt_bytes) aufgerufen. Prueft die Zielgroesse
+        nach dem Kopieren (Copy-Item meldet Erfolg nicht zuverlaessig genug
+        bei Netzwerkproblemen)."""
+        source_size = self.get_file_size(session, source_path)
+        if on_progress:
+            on_progress(0, source_size)
+
         escaped_src = source_path.replace("'", "''")
         escaped_dir = remote_dir.replace("'", "''")
         escaped_file = remote_filename.replace("'", "''")
@@ -602,32 +630,81 @@ class HyperVService:
         share = f"\\\\{node_address}\\C$"
         dest = f"{share}\\{escaped_dir}\\{escaped_file}"
         script = (
-            f"$share = '{share}'; "
+            f"$share = '{share}'; $dest = '{dest}'; "
             "net use $share /delete /y 2>&1 | Out-Null; "
             f"net use $share '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1 | Out-Null; "
             "if ($LASTEXITCODE -ne 0) { throw \"net use fehlgeschlagen (Exit $LASTEXITCODE)\" }; "
             "try { "
-            f"Copy-Item -Path '{escaped_src}' -Destination '{dest}' -Force -ErrorAction Stop; "
-            f"(Get-Item -Path '{dest}').Length "
+            f"$job = Start-Job -ScriptBlock {{ param($s, $d) Copy-Item -Path $s -Destination $d -Force }} "
+            f"-ArgumentList '{escaped_src}', $dest; "
+            "while ($job.State -eq 'Running') { "
+            "Start-Sleep -Seconds 2; "
+            "$len = (Get-Item -Path $dest -ErrorAction SilentlyContinue).Length; "
+            "if ($len) { Write-Output \"PROGRESS $len\" } "
+            "}; "
+            "Receive-Job -Job $job -ErrorAction Stop | Out-Null; "
+            "Remove-Job -Job $job -Force; "
+            "(Get-Item -Path $dest).Length "
             "} finally { "
             "net use $share /delete /y 2>&1 | Out-Null "
             "}"
         )
-        result = self._run_ps(session, script)
-        if not result.success or not result.output.strip():
-            raise RuntimeError(f"Kopieren auf '{node_address}' fehlgeschlagen: {result.error or result.output}")
-        try:
-            remote_size = int(result.output.strip().splitlines()[-1])
-        except ValueError as exc:
-            raise RuntimeError(f"Unerwartete Antwort beim Kopieren: {result.output}") from exc
-        source_size_result = self._run_ps(session, f"(Get-Item -Path '{escaped_src}').Length")
-        if source_size_result.success:
-            try:
-                source_size = int(source_size_result.output.strip())
-                if source_size != remote_size:
-                    raise RuntimeError(
-                        f"Groessenabweichung nach Kopieren: Quelle {source_size} Bytes, Ziel {remote_size} Bytes"
-                    )
-            except ValueError:
-                pass
+        def _forward_progress(current: int) -> None:
+            if on_progress:
+                on_progress(current, source_size)
+
+        remote_size = self._run_ps_streaming(session, script, on_progress=_forward_progress)
+        if remote_size != source_size:
+            raise RuntimeError(f"Groessenabweichung nach Kopieren: Quelle {source_size} Bytes, Ziel {remote_size} Bytes")
         return remote_size
+
+    def _run_ps_streaming(
+        self, session: winrm.Session, script: str, on_progress: Callable[[int], None] | None = None,
+    ) -> int:
+        """Fuehrt ein PowerShell-Skript aus, das laufend 'PROGRESS <bytes>'-
+        Zeilen ausgibt, und ruft on_progress fuer jede davon auf, sobald sie
+        eintrifft -- per Protocol-Low-Level-API (siehe copy_file_to_share)
+        statt session.run_ps(), das erst am Ende liefert. Erwartet als
+        letzte (Nicht-PROGRESS-)Ausgabezeile die finale Bytegroesse."""
+        encoded_ps = base64.b64encode(script.encode("utf_16_le")).decode("ascii")
+        command = f"powershell -encodedcommand {encoded_ps}"
+
+        shell_id = session.protocol.open_shell()
+        command_id = session.protocol.run_command(shell_id, command)
+        stdout_buffer = b""
+        stderr_buffer = b""
+        pending_line = ""
+        return_code = 0
+        try:
+            command_done = False
+            while not command_done:
+                try:
+                    stdout, stderr, return_code, command_done = session.protocol.get_command_output_raw(shell_id, command_id)
+                except winrm.exceptions.WinRMOperationTimeoutError:
+                    continue
+                stderr_buffer += stderr
+                if not stdout:
+                    continue
+                stdout_buffer += stdout
+                pending_line += stdout.decode("utf-8", errors="replace")
+                *complete_lines, pending_line = pending_line.split("\n")
+                for line in complete_lines:
+                    line = line.strip()
+                    if on_progress and line.startswith("PROGRESS "):
+                        try:
+                            on_progress(int(line.split()[1]))
+                        except (IndexError, ValueError):
+                            pass
+        finally:
+            session.protocol.cleanup_command(shell_id, command_id)
+            session.protocol.close_shell(shell_id)
+
+        output = stdout_buffer.decode("utf-8", errors="replace")
+        error = session._clean_error_msg(stderr_buffer).decode("utf-8", errors="replace")
+        non_progress_lines = [l.strip() for l in output.strip().splitlines() if l.strip() and not l.startswith("PROGRESS ")]
+        if return_code != 0 or not non_progress_lines:
+            raise RuntimeError(f"Kopieren fehlgeschlagen: {error or output}")
+        try:
+            return int(non_progress_lines[-1])
+        except ValueError as exc:
+            raise RuntimeError(f"Unerwartete Antwort beim Kopieren: {output}") from exc

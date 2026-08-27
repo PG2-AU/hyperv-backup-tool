@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { ActionIcon, Alert, Badge, Button, Group, Paper, Stack, Table, Tabs, Text, Title } from "@mantine/core";
+import { ActionIcon, Alert, Badge, Button, Group, Paper, Stack, Table, Tabs, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconDatabaseImport, IconInfoCircle, IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconDatabaseImport, IconInfoCircle, IconPlus, IconSearch, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -30,8 +30,10 @@ export function RestorePage() {
   const { data: restoreConfigs } = useRestoreInfraConfigs();
   const deleteRestoreConfig = useDeleteRestoreInfraConfig();
   const [restoreWizardOpen, setRestoreWizardOpen] = useState(false);
+  const [vmSearch, setVmSearch] = useState("");
 
   const cleanupPending = runs?.filter((r) => r.cleanup_needed) ?? [];
+  const filteredVms = (vms ?? []).filter((vm) => vm.name.toLowerCase().includes(vmSearch.trim().toLowerCase()));
 
   function handleCleanup(runId: string, vmName: string) {
     if (!window.confirm(`Zusatzdisk für '${vmName}' abhängen und löschen?`)) return;
@@ -95,9 +97,18 @@ export function RestorePage() {
         </Stack>
       )}
 
-      <Text size="sm" fw={600}>
-        VMs mit vorhandenen Backups
-      </Text>
+      <Group justify="space-between" align="center">
+        <Text size="sm" fw={600}>
+          VMs mit vorhandenen Backups
+        </Text>
+        <TextInput
+          placeholder="VM-Name suchen…"
+          leftSection={<IconSearch size={14} />}
+          value={vmSearch}
+          onChange={(e) => setVmSearch(e.currentTarget.value)}
+          w={280}
+        />
+      </Group>
       <Table striped highlightOnHover>
         <Table.Thead>
           <Table.Tr>
@@ -110,33 +121,60 @@ export function RestorePage() {
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {vms?.map((vm) => (
-            <Table.Tr key={vm.name}>
-              <Table.Td>{vm.name}</Table.Td>
-              <Table.Td>
-                <Badge color={STATE_COLOR[vm.state ?? ""] ?? "gray"} variant="light">
-                  {vm.state ?? "-"}
-                </Badge>
-              </Table.Td>
-              <Table.Td>{vm.host ?? "-"}</Table.Td>
-              <Table.Td>{vm.cluster ?? "-"}</Table.Td>
-              <Table.Td>
-                <Badge variant="filled" color="blue">
-                  {vm.backup_count}
-                </Badge>
-              </Table.Td>
-              <Table.Td>
-                <Button size="xs" leftSection={<IconDatabaseImport size={14} />} onClick={() => setWizardVm(vm)}>
-                  Restore
-                </Button>
-              </Table.Td>
-            </Table.Tr>
-          ))}
+          {filteredVms.map((vm) => {
+            const pendingCleanup = cleanupPending.find((r) => r.vm_name === vm.name);
+            return (
+              <Table.Tr key={vm.name}>
+                <Table.Td>{vm.name}</Table.Td>
+                <Table.Td>
+                  <Badge color={STATE_COLOR[vm.state ?? ""] ?? "gray"} variant="light">
+                    {vm.state ?? "-"}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>{vm.host ?? "-"}</Table.Td>
+                <Table.Td>{vm.cluster ?? "-"}</Table.Td>
+                <Table.Td>
+                  <Badge variant="filled" color="blue">
+                    {vm.backup_count}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>
+                  <Group gap="xs" wrap="nowrap">
+                    {pendingCleanup && (
+                      <Badge color="orange" variant="light" size="sm">
+                        Restore aktiv
+                      </Badge>
+                    )}
+                    <Button size="xs" leftSection={<IconDatabaseImport size={14} />} onClick={() => setWizardVm(vm)}>
+                      Restore
+                    </Button>
+                    {pendingCleanup && (
+                      <Button
+                        size="xs"
+                        color="orange"
+                        variant="light"
+                        leftSection={<IconTrash size={14} />}
+                        loading={cleanupRun.isPending}
+                        onClick={() => handleCleanup(pendingCleanup.id, vm.name)}
+                      >
+                        Restore abschließen
+                      </Button>
+                    )}
+                  </Group>
+                </Table.Td>
+              </Table.Tr>
+            );
+          })}
         </Table.Tbody>
       </Table>
       {vms?.length === 0 && (
         <Text c="dimmed" size="sm" ta="center" py="md">
           Noch keine VM mit vorhandenen Backups.
+        </Text>
+      )}
+      {(vms?.length ?? 0) > 0 && filteredVms.length === 0 && (
+        <Text c="dimmed" size="sm" ta="center" py="md">
+          Keine VM passt zur Suche „{vmSearch}“.
         </Text>
       )}
           </Stack>

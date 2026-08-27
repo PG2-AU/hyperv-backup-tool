@@ -599,6 +599,8 @@ export interface RestoreRunStep {
   label: string;
   status: "pending" | "running" | "success" | "error" | "skipped";
   message?: string | null;
+  progress_current?: number | null;
+  progress_total?: number | null;
 }
 
 export interface RestoreRun {
