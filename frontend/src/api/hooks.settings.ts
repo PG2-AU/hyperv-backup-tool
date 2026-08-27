@@ -42,7 +42,11 @@ export interface PublicSettings {
 export interface VersionInfo {
   commit?: string | null;
   commit_short?: string | null;
+  commit_count?: number | null;
   last_deploy_at?: string | null;
+  last_health_check_at?: string | null;
+  last_discovery_at?: string | null;
+  last_snapshot_reconciliation_at?: string | null;
 }
 
 export interface UserCreatePayload {

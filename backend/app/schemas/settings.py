@@ -8,7 +8,11 @@ class VersionInfo(BaseModel):
 
     commit: str | None = None
     commit_short: str | None = None
+    commit_count: int | None = None
     last_deploy_at: str | None = None
+    last_health_check_at: str | None = None
+    last_discovery_at: str | None = None
+    last_snapshot_reconciliation_at: str | None = None
 
 
 class PublicSettings(BaseModel):

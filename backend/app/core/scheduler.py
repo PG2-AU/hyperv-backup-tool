@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy.orm import Session
 
 from app.api.routes.hyperv_clusters import _refresh_status as _refresh_hyperv_status
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
@@ -30,12 +31,27 @@ from app.db.session import SessionLocal
 from app.models.backup_run import BackupRunSnapshot
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.netapp_cluster import NetAppCluster
+from app.models.scheduler_status import SchedulerStatus
 
 _scheduler: BackgroundScheduler | None = None
 
 
 def _log(message: str) -> None:
     print(f"[scheduler] {datetime.now(timezone.utc).isoformat()} {message}", flush=True)
+
+
+def _touch(db: Session, field_name: str) -> None:
+    """Aktualisiert den Zeitstempel eines Jobs auf der Singleton-Statuszeile
+    -- fuer die Fusszeile im Hauptmenue ('Letzte Discovery: ...'). Laeuft
+    unabhaengig vom eigentlichen Job-Ergebnis, damit auch ein Lauf ohne
+    Aenderungen (z.B. keine Snapshots zu pruefen) korrekt als 'gelaufen'
+    gilt."""
+    row = db.query(SchedulerStatus).first()
+    if row is None:
+        row = SchedulerStatus()
+        db.add(row)
+    setattr(row, field_name, datetime.now(timezone.utc))
+    db.commit()
 
 
 def run_health_checks() -> None:
@@ -51,6 +67,7 @@ def run_health_checks() -> None:
                 _refresh_netapp_status(db, cluster)
             except Exception as exc:
                 _log(f"Health-Check fehlgeschlagen fuer NetApp-Cluster '{cluster.name}': {exc}")
+        _touch(db, "last_health_check_at")
     finally:
         db.close()
 
@@ -68,6 +85,7 @@ def run_discovery() -> None:
                 _run_netapp_discovery(db, cluster)
             except Exception as exc:
                 _log(f"Discovery fehlgeschlagen fuer NetApp-Cluster '{cluster.name}': {exc}")
+        _touch(db, "last_discovery_at")
     finally:
         db.close()
 
@@ -115,6 +133,7 @@ def run_snapshot_reconciliation() -> None:
                     row.error_message = f"Snapshot wurde extern geloescht (Abgleich am {now_str} UTC)"
             db.commit()
     finally:
+        _touch(db, "last_snapshot_reconciliation_at")
         db.close()
 
 
