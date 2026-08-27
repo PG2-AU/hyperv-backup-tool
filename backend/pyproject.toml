@@ -17,7 +17,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "ldap3>=2.9",
     "netapp-ontap>=9.15",
-    "pywinrm>=0.4.3",
+    "pywinrm[credssp]>=0.4.3",
     "httpx>=0.27",
     "apscheduler>=3.10",
 ]
