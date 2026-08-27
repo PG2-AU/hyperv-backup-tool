@@ -319,7 +319,7 @@ export function SettingsPage() {
 
   return (
     <Stack>
-      <Title order={3}>Einstellungen</Title>
+      <Title order={3}>Settings</Title>
 
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "users" })}>
         <Tabs.List>
