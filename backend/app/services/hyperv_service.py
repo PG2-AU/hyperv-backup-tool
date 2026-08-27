@@ -256,7 +256,14 @@ class HyperVService:
         except json.JSONDecodeError:
             return {}
         entries = raw if isinstance(raw, list) else [raw]
-        return {e["Node"]: e["Address"] for e in entries if e.get("Node") and e.get("Address")}
+        # Schluessel bewusst kleingeschrieben: 'Node' aus
+        # Get-ClusterNetworkInterface kann in anderer Gross-/Kleinschreibung
+        # vorliegen als der Knotenname aus Get-VM/Get-ClusterNode (z.B.
+        # 'svAUdemo7-hv103' vs. 'SVAUDEMO7-HV103') -- gegen echten Cluster
+        # verifiziert: ein case-sensitiver dict-Lookup lieferte sonst nichts,
+        # und resolve_node_address fiel auf den (vom Container aus nicht
+        # aufloesbaren) Namen zurueck.
+        return {e["Node"].lower(): e["Address"] for e in entries if e.get("Node") and e.get("Address")}
 
     def run_discovery(self, username: str, password: str) -> tuple[list[DiscoveryStepResult], HyperVDiscoveryData]:
         """Erkennt alle VMs im Cluster inkl. ihrer VHDs (Pfad/Speicherort +
@@ -290,7 +297,7 @@ class HyperVService:
             if node.state != "Up":
                 results.append(DiscoveryStepResult("vms", False, f"Knoten '{node.name}' übersprungen (Status: {node.state})"))
                 continue
-            target = node_ips.get(node.name, node.name)
+            target = node_ips.get(node.name.lower(), node.name)
             try:
                 node_service = HyperVService(self._settings, target, use_https=self._use_https)
                 session = node_service._session(username, password)
@@ -415,7 +422,7 @@ class HyperVService:
         Knotennamen zur Management-IP auf, faellt auf den Namen selbst
         zurueck, falls nicht auflösbar (DNS ggf. vorhanden)."""
         ips = self._node_management_ips(cno_session)
-        return ips.get(node_name, node_name)
+        return ips.get(node_name.lower(), node_name)
 
     def get_vm_state(self, session: winrm.Session, vm_name: str) -> str:
         result = self._run_ps(session, f"(Get-VM -Name '{vm_name}').State.ToString()")
