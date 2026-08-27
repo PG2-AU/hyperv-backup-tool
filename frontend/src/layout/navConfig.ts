@@ -44,6 +44,7 @@ export const NAV_ITEMS: NavItem[] = [
     children: [
       { label: "Policies", path: "/jobs?tab=policies" },
       { label: "Protection Groups", path: "/jobs?tab=protection-groups", searchContext: "resource-groups" },
+      { label: "Zeitpläne", path: "/jobs?tab=schedules" },
       { label: "Job-Verlauf", path: "/jobs?tab=runs" },
     ],
   },
@@ -81,7 +82,6 @@ export const NAV_ITEMS: NavItem[] = [
     searchContext: "settings",
     children: [
       { label: "Benutzer & Rollen", path: "/settings?tab=users" },
-      { label: "Zeitpläne", path: "/settings?tab=schedules" },
       { label: "SnapMirror-Labels", path: "/settings?tab=snapmirror-labels" },
       { label: "NetApp SnapMirror-Policies", path: "/settings?tab=netapp-snapmirror-policies" },
       { label: "NetApp-Schedules", path: "/settings?tab=netapp-schedules" },

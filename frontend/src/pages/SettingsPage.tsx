@@ -23,13 +23,11 @@ import { useSearchParams } from "react-router-dom";
 
 import {
   useDeleteHyperVCluster,
-  useDeleteSchedule,
   useDeleteSnapMirrorLabel,
   useDiscoverHyperVCluster,
   useHyperVClusters,
   useNetAppClusters,
   useNetAppSchedules,
-  useSchedules,
   useSnapmirrorPolicies,
   useSnapMirrorLabels,
   useSvms,
@@ -40,23 +38,14 @@ import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { HyperVClusterFormModal } from "@/components/HyperVClusterFormModal";
 import { NetAppScheduleFormModal } from "@/components/NetAppScheduleFormModal";
 import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
-import { ScheduleFormModal } from "@/components/ScheduleFormModal";
 import { SnapMirrorLabelFormModal } from "@/components/SnapMirrorLabelFormModal";
 import { SnapMirrorPolicyEditModal } from "@/components/SnapMirrorPolicyEditModal";
 import { SnapMirrorPolicyFormModal } from "@/components/SnapMirrorPolicyFormModal";
-import type { HyperVCluster, NetAppSnapMirrorPolicy, Schedule, SnapMirrorLabel } from "@/api/types";
+import type { HyperVCluster, NetAppSnapMirrorPolicy, SnapMirrorLabel } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
-import { formatSchedule } from "@/utils/format";
 import { buildHyperVClusterCreationSteps } from "@/utils/hypervSteps";
 import { buildPolicyCreationSteps, buildPolicyEditSteps, buildScheduleCreationSteps } from "@/utils/netappSteps";
-
-const SCHEDULE_TYPE_LABEL: Record<string, string> = {
-  hourly: "Mehrmals täglich",
-  daily: "Täglich",
-  weekly: "Wöchentlich",
-  monthly: "Monatlich",
-};
 
 const HYPERV_HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
 const HYPERV_HEALTH_LABEL: Record<string, string> = {
@@ -206,35 +195,6 @@ export function SettingsPage() {
   const { data: settings } = usePublicSettings();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [passwordModalUser, setPasswordModalUser] = useState<UserRead | null>(null);
-  const { data: schedules } = useSchedules();
-  const deleteSchedule = useDeleteSchedule();
-  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
-  const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
-
-  function openCreateSchedule() {
-    setEditingSchedule(null);
-    setScheduleModalOpen(true);
-  }
-
-  function openEditSchedule(schedule: Schedule) {
-    setEditingSchedule(schedule);
-    setScheduleModalOpen(true);
-  }
-
-  function removeSchedule(schedule: Schedule) {
-    confirmAction({
-      title: "Zeitplan löschen",
-      message: `Zeitplan '${schedule.name}' wirklich löschen?`,
-      confirmLabel: "Löschen",
-      onConfirm: () =>
-        deleteSchedule.mutate(schedule.id, {
-          onSuccess: () => notifications.show({ title: "Zeitplan gelöscht", message: schedule.name, color: "blue" }),
-          onError: (err) =>
-            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Zeitplan konnte nicht gelöscht werden."), color: "red" }),
-        }),
-    });
-  }
-
   const { data: labels } = useSnapMirrorLabels();
   const deleteLabel = useDeleteSnapMirrorLabel();
   const [labelModalOpen, setLabelModalOpen] = useState(false);
@@ -324,7 +284,6 @@ export function SettingsPage() {
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "users" })}>
         <Tabs.List>
           <Tabs.Tab value="users">Benutzer & Rollen</Tabs.Tab>
-          <Tabs.Tab value="schedules">Zeitpläne</Tabs.Tab>
           <Tabs.Tab value="snapmirror-labels">SnapMirror-Labels</Tabs.Tab>
           <Tabs.Tab value="netapp-snapmirror-policies">SnapMirror-Policies</Tabs.Tab>
           <Tabs.Tab value="netapp-schedules">Schedules</Tabs.Tab>
@@ -414,61 +373,6 @@ export function SettingsPage() {
               </Table>
             </Paper>
           </Stack>
-        </Tabs.Panel>
-
-        <Tabs.Panel value="schedules" pt="md">
-          <Paper p="md">
-            <Group justify="space-between" mb="sm">
-              <Title order={5}>Zeitpläne</Title>
-              <Button leftSection={<IconPlus size={16} />} onClick={openCreateSchedule}>
-                Zeitplan erstellen
-              </Button>
-            </Group>
-            <Table striped highlightOnHover>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Name</Table.Th>
-                  <Table.Th>Typ</Table.Th>
-                  <Table.Th>Details</Table.Th>
-                  <Table.Th>Aktionen</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {schedules?.map((s) => (
-                  <Table.Tr key={s.id}>
-                    <Table.Td>{s.name}</Table.Td>
-                    <Table.Td>
-                      <Badge variant="light" color="blue">
-                        {SCHEDULE_TYPE_LABEL[s.schedule_type] ?? s.schedule_type}
-                      </Badge>
-                    </Table.Td>
-                    <Table.Td>{formatSchedule(s)}</Table.Td>
-                    <Table.Td>
-                      <Group gap="xs">
-                        <ActionIcon variant="light" onClick={() => openEditSchedule(s)}>
-                          <IconEdit size={16} />
-                        </ActionIcon>
-                        <ActionIcon variant="light" color="red" onClick={() => removeSchedule(s)}>
-                          <IconTrash size={16} />
-                        </ActionIcon>
-                      </Group>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-            {schedules?.length === 0 && (
-              <Text c="dimmed" size="sm" ta="center" py="md">
-                Noch keine Zeitpläne angelegt.
-              </Text>
-            )}
-          </Paper>
-
-          <ScheduleFormModal
-            opened={scheduleModalOpen}
-            onClose={() => setScheduleModalOpen(false)}
-            schedule={editingSchedule}
-          />
         </Tabs.Panel>
 
         <Tabs.Panel value="snapmirror-labels" pt="md">

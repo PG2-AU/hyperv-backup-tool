@@ -1,17 +1,26 @@
 import { useState } from "react";
-import { Badge, Button, Drawer, Group, Menu, Stack, Table, Tabs, Text, Title } from "@mantine/core";
+import { ActionIcon, Badge, Button, Drawer, Group, Menu, Paper, Stack, Table, Tabs, Text, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconEdit, IconPlayerPlay, IconPlus, IconStack2, IconTerminal2, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useDeletePolicy, useDeleteResourceGroup, useJobRuns, usePolicies, useResourceGroups } from "@/api/hooks";
+import {
+  useDeletePolicy,
+  useDeleteResourceGroup,
+  useDeleteSchedule,
+  useJobRuns,
+  usePolicies,
+  useResourceGroups,
+  useSchedules,
+} from "@/api/hooks";
 import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { LogViewer } from "@/components/LogViewer";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { ResourceGroupFormModal } from "@/components/ResourceGroupFormModal";
-import type { BackupJobRun, BackupPolicy, JobStatus, ResourceGroup } from "@/api/types";
+import { ScheduleFormModal } from "@/components/ScheduleFormModal";
+import type { BackupJobRun, BackupPolicy, JobStatus, ResourceGroup, Schedule } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatRetention, formatSchedule } from "@/utils/format";
@@ -28,10 +37,17 @@ const STATUS_COLOR: Record<JobStatus, string> = {
 
 const SCOPE_LABEL: Record<string, string> = { vm: "VMs", csv: "CSVs", lun: "LUNs" };
 
+const SCHEDULE_TYPE_LABEL: Record<string, string> = {
+  hourly: "Mehrmals täglich",
+  daily: "Täglich",
+  weekly: "Wöchentlich",
+  monthly: "Monatlich",
+};
+
 export function JobsPage() {
   const [params, setParams] = useSearchParams();
   const tabParam = params.get("tab");
-  const activeTab = tabParam === "runs" || tabParam === "protection-groups" ? tabParam : "policies";
+  const activeTab = tabParam === "runs" || tabParam === "protection-groups" || tabParam === "schedules" ? tabParam : "policies";
 
   const { data: policies } = usePolicies();
   const { data: runs } = useJobRuns();
@@ -50,6 +66,35 @@ export function JobsPage() {
   const groupMenu = useContextMenu<ResourceGroup>();
   const [groupFormOpen, setGroupFormOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ResourceGroup | null>(null);
+
+  const { data: schedules } = useSchedules();
+  const deleteSchedule = useDeleteSchedule();
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
+
+  function openCreateSchedule() {
+    setEditingSchedule(null);
+    setScheduleModalOpen(true);
+  }
+
+  function openEditSchedule(schedule: Schedule) {
+    setEditingSchedule(schedule);
+    setScheduleModalOpen(true);
+  }
+
+  function removeSchedule(schedule: Schedule) {
+    confirmAction({
+      title: "Zeitplan löschen",
+      message: `Zeitplan '${schedule.name}' wirklich löschen?`,
+      confirmLabel: "Löschen",
+      onConfirm: () =>
+        deleteSchedule.mutate(schedule.id, {
+          onSuccess: () => notifications.show({ title: "Zeitplan gelöscht", message: schedule.name, color: "blue" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Zeitplan konnte nicht gelöscht werden."), color: "red" }),
+        }),
+    });
+  }
 
   function runNow(policy: BackupPolicy) {
     runPolicy(policy);
@@ -125,6 +170,7 @@ export function JobsPage() {
         <Tabs.List>
           <Tabs.Tab value="policies">Policies</Tabs.Tab>
           <Tabs.Tab value="protection-groups">Protection Groups</Tabs.Tab>
+          <Tabs.Tab value="schedules">Zeitpläne</Tabs.Tab>
           <Tabs.Tab value="runs">Job-Verlauf</Tabs.Tab>
         </Tabs.List>
 
@@ -245,6 +291,55 @@ export function JobsPage() {
               </Text>
             )}
           </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="schedules" pt="md">
+          <Paper p="md">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>Zeitpläne</Title>
+              <Button leftSection={<IconPlus size={16} />} onClick={openCreateSchedule}>
+                Zeitplan erstellen
+              </Button>
+            </Group>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Typ</Table.Th>
+                  <Table.Th>Details</Table.Th>
+                  <Table.Th>Aktionen</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {schedules?.map((s) => (
+                  <Table.Tr key={s.id}>
+                    <Table.Td>{s.name}</Table.Td>
+                    <Table.Td>
+                      <Badge variant="light" color="blue">
+                        {SCHEDULE_TYPE_LABEL[s.schedule_type] ?? s.schedule_type}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>{formatSchedule(s)}</Table.Td>
+                    <Table.Td>
+                      <Group gap="xs">
+                        <ActionIcon variant="light" onClick={() => openEditSchedule(s)}>
+                          <IconEdit size={16} />
+                        </ActionIcon>
+                        <ActionIcon variant="light" color="red" onClick={() => removeSchedule(s)}>
+                          <IconTrash size={16} />
+                        </ActionIcon>
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            {schedules?.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Noch keine Zeitpläne angelegt.
+              </Text>
+            )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="runs" pt="md">
@@ -373,6 +468,7 @@ export function JobsPage() {
 
       <PolicyFormModal opened={formOpen} onClose={() => setFormOpen(false)} policy={editingPolicy} />
       <ResourceGroupFormModal opened={groupFormOpen} onClose={() => setGroupFormOpen(false)} group={editingGroup} />
+      <ScheduleFormModal opened={scheduleModalOpen} onClose={() => setScheduleModalOpen(false)} schedule={editingSchedule} />
       <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={runPolicy} />
     </Stack>
   );
