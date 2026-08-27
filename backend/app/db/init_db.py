@@ -73,6 +73,7 @@ def init_db(db: Session) -> None:
             "dynamic_memory_enabled": "BOOLEAN", "network_adapters": "JSON", "pci_devices": "JSON",
         },
     )
+    _add_missing_columns(engine, "backup_run_vm_configs", {"hyperv_cluster_id": "VARCHAR(36)"})
 
     for role_name, permissions in DEFAULT_ROLES.items():
         existing = db.query(Role).filter(Role.name == role_name).first()

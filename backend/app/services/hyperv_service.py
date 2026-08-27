@@ -526,6 +526,69 @@ class HyperVService:
             "path": data.get("Path"),
         }
 
+    # --- Komplette VM-Neuerstellung (geloeschte VM aus Backup) -------------
+
+    def create_vm(self, session: winrm.Session, vm_name: str, generation: int, storage_path: str) -> str:
+        """Legt eine neue, voellig leere VM an (keine Disks) -- fuer die
+        komplette Neuerstellung einer zuvor geloeschten VM aus einem
+        Backup-Lauf (siehe VmRecreateRun/_execute_vm_recreate in
+        app.api.routes.restore). Disks werden danach einzeln per attach_vhd
+        angehaengt, Hardware/Netzwerk per configure_vm_hardware/
+        add_network_adapter. Liefert die neue VM-UUID."""
+        escaped_name = vm_name.replace("'", "''")
+        escaped_path = storage_path.replace("'", "''")
+        script = f"$vm = New-VM -Name '{escaped_name}' -Generation {generation} -Path '{escaped_path}' -NoVHD; $vm.Id.ToString()"
+        result = self._run_ps(session, script)
+        if not result.success or not result.output.strip():
+            raise RuntimeError(f"VM '{vm_name}' konnte nicht angelegt werden: {result.error or result.output}")
+        return result.output.strip()
+
+    def configure_vm_hardware(
+        self, session: winrm.Session, vm_name: str, cpu_count: int | None,
+        memory_startup_bytes: int | None, memory_minimum_bytes: int | None, memory_maximum_bytes: int | None,
+        dynamic_memory_enabled: bool | None,
+    ) -> None:
+        escaped = vm_name.replace("'", "''")
+        parts: list[str] = []
+        if cpu_count:
+            parts.append(f"Set-VMProcessor -VMName '{escaped}' -Count {cpu_count} -ErrorAction Stop; ")
+        if memory_startup_bytes:
+            mem_args = [f"-StartupBytes {memory_startup_bytes}"]
+            if dynamic_memory_enabled and memory_minimum_bytes and memory_maximum_bytes:
+                mem_args += ["-DynamicMemoryEnabled $true", f"-MinimumBytes {memory_minimum_bytes}", f"-MaximumBytes {memory_maximum_bytes}"]
+            else:
+                mem_args.append("-DynamicMemoryEnabled $false")
+            parts.append(f"Set-VMMemory -VMName '{escaped}' {' '.join(mem_args)} -ErrorAction Stop; ")
+        if not parts:
+            return
+        result = self._run_ps(session, "".join(parts))
+        if not result.success:
+            raise RuntimeError(f"Hardware-Konfiguration fuer '{vm_name}' fehlgeschlagen: {result.error}")
+
+    def add_network_adapter(self, session: winrm.Session, vm_name: str, switch_name: str, vlan_id: int | None) -> None:
+        escaped_vm = vm_name.replace("'", "''")
+        escaped_switch = switch_name.replace("'", "''")
+        script = f"Add-VMNetworkAdapter -VMName '{escaped_vm}' -SwitchName '{escaped_switch}' -ErrorAction Stop; "
+        if vlan_id:
+            script += (
+                f"Get-VMNetworkAdapter -VMName '{escaped_vm}' | Select-Object -Last 1 | "
+                f"Set-VMNetworkAdapterVlan -Access -VlanId {vlan_id} -ErrorAction Stop"
+            )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Netzwerkadapter fuer '{vm_name}' konnte nicht angelegt werden: {result.error}")
+
+    def register_cluster_role(self, cno_session: winrm.Session, vm_name: str) -> None:
+        """Registriert eine bereits existierende (aber noch nicht
+        hochverfuegbare) VM als Cluster-Rolle -- Single-Hop-Abfrage gegen
+        den CNO (Cluster-Datenbank-Operation, wie list_csvs/
+        get_vm_owner_node), damit sie ueber Failover verfuegbar ist wie das
+        Original."""
+        escaped = vm_name.replace("'", "''")
+        result = self._run_ps(cno_session, f"Add-ClusterVirtualMachineRole -VMName '{escaped}' -ErrorAction Stop | Out-Null")
+        if not result.success:
+            raise RuntimeError(f"VM '{vm_name}' konnte nicht als Cluster-Rolle registriert werden: {result.error}")
+
     def detach_vhd(self, session: winrm.Session, vm_name: str, vhd_path: str) -> CommandResult:
         escaped = vhd_path.replace("'", "''")
         script = (

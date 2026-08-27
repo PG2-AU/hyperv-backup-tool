@@ -93,6 +93,10 @@ class BackupRunVmConfig(Base):
     run_id: Mapped[str] = mapped_column(String(36), ForeignKey("backup_runs.id", ondelete="CASCADE"))
     vm_name: Mapped[str] = mapped_column(String(255))
     vm_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Aus HyperVVm.cluster_id zum Backup-Zeitpunkt uebernommen -- einzige
+    # dauerhafte Quelle dafuer, sobald die VM geloescht und aus HyperVVm
+    # beim naechsten Discovery-Lauf verschwunden ist (siehe VmRecreateRun).
+    hyperv_cluster_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     cpu_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     memory_startup_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     memory_minimum_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)

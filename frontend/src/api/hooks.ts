@@ -36,6 +36,8 @@ import type {
   RestoreProxyHostWrite,
   RestoreRun,
   TriggerRestorePayload,
+  VmBackupRun,
+  VmRecreateRun,
   VmWithBackups,
   RetentionType,
   Schedule,
@@ -632,6 +634,29 @@ export function useRestoreRun(id: string | undefined, poll: boolean) {
   return useQuery({
     queryKey: ["restore-run", id],
     queryFn: async () => (await apiClient.get<RestoreRun>(`/restore/runs/${id}`)).data,
+    enabled: !!id,
+    refetchInterval: (query) => (poll && query.state.data?.status === "running" ? 3000 : false),
+  });
+}
+
+export function useVmBackupRuns(vmName: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ["vm-backup-runs", vmName],
+    queryFn: async () => (await apiClient.get<VmBackupRun[]>(`/restore/vms/${vmName}/backup-runs`)).data,
+    enabled: enabled && !!vmName,
+  });
+}
+
+export function useRecreateVm(vmName: string | undefined) {
+  return useMutation({
+    mutationFn: async (runId: string) => (await apiClient.post<VmRecreateRun>(`/restore/vms/${vmName}/recreate`, { run_id: runId })).data,
+  });
+}
+
+export function useVmRecreateRun(id: string | undefined, poll: boolean) {
+  return useQuery({
+    queryKey: ["vm-recreate-run", id],
+    queryFn: async () => (await apiClient.get<VmRecreateRun>(`/restore/vm-recreate-runs/${id}`)).data,
     enabled: !!id,
     refetchInterval: (query) => (poll && query.state.data?.status === "running" ? 3000 : false),
   });

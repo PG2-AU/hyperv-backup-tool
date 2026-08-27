@@ -614,6 +614,7 @@ export interface VmWithBackups {
   state?: string | null;
   cluster?: string | null;
   backup_count: number;
+  exists_in_inventory: boolean;
 }
 
 export interface RestoreRunStep {
@@ -621,6 +622,45 @@ export interface RestoreRunStep {
   label: string;
   status: "pending" | "running" | "success" | "error" | "skipped";
   message?: string | null;
+}
+
+export interface VmBackupRunVhd {
+  name: string;
+  size_bytes?: number | null;
+  csv_name?: string | null;
+}
+
+export interface VmBackupRunNetworkAdapter {
+  name: string;
+  switch_name?: string | null;
+  vlan_id?: number | null;
+}
+
+export interface VmBackupRun {
+  run_id: string;
+  created_at: string;
+  policy_name: string;
+  consistency: ConsistencyType;
+  cpu_count?: number | null;
+  generation?: number | null;
+  memory_startup_bytes?: number | null;
+  dynamic_memory_enabled?: boolean | null;
+  host_name?: string | null;
+  network_adapters: VmBackupRunNetworkAdapter[];
+  pci_devices: string[];
+  vhds: VmBackupRunVhd[];
+}
+
+export interface VmRecreateRun {
+  id: string;
+  vm_name: string;
+  source_run_id: string;
+  status: "running" | "succeeded" | "failed" | "cleaned_up";
+  new_vm_uuid?: string | null;
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: RestoreRunStep[];
 }
 
 export interface RestoreRun {

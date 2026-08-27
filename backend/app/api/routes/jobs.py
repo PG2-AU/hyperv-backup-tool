@@ -515,6 +515,7 @@ def trigger_job_run(
             db.add(
                 BackupRunVmConfig(
                     run_id=run.id, vm_name=vm_name, vm_uuid=hv_vm.vm_uuid if hv_vm else None,
+                    hyperv_cluster_id=hv_vm.cluster_id if hv_vm else None,
                     cpu_count=hv_vm.cpu_count if hv_vm else None,
                     memory_startup_bytes=hv_vm.memory_startup_bytes if hv_vm else None,
                     memory_minimum_bytes=hv_vm.memory_minimum_bytes if hv_vm else None,

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ActionIcon, Alert, Badge, Button, Group, Paper, Stack, Table, Tabs, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconDatabaseImport, IconInfoCircle, IconPlus, IconSearch, IconTrash } from "@tabler/icons-react";
+import { IconDatabaseImport, IconInfoCircle, IconPlus, IconRefresh, IconSearch, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -13,6 +13,7 @@ import {
 } from "@/api/hooks";
 import { RestoreSetupWizardModal } from "@/components/RestoreSetupWizardModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
+import { VmRecreateWizardModal } from "@/components/VmRecreateWizardModal";
 import type { VmWithBackups } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
@@ -27,6 +28,7 @@ export function RestorePage() {
   const { data: runs } = useRestoreRuns();
   const cleanupRun = useCleanupRestoreRun();
   const [wizardVm, setWizardVm] = useState<VmWithBackups | null>(null);
+  const [recreateVm, setRecreateVm] = useState<VmWithBackups | null>(null);
 
   const { data: restoreConfigs } = useRestoreInfraConfigs();
   const deleteRestoreConfig = useDeleteRestoreInfraConfig();
@@ -131,11 +133,24 @@ export function RestorePage() {
             const pendingCleanup = cleanupPending.find((r) => r.vm_name === vm.name);
             return (
               <Table.Tr key={vm.name}>
-                <Table.Td>{vm.name}</Table.Td>
                 <Table.Td>
-                  <Badge color={STATE_COLOR[vm.state ?? ""] ?? "gray"} variant="light">
-                    {vm.state ?? "-"}
-                  </Badge>
+                  <Group gap="xs" wrap="nowrap">
+                    <Text>{vm.name}</Text>
+                    {!vm.exists_in_inventory && (
+                      <Badge color="red" variant="light" size="sm">
+                        Gelöscht
+                      </Badge>
+                    )}
+                  </Group>
+                </Table.Td>
+                <Table.Td>
+                  {vm.exists_in_inventory ? (
+                    <Badge color={STATE_COLOR[vm.state ?? ""] ?? "gray"} variant="light">
+                      {vm.state ?? "-"}
+                    </Badge>
+                  ) : (
+                    "-"
+                  )}
                 </Table.Td>
                 <Table.Td>{vm.host ?? "-"}</Table.Td>
                 <Table.Td>{vm.cluster ?? "-"}</Table.Td>
@@ -151,9 +166,15 @@ export function RestorePage() {
                         Restore aktiv
                       </Badge>
                     )}
-                    <Button size="xs" leftSection={<IconDatabaseImport size={14} />} onClick={() => setWizardVm(vm)}>
-                      Restore
-                    </Button>
+                    {vm.exists_in_inventory ? (
+                      <Button size="xs" leftSection={<IconDatabaseImport size={14} />} onClick={() => setWizardVm(vm)}>
+                        Restore
+                      </Button>
+                    ) : (
+                      <Button size="xs" color="grape" leftSection={<IconRefresh size={14} />} onClick={() => setRecreateVm(vm)}>
+                        VM neu erstellen
+                      </Button>
+                    )}
                     {pendingCleanup && (
                       <Button
                         size="xs"
@@ -254,6 +275,7 @@ export function RestorePage() {
       </Tabs>
 
       <RestoreWizardModal opened={!!wizardVm} onClose={() => setWizardVm(null)} vm={wizardVm} />
+      <VmRecreateWizardModal opened={!!recreateVm} onClose={() => setRecreateVm(null)} vm={recreateVm} />
       <RestoreSetupWizardModal opened={restoreWizardOpen} onClose={() => setRestoreWizardOpen(false)} />
     </Stack>
   );
