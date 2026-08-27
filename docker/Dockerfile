@@ -15,38 +15,30 @@ ENV LANG=C.UTF-8 \
     HVNB_TLS_KEY_PATH=/etc/hvnb/certs/server.key \
     NODE_OPTIONS=--dns-result-order=ipv4first
 
-# Unter network_mode: host (siehe docker-compose.yml, fuer den iSCSI-Restore-
-# Workflow noetig) sieht der Container die IPv6-Adressen des Hosts, die in
-# dieser Umgebung nicht tatsaechlich geroutet werden -- Node/npm versuchen
-# ohne diese Option zuerst IPv6 und haengen minutenlang, bevor sie auf IPv4
-# zurueckfallen (gegen echten Build verifiziert: 'npm ci' ging von >5 Minuten
-# Haenger auf 7 Sekunden). curl/plain DNS sind davon nicht betroffen, nur
-# Nodes eigener dualstack-Resolver.
+# Defensive Absicherung gegen einen IPv6-Resolver-Haenger bei 'npm ci'/vite,
+# der in einer frueheren network_mode:host-Konfiguration dieses Projekts
+# real auftrat (siehe Chat-Verlauf: >5 Minuten Haenger auf gerouteten, aber
+# nicht funktionalen IPv6-Adressen, curl/plain DNS nicht betroffen). Im
+# aktuellen Bridge-Networking-Modus nicht mehr aktiv reproduziert, aber
+# schadlos und billig als Vorsichtsmassnahme beibehalten.
 
 RUN dnf install -y --setopt=install_weak_deps=False \
         python3.12 python3.12-pip \
         git nginx openssl gettext shadow-utils \
-        epel-release \
     && dnf module -y reset nodejs \
     && dnf module -y install nodejs:20 \
-    && dnf install -y --setopt=install_weak_deps=False \
-        iscsi-initiator-utils cifs-utils samba-client ntfs-3g kpartx parted \
     && dnf clean all \
     && alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
     && python3 -m pip install --upgrade pip \
     && python3 -m pip install --no-cache-dir supervisor
 
-# Werkzeuge fuer den VHDX-Restore-Workflow (siehe restore_infra.py):
-# - iscsi-initiator-utils: iSCSI-Login zur geklonten LUN
-# - cifs-utils/samba-client: Kopieren der wiederhergestellten VHDX auf die
-#   Hyper-V-CSV per SMB (administrative Freigabe C$)
-# - ntfs-3g: Lesezugriff auf die NTFS/CSVFS-formatierte Partition der LUN
-# - kpartx/parted: Partitionstabelle der geklonten LUN erkennen/einbinden
-# Fuer echte iSCSI-/Mount-Operationen braucht der Container zusaetzlich
-# CAP_SYS_ADMIN und Blockgeraete-Zugriff -- das kann NICHT ueber dieses
-# Image/den Requirements-Wizard automatisiert werden, sondern erfordert eine
-# einmalige Anpassung der Container-Startparameter (siehe Settings >
-# Restore-Setup > Anforderungen fuer die exakten Flags).
+# Der VHDX-Restore-Workflow braucht keinen iSCSI-Initiator/keine
+# Mount-Werkzeuge mehr IM Container (fruehere Linux-Version, siehe
+# Chat-Verlauf) -- das laeuft jetzt per WinRM auf einem dedizierten
+# Windows-Restore-Proxy-Host (nativer Microsoft-iSCSI-Initiator, siehe
+# HVNB_RESTORE_PROXY_* und app.services.hyperv_service). Der Container
+# braucht dafuer keine Sonderrechte (kein CAP_SYS_ADMIN/NET_ADMIN/MKNOD,
+# kein network_mode: host).
 
 RUN useradd --system --create-home --home-dir /home/hvnb --shell /bin/bash hvnb
 

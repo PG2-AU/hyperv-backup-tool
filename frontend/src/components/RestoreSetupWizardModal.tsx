@@ -13,15 +13,13 @@ import {
   TextInput,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconAlertTriangle, IconCheck, IconX } from "@tabler/icons-react";
+import { IconAlertTriangle } from "@tabler/icons-react";
 
 import {
   useBroadcastDomains,
   useCreateRestoreLif,
-  useInstallRestoreRequirements,
   useNetAppClusters,
   useRestoreInitiator,
-  useRestoreRequirements,
   useSetupRestoreInfra,
   useSvmLifCandidates,
   useSvms,
@@ -48,9 +46,7 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
   const [newLifDomain, setNewLifDomain] = useState<string | null>(null);
   const [showCreateLif, setShowCreateLif] = useState(false);
 
-  const { data: requirements, isLoading: requirementsLoading } = useRestoreRequirements();
-  const installRequirements = useInstallRestoreRequirements();
-  const { data: initiator } = useRestoreInitiator(active >= 1);
+  const { data: initiator, isLoading: initiatorLoading } = useRestoreInitiator(opened);
   const { data: clusters } = useNetAppClusters();
   const { data: svms } = useSvms();
   const { data: lifCandidates, refetch: refetchLifs, isFetching: lifsLoading } = useSvmLifCandidates(
@@ -83,20 +79,6 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
     (domain?.ports ?? []).map((p) => ({ value: `${p.node_name}|${p.port_name}`, label: `${p.node_name} / ${p.port_name}` })),
   );
   const [newLifPort, setNewLifPort] = useState<string | null>(null);
-
-  function runInstall() {
-    installRequirements.mutate(undefined, {
-      onSuccess: (steps) => {
-        const failed = steps.filter((s) => !s.success);
-        notifications.show({
-          title: failed.length === 0 ? "Installation abgeschlossen" : "Installation teilweise fehlgeschlagen",
-          message: failed.length === 0 ? "Alle Pakete installiert." : failed.map((s) => `${s.step}: ${s.message}`).join("; "),
-          color: failed.length === 0 ? "green" : "orange",
-        });
-      },
-      onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Installation fehlgeschlagen."), color: "red" }),
-    });
-  }
 
   function handleCreateLif() {
     if (!clusterId || !svmName || !domain || !newLifPort || !newLifAddress) return;
@@ -142,61 +124,23 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
     );
   }
 
-  const packagesOk = requirements?.all_packages_ok ?? false;
-  const capabilityOk = requirements?.capability_ok ?? false;
-
   return (
     <Modal opened={opened} onClose={onClose} title="Restore-Infrastruktur einrichten" size="xl">
       <Stepper active={active} onStepClick={setActive} size="sm">
-        <Stepper.Step label="Voraussetzungen" description="Pakete & Rechte">
+        <Stepper.Step label="Proxy-Host" description="Windows-iSCSI-Initiator">
           <Stack mt="md">
-            {requirementsLoading && <Loader size="sm" />}
-            {requirements?.checks.map((c) => (
-              <Group key={c.name} justify="space-between">
-                <Text size="sm">{c.label}</Text>
-                {c.satisfied ? (
-                  <Badge color="green" leftSection={<IconCheck size={12} />}>
-                    OK
-                  </Badge>
-                ) : (
-                  <Badge color="red" leftSection={<IconX size={12} />}>
-                    fehlt
-                  </Badge>
-                )}
-              </Group>
-            ))}
-            {!capabilityOk && (
-              <Alert icon={<IconAlertTriangle size={16} />} color="orange" variant="light">
-                {requirements?.capability_hint}
-              </Alert>
-            )}
-            <Group justify="flex-end">
-              <Button variant="default" loading={installRequirements.isPending} onClick={runInstall}>
-                Pakete installieren
-              </Button>
-              <Button onClick={() => setActive(1)} disabled={!packagesOk}>
-                Weiter
-              </Button>
-            </Group>
-          </Stack>
-        </Stepper.Step>
-
-        <Stepper.Step label="Initiator" description="Container-IQN">
-          <Stack mt="md">
+            {initiatorLoading && <Loader size="sm" />}
             {initiator?.configured ? (
               <Text size="sm" ff="monospace">
                 {initiator.iqn}
               </Text>
             ) : (
-              <Text size="sm" c="dimmed">
-                Initiator noch nicht konfiguriert -- Voraussetzungen installieren.
-              </Text>
+              <Alert icon={<IconAlertTriangle size={16} />} color="orange" variant="light">
+                {initiator?.error ?? "Restore-Proxy-Host nicht erreichbar oder nicht konfiguriert (HVNB_RESTORE_PROXY_*)."}
+              </Alert>
             )}
             <Group justify="flex-end">
-              <Button variant="default" onClick={() => setActive(0)}>
-                Zurück
-              </Button>
-              <Button onClick={() => setActive(2)} disabled={!initiator?.configured}>
+              <Button onClick={() => setActive(1)} disabled={!initiator?.configured}>
                 Weiter
               </Button>
             </Group>
@@ -241,7 +185,7 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
                 ))}
                 {lifCandidates.every((l) => !l.reachable) && (
                   <Alert icon={<IconAlertTriangle size={16} />} color="orange" variant="light">
-                    Kein vorhandenes Interface dieser SVM ist vom Container aus erreichbar. Neues Interface anlegen:
+                    Kein vorhandenes Interface dieser SVM ist erreichbar. Neues Interface anlegen:
                   </Alert>
                 )}
               </Stack>
@@ -277,10 +221,10 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
             )}
 
             <Group justify="flex-end">
-              <Button variant="default" onClick={() => setActive(1)}>
+              <Button variant="default" onClick={() => setActive(0)}>
                 Zurück
               </Button>
-              <Button onClick={() => setActive(3)} disabled={!selectedLifAddress}>
+              <Button onClick={() => setActive(2)} disabled={!selectedLifAddress}>
                 Weiter
               </Button>
             </Group>
@@ -294,10 +238,10 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
             </Text>
             <TextInput label="Igroup-Name" value={igroupName} onChange={(e) => setIgroupName(e.currentTarget.value)} />
             <Text size="xs" c="dimmed">
-              Legt eine iSCSI-Zugriffsberechtigung für den Container-Initiator sowie die Igroup auf der SVM an.
+              Legt eine iSCSI-Zugriffsberechtigung für den Proxy-Host-Initiator sowie die Igroup auf der SVM an.
             </Text>
             <Group justify="flex-end">
-              <Button variant="default" onClick={() => setActive(2)}>
+              <Button variant="default" onClick={() => setActive(1)}>
                 Zurück
               </Button>
               <Button onClick={handleSetup} loading={setupInfra.isPending} disabled={!igroupName}>

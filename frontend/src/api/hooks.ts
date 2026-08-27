@@ -32,7 +32,6 @@ import type {
   RestoreInfraSetupPayload,
   RestoreInitiatorInfo,
   RestoreLifCandidate,
-  RestoreRequirementsStatus,
   RestoreRun,
   TriggerRestorePayload,
   VmWithBackups,
@@ -508,21 +507,6 @@ export function useCreateSvmPeer() {
 }
 
 // --- Restore-Setup-Wizard ---------------------------------------------
-
-export function useRestoreRequirements() {
-  return useQuery({
-    queryKey: ["restore-requirements"],
-    queryFn: async () => (await apiClient.get<RestoreRequirementsStatus>("/restore-infra/requirements")).data,
-  });
-}
-
-export function useInstallRestoreRequirements() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async () => (await apiClient.post<DiscoveryStep[]>("/restore-infra/requirements/install")).data,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restore-requirements"] }),
-  });
-}
 
 export function useRestoreInitiator(enabled: boolean) {
   return useQuery({

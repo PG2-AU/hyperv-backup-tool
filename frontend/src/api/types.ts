@@ -529,23 +529,10 @@ export interface BackupJobRun {
   snapshots: BackupRunSnapshot[];
 }
 
-export interface RestoreRequirementCheck {
-  name: string;
-  label: string;
-  satisfied: boolean;
-  detail?: string | null;
-}
-
-export interface RestoreRequirementsStatus {
-  checks: RestoreRequirementCheck[];
-  all_packages_ok: boolean;
-  capability_ok: boolean;
-  capability_hint: string;
-}
-
 export interface RestoreInitiatorInfo {
   configured: boolean;
   iqn?: string | null;
+  error?: string | null;
 }
 
 export interface RestoreLifCandidate {

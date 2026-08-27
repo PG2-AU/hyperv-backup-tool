@@ -1,9 +1,19 @@
 """VM-Restore: klont eine LUN aus einem Backup-Snapshot, meldet sich per
-iSCSI direkt vom Container aus bei der Ziel-SVM an, kopiert die
-wiederhergestellte VHDX per SMB auf die Ziel-CSV, und haengt sie an die VM
-an (neue Zusatzdisk, mode='add') oder ersetzt die laufende VHDX damit
-(mode='replace' -- VM wird dafuer kurz gestoppt, die alte Datei wird
-geloescht, nicht nur umbenannt, siehe Chat-Verlauf).
+nativem Windows-iSCSI-Initiator auf dem Restore-Proxy-Host (siehe
+HVNB_RESTORE_PROXY_*) an der Ziel-SVM an, kopiert die wiederhergestellte
+VHDX von dort per SMB auf die Ziel-CSV, und haengt sie an die VM an (neue
+Zusatzdisk, mode='add') oder ersetzt die laufende VHDX damit (mode='replace'
+-- VM wird dafuer kurz gestoppt, die alte Datei wird geloescht, nicht nur
+umbenannt, siehe Chat-Verlauf).
+
+Fruehere Version fuehrte iSCSI/Mount/Kopieren per Linux-Subprocess
+(iscsiadm/ntfs-3g/smbclient) direkt im Container aus -- das scheiterte an
+mehreren, gegen die echte Zielumgebung verifizierten Problemen (rootless
+Podman kann kein echtes CAP_SYS_ADMIN gegenueber dem init-User-Namespace
+gewaehren, WSL2s Kernel-Netlink-Implementierung fuer iSCSI-Sessions
+funktioniert nur im Host-Netzwerk-Namespace, kein devtmpfs fuer /dev-Knoten).
+Der native Windows-iSCSI-Initiator auf einem dedizierten Windows-Host
+umgeht all das strukturell.
 
 Laeuft als Hintergrund-Task (FastAPI BackgroundTasks) mit eigener DB-Session:
 ein Lauf (LUN-Klon + iSCSI + Kopie potenziell grosser VHDX-Dateien) kann
@@ -38,7 +48,6 @@ from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_run import RestoreMode, RestoreRun, RestoreRunStep, RestoreStatus, RestoreStepStatus
-from app.services import restore_execution_service as exec_svc
 from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppConnectionError, NetAppOntapService
 
@@ -177,7 +186,10 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
     netapp_service: NetAppOntapService | None = None
     svm_name: str | None = None
     igroup_name: str | None = None
-    mount_point: str | None = None
+    disk_number: int | None = None
+    mount_dir: str | None = None
+    proxy_service: HyperVService | None = None
+    proxy_session = None
     lif_address: str | None = None
     lif_port: int | None = None
     target_iqn: str | None = None
@@ -238,6 +250,11 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 ctx.row.message = f"CSV {csv_name} -> Volume {lun.volume_name} @ {lun.svm_name}"
 
             settings = get_settings()
+            if not settings.restore_proxy_address or not settings.restore_proxy_username:
+                raise RuntimeError(
+                    "Kein Restore-Proxy-Host konfiguriert (HVNB_RESTORE_PROXY_ADDRESS/"
+                    "HVNB_RESTORE_PROXY_USERNAME/HVNB_RESTORE_PROXY_PASSWORD)."
+                )
             hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
             hv_password = decrypt_secret(hv_cluster.encrypted_password)
 
@@ -252,6 +269,11 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
                 node_session = node_service.connect(hv_cluster.username, hv_password)
                 ctx.row.message = node_address
+
+            with _StepCtx(db, run.id, "connect-proxy", "Verbindung zum Restore-Proxy-Host") as ctx:
+                proxy_service = HyperVService(settings, settings.restore_proxy_address, use_https=settings.winrm_use_https)
+                proxy_session = proxy_service.connect(settings.restore_proxy_username, settings.restore_proxy_password)
+                ctx.row.message = settings.restore_proxy_address
 
             netapp_service = _netapp_service_for(netapp_cluster)
             svm_name = lun.svm_name
@@ -278,18 +300,17 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
 
             with _StepCtx(db, run.id, "iscsi-login", "iSCSI-Verbindung aufbauen") as ctx:
                 target_iqn = netapp_service.get_iscsi_target_iqn(svm_name)
-                exec_svc.iscsi_login(lif_address, lif_port, target_iqn)
+                proxy_service.iscsi_connect(proxy_session, lif_address, lif_port, target_iqn)
                 ctx.row.message = target_iqn
 
             with _StepCtx(db, run.id, "find-disk", "Disk erkennen") as ctx:
-                device_path = exec_svc.find_disk_by_serial(clone.serial_number, timeout_sec=30)
-                ctx.row.message = device_path
+                disk_number = proxy_service.find_disk_by_serial(proxy_session, clone.serial_number, timeout_sec=30)
+                ctx.row.message = f"Disk {disk_number}"
 
             with _StepCtx(db, run.id, "mount", "Partition einbinden") as ctx:
-                partition_path = exec_svc.find_largest_partition(device_path, timeout_sec=15)
-                mount_point = f"/tmp/hvnb_restore_{run.id}"
-                exec_svc.mount_ntfs(partition_path, mount_point)
-                ctx.row.message = partition_path
+                mount_dir = f"C:\\hvnb_restore\\{run.id}"
+                mount_dir = proxy_service.prepare_data_partition_path(proxy_session, disk_number, mount_dir)
+                ctx.row.message = mount_dir
 
             after_csv = run.source_vhd_path.split(f"ClusterStorage\\{csv_name}\\", 1)[1]
             parts = after_csv.split("\\")
@@ -299,24 +320,24 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
             ext = Path(original_filename).suffix
             new_filename = f"{stem}_restore_{suffix}{ext}"
 
-            local_dir = Path(mount_point) / relative_dir.replace("\\", "/") if relative_dir else Path(mount_point)
-            local_path = local_dir / original_filename
+            local_path = f"{mount_dir}\\{relative_dir}\\{original_filename}" if relative_dir else f"{mount_dir}\\{original_filename}"
             remote_dir = f"ClusterStorage\\{csv_name}" + (f"\\{relative_dir}" if relative_dir else "")
             restored_vhd_path = f"C:\\{remote_dir}\\{new_filename}"
 
             with _StepCtx(db, run.id, "copy", f"VHDX auf CSV kopieren ({new_filename})") as ctx:
-                copy_result = exec_svc.copy_via_smb(
-                    str(local_path), node_address, hv_cluster.username,
-                    hv_password, remote_dir, new_filename,
+                remote_size = proxy_service.copy_file_to_share(
+                    proxy_session, local_path, node_address, remote_dir, new_filename,
+                    hv_cluster.username, hv_password,
                 )
-                ctx.row.message = f"{copy_result.remote_size_bytes} Bytes kopiert"
+                ctx.row.message = f"{remote_size} Bytes kopiert"
             run.restored_vhd_path = restored_vhd_path
             db.commit()
 
             with _StepCtx(db, run.id, "cleanup-source", "Temporäre LUN aufräumen"):
-                exec_svc.unmount(mount_point)
-                mount_point = None
-                exec_svc.iscsi_logout(lif_address, lif_port, target_iqn)
+                proxy_service.release_disk(proxy_session, disk_number, mount_dir)
+                disk_number = None
+                mount_dir = None
+                proxy_service.iscsi_disconnect(proxy_session, target_iqn)
                 netapp_service.delete_lun_map(clone_lun_uuid, igroup_name, svm_name)
                 netapp_service.delete_lun(clone_lun_uuid)
                 clone_lun_uuid = None
@@ -362,10 +383,10 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
             db.commit()
             # Best-effort Aufraeumen der temporaeren LUN, falls der Fehler
             # nach dem Klonen, aber vor dem regulaeren Cleanup-Schritt auftrat.
-            if mount_point:
-                exec_svc.unmount(mount_point)
-            if target_iqn and lif_address and lif_port:
-                exec_svc.iscsi_logout(lif_address, lif_port, target_iqn)
+            if proxy_service and proxy_session and disk_number is not None and mount_dir:
+                proxy_service.release_disk(proxy_session, disk_number, mount_dir)
+            if proxy_service and proxy_session and target_iqn:
+                proxy_service.iscsi_disconnect(proxy_session, target_iqn)
             if clone_lun_uuid and netapp_service and svm_name and igroup_name:
                 try:
                     netapp_service.delete_lun_map(clone_lun_uuid, igroup_name, svm_name)

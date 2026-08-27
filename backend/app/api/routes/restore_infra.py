@@ -1,87 +1,39 @@
-"""Restore-Setup-Wizard: richtet die Infrastruktur ein, die der VHDX-Restore-
-Workflow braucht (siehe docs/restore-Untersuchung) -- der Container meldet
-sich per iSCSI direkt bei der NetApp-SVM an, klont dort eine LUN aus einem
+"""Restore-Setup-Wizard: richtet die NetApp-seitige Infrastruktur ein, die
+der VHDX-Restore-Workflow braucht -- der Restore-Proxy-Host (ein dedizierter
+Windows-Host, siehe HVNB_RESTORE_PROXY_*) meldet sich per nativem
+Windows-iSCSI-Initiator an der Ziel-SVM an, klont dort eine LUN aus einem
 Snapshot und kopiert die wiederhergestellte VHDX per SMB auf die Ziel-CSV.
 
-Dieser Workflow lief bewusst NICHT ueber den Hyper-V-Cluster (Windows
-Failover Clustering blockiert node-lokal jede neu sichtbare, block-identische
-Disk, siehe Chat-Verlauf) und NICHT ueber den Host der WSL/Podman-Umgebung
-(kein Routing zum iSCSI-Datennetz) -- sondern ueber ein dediziertes,
-erreichbares iSCSI-Interface auf der SVM plus einen eigenen Initiator im
-Container selbst.
-
-Zwei Kategorien von Anforderungen:
-1. Pakete (iscsi-initiator-utils, ntfs-3g, cifs-utils/samba-client, kpartx,
-   parted) -- koennen zur Laufzeit im Container nachinstalliert werden
-   (siehe /requirements/install), sind aber auch im Dockerfile fest
-   verankert (docker/Dockerfile), damit ein frisches Image sie von Anfang
-   an mitbringt.
-2. Container-Rechte (CAP_SYS_ADMIN + Blockgeraete-Zugriff fuer iSCSI-Logins
-   und Mount-Operationen) -- KANN NICHT zur Laufzeit nachgeruestet werden,
-   sondern erfordert eine einmalige Anpassung der Container-Startparameter
-   (siehe REQUIRED_CAPABILITIES_HINT unten).
-"""
-
-import shutil
-import subprocess
-import tempfile
-from pathlib import Path
+Fruehere Version lief ueber einen iSCSI-Initiator IM CONTAINER selbst
+(Linux, iscsiadm) -- das scheiterte strukturell an mehreren, gegen die echte
+Zielumgebung verifizierten Problemen (siehe Chat-Verlauf: rootless Podman
+ohne echtes CAP_SYS_ADMIN, WSL2-Kernel-Netlink-Inkompatibilitaeten, kein
+devtmpfs). Der Initiator lebt jetzt auf dem Windows-Proxy-Host; dieser
+Router fragt ihn per WinRM ab, statt eine lokale Datei im Container zu
+lesen -- Paket-/Capability-Checks (frueher hier) entfallen dadurch
+komplett."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.core.config import get_settings
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.restore_infra import RestoreInfraConfig
-from app.schemas.netapp_cluster import DiscoveryStepRead
+from app.services.hyperv_service import HyperVConnectionError, HyperVService
 from app.services.netapp_service import NetAppConnectionError, NetAppOntapService, tcp_port_open
 from app.core.crypto import decrypt_secret
 
 router = APIRouter(prefix="/api/restore-infra", tags=["restore-infra"])
 
-INITIATOR_NAME_PATH = Path("/etc/iscsi/initiatorname.iscsi")
-
-REQUIRED_BINARIES = [
-    ("iscsiadm", "iSCSI-Initiator (iscsi-initiator-utils)"),
-    ("ntfs-3g", "NTFS/CSVFS-Lesezugriff (ntfs-3g)"),
-    ("smbclient", "SMB-Kopie auf die Hyper-V-CSV (samba-client)"),
-    ("kpartx", "Partitionserkennung (kpartx)"),
-    ("partprobe", "Partitionstabellen-Tool (parted)"),
-]
-
-REQUIRED_CAPABILITIES_HINT = (
-    "Der Container braucht zusaetzlich CAP_SYS_ADMIN (Mount-Operationen, "
-    "gegen den echten Container verifiziert) und CAP_NET_ADMIN (iscsid kann "
-    "sonst den NETLINK_ISCSI-Socket nicht binden -- 'can not bind "
-    "NETLINK_ISCSI socket [Operation not permitted]', live am echten "
-    "Container reproduziert) sowie Zugriff auf neu erscheinende Blockgeraete. "
-    "Das kann nicht zur Laufzeit nachgeruestet werden -- der Container muss "
-    "einmalig mit zusaetzlichen Rechten neu erstellt werden, z.B.: "
-    "podman run ... --cap-add=SYS_ADMIN --cap-add=NET_ADMIN --device /dev/fuse "
-    "--device-cgroup-rule='b 8:* rmw' ..."
-)
-
-
-class RequirementCheck(BaseModel):
-    name: str
-    label: str
-    satisfied: bool
-    detail: str | None = None
-
-
-class RequirementsStatus(BaseModel):
-    checks: list[RequirementCheck]
-    all_packages_ok: bool
-    capability_ok: bool
-    capability_hint: str
-
 
 class InitiatorInfo(BaseModel):
     configured: bool
     iqn: str | None = None
+    error: str | None = None
 
 
 class LifCandidate(BaseModel):
@@ -133,101 +85,40 @@ class RestoreInfraConfigRead(BaseModel):
         from_attributes = True
 
 
-def _check_mount_capability() -> RequirementCheck:
-    try:
-        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
-            result = subprocess.run(["mount", "--bind", src, dst], capture_output=True, text=True, timeout=10)
-            ok = result.returncode == 0
-            if ok:
-                subprocess.run(["umount", dst], capture_output=True, timeout=10)
-            return RequirementCheck(
-                name="mount_capability",
-                label="Container-Berechtigung fuer Mount-Operationen (CAP_SYS_ADMIN)",
-                satisfied=ok,
-                detail=None if ok else (result.stderr or "").strip() or "Mount wurde vom Container abgelehnt.",
-            )
-    except Exception as exc:
-        return RequirementCheck(
-            name="mount_capability", label="Container-Berechtigung fuer Mount-Operationen (CAP_SYS_ADMIN)",
-            satisfied=False, detail=str(exc),
+def _proxy_service_and_session():
+    """Verbindet zum Restore-Proxy-Host (WinRM). Wirft HTTPException, falls
+    nicht konfiguriert oder nicht erreichbar -- wird von mehreren Routen
+    dieses Wizards gebraucht (Initiator lesen, spaeter Setup)."""
+    settings = get_settings()
+    if not settings.restore_proxy_address or not settings.restore_proxy_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Kein Restore-Proxy-Host konfiguriert (HVNB_RESTORE_PROXY_ADDRESS/"
+                "HVNB_RESTORE_PROXY_USERNAME/HVNB_RESTORE_PROXY_PASSWORD in der .env)."
+            ),
         )
-
-
-@router.get("/requirements", response_model=RequirementsStatus)
-def get_requirements(user=Depends(require_permission(Permission.STORAGE_MANAGE))) -> RequirementsStatus:
-    checks = [
-        RequirementCheck(name=binname, label=label, satisfied=shutil.which(binname) is not None)
-        for binname, label in REQUIRED_BINARIES
-    ]
-    capability_check = _check_mount_capability()
-    checks.append(capability_check)
-    return RequirementsStatus(
-        checks=checks,
-        all_packages_ok=all(c.satisfied for c in checks if c.name != "mount_capability"),
-        capability_ok=capability_check.satisfied,
-        capability_hint=REQUIRED_CAPABILITIES_HINT,
-    )
-
-
-@router.post("/requirements/install", response_model=list[DiscoveryStepRead])
-def install_requirements(user=Depends(require_permission(Permission.STORAGE_MANAGE))) -> list[DiscoveryStepRead]:
-    steps: list[DiscoveryStepRead] = []
-
-    def run_step(step_id: str, cmd: list[str], timeout: int = 180) -> None:
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-            success = proc.returncode == 0
-            message = "OK" if success else ((proc.stderr or proc.stdout or "").strip()[:500] or "Fehlgeschlagen")
-        except Exception as exc:
-            success = False
-            message = str(exc)
-        steps.append(DiscoveryStepRead(step=step_id, success=success, message=message))
-
-    run_step("epel", ["dnf", "install", "-y", "epel-release"])
-    run_step(
-        "packages",
-        ["dnf", "install", "-y", "iscsi-initiator-utils", "cifs-utils", "samba-client", "ntfs-3g", "kpartx", "parted"],
-    )
-
-    # In diesem minimalen Container-Image laeuft das %post-Scriptlet des
-    # iscsi-initiator-utils-Pakets nicht zuverlaessig (erzeugt normalerweise
-    # /etc/iscsi/initiatorname.iscsi automatisch) -- gegen den echten
-    # Container verifiziert: Paket installiert, Datei fehlte trotzdem. Wird
-    # hier explizit nachgeholt, damit der Initiator garantiert existiert.
-    if not INITIATOR_NAME_PATH.exists() and shutil.which("iscsi-iname"):
-        try:
-            iqn = subprocess.run(["iscsi-iname"], capture_output=True, text=True, timeout=10).stdout.strip()
-            INITIATOR_NAME_PATH.parent.mkdir(parents=True, exist_ok=True)
-            INITIATOR_NAME_PATH.write_text(f"InitiatorName={iqn}\n")
-            steps.append(DiscoveryStepRead(step="initiator", success=True, message=f"Initiator erzeugt: {iqn}"))
-        except Exception as exc:
-            steps.append(DiscoveryStepRead(step="initiator", success=False, message=str(exc)))
-    elif INITIATOR_NAME_PATH.exists():
-        steps.append(DiscoveryStepRead(step="initiator", success=True, message="Initiator bereits vorhanden"))
-    else:
-        steps.append(DiscoveryStepRead(step="initiator", success=False, message="iscsi-iname nicht gefunden (Paketinstallation pruefen)"))
-
-    if shutil.which("iscsid"):
-        run_step("iscsid", ["iscsid"], timeout=15)
-    else:
-        steps.append(DiscoveryStepRead(step="iscsid", success=False, message="iscsid nicht gefunden (Paketinstallation pruefen)"))
-
-    return steps
-
-
-def _read_initiator() -> InitiatorInfo:
-    if not INITIATOR_NAME_PATH.exists():
-        return InitiatorInfo(configured=False)
-    for line in INITIATOR_NAME_PATH.read_text().splitlines():
-        line = line.strip()
-        if line.startswith("InitiatorName="):
-            return InitiatorInfo(configured=True, iqn=line.split("=", 1)[1])
-    return InitiatorInfo(configured=False)
+    service = HyperVService(settings, settings.restore_proxy_address, use_https=settings.winrm_use_https)
+    try:
+        session = service.connect(settings.restore_proxy_username, settings.restore_proxy_password, read_timeout_sec=15, operation_timeout_sec=10)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Restore-Proxy-Host nicht erreichbar: {exc}") from exc
+    return service, session
 
 
 @router.get("/initiator", response_model=InitiatorInfo)
 def get_initiator(user=Depends(require_permission(Permission.STORAGE_MANAGE))) -> InitiatorInfo:
-    return _read_initiator()
+    """Fragt die iSCSI-Initiator-IQN des Restore-Proxy-Hosts per WinRM ab
+    (startet dabei bei Bedarf den MSiSCSI-Dienst -- auf einem frischen
+    Windows Server ist er standardmaessig deaktiviert)."""
+    try:
+        service, session = _proxy_service_and_session()
+        iqn = service.get_initiator_iqn(session)
+    except HTTPException as exc:
+        return InitiatorInfo(configured=False, error=exc.detail)
+    except (HyperVConnectionError, RuntimeError) as exc:
+        return InitiatorInfo(configured=False, error=str(exc))
+    return InitiatorInfo(configured=True, iqn=iqn)
 
 
 def _get_cluster_or_404(db: Session, cluster_id: str) -> NetAppCluster:
@@ -256,9 +147,9 @@ def check_svm_lifs(
     user=Depends(require_permission(Permission.STORAGE_MANAGE)),
 ) -> list[LifCandidate]:
     """Listet die bekannten (discovered) Netzwerk-Interfaces der SVM und
-    testet fuer jedes, ob Port 3260 (iSCSI) vom Container aus erreichbar
-    ist -- ohne diesen Test wuerde man erst beim eigentlichen Restore-Lauf
-    merken, dass ein Interface im falschen Netz liegt."""
+    testet fuer jedes, ob Port 3260 (iSCSI) vom Backend-Container aus
+    erreichbar ist -- reiner Netzwerk-Sichtbarkeitstest, unabhaengig vom
+    eigentlichen (auf dem Proxy-Host laufenden) iSCSI-Login."""
     from app.models.netapp_discovery import NetAppNetworkInterface
 
     _get_cluster_or_404(db, cluster_id)
@@ -315,22 +206,22 @@ def setup_restore_infra(
     cluster_id: str, payload: SetupRequest, db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.STORAGE_MANAGE)),
 ) -> RestoreInfraConfig:
-    """Letzter Wizard-Schritt: legt die iSCSI-Zugriffsberechtigung (sonst
+    """Letzter Wizard-Schritt: liest die aktuelle Initiator-IQN frisch vom
+    Restore-Proxy-Host, legt die iSCSI-Zugriffsberechtigung (sonst
     'authorization failure' schon bei der Discovery, siehe echte DEMO7-SVM)
-    und die Igroup fuer den Container-Initiator an, und speichert die
-    Konfiguration fuer spaetere Restore-Laeufe."""
+    und die Igroup dafuer an, und speichert die Konfiguration fuer spaetere
+    Restore-Laeufe."""
     cluster = _get_cluster_or_404(db, cluster_id)
-    initiator = _read_initiator()
-    if not initiator.configured or not initiator.iqn:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Kein iSCSI-Initiator konfiguriert (Anforderungen zuerst installieren).",
-        )
+    proxy_service, proxy_session = _proxy_service_and_session()
+    try:
+        iqn = proxy_service.get_initiator_iqn(proxy_session)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     service = _service_for(cluster)
     try:
-        service.ensure_iscsi_credentials(payload.svm_name, initiator.iqn, auth_type="none")
-        service.ensure_igroup_initiator(payload.svm_name, payload.igroup_name, os_type="linux", initiator_iqn=initiator.iqn)
+        service.ensure_iscsi_credentials(payload.svm_name, iqn, auth_type="none")
+        service.ensure_igroup_initiator(payload.svm_name, payload.igroup_name, os_type="windows", initiator_iqn=iqn)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -344,13 +235,13 @@ def setup_restore_infra(
         existing.iscsi_lif_address = payload.iscsi_lif_address
         existing.iscsi_lif_port = payload.iscsi_lif_port
         existing.igroup_name = payload.igroup_name
-        existing.initiator_iqn = initiator.iqn
+        existing.initiator_iqn = iqn
         config = existing
     else:
         config = RestoreInfraConfig(
             netapp_cluster_id=cluster_id, svm_name=payload.svm_name,
             iscsi_lif_name=payload.iscsi_lif_name, iscsi_lif_address=payload.iscsi_lif_address,
-            iscsi_lif_port=payload.iscsi_lif_port, igroup_name=payload.igroup_name, initiator_iqn=initiator.iqn,
+            iscsi_lif_port=payload.iscsi_lif_port, igroup_name=payload.igroup_name, initiator_iqn=iqn,
         )
         db.add(config)
     db.commit()

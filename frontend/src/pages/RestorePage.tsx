@@ -145,12 +145,11 @@ export function RestorePage() {
         <Tabs.Panel value="setup" pt="md">
           <Stack>
             <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
-              Der VHDX-Restore-Workflow klont eine LUN aus einem Snapshot und meldet sich per iSCSI direkt vom
-              Container aus bei der NetApp-SVM an, um die wiederhergestellte VHDX per SMB auf die Ziel-CSV zu
-              kopieren. Voraussetzungen: der Container braucht Netzwerkzugriff auf ein iSCSI-Interface der Ziel-SVM
-              sowie auf Port 445 (SMB) eines Hyper-V-Knotens, und zusätzlich erweiterte Container-Rechte
-              (CAP_SYS_ADMIN + Blockgeräte-Zugriff) für echte iSCSI-/Mount-Operationen -- letzteres kann nur durch
-              eine einmalige Anpassung der Container-Startparameter erfüllt werden, siehe Assistent unten.
+              Der VHDX-Restore-Workflow klont eine LUN aus einem Snapshot und meldet sich per nativem
+              Windows-iSCSI-Initiator auf einem dedizierten Restore-Proxy-Host (siehe HVNB_RESTORE_PROXY_* in der
+              Server-Konfiguration) bei der NetApp-SVM an, um die wiederhergestellte VHDX per SMB auf die Ziel-CSV
+              zu kopieren. Voraussetzung: der Proxy-Host braucht Netzwerkzugriff auf ein iSCSI-Interface der
+              Ziel-SVM sowie auf Port 445 (SMB) eines Hyper-V-Knotens, und ist per WinRM vom Server aus erreichbar.
             </Alert>
             <Paper p="md">
               <Group justify="space-between" mb="sm">

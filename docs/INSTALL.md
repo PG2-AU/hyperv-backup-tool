@@ -71,6 +71,86 @@ erzeugen, uebertragen, in der VM: `git -C ~/hyperv-repo.git fetch
 Der SSH-Deploy-Key (`hvnb_git_deploy`) wird fuer diesen Weg nicht mehr
 gebraucht, bleibt aber fuer eine spaetere Netzwerkloesung nutzbar.
 
+## Schritt 3: Arbeitskopie, .env, Container-Build
+
+```bash
+git clone ~/hyperv-repo.git ~/hyperv-netapp-backup
+cd ~/hyperv-netapp-backup
+
+cat > .env << 'EOF'
+HVNB_ENVIRONMENT=development
+HVNB_SECRET_KEY=local-dev-secret-not-for-production
+HVNB_INITIAL_ADMIN_PASSWORD=password123
+
+HVNB_AD_ENABLED=false
+
+HVNB_ONTAP_VERIFY_SSL=true
+HVNB_ONTAP_IS_METROCLUSTER=true
+
+HVNB_WINRM_TRANSPORT=ntlm
+HVNB_WINRM_USE_HTTPS=true
+HVNB_WINRM_PORT=5986
+
+HVNB_TLS_CERT_PATH=/etc/hvnb/certs/server.crt
+HVNB_TLS_KEY_PATH=/etc/hvnb/certs/server.key
+EOF
+
+sudo dnf install -y python3-pip || true
+sudo pip3 install podman-compose
+
+podman-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+Verifiziert auf `svaudemo7-hvnb` (10.93.70.13): Build + Start erfolgreich,
+`nginx`/`updater`/`uvicorn` laufen sauber, kein `iscsid` (korrekt entfernt).
+Selbstsigniertes TLS-Zertifikat wurde automatisch erzeugt.
+
+## Schritt 4: Externe Erreichbarkeit (WSL2-NAT-Modus)
+
+Getestet: `networkingMode=mirrored` (`.wslconfig`) scheitert auf diesem
+Windows Server 2025 mit `CreateInstance/CreateVm/ConfigureNetworking/
+0x803b0015` und faellt auf `networkingMode=None` zurueck (WSL2 komplett ohne
+Netzwerk) -- **nicht verwenden auf dieser Plattform**. `.wslconfig` wieder
+entfernt, `wsl --shutdown`, zurueck auf Standard-NAT.
+
+Im NAT-Modus lauscht der von WSL2 automatisch erzeugte Relay nur auf
+`[::1]:8443` (IPv6-Loopback) -- von aussen nicht erreichbar, selbst mit
+korrekter Windows-Firewall-Regel. Loesung: manuelle Portweiterleitung direkt
+auf die WSL2-Guest-IP, analog zum SSH-Workaround auf dem Entwickler-Host:
+
+```powershell
+# WSL2-Guest-IP ermitteln (aendert sich bei jedem wsl --shutdown/Neustart!)
+# in der Rocky-Shell: ip -4 addr show eth0
+
+New-NetFirewallRule -DisplayName "HVNB HTTPS (8443)" -Direction Inbound -Protocol TCP -LocalPort 8443 -Profile Domain,Private,Public -Action Allow
+netsh interface portproxy add v4tov4 listenport=8443 listenaddress=0.0.0.0 connectport=8443 connectaddress=<WSL2-Guest-IP>
+```
+
+Verifiziert von einem externen Host (10.81.50.172) gegen 10.93.70.13:8443:
+`TcpTestSucceeded: True`, `/api/health` liefert `{"status":"ok",...}`.
+
+**Bekannte Einschraenkung:** Die `netsh portproxy`-Regel ist an die
+WSL2-Guest-IP gebunden, die sich bei jedem `wsl --shutdown` oder
+Windows-Neustart der VM aendert. Bis eine dauerhafte Loesung steht
+(Mirrored-Networking ist auf dieser Plattform nicht nutzbar), muss die Regel
+nach jedem Neustart mit der neuen IP neu gesetzt werden:
+
+```powershell
+netsh interface portproxy delete v4tov4 listenport=8443 listenaddress=0.0.0.0
+netsh interface portproxy add v4tov4 listenport=8443 listenaddress=0.0.0.0 connectport=8443 connectaddress=<neue-WSL2-IP>
+```
+
 ## Offene Schritte
 
-(wird laufend ergänzt)
+- [x] `/api/health` bestaetigt (lokal und extern)
+- [x] Login im Browser (`https://10.93.70.13:8443`, admin/password123) bestaetigt
+- [ ] Dauerhafte Loesung fuer externe Erreichbarkeit nach Neustarts (Skript
+      das den Portproxy beim VM-Boot automatisch mit der aktuellen WSL2-IP
+      neu setzt, z.B. als Scheduled Task)
+- [ ] Dauerhafte Loesung fuer Code-Sync klaeren (echter Git-Server oder
+      Netzwerk-Routing zwischen 10.81.x und 10.93.70.x) -- aktuell nur
+      manueller Bundle+RDP-Transfer
+- [ ] WinRM auf dieser VM selbst konfigurieren (fuer den kuenftigen
+      WinRM-basierten Restore-Ausfuehrungspfad)
+- [ ] NetApp-Cluster, Hyper-V-Cluster etc. in der neuen Instanz einrichten
+      (separate DB von der Entwickler-Instanz)

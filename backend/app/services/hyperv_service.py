@@ -467,3 +467,151 @@ class HyperVService:
     def delete_file(self, session: winrm.Session, path: str) -> CommandResult:
         escaped = path.replace("'", "''")
         return self._run_ps(session, f"Remove-Item -Path '{escaped}' -Force -ErrorAction Stop")
+
+    # --- VM-Restore: nativer Windows-iSCSI-Initiator auf dem Restore-Proxy-Host ---
+    # Ersetzt die fruehere Linux-Variante (iscsiadm/ntfs-3g/smbclient im
+    # Container, siehe Chat-Verlauf) -- der native Microsoft-iSCSI-Initiator
+    # auf einem Windows-Host ist fuer diesen Zweck deutlich robuster (kein
+    # Bedarf an CAP_SYS_ADMIN/NET_ADMIN/MKNOD, kein devtmpfs-Problem, keine
+    # WSL2-Netlink-Inkompatibilitaet).
+
+    def get_initiator_iqn(self, session: winrm.Session) -> str:
+        """Stellt sicher, dass der Microsoft-iSCSI-Initiator-Dienst laeuft
+        (auf einem frischen Windows Server ist er standardmaessig deaktiviert)
+        und liefert die IQN des Hosts fuer die Igroup-/Credentials-Einrichtung
+        auf der NetApp-Seite."""
+        script = (
+            "if ((Get-Service -Name MSiSCSI).Status -ne 'Running') { Start-Service MSiSCSI }; "
+            "Set-Service -Name MSiSCSI -StartupType Automatic; "
+            "(Get-InitiatorPort | Select-Object -First 1 -ExpandProperty NodeAddress)"
+        )
+        result = self._run_ps(session, script)
+        if not result.success or not result.output.strip():
+            raise RuntimeError(f"iSCSI-Initiator konnte nicht ermittelt werden: {result.error or result.output}")
+        return result.output.strip()
+
+    def iscsi_connect(self, session: winrm.Session, portal_address: str, portal_port: int, target_iqn: str) -> None:
+        script = (
+            f"New-IscsiTargetPortal -TargetPortalAddress '{portal_address}' -TargetPortalPortNumber {portal_port} "
+            "-ErrorAction SilentlyContinue | Out-Null; "
+            f"Connect-IscsiTarget -NodeAddress '{target_iqn}' -TargetPortalAddress '{portal_address}' "
+            f"-TargetPortalPortNumber {portal_port} -IsPersistent $false -IsMultipathEnabled $false -ErrorAction Stop | Out-Null"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"iSCSI-Verbindung fehlgeschlagen: {result.error}")
+
+    def iscsi_disconnect(self, session: winrm.Session, target_iqn: str) -> None:
+        """Best-effort -- wird auch beim Cleanup nach einem Fehler
+        aufgerufen, daher kein Raise bei Fehlschlag."""
+        self._run_ps(
+            session,
+            f"Disconnect-IscsiTarget -NodeAddress '{target_iqn}' -Confirm:$false -ErrorAction SilentlyContinue",
+        )
+
+    def find_disk_by_serial(self, session: winrm.Session, serial: str, timeout_sec: int = 30) -> int:
+        """Pollt Get-Disk, bis die per Seriennummer identifizierte, per iSCSI
+        neu verbundene Disk erscheint. Get-Disk's SerialNumber entspricht
+        exakt ONTAP's lun.serial_number (siehe list_csvs -- dieselbe
+        Korrelation wird dort bereits fuer die Discovery genutzt, hier nur
+        mit Poll-Schleife statt einmaliger Abfrage)."""
+        escaped = serial.replace("'", "''")
+        script = (
+            f"1..{timeout_sec} | ForEach-Object {{ "
+            f"$d = Get-Disk | Where-Object {{ ($_.SerialNumber -replace '\\s','') -eq '{escaped}' }} "
+            "| Select-Object -First 1 -ExpandProperty Number; "
+            "if ($null -ne $d) { $d; break }; Start-Sleep -Seconds 1 "
+            "}"
+        )
+        result = self._run_ps(session, script)
+        output = result.output.strip()
+        if not result.success or not output:
+            raise RuntimeError(f"Disk mit Seriennummer '{serial}' nicht gefunden (Timeout). {result.error or ''}".strip())
+        return int(output.splitlines()[-1])
+
+    def prepare_data_partition_path(self, session: winrm.Session, disk_number: int, mount_dir: str) -> str:
+        """Bringt die Disk online/beschreibbar, ermittelt die groessere der
+        beiden Partitionen (die kleine 'Reserved'-Partition ist immer die
+        erste, die Datenpartition die groesste -- identisches Muster wie
+        beim fruehen Linux-Ansatz) und haengt sie unter mount_dir ein."""
+        escaped_dir = mount_dir.replace("'", "''")
+        script = (
+            f"$disk = Get-Disk -Number {disk_number}; "
+            f"if ($disk.IsOffline) {{ Set-Disk -Number {disk_number} -IsOffline $false }}; "
+            f"if ($disk.IsReadOnly) {{ Set-Disk -Number {disk_number} -IsReadOnly $false }}; "
+            f"$part = Get-Partition -DiskNumber {disk_number} | Where-Object {{ $_.Type -eq 'Basic' }} "
+            "| Sort-Object Size -Descending | Select-Object -First 1; "
+            "if (-not $part) { throw 'Keine Datenpartition gefunden' }; "
+            f"if (-not (Test-Path '{escaped_dir}')) {{ New-Item -ItemType Directory -Path '{escaped_dir}' -Force | Out-Null }}; "
+            f"Add-PartitionAccessPath -DiskNumber {disk_number} -PartitionNumber $part.PartitionNumber -AccessPath '{escaped_dir}' "
+            "-ErrorAction Stop; "
+            f"'{escaped_dir}'"
+        )
+        result = self._run_ps(session, script)
+        if not result.success or not result.output.strip():
+            raise RuntimeError(f"Partition konnte nicht eingebunden werden: {result.error or result.output}")
+        return result.output.strip()
+
+    def release_disk(self, session: winrm.Session, disk_number: int, mount_dir: str) -> None:
+        """Best-effort -- wird auch beim Cleanup nach einem Fehler
+        aufgerufen, daher kein Raise bei Fehlschlag."""
+        escaped_dir = mount_dir.replace("'", "''")
+        script = (
+            f"Get-Partition -DiskNumber {disk_number} -ErrorAction SilentlyContinue | ForEach-Object {{ "
+            f"Remove-PartitionAccessPath -DiskNumber {disk_number} -PartitionNumber $_.PartitionNumber "
+            f"-AccessPath '{escaped_dir}' -ErrorAction SilentlyContinue }}; "
+            f"Remove-Item -Path '{escaped_dir}' -Force -ErrorAction SilentlyContinue; "
+            f"Set-Disk -Number {disk_number} -IsOffline $true -ErrorAction SilentlyContinue"
+        )
+        self._run_ps(session, script)
+
+    def copy_file_to_share(
+        self, session: winrm.Session, source_path: str, node_address: str,
+        remote_dir: str, remote_filename: str, share_username: str, share_password: str,
+    ) -> int:
+        """Kopiert eine Datei vom Restore-Proxy-Host auf die administrative
+        C$-Freigabe eines Hyper-V-Knotens. Bindet das Ziel explizit per
+        New-SmbMapping mit eigenen Zugangsdaten ein statt die
+        WinRM-Sitzungsidentitaet zu delegieren -- WinRM/NTLM erlaubt keine
+        Weitergabe der eingehenden Authentifizierung an einen dritten Host
+        ('Double-Hop'-Problem), daher dieselbe explizite Credential-
+        Praesentation wie zuvor beim Linux-smbclient-Ansatz. Prueft die
+        Zielgroesse nach dem Kopieren (Copy-Item meldet Erfolg nicht
+        zuverlaessig genug bei Netzwerkproblemen)."""
+        escaped_src = source_path.replace("'", "''")
+        escaped_dir = remote_dir.replace("'", "''")
+        escaped_file = remote_filename.replace("'", "''")
+        escaped_user = share_username.replace("'", "''")
+        escaped_pw = share_password.replace("'", "''")
+        share = f"\\\\{node_address}\\C$"
+        dest = f"{share}\\{escaped_dir}\\{escaped_file}"
+        script = (
+            f"$pw = ConvertTo-SecureString '{escaped_pw}' -AsPlainText -Force; "
+            f"$cred = New-Object System.Management.Automation.PSCredential('{escaped_user}', $pw); "
+            f"Remove-SmbMapping -RemotePath '{share}' -Force -Confirm:$false -ErrorAction SilentlyContinue; "
+            f"New-SmbMapping -RemotePath '{share}' -Credential $cred -Persistent $false -ErrorAction Stop | Out-Null; "
+            "try { "
+            f"Copy-Item -Path '{escaped_src}' -Destination '{dest}' -Force -ErrorAction Stop; "
+            f"(Get-Item -Path '{dest}').Length "
+            "} finally { "
+            f"Remove-SmbMapping -RemotePath '{share}' -Force -Confirm:$false -ErrorAction SilentlyContinue "
+            "}"
+        )
+        result = self._run_ps(session, script)
+        if not result.success or not result.output.strip():
+            raise RuntimeError(f"Kopieren auf '{node_address}' fehlgeschlagen: {result.error or result.output}")
+        try:
+            remote_size = int(result.output.strip().splitlines()[-1])
+        except ValueError as exc:
+            raise RuntimeError(f"Unerwartete Antwort beim Kopieren: {result.output}") from exc
+        source_size_result = self._run_ps(session, f"(Get-Item -Path '{escaped_src}').Length")
+        if source_size_result.success:
+            try:
+                source_size = int(source_size_result.output.strip())
+                if source_size != remote_size:
+                    raise RuntimeError(
+                        f"Groessenabweichung nach Kopieren: Quelle {source_size} Bytes, Ziel {remote_size} Bytes"
+                    )
+            except ValueError:
+                pass
+        return remote_size
