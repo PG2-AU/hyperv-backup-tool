@@ -39,7 +39,7 @@ export function BackupsModal({ opened, onClose, scope, name }: BackupsModalProps
   function handleDetachVm(b: BackupSnapshot) {
     if (!name) return;
     confirmAction({
-      title: "Aus VM-Historie entfernen",
+      title: "VM-Informationen aus Backup entfernen",
       message: `'${name}' aus diesem Backup-Eintrag entfernen? Der Snapshot bleibt für andere VMs und das CSV unverändert erhalten -- es wird nur die Zuordnung in der Datenbank entfernt.`,
       confirmLabel: "Entfernen",
       color: "orange",
@@ -108,7 +108,7 @@ export function BackupsModal({ opened, onClose, scope, name }: BackupsModalProps
                         <Menu.Dropdown>
                           {scope === "vm" && (
                             <Menu.Item leftSection={<IconUnlink size={14} />} onClick={() => handleDetachVm(b)}>
-                              Aus dieser VM-Historie entfernen
+                              VM-Informationen aus diesem Backup entfernen
                             </Menu.Item>
                           )}
                           <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={() => handleDeleteSnapshot(b)}>

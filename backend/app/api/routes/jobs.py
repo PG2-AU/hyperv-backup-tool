@@ -380,22 +380,25 @@ def delete_backup_snapshot(
     db.commit()
 
 
-@router.post("/backups/{snapshot_id}/detach-vm", response_model=BackupSnapshotRead)
+@router.post("/backups/{snapshot_id}/detach-vm", status_code=status.HTTP_204_NO_CONTENT)
 def detach_vm_from_backup_snapshot(
     snapshot_id: str, vm_name: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_DELETE)),
-) -> BackupRunSnapshot:
+) -> None:
     """Entfernt nur die Zuordnung einer VM zu diesem Snapshot aus der DB --
     der Snapshot selbst bleibt auf der NetApp und fuer andere VMs/das CSV
     unveraendert bestehen. Fuer den Fall, dass ein Snapshot mehrere VMs
     abdeckt (gemeinsames CSV/Volume) und nur eine davon aus der Historie
-    verschwinden soll."""
+    verschwinden soll. Kein response_model/Rueckgabewert -- das Frontend
+    laedt nach Erfolg per invalidateQueries neu, statt die Antwort zu
+    verwenden (BackupSnapshotRead erwartet Felder wie policy_name, die auf
+    dem rohen BackupRunSnapshot-Objekt nicht direkt liegen, siehe
+    list_backups_for_object oben, das ueber r.run.policy_name geht -- ein
+    response_model hier waere bei der Serialisierung gescheitert)."""
     row = db.get(BackupRunSnapshot, snapshot_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot nicht gefunden")
     row.vm_names = [v for v in (row.vm_names or []) if v != vm_name]
     db.commit()
-    db.refresh(row)
-    return row
 
 
 @router.post("/{job_id}/run", response_model=BackupJobRun)
