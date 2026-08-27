@@ -301,8 +301,15 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 # existiert nur auf einem echten Knoten, nicht auf dem
                 # Cluster-Zugriffspunkt (hv_cluster.management_address) --
                 # sonst schlaegt der Tree-Connect mit NT_STATUS_BAD_NETWORK_NAME
-                # fehl (gegen echten Cluster verifiziert).
-                node_address = hv_service.resolve_node_address(cno_session, vm.host_name)
+                # fehl (gegen echten Cluster verifiziert). Live-Migration/
+                # Failover kann die VM seit der letzten Discovery auf einen
+                # anderen Knoten verschoben haben, daher den aktuellen
+                # Besitzer-Knoten LIVE abfragen statt der ggf. veralteten
+                # HyperVVm.host_name blind zu vertrauen (verifiziert live:
+                # Get-VM auf dem laut DB-Stand 'richtigen' Knoten fand die
+                # VM nicht mehr).
+                owner_node = hv_service.get_vm_owner_node(cno_session, run.vm_name) or vm.host_name
+                node_address = hv_service.resolve_node_address(cno_session, owner_node)
                 node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
                 node_session = node_service.connect(hv_cluster.username, hv_password)
                 ctx.row.message = node_address
@@ -497,7 +504,8 @@ def cleanup_restore(
     hv_password = decrypt_secret(hv_cluster.encrypted_password)
     try:
         cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
-        node_address = hv_service.resolve_node_address(cno_session, vm.host_name)
+        owner_node = hv_service.get_vm_owner_node(cno_session, run.vm_name) or vm.host_name
+        node_address = hv_service.resolve_node_address(cno_session, owner_node)
         node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
         node_session = node_service.connect(hv_cluster.username, hv_password)
         result = node_service.detach_vhd(node_session, run.vm_name, run.restored_vhd_path)

@@ -288,6 +288,25 @@ class HyperVService:
             )
         return vms
 
+    def get_vm_owner_node(self, session: winrm.Session, vm_name: str) -> str | None:
+        """Ermittelt LIVE, welcher Cluster-Knoten eine VM aktuell besitzt/
+        ausfuehrt -- per Get-ClusterGroup gegen den CNO (liest nur die
+        Cluster-Datenbank, Single-Hop wie schon bei list_csvs/
+        _node_management_ips), NICHT ueber die ggf. veraltete
+        HyperVVm.host_name aus der letzten Discovery. Noetig, weil eine VM
+        zwischen zwei Discovery-Laeufen per Live-Migration/Failover auf
+        einen anderen Knoten gewandert sein kann -- gegen echten Cluster
+        verifiziert: Get-VM auf dem laut (veralteter) Discovery-DB
+        'richtigen' Knoten fand die VM nicht mehr ('Hyper-V was unable to
+        find a virtual machine'). Liefert None, falls die VM keine eigene
+        Cluster-Gruppe hat (z.B. nicht hochverfuegbar) -- Aufrufer sollte
+        dann auf die Discovery-DB zurueckfallen."""
+        escaped = vm_name.replace("'", "''")
+        result = self._run_ps(session, f"(Get-ClusterGroup -Name '{escaped}' -ErrorAction SilentlyContinue).OwnerNode.Name")
+        if not result.success:
+            return None
+        return result.output.strip() or None
+
     def _node_management_ips(self, session: winrm.Session) -> dict[str, str]:
         """Liefert je Knoten die IP-Adresse im 'ClusterAndClient'-Netzwerk
         (dem Management-Netz, auf dem auch der CNO selbst erreichbar ist).
