@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
@@ -770,6 +771,20 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
 
             with _StepCtx(db, run.id, "register-cluster-role", "Als Cluster-Rolle registrieren", step_model=VmRecreateRunStep):
                 hv_service.register_cluster_role(cno_session, run.vm_name)
+
+            with _StepCtx(db, run.id, "post-discovery", "Inventory aktualisieren", step_model=VmRecreateRunStep) as ctx:
+                # Best-effort: die VM ist zu diesem Zeitpunkt bereits
+                # erfolgreich neu erstellt, ein Fehler hier soll den Lauf
+                # nicht nachtraeglich als failed markieren -- sonst muesste
+                # man sonst bis zum naechsten periodischen Discovery-Lauf
+                # (Standard alle 4h, siehe app.core.scheduler) oder einem
+                # manuellen Discover warten, bis die VM im Inventory
+                # auftaucht.
+                try:
+                    _run_hyperv_discovery(db, hv_cluster)
+                    ctx.row.message = "Discovery abgeschlossen"
+                except Exception as exc:
+                    ctx.row.message = f"Discovery fehlgeschlagen (VM wurde trotzdem erfolgreich erstellt): {exc}"
 
             run.status = RestoreStatus.SUCCEEDED
             run.finished_at = datetime.now(timezone.utc)
