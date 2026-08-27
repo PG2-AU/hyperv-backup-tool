@@ -182,10 +182,15 @@ def copy_via_smb(
     if domain:
         base_cmd += ["-W", domain]
 
-    put_script = f"cd {remote_dir}; lcd {local_dir}; put {local_name} {remote_filename}"
+    # Windows-Pfade wie das Standard-'Virtual Hard Disks'-Verzeichnis
+    # enthalten haeufig Leerzeichen -- ohne Anfuehrungszeichen bricht
+    # smbclients Mini-Skriptsprache den Befehl an der ersten Leerstelle ab
+    # (gegen echten Cluster verifiziert: 'cd ...\Virtual' statt '...\Virtual
+    # Hard Disks', NT_STATUS_OBJECT_NAME_NOT_FOUND).
+    put_script = f'cd "{remote_dir}"; lcd "{local_dir}"; put "{local_name}" "{remote_filename}"'
     _run(base_cmd + ["-c", put_script], timeout=3600, check=False)
 
-    verify_script = f"cd {remote_dir}; ls {remote_filename}"
+    verify_script = f'cd "{remote_dir}"; ls "{remote_filename}"'
     verify = _run(base_cmd + ["-c", verify_script], timeout=30, check=False)
     output = verify.stdout + verify.stderr
     if "NT_STATUS_NO_SUCH_FILE" in output or remote_filename not in output:
