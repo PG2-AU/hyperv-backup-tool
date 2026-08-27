@@ -7,10 +7,11 @@ damit Aenderungen ohne Container-Neustart wirksam werden)."""
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.db.types import DateTime
 
 
 class RestoreProxyHost(Base):

@@ -1,10 +1,11 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, String
+from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.db.types import DateTime
 
 DEFAULT_SNAPMIRROR_LABELS = ["hyperv_hourly", "hyperv_daily", "hyperv_weekly", "hyperv_monthly"]
 

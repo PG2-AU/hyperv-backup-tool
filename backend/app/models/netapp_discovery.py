@@ -7,10 +7,11 @@ des letzten erfolgreichen Laufs, in dem das Objekt gefunden wurde."""
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.db.types import DateTime
 
 
 def _id() -> str:

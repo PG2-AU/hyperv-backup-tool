@@ -5,10 +5,11 @@ damit ein spaeterer Restore-Lauf diese nicht jedes Mal neu ermitteln muss."""
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.db.types import DateTime
 
 
 def _id() -> str:

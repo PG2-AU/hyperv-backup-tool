@@ -1,10 +1,11 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, JSON, String, Table
+from sqlalchemy import Column, Enum, ForeignKey, JSON, String, Table
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.types import DateTime
 from app.models.backup_policy import BackupScope
 
 resource_group_policies = Table(
