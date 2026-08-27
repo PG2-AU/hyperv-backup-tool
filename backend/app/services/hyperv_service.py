@@ -468,6 +468,16 @@ class HyperVService:
         escaped = path.replace("'", "''")
         return self._run_ps(session, f"Remove-Item -Path '{escaped}' -Force -ErrorAction Stop")
 
+    def rename_file(self, session: winrm.Session, old_path: str, new_path: str) -> CommandResult:
+        """Benennt die wiederhergestellte VHDX im Replace-Modus auf den
+        Originalnamen um, nachdem die alte Datei geloescht wurde -- die
+        Kopie traegt bis dahin den '_restore_<Zeitstempel>'-Suffix (siehe
+        restore.py), damit sie waehrend des Kopierens nicht mit der noch
+        vorhandenen alten Datei kollidiert."""
+        old_escaped = old_path.replace("'", "''")
+        new_escaped = new_path.replace("'", "''")
+        return self._run_ps(session, f"Move-Item -Path '{old_escaped}' -Destination '{new_escaped}' -Force -ErrorAction Stop")
+
     # --- VM-Restore: nativer Windows-iSCSI-Initiator auf dem Restore-Proxy-Host ---
     # Ersetzt die fruehere Linux-Variante (iscsiadm/ntfs-3g/smbclient im
     # Container, siehe Chat-Verlauf) -- der native Microsoft-iSCSI-Initiator

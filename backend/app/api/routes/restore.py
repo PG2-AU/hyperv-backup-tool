@@ -367,6 +367,15 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                     result = node_service.delete_file(node_session, run.source_vhd_path)
                     if not result.success:
                         raise RuntimeError(result.error)
+                with _StepCtx(db, run.id, "rename", "Wiederhergestellte VHDX umbenennen") as ctx:
+                    final_path = f"C:\\{remote_dir}\\{original_filename}"
+                    result = node_service.rename_file(node_session, restored_vhd_path, final_path)
+                    if not result.success:
+                        raise RuntimeError(result.error)
+                    restored_vhd_path = final_path
+                    run.restored_vhd_path = restored_vhd_path
+                    db.commit()
+                    ctx.row.message = restored_vhd_path
                 with _StepCtx(db, run.id, "attach", "Wiederhergestellte VHDX anhängen"):
                     node_service.attach_vhd(node_session, run.vm_name, restored_vhd_path)
                 if was_running:
