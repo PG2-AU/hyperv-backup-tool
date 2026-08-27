@@ -7,7 +7,6 @@ import {
   Group,
   Loader,
   Modal,
-  Progress,
   Radio,
   ScrollArea,
   Stack,
@@ -60,6 +59,18 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
   const vmFull = vms?.find((v) => v.name === vm?.name);
   const totalCount = finishedRuns.length + (currentVhdPath ? 1 : 0) + queue.length;
 
+  const selectedSnapshot = backups?.find((b) => b.id === snapshotId);
+  // Die VHD-Auswahl kommt aus dem gewaehlten Snapshot (BackupRunVmConfig,
+  // zum Backup-Zeitpunkt gespeichert) statt aus dem aktuell-live VM-Zustand
+  // -- sonst koennte man eine VHDX angeboten bekommen, die in diesem
+  // Snapshot gar nicht enthalten war (neue Disk seitdem, oder die VM ist
+  // zwischenzeitlich auf eine andere CSV/LUN umgezogen). Fallback auf die
+  // Live-Liste nur fuer Backups von vor diesem Feature (kein
+  // BackupRunVmConfig vorhanden, vhds ist dann leer).
+  const vhdOptions = selectedSnapshot?.vhds.length
+    ? selectedSnapshot.vhds
+    : (vmFull?.vhds ?? []).map((v) => ({ name: v.name, path: v.full_path, size_bytes: v.size_bytes }));
+
   useEffect(() => {
     if (!opened) {
       setActive(0);
@@ -72,6 +83,10 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
       setFinishedRuns([]);
     }
   }, [opened]);
+
+  useEffect(() => {
+    setSelectedVhdPaths([]);
+  }, [snapshotId]);
 
   // Verarbeitet die Warteschlange sequenziell: startet den naechsten Restore
   // erst, wenn kein anderer mehr aktiv ist (currentVhdPath === null). Der
@@ -175,10 +190,10 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
               label="Welche VHDX sollen wiederhergestellt werden? (Mehrfachauswahl möglich)"
             >
               <Stack gap="xs" mt="xs">
-                {vmFull?.vhds.map((vhd) => (
+                {vhdOptions.map((vhd) => (
                   <Checkbox
-                    key={vhd.full_path}
-                    value={vhd.full_path}
+                    key={vhd.path}
+                    value={vhd.path}
                     label={
                       <Group gap="xs">
                         <Text size="sm">{vhd.name}</Text>
@@ -274,29 +289,19 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
                   {currentVhdPath?.split("\\").pop()}
                 </Text>
                 {run.steps.map((s) => (
-                  <Stack key={s.step} gap={4}>
-                    <Group gap="xs" wrap="nowrap" align="flex-start">
-                      {STEP_STATUS_ICON[s.status]}
-                      <Stack gap={0} style={{ flex: 1 }}>
-                        <Text size="sm" fw={600}>
-                          {s.label}
+                  <Group key={s.step} gap="xs" wrap="nowrap" align="flex-start">
+                    {STEP_STATUS_ICON[s.status]}
+                    <Stack gap={0} style={{ flex: 1 }}>
+                      <Text size="sm" fw={600}>
+                        {s.label}
+                      </Text>
+                      {s.status === "error" && (
+                        <Text size="xs" c="red">
+                          {s.message}
                         </Text>
-                        {s.status === "error" && (
-                          <Text size="xs" c="red">
-                            {s.message}
-                          </Text>
-                        )}
-                      </Stack>
-                    </Group>
-                    {s.status === "running" && !!s.progress_total && (
-                      <Stack gap={2} ml={24}>
-                        <Progress value={Math.min(100, (100 * (s.progress_current ?? 0)) / s.progress_total)} size="sm" animated />
-                        <Text size="xs" c="dimmed">
-                          {formatBytes(s.progress_current)} / {formatBytes(s.progress_total)}
-                        </Text>
-                      </Stack>
-                    )}
-                  </Stack>
+                      )}
+                    </Stack>
+                  </Group>
                 ))}
               </Stack>
             )}

@@ -1,13 +1,16 @@
 import { useState } from "react";
-import { ActionIcon, Badge, Box, Group, Menu, Paper, Progress, Stack, Table, Tabs, Text, Title } from "@mantine/core";
+import { ActionIcon, Badge, Box, Group, Menu, Paper, Progress, Stack, Table, Tabs, Text, TextInput, Title } from "@mantine/core";
 import {
   IconChevronsRight,
+  IconCpu,
   IconDatabase,
   IconDatabaseExport,
   IconFileText,
   IconFolder,
   IconInfoCircle,
+  IconNetwork,
   IconPlayerPlay,
+  IconSearch,
   IconServer,
   IconServer2,
   IconServerCog,
@@ -112,6 +115,38 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
           <IconX size={14} />
         </ActionIcon>
       </Group>
+
+      <Group gap="lg" mb="sm">
+        <Group gap={4}>
+          <IconCpu size={14} />
+          <Text size="xs" c="dimmed">
+            {vm.cpu_count ?? "-"} vCPU
+          </Text>
+        </Group>
+        <Text size="xs" c="dimmed">
+          RAM: {formatBytes(vm.memory_startup_bytes)}
+          {vm.dynamic_memory_enabled && ` (dynamisch: ${formatBytes(vm.memory_minimum_bytes)} – ${formatBytes(vm.memory_maximum_bytes)})`}
+        </Text>
+        <Text size="xs" c="dimmed">
+          Generation {vm.generation ?? "-"}
+        </Text>
+      </Group>
+      {vm.network_adapters.length > 0 && (
+        <Group gap="xs" mb="xs">
+          {vm.network_adapters.map((n, i) => (
+            <Badge key={i} variant="light" color="grape" leftSection={<IconNetwork size={12} />}>
+              {n.name}: {n.mac_address ?? "-"} @ {n.switch_name ?? "-"}
+              {n.vlan_id ? ` (VLAN ${n.vlan_id})` : ""}
+            </Badge>
+          ))}
+        </Group>
+      )}
+      {vm.pci_devices.length > 0 && (
+        <Text size="xs" c="dimmed" mb="sm">
+          PCI-Devices: {vm.pci_devices.join(", ")}
+        </Text>
+      )}
+
       <Stack gap="sm">
         {vhds.map((vhd, i) => {
           const csvName = vhd.csv_path.split(/[\\/]/).pop();
@@ -243,6 +278,8 @@ export function VmsPage() {
   const [selectedVm, setSelectedVm] = useState<Vm | null>(null);
   const [selectedCsv, setSelectedCsv] = useState<Csv | null>(null);
   const [backupsTarget, setBackupsTarget] = useState<{ scope: BackupScope; name: string } | null>(null);
+  const [vmSearch, setVmSearch] = useState("");
+  const filteredVms = (vms ?? []).filter((vm) => vm.name.toLowerCase().includes(vmSearch.trim().toLowerCase()));
   const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
 
   function showBackups(scope: BackupScope, name: string) {
@@ -285,6 +322,15 @@ export function VmsPage() {
         </Tabs.List>
 
         <Tabs.Panel value="vms" pt="md">
+          <Group justify="flex-end" mb="sm">
+            <TextInput
+              placeholder="VM-Name suchen…"
+              leftSection={<IconSearch size={14} />}
+              value={vmSearch}
+              onChange={(e) => setVmSearch(e.currentTarget.value)}
+              w={280}
+            />
+          </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -299,7 +345,7 @@ export function VmsPage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {vms?.map((vm) => (
+              {filteredVms.map((vm) => (
                 <Table.Tr
                   key={vm.id}
                   onClick={() => toggleSelectedVm(vm)}
@@ -326,6 +372,11 @@ export function VmsPage() {
               ))}
             </Table.Tbody>
           </Table>
+          {(vms?.length ?? 0) > 0 && filteredVms.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Keine VM passt zur Suche „{vmSearch}“.
+            </Text>
+          )}
         </Tabs.Panel>
 
         <Tabs.Panel value="csv" pt="md">

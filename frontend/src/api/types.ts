@@ -5,6 +5,13 @@ export interface VhdInfo {
   full_path: string;
 }
 
+export interface NetworkAdapter {
+  name: string;
+  mac_address?: string | null;
+  switch_name?: string | null;
+  vlan_id?: number | null;
+}
+
 export interface Vm {
   id: string;
   name: string;
@@ -18,6 +25,14 @@ export interface Vm {
   policy_names: string[];
   policy_ids: string[];
   protected: boolean;
+  cpu_count?: number | null;
+  generation?: number | null;
+  memory_startup_bytes?: number | null;
+  memory_minimum_bytes?: number | null;
+  memory_maximum_bytes?: number | null;
+  dynamic_memory_enabled?: boolean | null;
+  network_adapters: NetworkAdapter[];
+  pci_devices: string[];
 }
 
 export interface Csv {
@@ -501,6 +516,12 @@ export interface BackupRunSnapshot {
   error_message?: string | null;
 }
 
+export interface BackupSnapshotVhd {
+  name: string;
+  path: string;
+  size_bytes?: number | null;
+}
+
 export interface BackupSnapshot {
   id: string;
   run_id: string;
@@ -514,6 +535,7 @@ export interface BackupSnapshot {
   vm_names: string[];
   snapshot_name?: string | null;
   snapshot_uuid?: string | null;
+  vhds: BackupSnapshotVhd[];
 }
 
 export interface BackupJobRun {
@@ -599,8 +621,6 @@ export interface RestoreRunStep {
   label: string;
   status: "pending" | "running" | "success" | "error" | "skipped";
   message?: string | null;
-  progress_current?: number | null;
-  progress_total?: number | null;
 }
 
 export interface RestoreRun {
