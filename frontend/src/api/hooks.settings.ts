@@ -47,6 +47,7 @@ export interface VersionInfo {
   last_health_check_at?: string | null;
   last_discovery_at?: string | null;
   last_snapshot_reconciliation_at?: string | null;
+  last_retention_cleanup_at?: string | null;
 }
 
 export interface UserCreatePayload {

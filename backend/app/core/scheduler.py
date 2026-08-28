@@ -14,7 +14,7 @@ _run_discovery / _discover_and_persist), statt die Logik zu duplizieren."""
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -30,8 +30,8 @@ from app.api.routes.netapp_clusters import _refresh_status as _refresh_netapp_st
 from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
 from app.core.config import get_settings
 from app.db.session import SessionLocal
-from app.models.backup_policy import BackupPolicy
-from app.models.backup_run import BackupRunSnapshot
+from app.models.backup_policy import BackupPolicy, RetentionType
+from app.models.backup_run import BackupRun, BackupRunSnapshot
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.netapp_cluster import NetAppCluster
 from app.models.schedule import Schedule, ScheduleType
@@ -141,6 +141,89 @@ def run_snapshot_reconciliation() -> None:
         db.close()
 
 
+def run_retention_cleanup() -> None:
+    """Setzt die in jeder Policy hinterlegte Retention (retention_type/
+    retention_value) tatsaechlich durch -- bislang wurden diese Felder nur
+    gespeichert, aber nie ausgewertet, sodass Snapshots unbegrenzt auf den
+    NetApp-Volumes verblieben. Laeuft (wie run_snapshot_reconciliation)
+    einmal taeglich statt direkt nach jedem Backup-Lauf: Retention ist auf
+    Tage/Anzahl skaliert, also zeitlich unkritisch, und ein taeglicher Job
+    faengt auch Snapshots ab, die zu einer inzwischen deaktivierten oder
+    fehlgeschlagenen Policy gehoeren -- ein 'nach jedem Backup pruefen'
+    wuerde das verpassen.
+
+    Gruppiert alle erfolgreichen BackupRunSnapshot-Zeilen einer Policy nach
+    (netapp_cluster_id, volume_uuid) -- mehrere Backup-Laeufe derselben
+    Policy landen ueblicherweise auf demselben Volume, die Retention wird
+    also pro Volume durchgesetzt, nicht global pro Policy. Bei COUNT werden
+    die neuesten N behalten, bei DAYS alle juenger als N Tage. Ein
+    fehlgeschlagenes Loeschen (z.B. Snapshot-Locking/SnapLock noch aktiv)
+    wird geloggt und die Zeile bleibt stehen -- naechster Lauf versucht es
+    erneut, sobald die Sperre ausgelaufen ist."""
+    db = SessionLocal()
+    try:
+        clusters = {c.id: c for c in db.query(NetAppCluster).all()}
+        now = datetime.now(timezone.utc)
+
+        for policy in db.query(BackupPolicy).all():
+            rows = (
+                db.query(BackupRunSnapshot)
+                .join(BackupRun, BackupRunSnapshot.run_id == BackupRun.id)
+                .filter(
+                    BackupRun.policy_id == policy.id,
+                    BackupRunSnapshot.success.is_(True),
+                    BackupRunSnapshot.volume_uuid.isnot(None),
+                )
+                .all()
+            )
+            if not rows:
+                continue
+
+            groups: dict[tuple[str, str], list[BackupRunSnapshot]] = defaultdict(list)
+            for row in rows:
+                groups[(row.netapp_cluster_id, row.volume_uuid)].append(row)
+
+            for (cluster_id, volume_uuid), group_rows in groups.items():
+                cluster = clusters.get(cluster_id)
+                if cluster is None:
+                    continue
+                group_rows.sort(key=lambda r: r.created_at, reverse=True)
+
+                if policy.retention_type == RetentionType.COUNT:
+                    to_delete = group_rows[policy.retention_value:] if policy.retention_value > 0 else []
+                else:  # RetentionType.DAYS
+                    cutoff = now - timedelta(days=policy.retention_value)
+                    to_delete = [r for r in group_rows if r.created_at < cutoff]
+
+                if not to_delete:
+                    continue
+
+                try:
+                    service = _netapp_service_for(cluster)
+                except Exception as exc:
+                    _log(f"Retention uebersprungen fuer Cluster '{cluster.name}': {exc}")
+                    continue
+
+                for row in to_delete:
+                    try:
+                        result = service.delete_snapshot(row.volume_uuid, row.snapshot_uuid)
+                    except Exception as exc:
+                        _log(f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}') konnte nicht geloescht werden: {exc}")
+                        continue
+                    if not result.success:
+                        _log(f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}') konnte nicht geloescht werden: {result.message}")
+                        continue
+                    db.delete(row)
+                    _log(
+                        f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}', "
+                        f"Retention {policy.retention_type.value}={policy.retention_value}) geloescht"
+                    )
+                db.commit()
+    finally:
+        _touch(db, "last_retention_cleanup_at")
+        db.close()
+
+
 def _schedule_is_due(schedule: Schedule, now_local: datetime) -> bool:
     """Prueft, ob ein Schedule genau zur aktuellen (lokalen) Minute faellig
     ist. 'times' enthaelt "HH:MM"-Strings (bei HOURLY mehrere, sonst genau
@@ -212,6 +295,14 @@ def start_scheduler() -> BackgroundScheduler:
         run_snapshot_reconciliation, CronTrigger(hour=settings.snapshot_reconcile_hour, minute=0),
         id="snapshot-reconciliation", replace_existing=True, max_instances=1,
     )
+    # 15 Minuten nach dem Snapshot-Abgleich, damit Retention nicht gegen
+    # denselben Volume-Bestand parallel zum Abgleich arbeitet (nicht
+    # zwingend noetig, aber vermeidet ueberlappende NetApp-API-Last).
+    retention_hour = settings.snapshot_reconcile_hour
+    scheduler.add_job(
+        run_retention_cleanup, CronTrigger(hour=retention_hour, minute=15),
+        id="retention-cleanup", replace_existing=True, max_instances=1,
+    )
     scheduler.add_job(
         run_scheduled_backups, CronTrigger(minute="*"),
         id="scheduled-backups", replace_existing=True, max_instances=1,
@@ -221,6 +312,7 @@ def start_scheduler() -> BackgroundScheduler:
         f"gestartet (Health-Check alle {settings.healthcheck_interval_minutes}min, "
         f"Discovery alle {settings.discovery_interval_minutes}min, "
         f"Snapshot-Abgleich taeglich um {settings.snapshot_reconcile_hour:02d}:00 UTC, "
+        f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
         f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone})"
     )
     _scheduler = scheduler

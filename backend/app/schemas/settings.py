@@ -13,6 +13,7 @@ class VersionInfo(BaseModel):
     last_health_check_at: str | None = None
     last_discovery_at: str | None = None
     last_snapshot_reconciliation_at: str | None = None
+    last_retention_cleanup_at: str | None = None
 
 
 class PublicSettings(BaseModel):

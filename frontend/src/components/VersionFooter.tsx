@@ -31,6 +31,9 @@ export function VersionFooter() {
         <Text size="xs" c="dimmed">
           Snapshot-Abgleich: {formatTimestamp(version.last_snapshot_reconciliation_at)}
         </Text>
+        <Text size="xs" c="dimmed">
+          Retention-Cleanup: {formatTimestamp(version.last_retention_cleanup_at)}
+        </Text>
       </Stack>
     </Tooltip>
   );
