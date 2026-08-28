@@ -137,6 +137,7 @@ export function RestorePage() {
                 <Table.Th>VM</Table.Th>
                 <Table.Th>VHDX</Table.Th>
                 <Table.Th>Geöffnet seit</Table.Th>
+                <Table.Th>Automatisches Aufräumen</Table.Th>
                 <Table.Th />
               </Table.Tr>
             </Table.Thead>
@@ -148,6 +149,9 @@ export function RestorePage() {
                     {r.source_vhd_path.split("\\").pop()}
                   </Table.Td>
                   <Table.Td>{r.finished_at ? new Date(r.finished_at).toLocaleString("de-DE") : "-"}</Table.Td>
+                  <Table.Td c="dimmed" fz="sm">
+                    {r.expires_at ? new Date(r.expires_at).toLocaleString("de-DE") : "-"}
+                  </Table.Td>
                   <Table.Td>
                     <Group gap="xs" justify="flex-end">
                       <Button size="xs" variant="default" onClick={() => setOpenFileSession(r)}>

@@ -64,6 +64,7 @@ class FileRestoreRunRead(BaseModel):
     browse_root_path: str | None = None
     default_destination_path: str | None = None
     cleanup_needed: bool
+    expires_at: datetime | None = None
     error_message: str | None = None
     started_at: datetime
     finished_at: datetime | None = None

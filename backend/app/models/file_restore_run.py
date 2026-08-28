@@ -12,7 +12,7 @@ RUNNING (wird gemountet) -> SUCCEEDED (offen/durchsuchbar, cleanup_needed=
 True) -> CLEANED_UP (VHD dismounted, LUN-Klon/iSCSI-Session entfernt)."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -74,6 +74,21 @@ class FileRestoreRun(Base):
     steps = relationship(
         "FileRestoreRunStep", back_populates="run", cascade="all, delete-orphan", order_by="FileRestoreRunStep.created_at",
     )
+
+    @property
+    def expires_at(self) -> datetime | None:
+        """Zeitpunkt, zu dem das automatische Sicherheitsnetz
+        (app.core.scheduler.run_file_restore_expiry) diese Session
+        aufraeumt, falls der Nutzer es nicht vorher manuell tut -- fuer die
+        Anzeige in der Restore-Uebersicht ('Offene Datei-Restore-
+        Sessions'). Import hier statt am Modulkopf, um einen Zirkelbezug
+        beim App-Start zu vermeiden (app.core.config importiert nichts aus
+        app.models, aber viele Module importieren frueh von app.models)."""
+        if not self.cleanup_needed:
+            return None
+        from app.core.config import get_settings
+
+        return self.started_at + timedelta(hours=get_settings().file_restore_max_age_hours)
 
 
 class FileRestoreRunStep(Base):

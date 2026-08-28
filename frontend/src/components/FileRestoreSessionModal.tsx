@@ -3,11 +3,10 @@ import { Alert, Button, Group, Modal, Stack, Text, TextInput } from "@mantine/co
 import { notifications } from "@mantine/notifications";
 import { IconCheck } from "@tabler/icons-react";
 
-import { useCleanupFileRestoreRun, useCopyFileRestoreSelection } from "@/api/hooks";
+import { useCopyFileRestoreSelection } from "@/api/hooks";
 import { FileBrowser } from "@/components/FileBrowser";
 import type { FileRestoreRun } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
-import { confirmAction } from "@/utils/confirm";
 
 interface FileRestoreSessionModalProps {
   opened: boolean;
@@ -19,12 +18,16 @@ interface FileRestoreSessionModalProps {
  * "Offene Datei-Restore-Sessions" in RestorePage.tsx) -- mountet NICHT neu,
  * nutzt den bestehenden browse_root_path der Session. Fuer eine neue Session
  * siehe stattdessen den "Dateien wiederherstellen"-Pfad in
- * RestoreWizardModal.tsx. */
+ * RestoreWizardModal.tsx. Bewusst KEIN Cleanup-Button hier (und auch nicht
+ * im Wizard) -- ein Nutzer hat live erlebt, dass ein missverstandener
+ * "Fertig & aufräumen"-Button die Session vor dem eigentlichen Kopieren
+ * zerstoert hat. Aufraeumen ist daher ausschliesslich ueber die dedizierte
+ * Aktion in der Tabelle "Offene Datei-Restore-Sessions" (RestorePage.tsx,
+ * mit eigener Bestaetigung) oder automatisch per Zeitlimit moeglich. */
 export function FileRestoreSessionModal({ opened, onClose, run }: FileRestoreSessionModalProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [destinationPath, setDestinationPath] = useState(run?.default_destination_path ?? "");
   const copySelection = useCopyFileRestoreSelection(run?.id);
-  const cleanupFileRestoreRun = useCleanupFileRestoreRun();
 
   function handleToggleSelect(path: string, checked: boolean) {
     setSelected((prev) => {
@@ -49,20 +52,6 @@ export function FileRestoreSessionModal({ opened, onClose, run }: FileRestoreSes
     );
   }
 
-  function handleCleanup() {
-    if (!run) return;
-    confirmAction({
-      title: "Session aufräumen",
-      message: `VHDX für '${run.vm_name}' aushängen und temporären LUN-Klon entfernen?`,
-      confirmLabel: "Aufräumen",
-      onConfirm: () =>
-        cleanupFileRestoreRun.mutate(run.id, {
-          onSuccess: () => onClose(),
-          onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Aufräumen fehlgeschlagen."), color: "red" }),
-        }),
-    });
-  }
-
   if (!run || !run.browse_root_path) return null;
 
   return (
@@ -80,18 +69,14 @@ export function FileRestoreSessionModal({ opened, onClose, run }: FileRestoreSes
             Zuletzt ausgewählte Elemente wurden kopiert.
           </Alert>
         )}
+        <Text size="xs" c="dimmed">
+          Aufräumen erfolgt bewusst nur über die Tabelle "Offene Datei-Restore-Sessions" oder automatisch per Zeitlimit.
+        </Text>
         <Group justify="space-between">
           <Button variant="default" onClick={handleCopy} loading={copySelection.isPending} disabled={selected.size === 0 || !destinationPath}>
             Kopieren
           </Button>
-          <Group>
-            <Button variant="default" onClick={onClose}>
-              Schließen
-            </Button>
-            <Button color="red" variant="light" onClick={handleCleanup} loading={cleanupFileRestoreRun.isPending}>
-              Fertig &amp; aufräumen
-            </Button>
-          </Group>
+          <Button onClick={onClose}>Schließen</Button>
         </Group>
       </Stack>
     </Modal>

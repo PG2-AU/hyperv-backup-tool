@@ -19,7 +19,6 @@ import { IconAlertTriangle, IconCheck, IconMinus, IconX } from "@tabler/icons-re
 
 import {
   useBackupsForObject,
-  useCleanupFileRestoreRun,
   useCopyFileRestoreSelection,
   useFileRestoreRun,
   useRestoreRun,
@@ -80,7 +79,6 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
   const triggerFileRestore = useTriggerFileRestore();
   const { data: fileRun } = useFileRestoreRun(fileRunId ?? undefined, true);
   const copySelection = useCopyFileRestoreSelection(fileRunId ?? undefined);
-  const cleanupFileRestoreRun = useCleanupFileRestoreRun();
 
   const vmFull = vms?.find((v) => v.name === vm?.name);
   const totalCount = finishedRuns.length + (currentVhdPath ? 1 : 0) + queue.length;
@@ -207,18 +205,6 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
         },
       },
     );
-  }
-
-  function handleCleanupAndClose() {
-    if (!fileRunId) {
-      onClose();
-      return;
-    }
-    cleanupFileRestoreRun.mutate(fileRunId, {
-      onSuccess: () => onClose(),
-      onError: (err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Aufräumen fehlgeschlagen."), color: "red" }),
-    });
   }
 
   const batchDone = currentRunId === null && queue.length === 0 && finishedRuns.length > 0;
@@ -440,6 +426,11 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
                       Zuletzt ausgewählte Elemente wurden kopiert.
                     </Alert>
                   )}
+                  <Text size="xs" c="dimmed">
+                    Die Session bleibt nach dem Schließen geöffnet und erscheint unter Restore &gt; Wiederherstellen als
+                    „Offene Datei-Restore-Session" -- Aufräumen erfolgt dort bewusst per Klick, oder automatisch am{" "}
+                    {fileRun.expires_at ? new Date(fileRun.expires_at).toLocaleString("de-DE") : "…"}.
+                  </Text>
                   <Group justify="space-between">
                     <Button
                       variant="default"
@@ -449,14 +440,7 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
                     >
                       Kopieren
                     </Button>
-                    <Group>
-                      <Button variant="default" onClick={onClose}>
-                        Später weitermachen
-                      </Button>
-                      <Button color="red" variant="light" onClick={handleCleanupAndClose} loading={cleanupFileRestoreRun.isPending}>
-                        Fertig &amp; aufräumen
-                      </Button>
-                    </Group>
+                    <Button onClick={onClose}>Fertig</Button>
                   </Group>
                 </>
               )}
