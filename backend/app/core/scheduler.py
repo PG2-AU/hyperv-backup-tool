@@ -22,6 +22,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session
 
+from app.api.routes.file_restore import _cleanup_file_restore_run
 from app.api.routes.hyperv_clusters import _refresh_status as _refresh_hyperv_status
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
 from app.api.routes.jobs import trigger_job_run
@@ -32,6 +33,7 @@ from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.backup_policy import BackupPolicy, RetentionType
 from app.models.backup_run import BackupRun, BackupRunSnapshot
+from app.models.file_restore_run import FileRestoreRun
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.netapp_cluster import NetAppCluster
 from app.models.schedule import Schedule, ScheduleType
@@ -224,6 +226,38 @@ def run_retention_cleanup() -> None:
         db.close()
 
 
+def run_file_restore_expiry() -> None:
+    """Sicherheitsnetz fuer Datei-Restore-Sessions (siehe
+    app.api.routes.file_restore): raeumt gemountete VHDX automatisch auf,
+    wenn der Nutzer den manuellen Cleanup vergessen hat. Laeuft stuendlich
+    statt taeglich wie die Retention -- diese Sessions sollen kurzlebig
+    sein (nur fuer den Dauer eines Datei-Restore-Vorgangs offen), ein
+    24h-Sicherheitsnetz soll also zeitnah greifen, nicht erst am naechsten
+    Tag. Nutzt denselben Cleanup-Ablauf wie der manuelle Endpunkt
+    (_cleanup_file_restore_run), damit kein zweiter Code-Pfad fuers
+    Abbauen von LUN-Klon/iSCSI/Mount gepflegt werden muss."""
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.file_restore_max_age_hours)
+        expired = (
+            db.query(FileRestoreRun)
+            .filter(FileRestoreRun.cleanup_needed.is_(True), FileRestoreRun.started_at < cutoff)
+            .all()
+        )
+        for run in expired:
+            try:
+                _cleanup_file_restore_run(db, run)
+                run.error_message = "Automatisch aufgeraeumt (Zeitlimit ueberschritten)"
+                db.commit()
+                _log(f"Datei-Restore-Session fuer VM '{run.vm_name}' automatisch aufgeraeumt (Zeitlimit ueberschritten)")
+            except Exception as exc:
+                _log(f"Automatisches Aufraeumen der Datei-Restore-Session fuer VM '{run.vm_name}' fehlgeschlagen: {exc}")
+    finally:
+        _touch(db, "last_file_restore_expiry_at")
+        db.close()
+
+
 def _schedule_is_due(schedule: Schedule, now_local: datetime) -> bool:
     """Prueft, ob ein Schedule genau zur aktuellen (lokalen) Minute faellig
     ist. 'times' enthaelt "HH:MM"-Strings (bei HOURLY mehrere, sonst genau
@@ -307,13 +341,18 @@ def start_scheduler() -> BackgroundScheduler:
         run_scheduled_backups, CronTrigger(minute="*"),
         id="scheduled-backups", replace_existing=True, max_instances=1,
     )
+    scheduler.add_job(
+        run_file_restore_expiry, IntervalTrigger(hours=1),
+        id="file-restore-expiry", replace_existing=True, max_instances=1,
+    )
     scheduler.start()
     _log(
         f"gestartet (Health-Check alle {settings.healthcheck_interval_minutes}min, "
         f"Discovery alle {settings.discovery_interval_minutes}min, "
         f"Snapshot-Abgleich taeglich um {settings.snapshot_reconcile_hour:02d}:00 UTC, "
         f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
-        f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone})"
+        f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone}, "
+        f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h))"
     )
     _scheduler = scheduler
     return scheduler

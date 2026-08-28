@@ -774,3 +774,145 @@ class HyperVService:
         if source_size != remote_size:
             raise RuntimeError(f"Groessenabweichung nach Kopieren: Quelle {source_size} Bytes, Ziel {remote_size} Bytes")
         return remote_size
+
+    # --- Datei-Restore: VHDX direkt auf dem Restore-Proxy-Host mounten und
+    # durchsuchen, statt sie erst auf eine CSV zu kopieren und an eine VM
+    # anzuhaengen (siehe app.api.routes.file_restore). Die geklonte LUN wird
+    # wie beim normalen Restore ueber prepare_data_partition_path als
+    # Ordner eingebunden -- darin liegt die VHDX-Datei selbst, die dann per
+    # Mount-VHD eine Ebene tiefer erneut gemountet wird; prepare_data_
+    # partition_path/release_disk greifen dafuer unveraendert, nur mit der
+    # Disk-Nummer der virtuellen (VHD-)Disk statt der rohen Klon-Disk. -----
+
+    def check_vhd_mount_available(self, session: winrm.Session) -> bool:
+        """Prueft, ob Mount-DiskImage/Dismount-DiskImage (Storage-Modul)
+        auf diesem Host verfuegbar sind -- Bestandteil von Windows Server
+        seit 2012, daher praktisch immer vorhanden. Live gegen den echten
+        Restore-Proxy-Host verifiziert wurde dabei ein wichtiger Irrtum
+        aufgedeckt: die urspruenglich hierfuer vorgesehenen Mount-VHD/
+        Dismount-VHD (Hyper-V-PowerShell-Modul) scheitern auf einem Host
+        OHNE echte Hyper-V-Rolle mit 'could not access an expected WMI
+        class' -- das Cmdlet braucht den Virtual Machine Management
+        Service, nicht nur das Verwaltungsmodul. Mount-DiskImage nutzt
+        stattdessen den Windows-eigenen Virtual-Disk-Dienst (denselben,
+        den auch 'diskpart attach vdisk' verwendet) und funktioniert daher
+        auch auf einem reinen iSCSI-Proxy-Host ohne Hyper-V-Rolle."""
+        result = self._run_ps(session, "[bool](Get-Command Mount-DiskImage -ErrorAction SilentlyContinue)")
+        return result.success and result.output.strip().lower() == "true"
+
+    def mount_vhd(self, session: winrm.Session, vhd_path: str, read_only: bool = True) -> int:
+        """Mountet eine VHDX schreibgeschuetzt (Standard) ueber den
+        Windows-eigenen Virtual-Disk-Dienst (Storage-Modul, siehe
+        check_hyperv_powershell_available) und liefert die Disk-Nummer der
+        dadurch entstehenden virtuellen Disk -- diese wird anschliessend
+        wie eine normale Disk per prepare_data_partition_path eingebunden.
+        Read-only, da der Restore lediglich lesend Dateien entnehmen soll;
+        vermeidet ausserdem Schreibsperren-Konflikte."""
+        escaped = vhd_path.replace("'", "''")
+        access = "ReadOnly" if read_only else "ReadWrite"
+        script = (
+            f"Mount-DiskImage -ImagePath '{escaped}' -Access {access} -PassThru -ErrorAction Stop | "
+            "Get-DiskImage | Get-Disk | Select-Object -ExpandProperty Number"
+        )
+        result = self._run_ps(session, script)
+        output = result.output.strip()
+        if not result.success or not output:
+            raise RuntimeError(f"VHDX '{vhd_path}' konnte nicht gemountet werden: {result.error or result.output}")
+        return int(output.splitlines()[-1])
+
+    def dismount_vhd(self, session: winrm.Session, vhd_path: str) -> None:
+        """Best-effort -- wird auch beim Cleanup nach einem Fehler
+        aufgerufen, daher kein Raise bei Fehlschlag."""
+        escaped = vhd_path.replace("'", "''")
+        self._run_ps(session, f"Dismount-DiskImage -ImagePath '{escaped}' -ErrorAction SilentlyContinue")
+
+    def prepare_vhd_partition_path(self, session: winrm.Session, disk_number: int, mount_dir: str) -> str:
+        """Bindet die Datenpartition einer per mount_vhd gemounteten VHDX in
+        einen Ordner ein -- Gegenstueck zu prepare_data_partition_path fuer
+        den rohen LUN-Klon-Datentraeger, aber bewusst NICHT identisch:
+
+        1. Der rohe Klon-Datentraeger ist immer eine GPT-formatierte
+           Cluster-Shared-Volume-Disk (Type 'Basic'). Eine VHDX kann
+           dagegen beliebigen Gast-Inhalt haben -- z.B. MBR-partitioniert
+           (Type 'IFS' statt 'Basic', live gegen eine per diskpart
+           formatierte Test-VHDX verifiziert). Filterung erfolgt daher
+           per Ausschluss bekannter Nicht-Datenpartitionen (EFI-System,
+           MSR/Reserved, Recovery) statt auf einen einzelnen erwarteten
+           Typ zu pruefen.
+        2. mount_vhd mountet bewusst read-only (siehe dort) -- anders als
+           beim Klon-Datentraeger wird IsReadOnly hier NICHT zurueckgesetzt,
+           das wuerde dem Zweck des read-only Mounts widersprechen."""
+        escaped_dir = mount_dir.replace("'", "''")
+        script = (
+            f"$disk = Get-Disk -Number {disk_number}; "
+            f"if ($disk.IsOffline) {{ Set-Disk -Number {disk_number} -IsOffline $false }}; "
+            f"$part = Get-Partition -DiskNumber {disk_number} | "
+            "Where-Object { $_.Type -notin @('Reserved','System','Recovery') } "
+            "| Sort-Object Size -Descending | Select-Object -First 1; "
+            "if (-not $part) { throw 'Keine Datenpartition gefunden' }; "
+            f"if (-not (Test-Path '{escaped_dir}')) {{ New-Item -ItemType Directory -Path '{escaped_dir}' -Force | Out-Null }}; "
+            f"Add-PartitionAccessPath -DiskNumber {disk_number} -PartitionNumber $part.PartitionNumber -AccessPath '{escaped_dir}' "
+            "-ErrorAction Stop; "
+            f"'{escaped_dir}'"
+        )
+        result = self._run_ps(session, script)
+        if not result.success or not result.output.strip():
+            raise RuntimeError(f"VHDX-Partition konnte nicht eingebunden werden: {result.error or result.output}")
+        return result.output.strip()
+
+    def list_directory(self, session: winrm.Session, path: str) -> list[dict]:
+        """Listet den Inhalt eines Verzeichnisses (nur eine Ebene, nicht
+        rekursiv) fuer den Datei-Browser in der GUI. Gleiches defensives
+        JSON-Array-Handling wie list_vms/list_csvs: ConvertTo-Json liefert
+        bei genau einem Treffer ein einzelnes Objekt statt eines Arrays, bei
+        keinem Treffer eine leere Zeichenkette."""
+        # LastWriteTime muss explizit als ISO-8601-String ausgegeben werden
+        # (.ToString('o')) -- sonst liefert ConvertTo-Json das .NET-eigene
+        # '/Date(<ms>)/'-Format statt eines direkt parsbaren Zeitstempels
+        # (live gegen den echten Restore-Proxy-Host verifiziert, gleiche
+        # Kategorie Bug wie bei Enums, siehe get_cluster_summary).
+        escaped = path.replace("'", "''")
+        script = (
+            f"Get-ChildItem -Force -Path '{escaped}' -ErrorAction Stop | "
+            "Select-Object Name, @{N='IsDirectory';E={$_.PSIsContainer}}, Length, "
+            "@{N='ModifiedAt';E={$_.LastWriteTime.ToString('o')}} | "
+            "ConvertTo-Json -Depth 3"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Verzeichnis '{path}' konnte nicht gelesen werden: {result.error}")
+        output = result.output.strip()
+        if not output:
+            return []
+        raw = json.loads(output)
+        entries = raw if isinstance(raw, list) else [raw]
+        return [
+            {
+                "name": e.get("Name"),
+                "is_directory": bool(e.get("IsDirectory")),
+                "size_bytes": int(e["Length"]) if e.get("Length") is not None else None,
+                "modified_at": e.get("ModifiedAt"),
+            }
+            for e in entries
+            if e.get("Name")
+        ]
+
+    def copy_paths(self, session: winrm.Session, source_paths: list[str], destination_dir: str) -> None:
+        """Kopiert mehrere Dateien/Ordner (rekursiv) vom gemounteten
+        VHDX-Dateisystem in ein Zielverzeichnis auf dem Restore-Proxy-Host.
+        Jedes ausgewaehlte Element landet als eigener Datei-/Ordnername
+        unter destination_dir (keine flache Ablage, keine
+        Namens-Kollisionsbehandlung noetig, da destination_dir pro
+        Kopiervorgang frei waehlbar ist)."""
+        escaped_dest = destination_dir.replace("'", "''")
+        copy_cmds = "; ".join(
+            f"Copy-Item -Path '{p.replace(chr(39), chr(39) * 2)}' -Destination '{escaped_dest}' -Recurse -Force -ErrorAction Stop"
+            for p in source_paths
+        )
+        script = (
+            f"if (-not (Test-Path '{escaped_dest}')) {{ New-Item -ItemType Directory -Path '{escaped_dest}' -Force | Out-Null }}; "
+            f"{copy_cmds}"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Kopieren nach '{destination_dir}' fehlgeschlagen: {result.error}")

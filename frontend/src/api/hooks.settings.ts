@@ -48,6 +48,7 @@ export interface VersionInfo {
   last_discovery_at?: string | null;
   last_snapshot_reconciliation_at?: string | null;
   last_retention_cleanup_at?: string | null;
+  last_file_restore_expiry_at?: string | null;
 }
 
 export interface UserCreatePayload {

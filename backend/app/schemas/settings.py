@@ -14,6 +14,7 @@ class VersionInfo(BaseModel):
     last_discovery_at: str | None = None
     last_snapshot_reconciliation_at: str | None = None
     last_retention_cleanup_at: str | None = None
+    last_file_restore_expiry_at: str | None = None
 
 
 class PublicSettings(BaseModel):

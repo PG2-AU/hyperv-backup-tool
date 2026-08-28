@@ -206,6 +206,18 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
                 {initiator?.error ?? "Restore-Proxy-Host nicht erreichbar oder nicht konfiguriert."}
               </Alert>
             )}
+            {initiator?.configured && !initiator.file_restore_available && (
+              <Alert icon={<IconAlertTriangle size={16} />} color="yellow" variant="light">
+                Für den <strong>datei-basierten Restore</strong> (einzelne Dateien/Ordner aus einer
+                VHDX wiederherstellen) fehlt auf diesem Host das Storage-Cmdlet{" "}
+                <Text component="span" ff="monospace" size="sm">
+                  Mount-DiskImage
+                </Text>{" "}
+                (Bestandteil des Windows-eigenen Storage-Moduls, normalerweise ab Windows Server
+                2012 immer vorhanden). Normaler VHDX-Restore (Anhängen/Ersetzen) funktioniert
+                unabhängig davon.
+              </Alert>
+            )}
             <Group justify="flex-end">
               <Button onClick={() => setActive(1)} disabled={!initiator?.configured}>
                 Weiter

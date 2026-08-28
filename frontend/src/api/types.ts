@@ -555,6 +555,46 @@ export interface RestoreInitiatorInfo {
   configured: boolean;
   iqn?: string | null;
   error?: string | null;
+  file_restore_available: boolean;
+}
+
+export interface FileRestoreRunStep {
+  step: string;
+  label: string;
+  status: "pending" | "running" | "success" | "error" | "skipped";
+  message?: string | null;
+}
+
+export interface FileRestoreRun {
+  id: string;
+  vm_name: string;
+  source_vhd_path: string;
+  status: "running" | "succeeded" | "failed" | "cleaned_up";
+  browse_root_path?: string | null;
+  default_destination_path?: string | null;
+  cleanup_needed: boolean;
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: FileRestoreRunStep[];
+}
+
+export interface TriggerFileRestorePayload {
+  vm_name: string;
+  snapshot_id: string;
+  source_vhd_path: string;
+}
+
+export interface FileEntry {
+  name: string;
+  is_directory: boolean;
+  size_bytes?: number | null;
+  modified_at?: string | null;
+}
+
+export interface CopyFileRestoreSelectionPayload {
+  selected_paths: string[];
+  destination_path: string;
 }
 
 export interface RestoreProxyHostConfig {

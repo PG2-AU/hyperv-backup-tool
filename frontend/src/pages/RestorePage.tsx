@@ -5,16 +5,19 @@ import { IconDatabaseImport, IconInfoCircle, IconPlus, IconRefresh, IconSearch, 
 import { useSearchParams } from "react-router-dom";
 
 import {
+  useCleanupFileRestoreRun,
   useCleanupRestoreRun,
   useDeleteRestoreInfraConfig,
+  useFileRestoreRuns,
   useRestoreInfraConfigs,
   useRestoreRuns,
   useVmsWithBackups,
 } from "@/api/hooks";
+import { FileRestoreSessionModal } from "@/components/FileRestoreSessionModal";
 import { RestoreSetupWizardModal } from "@/components/RestoreSetupWizardModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { VmRecreateWizardModal } from "@/components/VmRecreateWizardModal";
-import type { VmWithBackups } from "@/api/types";
+import type { FileRestoreRun, VmWithBackups } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 
@@ -30,12 +33,17 @@ export function RestorePage() {
   const [wizardVm, setWizardVm] = useState<VmWithBackups | null>(null);
   const [recreateVm, setRecreateVm] = useState<VmWithBackups | null>(null);
 
+  const { data: fileRestoreRuns } = useFileRestoreRuns();
+  const cleanupFileRestoreRun = useCleanupFileRestoreRun();
+  const [openFileSession, setOpenFileSession] = useState<FileRestoreRun | null>(null);
+
   const { data: restoreConfigs } = useRestoreInfraConfigs();
   const deleteRestoreConfig = useDeleteRestoreInfraConfig();
   const [restoreWizardOpen, setRestoreWizardOpen] = useState(false);
   const [vmSearch, setVmSearch] = useState("");
 
   const cleanupPending = runs?.filter((r) => r.cleanup_needed) ?? [];
+  const openFileSessions = fileRestoreRuns?.filter((r) => r.cleanup_needed) ?? [];
   const filteredVms = (vms ?? []).filter((vm) => vm.name.toLowerCase().includes(vmSearch.trim().toLowerCase()));
 
   function handleCleanup(runId: string, vmName: string) {
@@ -47,6 +55,19 @@ export function RestorePage() {
         cleanupRun.mutate(runId, {
           onSuccess: () => notifications.show({ title: "Cleanup abgeschlossen", message: vmName, color: "blue" }),
           onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Cleanup fehlgeschlagen."), color: "red" }),
+        }),
+    });
+  }
+
+  function handleCleanupFileSession(runId: string, vmName: string) {
+    confirmAction({
+      title: "Session aufräumen",
+      message: `VHDX für '${vmName}' aushängen und temporären LUN-Klon entfernen?`,
+      confirmLabel: "Aufräumen",
+      onConfirm: () =>
+        cleanupFileRestoreRun.mutate(runId, {
+          onSuccess: () => notifications.show({ title: "Aufgeräumt", message: vmName, color: "blue" }),
+          onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Aufräumen fehlgeschlagen."), color: "red" }),
         }),
     });
   }
@@ -97,6 +118,52 @@ export function RestorePage() {
                     >
                       Cleanup durchführen
                     </Button>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Stack>
+      )}
+
+      {openFileSessions.length > 0 && (
+        <Stack gap="xs">
+          <Text size="sm" fw={600}>
+            Offene Datei-Restore-Sessions
+          </Text>
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>VM</Table.Th>
+                <Table.Th>VHDX</Table.Th>
+                <Table.Th>Geöffnet seit</Table.Th>
+                <Table.Th />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {openFileSessions.map((r) => (
+                <Table.Tr key={r.id}>
+                  <Table.Td>{r.vm_name}</Table.Td>
+                  <Table.Td ff="monospace" fz="xs">
+                    {r.source_vhd_path.split("\\").pop()}
+                  </Table.Td>
+                  <Table.Td>{r.finished_at ? new Date(r.finished_at).toLocaleString("de-DE") : "-"}</Table.Td>
+                  <Table.Td>
+                    <Group gap="xs" justify="flex-end">
+                      <Button size="xs" variant="default" onClick={() => setOpenFileSession(r)}>
+                        Erneut öffnen
+                      </Button>
+                      <Button
+                        size="xs"
+                        color="red"
+                        variant="light"
+                        leftSection={<IconTrash size={14} />}
+                        loading={cleanupFileRestoreRun.isPending}
+                        onClick={() => handleCleanupFileSession(r.id, r.vm_name)}
+                      >
+                        Aufräumen
+                      </Button>
+                    </Group>
                   </Table.Td>
                 </Table.Tr>
               ))}
@@ -277,6 +344,7 @@ export function RestorePage() {
       <RestoreWizardModal opened={!!wizardVm} onClose={() => setWizardVm(null)} vm={wizardVm} />
       <VmRecreateWizardModal opened={!!recreateVm} onClose={() => setRecreateVm(null)} vm={recreateVm} />
       <RestoreSetupWizardModal opened={restoreWizardOpen} onClose={() => setRestoreWizardOpen(false)} />
+      <FileRestoreSessionModal opened={!!openFileSession} onClose={() => setOpenFileSession(null)} run={openFileSession} />
     </Stack>
   );
 }

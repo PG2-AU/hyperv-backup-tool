@@ -35,6 +35,10 @@ class InitiatorInfo(BaseModel):
     configured: bool
     iqn: str | None = None
     error: str | None = None
+    # Fuer den datei-basierten Restore (Mount-VHD auf dem Proxy) benoetigt --
+    # separat von 'configured', da der Proxy fuer den normalen VHDX-Restore
+    # (anhaengen/ersetzen) auch ohne dieses Feature vollstaendig funktioniert.
+    file_restore_available: bool = False
 
 
 class LifCandidate(BaseModel):
@@ -162,7 +166,11 @@ def get_initiator(db: Session = Depends(get_db), user=Depends(require_permission
         return InitiatorInfo(configured=False, error=exc.detail)
     except (HyperVConnectionError, RuntimeError) as exc:
         return InitiatorInfo(configured=False, error=str(exc))
-    return InitiatorInfo(configured=True, iqn=iqn)
+    try:
+        file_restore_available = service.check_vhd_mount_available(session)
+    except (HyperVConnectionError, RuntimeError):
+        file_restore_available = False
+    return InitiatorInfo(configured=True, iqn=iqn, file_restore_available=file_restore_available)
 
 
 def _get_cluster_or_404(db: Session, cluster_id: str) -> NetAppCluster:

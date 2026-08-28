@@ -36,6 +36,10 @@ import type {
   RestoreProxyHostWrite,
   RestoreRun,
   TriggerRestorePayload,
+  CopyFileRestoreSelectionPayload,
+  FileEntry,
+  FileRestoreRun,
+  TriggerFileRestorePayload,
   VmBackupRun,
   VmRecreateRun,
   VmWithBackups,
@@ -675,5 +679,61 @@ export function useCleanupRestoreRun() {
   return useMutation({
     mutationFn: async (id: string) => (await apiClient.post<RestoreRun>(`/restore/runs/${id}/cleanup`)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restore-runs"] }),
+  });
+}
+
+// --- Datei-basierter Restore: VHDX auf dem Restore-Proxy-Host mounten und
+// durchsuchen, statt die ganze Platte auf eine CSV zu kopieren (siehe
+// backend/app/api/routes/file_restore.py). Gleiche Hook-Muster wie beim
+// normalen Restore oben (Trigger-Mutation + Poll-Query + Cleanup-Mutation),
+// zusaetzlich eine Browse-Query fuer den Datei-Browser im Wizard.
+
+export function useTriggerFileRestore() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: TriggerFileRestorePayload) =>
+      (await apiClient.post<FileRestoreRun>("/file-restore/runs", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["file-restore-runs"] }),
+  });
+}
+
+export function useFileRestoreRun(id: string | undefined, poll: boolean) {
+  return useQuery({
+    queryKey: ["file-restore-run", id],
+    queryFn: async () => (await apiClient.get<FileRestoreRun>(`/file-restore/runs/${id}`)).data,
+    enabled: !!id,
+    refetchInterval: (query) => (poll && query.state.data?.status === "running" ? 3000 : false),
+  });
+}
+
+export function useFileRestoreRuns() {
+  return useQuery({
+    queryKey: ["file-restore-runs"],
+    queryFn: async () => (await apiClient.get<FileRestoreRun[]>("/file-restore/runs")).data,
+    refetchInterval: 15_000,
+  });
+}
+
+export function useBrowseFileRestore(runId: string | undefined, path: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ["file-restore-browse", runId, path],
+    queryFn: async () =>
+      (await apiClient.get<FileEntry[]>(`/file-restore/runs/${runId}/browse`, { params: path ? { path } : {} })).data,
+    enabled: enabled && !!runId,
+  });
+}
+
+export function useCopyFileRestoreSelection(runId: string | undefined) {
+  return useMutation({
+    mutationFn: async (payload: CopyFileRestoreSelectionPayload) =>
+      (await apiClient.post(`/file-restore/runs/${runId}/copy`, payload)).data,
+  });
+}
+
+export function useCleanupFileRestoreRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<FileRestoreRun>(`/file-restore/runs/${id}/cleanup`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["file-restore-runs"] }),
   });
 }

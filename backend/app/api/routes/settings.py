@@ -87,4 +87,9 @@ def get_version(db: Session = Depends(get_db), user=Depends(get_current_user)) -
             if scheduler_status and scheduler_status.last_retention_cleanup_at
             else None
         ),
+        last_file_restore_expiry_at=(
+            scheduler_status.last_file_restore_expiry_at.isoformat()
+            if scheduler_status and scheduler_status.last_file_restore_expiry_at
+            else None
+        ),
     )

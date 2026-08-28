@@ -34,6 +34,9 @@ export function VersionFooter() {
         <Text size="xs" c="dimmed">
           Retention-Cleanup: {formatTimestamp(version.last_retention_cleanup_at)}
         </Text>
+        <Text size="xs" c="dimmed">
+          Datei-Restore-Sicherheitsnetz: {formatTimestamp(version.last_file_restore_expiry_at)}
+        </Text>
       </Stack>
     </Tooltip>
   );

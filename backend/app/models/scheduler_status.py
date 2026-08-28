@@ -22,3 +22,4 @@ class SchedulerStatus(Base):
     last_discovery_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_snapshot_reconciliation_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_retention_cleanup_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_file_restore_expiry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

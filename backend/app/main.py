@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
     auth,
+    file_restore,
     hyperv_clusters,
     jobs,
     logs,
@@ -67,6 +68,7 @@ app.include_router(users.router)
 app.include_router(settings_routes.router)
 app.include_router(restore_infra.router)
 app.include_router(restore.router)
+app.include_router(file_restore.router)
 
 
 @app.get("/api/health")

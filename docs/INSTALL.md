@@ -182,6 +182,33 @@ podman logs --tail 50 hvnb-backup        # Logs ansehen
 podman start hvnb-backup                 # falls doch einmal gestoppt
 ```
 
+## Schritt 6: Restore-Proxy-Host -- Voraussetzung fuer Datei-basierten Restore
+
+Der Restore-Proxy-Host (dedizierter Windows-Host, siehe Restore > Setup >
+Restore-Infrastruktur einrichten) braucht fuer den **normalen** VHDX-Restore
+(Anhaengen/Ersetzen) nur den nativen Windows-iSCSI-Initiator.
+
+Fuer den **datei-basierten Restore** (einzelne Dateien/Ordner direkt aus
+einer VHDX wiederherstellen, ohne die ganze Platte zu kopieren) mountet die
+App die VHDX auf dem Proxy per `Mount-DiskImage` (Windows-eigenes
+Storage-Modul, Bestandteil von Windows Server seit 2012). **Wichtiger
+Irrtum, live korrigiert:** urspruenglich war dafuer `Mount-VHD` aus dem
+Hyper-V-PowerShell-Modul vorgesehen -- das schlaegt auf einem Host OHNE
+echte Hyper-V-Rolle mit "could not access an expected WMI class" fehl, da
+es den Virtual Machine Management Service braucht, nicht nur ein
+Verwaltungsmodul. `Mount-DiskImage` nutzt stattdessen den
+Windows-eigenen Virtual-Disk-Dienst (denselben, den auch
+`diskpart attach vdisk` verwendet) und funktioniert dadurch auch auf einem
+reinen iSCSI-Proxy-Host ohne jede Hyper-V-Komponente -- **kein
+zusaetzliches Feature/Rolle noetig.**
+
+Der Restore-Setup-Wizard (Restore > Setup) prueft die Verfuegbarkeit von
+`Mount-DiskImage` trotzdem automatisch beim Abfragen der Initiator-IQN und
+zeigt einen Hinweis, falls es auf dem konfigurierten Proxy-Host fehlen
+sollte (`GET /api/restore-infra/initiator`, Feld `file_restore_available`)
+-- als Absicherung fuer sehr alte Windows-Server-Versionen, in der Praxis
+aber praktisch immer erfuellt.
+
 ## Offene Schritte
 
 - [x] `/api/health` bestaetigt (lokal und extern)

@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # laeuft komplett in UTC, ein in der GUI eingetragenes '08:30' meint
     # aber die lokale Ortszeit des Admins, nicht UTC.
     schedule_timezone: str = "Europe/Vienna"
+    # Sicherheitsnetz fuer Datei-Restore-Sessions (app.core.scheduler,
+    # run_file_restore_expiry): eine vergessene, offen gemountete VHDX wird
+    # nach dieser Anzahl Stunden automatisch aufgeraeumt, auch ohne
+    # manuellen Klick des Nutzers.
+    file_restore_max_age_hours: int = 24
 
     # --- HTTPS / GUI ---
     tls_cert_path: str = "/etc/hvnb/certs/server.crt"
