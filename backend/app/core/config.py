@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     healthcheck_interval_minutes: int = 15
     discovery_interval_minutes: int = 240
     snapshot_reconcile_hour: int = 2  # 0-23, taeglich zu dieser Stunde (UTC)
+    # Zeitzone, in der die Uhrzeiten in Backup > Zeitplaene interpretiert
+    # werden (IANA-Name, z.B. "Europe/Vienna") -- der Container selbst
+    # laeuft komplett in UTC, ein in der GUI eingetragenes '08:30' meint
+    # aber die lokale Ortszeit des Admins, nicht UTC.
+    schedule_timezone: str = "Europe/Vienna"
 
     # --- HTTPS / GUI ---
     tls_cert_path: str = "/etc/hvnb/certs/server.crt"
