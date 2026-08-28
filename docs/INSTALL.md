@@ -140,6 +140,48 @@ netsh interface portproxy delete v4tov4 listenport=8443 listenaddress=0.0.0.0
 netsh interface portproxy add v4tov4 listenport=8443 listenaddress=0.0.0.0 connectport=8443 connectaddress=<neue-WSL2-IP>
 ```
 
+## Schritt 5: Container-Persistenz absichern (rootless Podman + WSL2)
+
+**Beobachtetes Problem:** Der Container wurde mehrfach beobachtet als
+`Exited (0)` vorgefunden (kein Absturz/OOM, `podman inspect` zeigte
+`Error=""`), GUI dadurch nicht erreichbar. `docker-compose.yml` setzt zwar
+bereits `restart: unless-stopped` -- das reicht bei **rootless** Podman
+(kein dauerhafter Root-Daemon wie bei Docker) aber nicht automatisch aus:
+die Restart-Policy wird nur durchgesetzt, solange die systemd--user-Instanz
+des Benutzers laeuft. Unter WSL2 kann diese durch einen Windows-Sleep/
+Ruhezustand oder einen `wsl --shutdown` unterbrochen werden; ohne aktives
+Login-Session-Aequivalent (Lingering) faehrt systemd die Benutzerprozesse
+inkl. Container dann herunter, statt sie neu zu starten.
+
+**Fix, verifiziert auf `svaudemo7-hvnb`:**
+
+```bash
+# Erlaubt der systemd--user-Instanz von 'admin', unabhaengig von einer
+# aktiven Login-Session zu laufen (auch nach Reboot/WSL2-Neustart) --
+# ohne das wuerde rootless Podman keine Restart-Policy durchsetzen koennen.
+sudo loginctl enable-linger admin
+
+# Startet beim (Re-)Start der systemd--user-Instanz automatisch alle
+# Container mit passender Restart-Policy neu (podman-eigener Mechanismus,
+# analog zu dockerd's eingebautem Verhalten) -- deckt genau den Fall ab,
+# dass die Container-Liste nach einem Aussetzer leer ist.
+systemctl --user enable podman-restart.service
+```
+
+Danach: `podman ps -a` zeigte den Container weiterhin als gestoppt vor
+(Policy greift erst beim naechsten systemd--user-Start/Boot, nicht
+rueckwirkend) -- einmalig manuell mit `podman start hvnb-backup`
+nachgeholt. Ob das WSL2-Aussetzer-Muster damit vollstaendig behoben ist,
+zeigt sich erst beim naechsten tatsaechlichen Host-Sleep/Neustart.
+
+**Status-Check / manueller Eingriff bei Bedarf:**
+
+```bash
+podman ps -a --filter name=hvnb-backup   # Status pruefen
+podman logs --tail 50 hvnb-backup        # Logs ansehen
+podman start hvnb-backup                 # falls doch einmal gestoppt
+```
+
 ## Offene Schritte
 
 - [x] `/api/health` bestaetigt (lokal und extern)
