@@ -4,9 +4,9 @@ import {
   IconChevronsRight,
   IconCpu,
   IconDatabase,
-  IconDatabaseExport,
   IconFileText,
   IconFolder,
+  IconHistory,
   IconInfoCircle,
   IconNetwork,
   IconPlayerPlay,
@@ -378,7 +378,7 @@ export function VmsPage() {
                       </Tooltip>
                       <Tooltip label="Backups anzeigen">
                         <ActionIcon variant="light" onClick={() => showBackups("vm", vm.name)}>
-                          <IconDatabaseExport size={16} />
+                          <IconHistory size={16} />
                         </ActionIcon>
                       </Tooltip>
                     </Group>
@@ -474,7 +474,7 @@ export function VmsPage() {
                         </Tooltip>
                         <Tooltip label="Backups anzeigen">
                           <ActionIcon variant="light" onClick={() => showBackups("csv", csv.name)}>
-                            <IconDatabaseExport size={16} />
+                            <IconHistory size={16} />
                           </ActionIcon>
                         </Tooltip>
                       </Group>
