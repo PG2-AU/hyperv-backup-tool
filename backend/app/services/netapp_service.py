@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,6 +37,7 @@ from netapp_ontap.resources import (
     IpInterface,
     IscsiCredentials,
     IscsiService,
+    Job,
     Lun,
     LunMap,
     Metrocluster,
@@ -1051,20 +1053,53 @@ class NetAppOntapService:
                 raise NetAppConnectionError(f"SnapMirror-Initialisierung fehlgeschlagen: {exc}") from exc
 
     def update_snapmirror_relationship(self, uuid: str, *, policy_name: str | None = None, schedule_name: str | None = None) -> None:
-        # Direkte Attribut-Zuweisung statt from_dict() (siehe update_volume).
-        # Ein leerer String bei schedule_name bedeutet "Schedule entfernen" --
-        # ONTAP verlangt dafuer explizit {"uuid": null, "name": null} statt
-        # eines leeren Namens (siehe REST-API-Doku zu transfer_schedule).
-        with self._connection():
+        # SDK-Limitation (live verifiziert): SnapmirrorRelationship.patch()
+        # sendet nur die per Attribut-Diff berechnete Aenderung
+        # (_get_changed_data()). Ein Feld auf None zu setzen -- egal ob
+        # direkt, verschachtelt ({"uuid": None, "name": None}) oder per
+        # from_dict() -- erzeugt dabei NIE einen Unterschied zur (ebenfalls
+        # None/unset) Baseline eines frisch konstruierten Objekts; das Feld
+        # verschwindet also komplett aus dem gesendeten Body und ONTAP
+        # aendert nichts, obwohl patch() erfolgreich zurueckkehrt (Bug: ein
+        # in der GUI auf "kein Zeitplan" gesetztes SnapMirror-Update liess
+        # den alten Zeitplan unveraendert stehen). Auch ein leeres Dict
+        # {"transfer_schedule": {}} wird von ONTAP als No-Op interpretiert.
+        # Einzig ein roher PATCH-Request mit echtem JSON-null fuer
+        # transfer_schedule loescht den Zeitplan tatsaechlich -- dafuer wird
+        # hier bewusst am SDK-Objektmodell vorbei direkt ueber die
+        # Connection-Session gearbeitet, inkl. Warten auf den dabei
+        # gestarteten Async-Job (wie poll=True bei den SDK-Aufrufen sonst).
+        body: dict = {}
+        if policy_name is not None:
+            body["policy"] = {"name": policy_name}
+        if schedule_name is not None:
+            body["transfer_schedule"] = {"name": schedule_name} if schedule_name else None
+        if not body:
+            return
+        with self._connection() as conn:
             rel = SnapmirrorRelationship(uuid=uuid)
-            if policy_name is not None:
-                rel.policy = {"name": policy_name}
-            if schedule_name is not None:
-                rel.transfer_schedule = {"uuid": None, "name": None} if schedule_name == "" else {"name": schedule_name}
-            try:
-                rel.patch(poll=True, poll_timeout=60)
-            except NetAppRestError as exc:
-                raise NetAppConnectionError(f"SnapMirror-Beziehung konnte nicht geändert werden: {exc}") from exc
+            url = f"{conn.origin}{rel.instance_location}"
+            response = conn.session.patch(url, data=json.dumps(body), headers={"Content-Type": "application/json"})
+            if response.status_code >= 400:
+                raise NetAppConnectionError(f"SnapMirror-Beziehung konnte nicht geändert werden: {response.text}")
+            job_uuid = response.json().get("job", {}).get("uuid") if response.content else None
+            if job_uuid:
+                # Job.poll() erwartet laut SDK-Fehlermeldung ('No requests
+                # have been made for Job ...'), auf demselben Objekt zuvor
+                # bereits ein post()/patch() gemacht zu haben -- fuer einen
+                # frisch aus der Job-UUID der Rohantwort konstruierten Job
+                # nicht nutzbar (live verifiziert). Eigene, simple Poll-
+                # Schleife stattdessen.
+                for _ in range(30):
+                    job = Job(uuid=job_uuid)
+                    job.get()
+                    if job.state in ("success", "failure"):
+                        if job.state == "failure":
+                            raise NetAppConnectionError(
+                                f"SnapMirror-Beziehung konnte nicht geändert werden: {getattr(job, 'message', 'Job fehlgeschlagen')}"
+                            )
+                        break
+                    time.sleep(2)
 
     def generate_cluster_peer_passphrase(self) -> tuple[str, list[str]]:
         """Erzeugt eine Peering-Passphrase auf diesem Cluster (Schritt 1 des
