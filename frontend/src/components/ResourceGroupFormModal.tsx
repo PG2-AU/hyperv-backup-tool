@@ -11,6 +11,7 @@ import {
   type ResourceGroupWritePayload,
 } from "@/api/hooks";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
+import { SnapMirrorCheckPanel } from "@/components/SnapMirrorCheckPanel";
 import type { BackupScope, ResourceGroup } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 
@@ -120,6 +121,11 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
             value={policyIds}
             onChange={handlePolicyIdsChange}
             searchable
+          />
+
+          <SnapMirrorCheckPanel
+            enabled={(policies ?? []).some((p) => policyIds.includes(p.id) && p.snapmirror_update)}
+            groups={[{ scope, members }]}
           />
 
           <Group justify="flex-end" mt="sm">

@@ -441,6 +441,20 @@ export interface MetroClusterStatus {
 }
 
 export type BackupScope = "vm" | "csv" | "lun";
+
+export interface SnapMirrorCheckGroup {
+  scope: BackupScope;
+  members: string[];
+}
+
+export interface SnapMirrorCheckResult {
+  svm_name: string;
+  volume_name: string;
+  members: string[];
+  has_relationship: boolean;
+  policy_name?: string | null;
+  destination_path?: string | null;
+}
 export type ConsistencyType = "ApplicationConsistent" | "CrashConsistent";
 export type JobStatus =
   | "pending"

@@ -2,8 +2,16 @@ import { useEffect, useState } from "react";
 import { Button, Group, Modal, NumberInput, Select, Stack, Switch, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 
-import { useCreatePolicy, useSchedules, useSnapMirrorLabels, useUpdatePolicy, type BackupPolicyWritePayload } from "@/api/hooks";
+import {
+  useCreatePolicy,
+  useResourceGroups,
+  useSchedules,
+  useSnapMirrorLabels,
+  useUpdatePolicy,
+  type BackupPolicyWritePayload,
+} from "@/api/hooks";
 import { ScheduleFormModal } from "@/components/ScheduleFormModal";
+import { SnapMirrorCheckPanel } from "@/components/SnapMirrorCheckPanel";
 import { SnapMirrorLabelFormModal } from "@/components/SnapMirrorLabelFormModal";
 import type { BackupPolicy, RetentionType } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
@@ -24,7 +32,14 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
   const updatePolicy = useUpdatePolicy();
   const { data: schedules } = useSchedules();
   const { data: labels } = useSnapMirrorLabels();
+  const { data: resourceGroups } = useResourceGroups();
   const isEdit = !!policy;
+
+  // Nur im Bearbeiten-Modus bekannt: die Protection Groups, die diese
+  // Policy bereits verwenden -- eine neue, noch nicht verknuepfte Policy
+  // hat noch keine Objekte/Volumes, die sich pruefen liessen (siehe
+  // Nutzer-Entscheidung: Pruefung erst nach der Verknuepfung).
+  const linkedGroups = isEdit ? (resourceGroups ?? []).filter((g) => g.policies.some((p) => p.id === policy!.id)) : [];
 
   const [name, setName] = useState("");
   const [scheduleId, setScheduleId] = useState<string | null>(null);
@@ -121,6 +136,11 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
             label="SnapMirror-Update nach Snapshot"
             checked={snapmirrorUpdate}
             onChange={(e) => setSnapmirrorUpdate(e.currentTarget.checked)}
+          />
+
+          <SnapMirrorCheckPanel
+            enabled={snapmirrorUpdate && isEdit}
+            groups={linkedGroups.map((g) => ({ scope: g.scope, members: g.members }))}
           />
 
           <Select

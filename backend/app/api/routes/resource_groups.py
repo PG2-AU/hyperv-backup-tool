@@ -3,13 +3,16 @@ buendeln VMs oder CSVs zu einer benannten Gruppe (z.B. 'Bronze'), die mit
 einer oder mehreren Backup-Policies verknuepft wird. Protection Group +
 Policy zusammen ergeben die Backup-Definition."""
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.core.rbac import Permission
 from app.db.session import get_db
-from app.models.backup_policy import BackupPolicy
+from app.models.backup_policy import BackupPolicy, BackupScope
+from app.models.hyperv_discovery import HyperVCsv, HyperVVhd
+from app.models.netapp_discovery import NetAppSnapMirrorRelationship
 from app.models.resource_group import ResourceGroup
 from app.schemas.resource_group import ResourceGroupRead, ResourceGroupWrite
 
@@ -77,6 +80,94 @@ def update_resource_group(
     db.commit()
     db.refresh(group)
     return group
+
+
+class SnapMirrorCheckGroup(BaseModel):
+    scope: BackupScope
+    members: list[str]
+
+
+class SnapMirrorCheckRequest(BaseModel):
+    groups: list[SnapMirrorCheckGroup]
+
+
+class SnapMirrorCheckResult(BaseModel):
+    svm_name: str
+    volume_name: str
+    members: list[str]
+    has_relationship: bool
+    policy_name: str | None = None
+    destination_path: str | None = None
+
+
+@router.post("/check-snapmirror", response_model=list[SnapMirrorCheckResult])
+def check_snapmirror(
+    payload: SnapMirrorCheckRequest, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW)),
+) -> list[SnapMirrorCheckResult]:
+    """Loest die VM/CSV-Mitglieder einer oder mehrerer (noch nicht
+    gespeicherter) Protection-Group-Auswahlen auf ihre zugrunde liegenden
+    NetApp-Volumes auf und prueft, ob dafuer bereits eine SnapMirror-
+    Beziehung discovert wurde (NetAppSnapMirrorRelationship, periodisch per
+    Discovery befuellt -- kein Live-ONTAP-Aufruf noetig). Wird vom
+    Policy-/Protection-Group-Formular aufgerufen, sobald eine Policy mit
+    aktivem 'SnapMirror-Update nach Snapshot' auf ausgewaehlte Objekte
+    angewendet werden soll (siehe SnapMirrorCheckPanel.tsx im Frontend)."""
+    # (svm_name, volume_name) -> Menge der VM-/CSV-Namen, die darauf liegen
+    volume_members: dict[tuple[str, str], set[str]] = {}
+
+    for group in payload.groups:
+        if not group.members:
+            continue
+        # csv_name -> Menge der urspruenglich ausgewaehlten Namen (VM oder
+        # CSV), die tatsaechlich ueber dieses CSV auf dem Volume liegen --
+        # bei scope=vm wird das ueber die VHD-Zuordnung aufgeloest, damit
+        # eine VM nicht faelschlich allen Volumes der gesamten Gruppe
+        # zugerechnet wird, nur weil eine ANDERE VM der Gruppe dort liegt.
+        csv_to_names: dict[str, set[str]] = {}
+        if group.scope == BackupScope.CSV:
+            for name in group.members:
+                csv_to_names.setdefault(name, set()).add(name)
+        else:
+            rows = (
+                db.query(HyperVVhd.vm_name, HyperVVhd.csv_name)
+                .filter(HyperVVhd.vm_name.in_(group.members))
+                .distinct()
+                .all()
+            )
+            for row in rows:
+                if row.csv_name:
+                    csv_to_names.setdefault(row.csv_name, set()).add(row.vm_name)
+
+        if not csv_to_names:
+            continue
+        csvs = db.query(HyperVCsv).filter(HyperVCsv.name.in_(csv_to_names.keys())).all()
+        for csv in csvs:
+            if not csv.netapp_svm_name or not csv.netapp_volume_name:
+                continue
+            key = (csv.netapp_svm_name, csv.netapp_volume_name)
+            volume_members.setdefault(key, set()).update(csv_to_names.get(csv.name, set()))
+
+    if not volume_members:
+        return []
+
+    # Discovert-Beziehungen einmal laden statt pro Volume einzeln zu fragen.
+    relationships = {
+        rel.source_path: rel
+        for rel in db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.source_path.isnot(None)).all()
+    }
+
+    results: list[SnapMirrorCheckResult] = []
+    for (svm_name, volume_name), members in volume_members.items():
+        rel = relationships.get(f"{svm_name}:{volume_name}")
+        results.append(
+            SnapMirrorCheckResult(
+                svm_name=svm_name, volume_name=volume_name, members=sorted(members),
+                has_relationship=rel is not None,
+                policy_name=rel.policy_name if rel else None,
+                destination_path=rel.destination_path if rel else None,
+            )
+        )
+    return results
 
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -40,6 +40,8 @@ import type {
   FileEntry,
   FileRestoreRun,
   TriggerFileRestorePayload,
+  SnapMirrorCheckGroup,
+  SnapMirrorCheckResult,
   VmBackupRun,
   VmRecreateRun,
   VmWithBackups,
@@ -373,6 +375,13 @@ export function useUpdateResourceGroup() {
       queryClient.invalidateQueries({ queryKey: ["vms"] });
       queryClient.invalidateQueries({ queryKey: ["csvs"] });
     },
+  });
+}
+
+export function useCheckSnapMirror() {
+  return useMutation({
+    mutationFn: async (groups: SnapMirrorCheckGroup[]) =>
+      (await apiClient.post<SnapMirrorCheckResult[]>("/resource-groups/check-snapmirror", { groups })).data,
   });
 }
 
