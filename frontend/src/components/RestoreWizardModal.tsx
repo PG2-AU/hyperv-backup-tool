@@ -27,6 +27,7 @@ import {
   useVms,
 } from "@/api/hooks";
 import { FileBrowser } from "@/components/FileBrowser";
+import { SelectedFileList } from "@/components/SelectedFileList";
 import type { RestoreMode, RestoreRun, VmWithBackups } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
@@ -67,7 +68,7 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
   // Datei-basierter Restore: eigener Ablauf ab Schritt "Start" (mounten
   // statt kopieren+anhaengen, siehe FileBrowser/file-restore-Endpunkte).
   const [fileRunId, setFileRunId] = useState<string | null>(null);
-  const [selectedFsPaths, setSelectedFsPaths] = useState<Set<string>>(new Set());
+  const [selectedFsPaths, setSelectedFsPaths] = useState<Map<string, boolean>>(new Map());
   const [destinationPath, setDestinationPath] = useState("");
   const [lastCopyResult, setLastCopyResult] = useState<"success" | "error" | null>(null);
 
@@ -106,7 +107,7 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
       setCurrentRunId(null);
       setFinishedRuns([]);
       setFileRunId(null);
-      setSelectedFsPaths(new Set());
+      setSelectedFsPaths(new Map());
       setDestinationPath("");
       setLastCopyResult(null);
     }
@@ -180,11 +181,19 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
     setActive(3);
   }
 
-  function handleToggleFsPath(path: string, checked: boolean) {
+  function handleToggleFsPath(path: string, isDirectory: boolean, checked: boolean) {
     setSelectedFsPaths((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(path);
+      const next = new Map(prev);
+      if (checked) next.set(path, isDirectory);
       else next.delete(path);
+      return next;
+    });
+  }
+
+  function handleRemoveFsPath(path: string) {
+    setSelectedFsPaths((prev) => {
+      const next = new Map(prev);
+      next.delete(path);
       return next;
     });
   }
@@ -192,16 +201,16 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
   function handleCopySelection() {
     if (selectedFsPaths.size === 0 || !destinationPath) return;
     copySelection.mutate(
-      { selected_paths: Array.from(selectedFsPaths), destination_path: destinationPath },
+      { selected_paths: Array.from(selectedFsPaths.keys()), destination_path: destinationPath },
       {
         onSuccess: () => {
           setLastCopyResult("success");
-          setSelectedFsPaths(new Set());
-          notifications.show({ title: "Kopiert", message: `Nach ${destinationPath} kopiert.`, color: "green" });
+          setSelectedFsPaths(new Map());
+          notifications.show({ title: "Restore abgeschlossen", message: `Nach ${destinationPath} wiederhergestellt.`, color: "green" });
         },
         onError: (err) => {
           setLastCopyResult("error");
-          notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Kopieren fehlgeschlagen."), color: "red" });
+          notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Restore fehlgeschlagen."), color: "red" });
         },
       },
     );
@@ -415,15 +424,16 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
                     selected={selectedFsPaths}
                     onToggleSelect={handleToggleFsPath}
                   />
-                  <Text size="sm">{selectedFsPaths.size} Element(e) ausgewählt.</Text>
+                  <SelectedFileList rootPath={fileRun.browse_root_path} selected={selectedFsPaths} onRemove={handleRemoveFsPath} />
                   <TextInput
-                    label="Zielpfad auf dem Restore-Proxy-Host"
+                    label="Zielpfad"
+                    description={'Lokal auf dem Restore-Proxy-Host, oder ein UNC-Pfad zu einem anderen Rechner (z.B. \\\\ZIELSERVER\\C$\\Ordner)'}
                     value={destinationPath}
                     onChange={(e) => setDestinationPath(e.currentTarget.value)}
                   />
                   {lastCopyResult === "success" && (
                     <Alert icon={<IconCheck size={16} />} color="green" variant="light">
-                      Zuletzt ausgewählte Elemente wurden kopiert.
+                      Zuletzt ausgewählte Elemente wurden wiederhergestellt.
                     </Alert>
                   )}
                   <Text size="xs" c="dimmed">
@@ -438,7 +448,7 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
                       loading={copySelection.isPending}
                       disabled={selectedFsPaths.size === 0 || !destinationPath}
                     >
-                      Kopieren
+                      Restore
                     </Button>
                     <Button onClick={onClose}>Fertig</Button>
                   </Group>

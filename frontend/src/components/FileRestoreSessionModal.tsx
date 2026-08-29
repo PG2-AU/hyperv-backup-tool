@@ -5,6 +5,7 @@ import { IconCheck } from "@tabler/icons-react";
 
 import { useCopyFileRestoreSelection } from "@/api/hooks";
 import { FileBrowser } from "@/components/FileBrowser";
+import { SelectedFileList } from "@/components/SelectedFileList";
 import type { FileRestoreRun } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 
@@ -25,15 +26,23 @@ interface FileRestoreSessionModalProps {
  * Aktion in der Tabelle "Offene Datei-Restore-Sessions" (RestorePage.tsx,
  * mit eigener Bestaetigung) oder automatisch per Zeitlimit moeglich. */
 export function FileRestoreSessionModal({ opened, onClose, run }: FileRestoreSessionModalProps) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Map<string, boolean>>(new Map());
   const [destinationPath, setDestinationPath] = useState(run?.default_destination_path ?? "");
   const copySelection = useCopyFileRestoreSelection(run?.id);
 
-  function handleToggleSelect(path: string, checked: boolean) {
+  function handleToggleSelect(path: string, isDirectory: boolean, checked: boolean) {
     setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(path);
+      const next = new Map(prev);
+      if (checked) next.set(path, isDirectory);
       else next.delete(path);
+      return next;
+    });
+  }
+
+  function handleRemove(path: string) {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      next.delete(path);
       return next;
     });
   }
@@ -41,13 +50,13 @@ export function FileRestoreSessionModal({ opened, onClose, run }: FileRestoreSes
   function handleCopy() {
     if (!run || selected.size === 0 || !destinationPath) return;
     copySelection.mutate(
-      { selected_paths: Array.from(selected), destination_path: destinationPath },
+      { selected_paths: Array.from(selected.keys()), destination_path: destinationPath },
       {
         onSuccess: () => {
-          setSelected(new Set());
-          notifications.show({ title: "Kopiert", message: `Nach ${destinationPath} kopiert.`, color: "green" });
+          setSelected(new Map());
+          notifications.show({ title: "Restore abgeschlossen", message: `Nach ${destinationPath} wiederhergestellt.`, color: "green" });
         },
-        onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Kopieren fehlgeschlagen."), color: "red" }),
+        onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Restore fehlgeschlagen."), color: "red" }),
       },
     );
   }
@@ -58,15 +67,16 @@ export function FileRestoreSessionModal({ opened, onClose, run }: FileRestoreSes
     <Modal opened={opened} onClose={onClose} title={`Dateien durchsuchen: ${run.vm_name}`} size="xl">
       <Stack gap="md">
         <FileBrowser runId={run.id} rootPath={run.browse_root_path} selected={selected} onToggleSelect={handleToggleSelect} />
-        <Text size="sm">{selected.size} Element(e) ausgewählt.</Text>
+        <SelectedFileList rootPath={run.browse_root_path} selected={selected} onRemove={handleRemove} />
         <TextInput
-          label="Zielpfad auf dem Restore-Proxy-Host"
+          label="Zielpfad"
+          description={'Lokal auf dem Restore-Proxy-Host, oder ein UNC-Pfad zu einem anderen Rechner (z.B. \\\\ZIELSERVER\\C$\\Ordner)'}
           value={destinationPath}
           onChange={(e) => setDestinationPath(e.currentTarget.value)}
         />
         {copySelection.isSuccess && (
           <Alert icon={<IconCheck size={16} />} color="green" variant="light">
-            Zuletzt ausgewählte Elemente wurden kopiert.
+            Zuletzt ausgewählte Elemente wurden wiederhergestellt.
           </Alert>
         )}
         <Text size="xs" c="dimmed">
@@ -74,7 +84,7 @@ export function FileRestoreSessionModal({ opened, onClose, run }: FileRestoreSes
         </Text>
         <Group justify="space-between">
           <Button variant="default" onClick={handleCopy} loading={copySelection.isPending} disabled={selected.size === 0 || !destinationPath}>
-            Kopieren
+            Restore
           </Button>
           <Button onClick={onClose}>Schließen</Button>
         </Group>
