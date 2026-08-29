@@ -85,7 +85,7 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
       schedule_id: scheduleId,
       app_consistent: appConsistent,
       snapmirror_update: snapmirrorUpdate,
-      snapmirror_label_id: labelId,
+      snapmirror_label_id: snapmirrorUpdate ? labelId : null,
       retention_type: retentionType,
       retention_value: Number(retentionValue),
       snapshot_locking_enabled: lockingEnabled,
@@ -143,17 +143,19 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
             groups={linkedGroups.map((g) => ({ scope: g.scope, members: g.members }))}
           />
 
-          <Select
-            label="SnapMirror-Label"
-            placeholder="Kein Label"
-            data={[
-              { value: NEW_LABEL_VALUE, label: "+ Neues Label erstellen..." },
-              ...(labels?.map((l) => ({ value: l.id, label: l.name })) ?? []),
-            ]}
-            value={labelId}
-            onChange={(v) => (v === NEW_LABEL_VALUE ? setLabelModalOpen(true) : setLabelId(v))}
-            clearable
-          />
+          {snapmirrorUpdate && (
+            <Select
+              label="SnapMirror-Label"
+              placeholder="Kein Label"
+              data={[
+                { value: NEW_LABEL_VALUE, label: "+ Neues Label erstellen..." },
+                ...(labels?.map((l) => ({ value: l.id, label: l.name })) ?? []),
+              ]}
+              value={labelId}
+              onChange={(v) => (v === NEW_LABEL_VALUE ? setLabelModalOpen(true) : setLabelId(v))}
+              clearable
+            />
+          )}
 
           <Group grow>
             <Select

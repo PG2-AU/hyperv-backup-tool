@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Badge, Button, Group, Loader, Stack, Text } from "@mantine/core";
+import { Badge, Button, Group, List, Loader, Stack, Text } from "@mantine/core";
 import { IconAlertTriangle, IconCheck } from "@tabler/icons-react";
 
-import { useAggregates, useCheckSnapMirror, useNetAppClusters, useSvms, useVolumes } from "@/api/hooks";
+import { useAggregates, useCheckSnapMirror, useNetAppClusters, useSnapmirrorPolicies, useSvms, useVolumes } from "@/api/hooks";
 import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
 import { SnapmirrorFormModal } from "@/components/SnapmirrorFormModal";
 import type { SnapMirrorCheckGroup, SnapMirrorCheckResult, SnapmirrorCreationPlan } from "@/api/types";
@@ -31,6 +31,7 @@ export function SnapMirrorCheckPanel({ enabled, groups }: SnapMirrorCheckPanelPr
   const { data: svms } = useSvms();
   const { data: volumes } = useVolumes();
   const { data: aggregates } = useAggregates();
+  const { data: snapmirrorPolicies } = useSnapmirrorPolicies();
   const checkSnapMirror = useCheckSnapMirror();
   const [results, setResults] = useState<SnapMirrorCheckResult[] | null>(null);
   const [snapmirrorFormOpen, setSnapmirrorFormOpen] = useState(false);
@@ -68,28 +69,52 @@ export function SnapMirrorCheckPanel({ enabled, groups }: SnapMirrorCheckPanelPr
 
   return (
     <>
-      <Stack gap={6}>
-        {results.map((r) => (
-          <Group key={`${r.svm_name}:${r.volume_name}`} justify="space-between" wrap="nowrap">
-            <Text size="xs" c="dimmed" truncate>
-              {r.members.join(", ")} → {r.svm_name}:{r.volume_name}
-            </Text>
-            {r.has_relationship ? (
-              <Badge color="green" variant="light" leftSection={<IconCheck size={12} />}>
-                SnapMirror aktiv ({r.policy_name ?? "?"})
-              </Badge>
-            ) : (
-              <Group gap="xs" wrap="nowrap">
-                <Badge color="orange" variant="light" leftSection={<IconAlertTriangle size={12} />}>
-                  Keine SnapMirror-Beziehung
-                </Badge>
-                <Button size="xs" variant="light" onClick={() => openCreateWizard(r)}>
-                  Jetzt erstellen
-                </Button>
+      <Stack gap="sm">
+        {results.map((r) => {
+          const policy = r.has_relationship ? snapmirrorPolicies?.find((p) => p.name === r.policy_name) : undefined;
+          return (
+            <Stack key={`${r.svm_name}:${r.volume_name}`} gap={4}>
+              <Group justify="space-between" wrap="nowrap" align="flex-start">
+                <Stack gap={0} style={{ minWidth: 0 }}>
+                  <Text size="xs" c="dimmed" truncate>
+                    Objekt(e): {r.members.join(", ")}
+                  </Text>
+                  <Text size="xs" c="dimmed" ff="monospace" truncate>
+                    Quellvolume: {r.svm_name}:{r.volume_name}
+                  </Text>
+                </Stack>
+                {r.has_relationship ? (
+                  <Badge color="green" variant="light" leftSection={<IconCheck size={12} />}>
+                    SnapMirror aktiv ({r.policy_name ?? "?"})
+                  </Badge>
+                ) : (
+                  <Group gap="xs" wrap="nowrap">
+                    <Badge color="orange" variant="light" leftSection={<IconAlertTriangle size={12} />}>
+                      Keine SnapMirror-Beziehung
+                    </Badge>
+                    <Button size="xs" variant="light" onClick={() => openCreateWizard(r)}>
+                      Jetzt erstellen
+                    </Button>
+                  </Group>
+                )}
               </Group>
-            )}
-          </Group>
-        ))}
+              {r.has_relationship && policy && policy.rules.length > 0 && (
+                <List size="xs" c="dimmed" pl={4} withPadding>
+                  {policy.rules.map((rule) => (
+                    <List.Item key={rule.label}>
+                      Label „{rule.label}“ — {rule.count} Versionen aufbewahrt
+                    </List.Item>
+                  ))}
+                </List>
+              )}
+              {r.has_relationship && r.policy_name && !policy && (
+                <Text size="xs" c="dimmed" pl={4}>
+                  Details zur Policy „{r.policy_name}“ noch nicht discovert.
+                </Text>
+              )}
+            </Stack>
+          );
+        })}
       </Stack>
 
       <SnapmirrorFormModal
