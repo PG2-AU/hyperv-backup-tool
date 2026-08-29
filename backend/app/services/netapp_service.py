@@ -946,12 +946,27 @@ class NetAppOntapService:
 
     def create_snapmirror_policy(self, svm_name: str, name: str, vault_type: str, rules: list[dict]) -> None:
         # ONTAP REST kennt auf Policy-Ebene nur type=async/sync/continuous --
-        # die klassischen NetApp-Begriffe "Vault" und "Mirror-Vault" sind beides
-        # async-Policies mit Retention-Regeln (gegen echte Policies auf CL2
-        # verifiziert: 'MirrorAndVault' und reine Vault-Policies wie
-        # 'CloudBackupDefault' haben identische Feldstruktur, nur der Kommentar
-        # unterscheidet sich). 'vault_type' steuert daher nur den
-        # dokumentierenden Kommentartext, technisch wird immer type=async gesetzt.
+        # "Vault" und "Mirror-Vault" sind beides async-Policies mit identischer
+        # Retention-Struktur (verifiziert: 'MirrorAndVault' und reine
+        # Vault-Policies wie 'XDPDefault' haben dieselben Felder bis auf
+        # EINEN Unterschied: 'create_snapshot_on_source'. Fehlt es (false),
+        # erwartet die Policy, dass die zu vaultenden Snapshots extern
+        # erstellt werden (unser eigener create_snapshot()-Aufruf) -- reines
+        # Vault-Verhalten. Ist es true (ONTAP-Default, wenn das Feld gar
+        # nicht gesetzt wird!), erzeugt SnapMirror selbst zusaetzlich einen
+        # Snapshot des aktuellen Dateisystemstands bei jedem Transfer und
+        # mirrort diesen -- das macht aus der Policy technisch eine
+        # Mirror-Vault-Policy, unabhaengig vom Kommentartext. Der fruehere
+        # Code liess dieses Feld komplett weg und erzeugte dadurch IMMER
+        # eine Mirror-Vault-Policy, auch wenn "Vault" gewaehlt wurde --
+        # live gegen eine echte Policy verifiziert und hier behoben.
+        #
+        # WICHTIG: 'create_snapshot_on_source': true wird von ONTAP beim
+        # Anlegen explizit ABGELEHNT ('does not support the "true" value',
+        # live verifiziert) -- true ist nur als impliziter Default erlaubt,
+        # wenn das Feld komplett weggelassen wird (siehe MirrorAndVault: im
+        # GET nicht vorhanden, verhaelt sich aber wie true). Fuer
+        # Mirror-Vault daher das Feld einfach weglassen statt true zu senden.
         rule_desc = ", ".join(f"{r['count']}x {r['label']}" for r in rules)
         comment = (
             f"Vault policy with {rule_desc} rule(s)."
@@ -964,6 +979,8 @@ class NetAppOntapService:
             "retention": [{"label": r["label"], "count": str(r["count"])} for r in rules],
             "comment": comment,
         }
+        if vault_type == "vault":
+            payload["create_snapshot_on_source"] = False
         if svm_name:
             payload["svm"] = {"name": svm_name}
         with self._connection():
