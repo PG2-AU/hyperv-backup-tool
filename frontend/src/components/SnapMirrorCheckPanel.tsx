@@ -75,14 +75,10 @@ export function SnapMirrorCheckPanel({ enabled, groups }: SnapMirrorCheckPanelPr
           return (
             <Stack key={`${r.svm_name}:${r.volume_name}`} gap={4}>
               <Group justify="space-between" wrap="nowrap" align="flex-start">
-                <Stack gap={0} style={{ minWidth: 0 }}>
-                  <Text size="xs" c="dimmed" truncate>
-                    Objekt(e): {r.members.join(", ")}
-                  </Text>
-                  <Text size="xs" c="dimmed" ff="monospace" truncate>
-                    Quellvolume: {r.svm_name}:{r.volume_name}
-                  </Text>
-                </Stack>
+                <Text size="xs" c="dimmed" ff="monospace" truncate style={{ minWidth: 0 }}>
+                  {r.svm_name}:{r.volume_name}
+                  {r.has_relationship && r.destination_path ? ` → ${r.destination_path}` : ""}
+                </Text>
                 {r.has_relationship ? (
                   <Badge color="green" variant="light" leftSection={<IconCheck size={12} />}>
                     SnapMirror aktiv ({r.policy_name ?? "?"})
