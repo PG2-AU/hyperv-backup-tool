@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ActionIcon, Badge, Button, Drawer, Group, Menu, Paper, Stack, Table, Tabs, Text, Title } from "@mantine/core";
+import { ActionIcon, Badge, Button, Drawer, Group, Paper, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconEdit, IconPlayerPlay, IconPlus, IconStack2, IconTerminal2, IconTrash } from "@tabler/icons-react";
@@ -14,7 +14,6 @@ import {
   useResourceGroups,
   useSchedules,
 } from "@/api/hooks";
-import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { LogViewer } from "@/components/LogViewer";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
@@ -53,7 +52,6 @@ export function JobsPage() {
   const { data: runs } = useJobRuns();
   const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
   const deletePolicy = useDeletePolicy();
-  const policyMenu = useContextMenu<BackupPolicy>();
   const [logsOpened, { open: openLogs, close: closeLogs }] = useDisclosure(false);
   const [logContext, setLogContext] = useState<string | undefined>(undefined);
   const [formOpen, setFormOpen] = useState(false);
@@ -63,7 +61,6 @@ export function JobsPage() {
 
   const { data: groups } = useResourceGroups();
   const deleteGroup = useDeleteResourceGroup();
-  const groupMenu = useContextMenu<ResourceGroup>();
   const [groupFormOpen, setGroupFormOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ResourceGroup | null>(null);
 
@@ -189,11 +186,12 @@ export function JobsPage() {
                   <Table.Th>Retention</Table.Th>
                   <Table.Th>Snapshot Locking</Table.Th>
                   <Table.Th>Status</Table.Th>
+                  <Table.Th>Aktionen</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {policies?.map((policy) => (
-                  <Table.Tr key={policy.id} onContextMenu={(e) => policyMenu.open(e, policy)} style={{ cursor: "context-menu" }}>
+                  <Table.Tr key={policy.id}>
                     <Table.Td>{policy.name}</Table.Td>
                     <Table.Td>{formatSchedule(policy.schedule)}</Table.Td>
                     <Table.Td>
@@ -229,6 +227,30 @@ export function JobsPage() {
                         {policy.enabled ? "aktiv" : "pausiert"}
                       </Badge>
                     </Table.Td>
+                    <Table.Td>
+                      <Group gap="xs" wrap="nowrap">
+                        <Tooltip label="Jetzt ausführen">
+                          <ActionIcon variant="light" onClick={() => runNow(policy)}>
+                            <IconPlayerPlay size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Bearbeiten">
+                          <ActionIcon variant="light" onClick={() => openEdit(policy)}>
+                            <IconEdit size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Log anzeigen">
+                          <ActionIcon variant="light" onClick={() => showLog(policy.id)}>
+                            <IconTerminal2 size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Löschen">
+                          <ActionIcon variant="light" color="red" onClick={() => removePolicy(policy)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                    </Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>
@@ -249,11 +271,12 @@ export function JobsPage() {
                   <Table.Th>Anzahl</Table.Th>
                   <Table.Th>Objekte</Table.Th>
                   <Table.Th>Verknüpfte Policies</Table.Th>
+                  <Table.Th>Aktionen</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {groups?.map((group) => (
-                  <Table.Tr key={group.id} onContextMenu={(e) => groupMenu.open(e, group)} style={{ cursor: "context-menu" }}>
+                  <Table.Tr key={group.id}>
                     <Table.Td>{group.name}</Table.Td>
                     <Table.Td>
                       <Badge variant="light" color="blue">
@@ -280,6 +303,25 @@ export function JobsPage() {
                           keine
                         </Text>
                       )}
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap="xs" wrap="nowrap">
+                        <Tooltip label="Jetzt ausführen">
+                          <ActionIcon variant="light" onClick={() => runGroupNow(group)}>
+                            <IconPlayerPlay size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Bearbeiten">
+                          <ActionIcon variant="light" onClick={() => openEditGroup(group)}>
+                            <IconEdit size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Löschen">
+                          <ActionIcon variant="light" color="red" onClick={() => removeGroup(group)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
                     </Table.Td>
                   </Table.Tr>
                 ))}
@@ -322,12 +364,16 @@ export function JobsPage() {
                     <Table.Td>{formatSchedule(s)}</Table.Td>
                     <Table.Td>
                       <Group gap="xs">
-                        <ActionIcon variant="light" onClick={() => openEditSchedule(s)}>
-                          <IconEdit size={16} />
-                        </ActionIcon>
-                        <ActionIcon variant="light" color="red" onClick={() => removeSchedule(s)}>
-                          <IconTrash size={16} />
-                        </ActionIcon>
+                        <Tooltip label="Bearbeiten">
+                          <ActionIcon variant="light" onClick={() => openEditSchedule(s)}>
+                            <IconEdit size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Löschen">
+                          <ActionIcon variant="light" color="red" onClick={() => removeSchedule(s)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Tooltip>
                       </Group>
                     </Table.Td>
                   </Table.Tr>
@@ -387,36 +433,6 @@ export function JobsPage() {
           </Table>
         </Tabs.Panel>
       </Tabs>
-
-      <ContextMenuDropdown position={policyMenu.state?.position ?? null} opened={!!policyMenu.state} onClose={policyMenu.close}>
-        <Menu.Label>{policyMenu.state?.data.name}</Menu.Label>
-        <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => policyMenu.state && runNow(policyMenu.state.data)}>
-          Jetzt ausfuehren
-        </Menu.Item>
-        <Menu.Item leftSection={<IconEdit size={16} />} onClick={() => policyMenu.state && openEdit(policyMenu.state.data)}>
-          Bearbeiten
-        </Menu.Item>
-        <Menu.Item leftSection={<IconTerminal2 size={16} />} onClick={() => policyMenu.state && showLog(policyMenu.state.data.id)}>
-          Log anzeigen
-        </Menu.Item>
-        <Menu.Divider />
-        <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={() => policyMenu.state && removePolicy(policyMenu.state.data)}>
-          Loeschen
-        </Menu.Item>
-      </ContextMenuDropdown>
-
-      <ContextMenuDropdown position={groupMenu.state?.position ?? null} opened={!!groupMenu.state} onClose={groupMenu.close}>
-        <Menu.Label>{groupMenu.state?.data.name}</Menu.Label>
-        <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => groupMenu.state && runGroupNow(groupMenu.state.data)}>
-          Jetzt ausfuehren
-        </Menu.Item>
-        <Menu.Item leftSection={<IconEdit size={16} />} onClick={() => groupMenu.state && openEditGroup(groupMenu.state.data)}>
-          Bearbeiten
-        </Menu.Item>
-        <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={() => groupMenu.state && removeGroup(groupMenu.state.data)}>
-          Loeschen
-        </Menu.Item>
-      </ContextMenuDropdown>
 
       <Drawer opened={logsOpened} onClose={closeLogs} position="bottom" size="45%" title="Job-Log">
         <LogViewer context={logContext} />

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ActionIcon, Badge, Box, Group, Menu, Paper, Progress, Stack, Table, Tabs, Text, TextInput, Title } from "@mantine/core";
+import { ActionIcon, Badge, Box, Group, Paper, Progress, Stack, Table, Tabs, Text, TextInput, Title, Tooltip } from "@mantine/core";
 import {
   IconChevronsRight,
   IconCpu,
@@ -15,14 +15,12 @@ import {
   IconServer2,
   IconServerCog,
   IconStack2,
-  IconTerminal2,
   IconX,
 } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import { useCsvs, useVms } from "@/api/hooks";
 import { BackupsModal } from "@/components/BackupsModal";
-import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import type { BackupScope, Csv, PolicySummary, Vm } from "@/api/types";
 import { formatBytes } from "@/utils/format";
@@ -273,8 +271,6 @@ export function VmsPage() {
   const activeTab = params.get("tab") === "csv" ? "csv" : "vms";
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
-  const vmMenu = useContextMenu<Vm>();
-  const csvMenu = useContextMenu<Csv>();
   const [selectedVm, setSelectedVm] = useState<Vm | null>(null);
   const [selectedCsv, setSelectedCsv] = useState<Csv | null>(null);
   const [backupsTarget, setBackupsTarget] = useState<{ scope: BackupScope; name: string } | null>(null);
@@ -342,6 +338,7 @@ export function VmsPage() {
                 <Table.Th>VHDX-Größe</Table.Th>
                 <Table.Th>Protection Group</Table.Th>
                 <Table.Th>Protected</Table.Th>
+                <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -349,7 +346,6 @@ export function VmsPage() {
                 <Table.Tr
                   key={vm.id}
                   onClick={() => toggleSelectedVm(vm)}
-                  onContextMenu={(e) => vmMenu.open(e, vm)}
                   style={{ cursor: "pointer", backgroundColor: selectedVm?.id === vm.id ? "var(--mantine-color-blue-light)" : undefined }}
                 >
                   <Table.Td>{vm.name}</Table.Td>
@@ -367,6 +363,25 @@ export function VmsPage() {
                   </Table.Td>
                   <Table.Td>
                     <ProtectedBadge protected={vm.protected} />
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
+                      <Tooltip label="Backup jetzt starten">
+                        <ActionIcon variant="light" onClick={() => runBackupNow(vm)}>
+                          <IconPlayerPlay size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Details anzeigen">
+                        <ActionIcon variant="light" onClick={() => setSelectedVm(vm)}>
+                          <IconInfoCircle size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Backups anzeigen">
+                        <ActionIcon variant="light" onClick={() => showBackups("vm", vm.name)}>
+                          <IconDatabaseExport size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
                   </Table.Td>
                 </Table.Tr>
               ))}
@@ -393,6 +408,7 @@ export function VmsPage() {
                 <Table.Th>Volume</Table.Th>
                 <Table.Th>Protection Group</Table.Th>
                 <Table.Th>Protected</Table.Th>
+                <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -405,7 +421,6 @@ export function VmsPage() {
                   <Table.Tr
                     key={csv.name}
                     onClick={() => toggleSelectedCsv(csv)}
-                    onContextMenu={(e) => csvMenu.open(e, csv)}
                     style={{
                       cursor: "pointer",
                       backgroundColor: selectedCsv?.name === csv.name ? "var(--mantine-color-blue-light)" : undefined,
@@ -445,6 +460,25 @@ export function VmsPage() {
                     <Table.Td>
                       <ProtectedBadge protected={csv.protected} />
                     </Table.Td>
+                    <Table.Td>
+                      <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
+                        <Tooltip label="Backup jetzt starten (CSV-Scope)">
+                          <ActionIcon variant="light" onClick={() => runBackupNowForCsv(csv)}>
+                            <IconPlayerPlay size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Details anzeigen">
+                          <ActionIcon variant="light" onClick={() => setSelectedCsv(csv)}>
+                            <IconInfoCircle size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Backups anzeigen">
+                          <ActionIcon variant="light" onClick={() => showBackups("csv", csv.name)}>
+                            <IconDatabaseExport size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                    </Table.Td>
                   </Table.Tr>
                 );
               })}
@@ -452,39 +486,6 @@ export function VmsPage() {
           </Table>
         </Tabs.Panel>
       </Tabs>
-
-      <ContextMenuDropdown position={vmMenu.state?.position ?? null} opened={!!vmMenu.state} onClose={vmMenu.close}>
-        <Menu.Label>{vmMenu.state?.data.name}</Menu.Label>
-        <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => vmMenu.state && runBackupNow(vmMenu.state.data)}>
-          Backup jetzt starten
-        </Menu.Item>
-        <Menu.Item leftSection={<IconInfoCircle size={16} />} onClick={() => vmMenu.state && setSelectedVm(vmMenu.state.data)}>
-          Details anzeigen
-        </Menu.Item>
-        <Menu.Item
-          leftSection={<IconDatabaseExport size={16} />}
-          onClick={() => vmMenu.state && showBackups("vm", vmMenu.state.data.name)}
-        >
-          Backups anzeigen
-        </Menu.Item>
-        <Menu.Item leftSection={<IconTerminal2 size={16} />}>Log anzeigen</Menu.Item>
-      </ContextMenuDropdown>
-
-      <ContextMenuDropdown position={csvMenu.state?.position ?? null} opened={!!csvMenu.state} onClose={csvMenu.close}>
-        <Menu.Label>{csvMenu.state?.data.name}</Menu.Label>
-        <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => csvMenu.state && runBackupNowForCsv(csvMenu.state.data)}>
-          Backup jetzt starten (CSV-Scope)
-        </Menu.Item>
-        <Menu.Item leftSection={<IconInfoCircle size={16} />} onClick={() => csvMenu.state && setSelectedCsv(csvMenu.state.data)}>
-          Details anzeigen
-        </Menu.Item>
-        <Menu.Item
-          leftSection={<IconDatabaseExport size={16} />}
-          onClick={() => csvMenu.state && showBackups("csv", csvMenu.state.data.name)}
-        >
-          Backups anzeigen
-        </Menu.Item>
-      </ContextMenuDropdown>
 
       <BackupsModal
         opened={!!backupsTarget}
