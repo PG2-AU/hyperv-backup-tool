@@ -43,7 +43,7 @@ from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunVmConfi
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
-from app.models.netapp_discovery import NetAppLun, NetAppVolume
+from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.schedule import Schedule
 from app.models.snapmirror_label import SnapMirrorLabel
 from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite, BackupSnapshotRead, BackupSnapshotVhdRead
@@ -603,6 +603,34 @@ def trigger_job_run(
             row.error_message = str(exc)
             errors.append(f"{target.volume_name}: {exc}")
         db.add(row)
+
+        # SnapMirror-Update anstossen, falls die Policy das vorsieht --
+        # eigener try/except (nicht Teil des Snapshot-try/except oben), damit
+        # ein Fehler hier nicht faelschlich den erfolgreich erstellten
+        # Snapshot als fehlgeschlagen markiert. Nutzt die per Discovery
+        # bereits bekannte Beziehung (kein zusaetzlicher Live-Aufruf zum
+        # Aufloesen noetig, siehe auch POST /api/resource-groups/
+        # check-snapmirror, das dieselbe Tabelle fuer die Praesenzpruefung
+        # im Policy-/Protection-Group-Formular nutzt). Fehlt die Beziehung
+        # oder schlaegt der Trigger fehl, wird das wie ein Checkpoint-Fehler
+        # oben als Warnung vermerkt (Lauf insgesamt FAILED, der Snapshot
+        # selbst bleibt aber gueltig und restorebar) -- der Nutzer soll das
+        # sehen und ueber den Check-Panel-Hinweis die Beziehung anlegen.
+        if row.success and policy.snapmirror_update:
+            try:
+                rel = (
+                    db.query(NetAppSnapMirrorRelationship)
+                    .filter(NetAppSnapMirrorRelationship.source_path == f"{target.svm_name}:{target.volume_name}")
+                    .first()
+                )
+                if rel is None or not rel.uuid:
+                    errors.append(f"{target.volume_name}: Kein SnapMirror-Update ausgeloest (keine Beziehung konfiguriert)")
+                else:
+                    sm_result = service.trigger_snapmirror_update(rel.uuid)
+                    if not sm_result.success:
+                        errors.append(f"{target.volume_name}: SnapMirror-Update fehlgeschlagen ({sm_result.message})")
+            except Exception as exc:
+                errors.append(f"{target.volume_name}: SnapMirror-Update fehlgeschlagen ({exc})")
 
     for node_service, node_session, vm_name in active_checkpoints:
         try:

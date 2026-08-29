@@ -1285,10 +1285,16 @@ class NetAppOntapService:
             return relationships
 
     def trigger_snapmirror_update(self, relationship_uuid: str) -> OperationResult:
+        # Direkte Attribut-Zuweisung statt .patch(body=...) -- Letzteres wird
+        # vom netapp_ontap-SDK nicht unterstuetzt ('Unexpected argument
+        # "body"', live verifiziert) und ist ohnehin nicht das SDK-Muster
+        # (siehe initialize_snapmirror_relationship/update_snapmirror_relationship
+        # oben, die denselben rel.attribut = wert; rel.patch()-Ansatz nutzen).
         with self._connection():
+            rel = SnapmirrorRelationship(uuid=relationship_uuid)
+            rel.state = "snapmirrored"
             try:
-                rel = SnapmirrorRelationship(uuid=relationship_uuid)
-                rel.patch(hydrate=True, body={"state": "snapmirrored"})
+                rel.patch()
                 return OperationResult(success=True, message="SnapMirror-Update ausgeloest")
             except NetAppRestError as exc:
                 return OperationResult(success=False, message=str(exc))
