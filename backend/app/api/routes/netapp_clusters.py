@@ -190,6 +190,7 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
                 NetAppSnapMirrorPolicy(
                     cluster_id=cluster.id, uuid=pol.uuid, name=pol.name, svm_name=pol.svm_name,
                     scope=pol.scope, type=pol.type, comment=pol.comment, rules_json=pol.rules_json, last_seen_at=now,
+                    create_snapshot_on_source=pol.create_snapshot_on_source, sync_type=pol.sync_type,
                 )
             )
 

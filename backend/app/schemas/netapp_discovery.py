@@ -9,6 +9,40 @@ class SnapMirrorPolicyRuleInfo(BaseModel):
     count: str
 
 
+def _derive_snapmirror_policy_display_type(
+    type_: str | None, create_snapshot_on_source: bool | None, sync_type: str | None, rules: list[dict],
+) -> str | None:
+    """Die ONTAP-CLI ('vserver snapmirror policy show') zeigt eine feinere
+    Kategorie an (vault/mirror-vault/async-mirror/sync-mirror/
+    strict-sync-mirror) als der rohe REST-Typ, der nur async/sync/
+    continuous kennt. Live gegen eine echte Policy verifiziert: eine reine
+    Vault-Policy (create_snapshot_on_source=False) hat REST-type='async',
+    die CLI zeigt aber 'vault' -- ohne diese Ableitung zeigte unsere GUI
+    faelschlich immer den rohen REST-Typ ("async") an, egal ob Vault oder
+    Mirror-Vault."""
+    if type_ is None:
+        return None
+    if type_ == "sync":
+        # ONTAP liefert hier 'sync', 'strict_sync' oder 'automated_failover'
+        # (live verifiziert) -- NICHT 'sync_mirror'/'strict_sync_mirror',
+        # wie man von den CLI-Bezeichnungen erwarten wuerde.
+        if sync_type == "strict_sync":
+            return "strict_sync_mirror"
+        if sync_type == "automated_failover":
+            return "automated_failover_sync"
+        return "sync_mirror"
+    if type_ == "async":
+        if create_snapshot_on_source is False:
+            return "vault"
+        # create_snapshot_on_source True oder (ONTAP-Default) gar nicht gesetzt:
+        # reines Mirroring ("all_source_snapshots"-Regel ohne weitere
+        # Retention-Regeln) vs. Mirror-and-Vault (zusaetzliche
+        # Zeitplan-Retention-Regeln neben dem Mirror).
+        other_rules = [r for r in rules if r.get("label") != "all_source_snapshots"]
+        return "async_mirror" if not other_rules else "mirror_vault"
+    return type_
+
+
 class NetAppSnapMirrorPolicyRead(BaseModel):
     id: str
     cluster_id: str
@@ -18,6 +52,8 @@ class NetAppSnapMirrorPolicyRead(BaseModel):
     svm_name: str | None = None
     scope: str | None = None
     type: str | None = None
+    display_type: str | None = None
+    create_snapshot_on_source: bool | None = None
     comment: str | None = None
     rules: list[SnapMirrorPolicyRuleInfo] = []
     last_seen_at: datetime
@@ -25,12 +61,19 @@ class NetAppSnapMirrorPolicyRead(BaseModel):
     @classmethod
     def from_model(cls, m, cluster_name: str) -> "NetAppSnapMirrorPolicyRead":
         try:
-            rules = [SnapMirrorPolicyRuleInfo(**r) for r in json.loads(m.rules_json or "[]")]
+            raw_rules = json.loads(m.rules_json or "[]")
         except (json.JSONDecodeError, TypeError):
+            raw_rules = []
+        try:
+            rules = [SnapMirrorPolicyRuleInfo(**r) for r in raw_rules]
+        except (TypeError, ValueError):
             rules = []
         return cls(
             id=m.id, cluster_id=m.cluster_id, cluster_name=cluster_name, uuid=m.uuid, name=m.name,
-            svm_name=m.svm_name, scope=m.scope, type=m.type, comment=m.comment, rules=rules, last_seen_at=m.last_seen_at,
+            svm_name=m.svm_name, scope=m.scope, type=m.type,
+            display_type=_derive_snapmirror_policy_display_type(m.type, m.create_snapshot_on_source, m.sync_type, raw_rules),
+            create_snapshot_on_source=m.create_snapshot_on_source,
+            comment=m.comment, rules=rules, last_seen_at=m.last_seen_at,
         )
 
 

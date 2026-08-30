@@ -345,6 +345,8 @@ export interface NetAppSnapMirrorPolicy extends NetAppDiscoveredBase {
   svm_name?: string | null;
   scope?: string | null;
   type?: string | null;
+  display_type?: string | null;
+  create_snapshot_on_source?: boolean | null;
   comment?: string | null;
   rules: SnapMirrorPolicyRule[];
 }

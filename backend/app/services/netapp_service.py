@@ -245,6 +245,8 @@ class DiscoveredSnapMirrorPolicy:
     type: str | None
     comment: str | None
     rules_json: str | None = None
+    create_snapshot_on_source: bool | None = None
+    sync_type: str | None = None
 
 
 @dataclass
@@ -587,6 +589,8 @@ class NetAppOntapService:
                                 type=_get_nested(pol, "type"),
                                 comment=_get_nested(pol, "comment"),
                                 rules_json=json.dumps(rules_list),
+                                create_snapshot_on_source=_get_nested(pol, "create_snapshot_on_source"),
+                                sync_type=_get_nested(pol, "sync_type"),
                             )
                         )
                     results.append(

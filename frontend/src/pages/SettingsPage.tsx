@@ -47,6 +47,21 @@ import { apiErrorMessage } from "@/utils/errors";
 import { buildHyperVClusterCreationSteps } from "@/utils/hypervSteps";
 import { buildPolicyCreationSteps, buildPolicyEditSteps, buildScheduleCreationSteps } from "@/utils/netappSteps";
 
+// ONTAP-REST kennt auf Policy-Ebene nur type=async/sync/continuous; die
+// feinere Kategorie, die die ONTAP-CLI als "Type" zeigt (vault,
+// mirror-vault, async-mirror, sync-mirror, strict-sync-mirror), liefert
+// das Backend bereits abgeleitet im Feld display_type -- hier nur noch
+// die Anzeigebeschriftung.
+const SNAPMIRROR_POLICY_TYPE_LABEL: Record<string, string> = {
+  vault: "Vault",
+  mirror_vault: "Mirror-Vault",
+  async_mirror: "Async-Mirror",
+  sync_mirror: "Sync-Mirror",
+  strict_sync_mirror: "Strict-Sync-Mirror",
+  automated_failover_sync: "Automated-FailOver-Sync",
+  continuous: "Continuous",
+};
+
 const HYPERV_HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
 const HYPERV_HEALTH_LABEL: Record<string, string> = {
   healthy: "Healthy",
@@ -445,7 +460,7 @@ export function SettingsPage() {
                     <Table.Td>{p.name}</Table.Td>
                     <Table.Td>
                       <Badge variant="light" color="blue">
-                        {p.type ?? "-"}
+                        {p.display_type ? (SNAPMIRROR_POLICY_TYPE_LABEL[p.display_type] ?? p.display_type) : (p.type ?? "-")}
                       </Badge>
                     </Table.Td>
                     <Table.Td>

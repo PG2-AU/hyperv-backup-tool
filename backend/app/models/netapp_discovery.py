@@ -159,6 +159,16 @@ class NetAppSnapMirrorPolicy(Base):
     svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
     type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # ONTAP REST kennt auf Policy-Ebene nur type=async/sync/continuous.
+    # Die genauere Kategorie, die die ONTAP-CLI als "Type" anzeigt (vault,
+    # mirror-vault, async-mirror, sync-mirror, strict-sync-mirror) wird
+    # daraus erst zusammen mit create_snapshot_on_source (und bei sync-Typ
+    # zusaetzlich sync_type) abgeleitet -- siehe
+    # netapp_discovery.py:_derive_snapmirror_policy_display_type. Ohne
+    # dieses Feld wurde bisher faelschlich immer der rohe REST-Typ
+    # ("async") angezeigt, auch fuer reine Vault-Policies.
+    create_snapshot_on_source: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    sync_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
     comment: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     rules_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
