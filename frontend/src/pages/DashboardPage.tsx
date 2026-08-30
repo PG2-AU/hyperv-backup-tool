@@ -1,4 +1,5 @@
-import { Badge, Group, Paper, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
+import { useState } from "react";
+import { Anchor, Badge, Group, Paper, SegmentedControl, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -8,6 +9,7 @@ import {
   IconShieldCheck,
   IconStack2,
 } from "@tabler/icons-react";
+import { Link } from "react-router-dom";
 
 import {
   useHyperVClusters,
@@ -18,6 +20,8 @@ import {
   useVms,
 } from "@/api/hooks";
 import type { BackupJobRun, BackupRunSnapshot } from "@/api/types";
+
+const RANGE_HOURS: Record<string, number> = { "24h": 24, "7d": 24 * 7 };
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: "green",
@@ -87,6 +91,7 @@ export function DashboardPage() {
   const { data: mcc } = useMetroClusterStatus();
   const { data: hyperVClusters } = useHyperVClusters();
   const { data: relationships } = useSnapMirrorRelationships();
+  const [jobsRange, setJobsRange] = useState<string>("24h");
 
   const failedRuns = runs?.filter((r) => r.status === "failed" || r.status === "cleaned_up_after_failure").length ?? 0;
   const protectedVms = vms?.filter((v) => v.protected).length ?? 0;
@@ -114,6 +119,11 @@ export function DashboardPage() {
       if (clusterRuns[0]) lastRunPerCluster.set(cluster.id, clusterRuns[0]);
     }
   }
+
+  const jobsRangeCutoff = Date.now() - RANGE_HOURS[jobsRange] * 60 * 60 * 1000;
+  const jobsInRange = (runs ?? [])
+    .filter((r) => new Date(r.started_at).getTime() >= jobsRangeCutoff)
+    .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
 
   const recentSnapshots: (BackupRunSnapshot & { started_at: string })[] = (runs ?? [])
     .flatMap((r) => r.snapshots.filter((s) => s.success).map((s) => ({ ...s, started_at: r.started_at })))
@@ -233,9 +243,18 @@ export function DashboardPage() {
       </Paper>
 
       <Paper p="md">
-        <Title order={5} mb="sm">
-          Letzte Job-Laeufe
-        </Title>
+        <Group justify="space-between" mb="sm">
+          <Title order={5}>Job-Laeufe</Title>
+          <SegmentedControl
+            size="xs"
+            value={jobsRange}
+            onChange={setJobsRange}
+            data={[
+              { label: "Letzte 24h", value: "24h" },
+              { label: "Letzte 7 Tage", value: "7d" },
+            ]}
+          />
+        </Group>
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
@@ -247,21 +266,34 @@ export function DashboardPage() {
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {runs?.map((run) => (
-              <Table.Tr key={run.id}>
-                <Table.Td>{run.job_name}</Table.Td>
-                <Table.Td>{run.scope}</Table.Td>
-                <Table.Td>{run.targets.join(", ")}</Table.Td>
-                <Table.Td>
-                  <Badge color={STATUS_COLOR[run.status]} variant="light">
-                    {run.status}
-                  </Badge>
+            {jobsInRange.length === 0 ? (
+              <Table.Tr>
+                <Table.Td colSpan={5}>
+                  <Text size="sm" c="dimmed">
+                    Keine Job-Laeufe in diesem Zeitraum.
+                  </Text>
                 </Table.Td>
-                <Table.Td>{new Date(run.started_at).toLocaleString("de-DE")}</Table.Td>
               </Table.Tr>
-            ))}
+            ) : (
+              jobsInRange.map((run) => (
+                <Table.Tr key={run.id}>
+                  <Table.Td>{run.job_name}</Table.Td>
+                  <Table.Td>{run.scope}</Table.Td>
+                  <Table.Td>{run.targets.join(", ")}</Table.Td>
+                  <Table.Td>
+                    <Badge color={STATUS_COLOR[run.status]} variant="light">
+                      {run.status}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>{new Date(run.started_at).toLocaleString("de-DE")}</Table.Td>
+                </Table.Tr>
+              ))
+            )}
           </Table.Tbody>
         </Table>
+        <Anchor component={Link} to="/jobs?tab=runs" size="sm" mt="sm" style={{ display: "inline-block" }}>
+          Alle Job-Laeufe anzeigen
+        </Anchor>
       </Paper>
 
       <Paper p="md">
