@@ -266,101 +266,111 @@ export function DashboardPage() {
         </Grid.Col>
       </Grid>
 
-      <Paper p="md">
-        <Title order={5} mb="sm">
-          SnapMirror Status
-        </Title>
-        <Table striped highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Quelle</Table.Th>
-              <Table.Th>Ziel</Table.Th>
-              <Table.Th>Ziel-Cluster</Table.Th>
-              <Table.Th>Lag</Table.Th>
-              <Table.Th>Status</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {referencedRelationships.length === 0 ? (
-              <Table.Tr>
-                <Table.Td colSpan={5}>
-                  <Text size="sm" c="dimmed">
-                    Keine vom Backup-Tool referenzierten SnapMirror-Beziehungen vorhanden.
-                  </Text>
-                </Table.Td>
-              </Table.Tr>
-            ) : (
-              referencedRelationships.map((rel) => (
-                <Table.Tr key={rel.id}>
-                  <Table.Td>{rel.source_path ?? "-"}</Table.Td>
-                  <Table.Td>{rel.destination_path ?? "-"}</Table.Td>
-                  <Table.Td>{rel.destination_cluster_name ?? "-"}</Table.Td>
-                  <Table.Td>{rel.lag_time ?? "-"}</Table.Td>
-                  <Table.Td>
-                    <Badge color={rel.healthy ? "green" : "red"} variant="light">
-                      {rel.healthy ? "Gesund" : "Warnung"}
-                    </Badge>
-                  </Table.Td>
-                </Table.Tr>
-              ))
-            )}
-          </Table.Tbody>
-        </Table>
-      </Paper>
+      <Grid>
+        <Grid.Col span={{ base: 12, md: 6 }}>
+          <Paper p="md" h="100%">
+            <Title order={5} mb="sm">
+              SnapMirror Status
+            </Title>
+            <Table.ScrollContainer minWidth={500}>
+              <Table striped highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Quelle</Table.Th>
+                    <Table.Th>Ziel</Table.Th>
+                    <Table.Th>Ziel-Cluster</Table.Th>
+                    <Table.Th>Lag</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {referencedRelationships.length === 0 ? (
+                    <Table.Tr>
+                      <Table.Td colSpan={5}>
+                        <Text size="sm" c="dimmed">
+                          Keine vom Backup-Tool referenzierten SnapMirror-Beziehungen vorhanden.
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ) : (
+                    referencedRelationships.map((rel) => (
+                      <Table.Tr key={rel.id}>
+                        <Table.Td>{rel.source_path ?? "-"}</Table.Td>
+                        <Table.Td>{rel.destination_path ?? "-"}</Table.Td>
+                        <Table.Td>{rel.destination_cluster_name ?? "-"}</Table.Td>
+                        <Table.Td>{rel.lag_time ?? "-"}</Table.Td>
+                        <Table.Td>
+                          <Badge color={rel.healthy ? "green" : "red"} variant="light">
+                            {rel.healthy ? "Gesund" : "Warnung"}
+                          </Badge>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))
+                  )}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          </Paper>
+        </Grid.Col>
 
-      <Paper p="md">
-        <Group justify="space-between" mb="sm">
-          <Title order={5}>Job-Laeufe</Title>
-          <SegmentedControl
-            size="xs"
-            value={jobsRange}
-            onChange={setJobsRange}
-            data={[
-              { label: "Letzte 24h", value: "24h" },
-              { label: "Letzte 7 Tage", value: "7d" },
-            ]}
-          />
-        </Group>
-        <Table striped highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Job</Table.Th>
-              <Table.Th>Scope</Table.Th>
-              <Table.Th>Ziele</Table.Th>
-              <Table.Th>Status</Table.Th>
-              <Table.Th>Gestartet</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {jobsInRange.length === 0 ? (
-              <Table.Tr>
-                <Table.Td colSpan={5}>
-                  <Text size="sm" c="dimmed">
-                    Keine Job-Laeufe in diesem Zeitraum.
-                  </Text>
-                </Table.Td>
-              </Table.Tr>
-            ) : (
-              jobsInRange.map((run) => (
-                <Table.Tr key={run.id}>
-                  <Table.Td>{run.job_name}</Table.Td>
-                  <Table.Td>{run.scope}</Table.Td>
-                  <Table.Td>{run.targets.join(", ")}</Table.Td>
-                  <Table.Td>
-                    <Badge color={STATUS_COLOR[run.status]} variant="light">
-                      {run.status}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>{new Date(run.started_at).toLocaleString("de-DE")}</Table.Td>
-                </Table.Tr>
-              ))
-            )}
-          </Table.Tbody>
-        </Table>
-        <Anchor component={Link} to="/jobs?tab=runs" size="sm" mt="sm" style={{ display: "inline-block" }}>
-          Alle Job-Laeufe anzeigen
-        </Anchor>
-      </Paper>
+        <Grid.Col span={{ base: 12, md: 6 }}>
+          <Paper p="md" h="100%">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>Job-Laeufe</Title>
+              <SegmentedControl
+                size="xs"
+                value={jobsRange}
+                onChange={setJobsRange}
+                data={[
+                  { label: "Letzte 24h", value: "24h" },
+                  { label: "Letzte 7 Tage", value: "7d" },
+                ]}
+              />
+            </Group>
+            <Table.ScrollContainer minWidth={500}>
+              <Table striped highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Job</Table.Th>
+                    <Table.Th>Scope</Table.Th>
+                    <Table.Th>Ziele</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Gestartet</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {jobsInRange.length === 0 ? (
+                    <Table.Tr>
+                      <Table.Td colSpan={5}>
+                        <Text size="sm" c="dimmed">
+                          Keine Job-Laeufe in diesem Zeitraum.
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ) : (
+                    jobsInRange.map((run) => (
+                      <Table.Tr key={run.id}>
+                        <Table.Td>{run.job_name}</Table.Td>
+                        <Table.Td>{run.scope}</Table.Td>
+                        <Table.Td>{run.targets.join(", ")}</Table.Td>
+                        <Table.Td>
+                          <Badge color={STATUS_COLOR[run.status]} variant="light">
+                            {run.status}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>{new Date(run.started_at).toLocaleString("de-DE")}</Table.Td>
+                      </Table.Tr>
+                    ))
+                  )}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+            <Anchor component={Link} to="/jobs?tab=runs" size="sm" mt="sm" style={{ display: "inline-block" }}>
+              Alle Job-Laeufe anzeigen
+            </Anchor>
+          </Paper>
+        </Grid.Col>
+      </Grid>
 
       <Paper p="md">
         <Title order={5} mb="sm">
