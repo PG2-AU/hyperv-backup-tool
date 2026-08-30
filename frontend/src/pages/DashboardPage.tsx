@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Anchor, Badge, Group, Paper, SegmentedControl, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
+import { Anchor, Badge, Grid, Group, Paper, SegmentedControl, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -12,12 +12,15 @@ import {
 import { Link } from "react-router-dom";
 
 import {
+  useCsvs,
   useHyperVClusters,
   useJobRuns,
-  useMetroClusterStatus,
+  useNetAppClusters,
   usePolicies,
   useSnapMirrorRelationships,
+  useSvms,
   useVms,
+  useVolumes,
 } from "@/api/hooks";
 import type { BackupJobRun, BackupRunSnapshot } from "@/api/types";
 
@@ -47,6 +50,14 @@ function formatDateTime(iso: string | null | undefined): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+// SnapMirror-Pfade haben das Format "svm_name:volume_name".
+function parseVolumePath(path: string | null | undefined): { svm: string; volume: string } | null {
+  if (!path) return null;
+  const [svm, volume] = path.split(":");
+  if (!svm || !volume) return null;
+  return { svm, volume };
 }
 
 function StatCard({
@@ -86,10 +97,13 @@ function StatCard({
 
 export function DashboardPage() {
   const { data: vms } = useVms();
+  const { data: csvs } = useCsvs();
   const { data: policies } = usePolicies();
   const { data: runs } = useJobRuns();
-  const { data: mcc } = useMetroClusterStatus();
   const { data: hyperVClusters } = useHyperVClusters();
+  const { data: netAppClusters } = useNetAppClusters();
+  const { data: svms } = useSvms();
+  const { data: volumes } = useVolumes();
   const { data: relationships } = useSnapMirrorRelationships();
   const [jobsRange, setJobsRange] = useState<string>("24h");
 
@@ -100,11 +114,27 @@ export function DashboardPage() {
     ?.filter((r) => r.status === "succeeded")
     .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0];
 
-  const unhealthyClusters = hyperVClusters?.filter((c) => c.health !== "healthy").length ?? 0;
-  const unhealthyRelationships = relationships?.filter((r) => !r.healthy).length ?? 0;
-  const warningsCount = failedRuns + unhealthyClusters + unhealthyRelationships + (mcc?.switchover_in_progress ? 1 : 0);
+  // Nur die SnapMirror-Beziehungen beruecksichtigen, deren Quell- oder
+  // Ziel-Volume tatsaechlich einer vom Backup-Tool erfassten CSV gehoert
+  // -- alle anderen im NetApp-Cluster vorhandenen Beziehungen sind fuer
+  // dieses Tool nicht relevant und werden ausgeblendet.
+  const referencedVolumeKeys = new Set(
+    (csvs ?? []).filter((c) => c.svm_name && c.volume_name).map((c) => `${c.svm_name}|${c.volume_name}`),
+  );
+  const referencedRelationships = (relationships ?? []).filter((rel) => {
+    const source = parseVolumePath(rel.source_path);
+    const destination = parseVolumePath(rel.destination_path);
+    return (
+      (source && referencedVolumeKeys.has(`${source.svm}|${source.volume}`)) ||
+      (destination && referencedVolumeKeys.has(`${destination.svm}|${destination.volume}`))
+    );
+  });
 
-  const snapMirrorAllHealthy = (relationships?.length ?? 0) > 0 && unhealthyRelationships === 0;
+  const unhealthyClusters = hyperVClusters?.filter((c) => c.health !== "healthy").length ?? 0;
+  const unhealthyRelationships = referencedRelationships.filter((r) => !r.healthy).length;
+  const warningsCount = failedRuns + unhealthyClusters + unhealthyRelationships;
+
+  const snapMirrorAllHealthy = referencedRelationships.length > 0 && unhealthyRelationships === 0;
 
   // "Letztes Backup" je Hyper-V-Cluster: ueber VM-Namen der Cluster-VMs
   // mit den Ziel-Namen erfolgreicher Job-Laeufe abgleichen (deckt aktuell
@@ -157,9 +187,9 @@ export function DashboardPage() {
         <StatCard
           icon={<IconDatabase size={28} />}
           label="SnapMirror Status"
-          value={relationships && relationships.length > 0 ? (snapMirrorAllHealthy ? "OK" : `${unhealthyRelationships} Fehler`) : "-"}
-          sub={relationships && relationships.length > 0 ? (snapMirrorAllHealthy ? "Alle Replikationen gesund" : "Pruefung noetig") : undefined}
-          color={relationships && relationships.length > 0 ? (snapMirrorAllHealthy ? "green" : "red") : undefined}
+          value={referencedRelationships.length > 0 ? (snapMirrorAllHealthy ? "OK" : `${unhealthyRelationships} Fehler`) : "-"}
+          sub={referencedRelationships.length > 0 ? (snapMirrorAllHealthy ? "Alle Replikationen gesund" : "Pruefung noetig") : undefined}
+          color={referencedRelationships.length > 0 ? (snapMirrorAllHealthy ? "green" : "red") : undefined}
         />
         <StatCard
           icon={<IconAlertTriangle size={28} />}
@@ -168,47 +198,77 @@ export function DashboardPage() {
           sub={warningsCount > 0 ? "Benoetigen Aufmerksamkeit" : undefined}
           color={warningsCount > 0 ? "red" : undefined}
         />
-        <StatCard
-          icon={<IconCircleCheck size={28} />}
-          label="MetroCluster"
-          value={mcc ? (mcc.switchover_in_progress ? "Switchover aktiv" : mcc.mode) : "-"}
-          color={mcc?.switchover_in_progress ? "orange" : "green"}
-        />
       </SimpleGrid>
 
-      <Paper p="md">
-        <Title order={5} mb="sm">
-          Cluster-Uebersicht
-        </Title>
-        <Table striped highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Cluster</Table.Th>
-              <Table.Th>Geschuetzte VMs</Table.Th>
-              <Table.Th>Letztes Backup</Table.Th>
-              <Table.Th>Status</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {hyperVClusters?.map((cluster) => {
-              const clusterVms = vms?.filter((v) => v.cluster === cluster.name) ?? [];
-              const lastRun = lastRunPerCluster.get(cluster.id);
-              return (
-                <Table.Tr key={cluster.id}>
-                  <Table.Td>{cluster.name}</Table.Td>
-                  <Table.Td>{clusterVms.filter((v) => v.protected).length}</Table.Td>
-                  <Table.Td>{lastRun ? formatDateTime(lastRun.started_at) : "-"}</Table.Td>
-                  <Table.Td>
-                    <Badge color={HEALTH_COLOR[cluster.health]} variant="light">
-                      {cluster.health}
-                    </Badge>
-                  </Table.Td>
+      <Grid>
+        <Grid.Col span={{ base: 12, md: 6 }}>
+          <Paper p="md" h="100%">
+            <Title order={5} mb="sm">
+              Cluster-Uebersicht
+            </Title>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Cluster</Table.Th>
+                  <Table.Th>Geschuetzte VMs</Table.Th>
+                  <Table.Th>Letztes Backup</Table.Th>
+                  <Table.Th>Status</Table.Th>
                 </Table.Tr>
-              );
-            })}
-          </Table.Tbody>
-        </Table>
-      </Paper>
+              </Table.Thead>
+              <Table.Tbody>
+                {hyperVClusters?.map((cluster) => {
+                  const clusterVms = vms?.filter((v) => v.cluster === cluster.name) ?? [];
+                  const lastRun = lastRunPerCluster.get(cluster.id);
+                  return (
+                    <Table.Tr key={cluster.id}>
+                      <Table.Td>{cluster.name}</Table.Td>
+                      <Table.Td>{clusterVms.filter((v) => v.protected).length}</Table.Td>
+                      <Table.Td>{lastRun ? formatDateTime(lastRun.started_at) : "-"}</Table.Td>
+                      <Table.Td>
+                        <Badge color={HEALTH_COLOR[cluster.health]} variant="light">
+                          {cluster.health}
+                        </Badge>
+                      </Table.Td>
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </Paper>
+        </Grid.Col>
+
+        <Grid.Col span={{ base: 12, md: 6 }}>
+          <Paper p="md" h="100%">
+            <Title order={5} mb="sm">
+              NetApp Cluster
+            </Title>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Cluster</Table.Th>
+                  <Table.Th>SVMs</Table.Th>
+                  <Table.Th>Volumes</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {netAppClusters?.map((cluster) => (
+                  <Table.Tr key={cluster.id}>
+                    <Table.Td>{cluster.name}</Table.Td>
+                    <Table.Td>{svms?.filter((s) => s.cluster_id === cluster.id).length ?? 0}</Table.Td>
+                    <Table.Td>{volumes?.filter((v) => v.cluster_id === cluster.id).length ?? 0}</Table.Td>
+                    <Table.Td>
+                      <Badge color={HEALTH_COLOR[cluster.health]} variant="light">
+                        {cluster.health}
+                      </Badge>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Paper>
+        </Grid.Col>
+      </Grid>
 
       <Paper p="md">
         <Title order={5} mb="sm">
@@ -225,19 +285,29 @@ export function DashboardPage() {
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {relationships?.map((rel) => (
-              <Table.Tr key={rel.id}>
-                <Table.Td>{rel.source_path ?? "-"}</Table.Td>
-                <Table.Td>{rel.destination_path ?? "-"}</Table.Td>
-                <Table.Td>{rel.destination_cluster_name ?? "-"}</Table.Td>
-                <Table.Td>{rel.lag_time ?? "-"}</Table.Td>
-                <Table.Td>
-                  <Badge color={rel.healthy ? "green" : "red"} variant="light">
-                    {rel.healthy ? "Gesund" : "Warnung"}
-                  </Badge>
+            {referencedRelationships.length === 0 ? (
+              <Table.Tr>
+                <Table.Td colSpan={5}>
+                  <Text size="sm" c="dimmed">
+                    Keine vom Backup-Tool referenzierten SnapMirror-Beziehungen vorhanden.
+                  </Text>
                 </Table.Td>
               </Table.Tr>
-            ))}
+            ) : (
+              referencedRelationships.map((rel) => (
+                <Table.Tr key={rel.id}>
+                  <Table.Td>{rel.source_path ?? "-"}</Table.Td>
+                  <Table.Td>{rel.destination_path ?? "-"}</Table.Td>
+                  <Table.Td>{rel.destination_cluster_name ?? "-"}</Table.Td>
+                  <Table.Td>{rel.lag_time ?? "-"}</Table.Td>
+                  <Table.Td>
+                    <Badge color={rel.healthy ? "green" : "red"} variant="light">
+                      {rel.healthy ? "Gesund" : "Warnung"}
+                    </Badge>
+                  </Table.Td>
+                </Table.Tr>
+              ))
+            )}
           </Table.Tbody>
         </Table>
       </Paper>
