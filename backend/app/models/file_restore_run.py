@@ -95,6 +95,16 @@ class FileRestoreRun(Base):
 
         return self.started_at + timedelta(hours=get_settings().file_restore_max_age_hours)
 
+    @property
+    def used_secondary(self) -> bool:
+        """True, wenn diese Session vom SnapMirror-Ziel (Sekundaersystem)
+        statt von der Quelle gemountet wurde -- erkennbar daran, dass ein
+        ganzes Volume geklont wurde statt nur einer LUN (siehe
+        clone_volume_uuid, _execute_file_restore_open). Fuer die GUI, damit
+        z.B. der Cleanup-Bestaetigungstext korrekt von 'Volume-Klon' statt
+        'LUN-Klon' spricht."""
+        return self.clone_volume_uuid is not None
+
 
 class FileRestoreRunStep(Base):
     __tablename__ = "file_restore_run_steps"

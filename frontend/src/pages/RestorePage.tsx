@@ -59,10 +59,10 @@ export function RestorePage() {
     });
   }
 
-  function handleCleanupFileSession(runId: string, vmName: string) {
+  function handleCleanupFileSession(runId: string, vmName: string, usedSecondary: boolean) {
     confirmAction({
       title: "Session aufräumen",
-      message: `VHDX für '${vmName}' aushängen und temporären LUN-Klon entfernen?`,
+      message: `VHDX für '${vmName}' aushängen und temporären ${usedSecondary ? "Volume-Klon" : "LUN-Klon"} entfernen?`,
       confirmLabel: "Aufräumen",
       onConfirm: () =>
         cleanupFileRestoreRun.mutate(runId, {
@@ -136,6 +136,7 @@ export function RestorePage() {
               <Table.Tr>
                 <Table.Th>VM</Table.Th>
                 <Table.Th>VHDX</Table.Th>
+                <Table.Th>System</Table.Th>
                 <Table.Th>Geöffnet seit</Table.Th>
                 <Table.Th>Automatisches Aufräumen</Table.Th>
                 <Table.Th />
@@ -147,6 +148,11 @@ export function RestorePage() {
                   <Table.Td>{r.vm_name}</Table.Td>
                   <Table.Td ff="monospace" fz="xs">
                     {r.source_vhd_path.split("\\").pop()}
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge color={r.used_secondary ? "orange" : "blue"} variant="light">
+                      {r.used_secondary ? "Sekundär" : "Primär"}
+                    </Badge>
                   </Table.Td>
                   <Table.Td>{r.finished_at ? new Date(r.finished_at).toLocaleString("de-DE") : "-"}</Table.Td>
                   <Table.Td c="dimmed" fz="sm">
@@ -163,7 +169,7 @@ export function RestorePage() {
                         variant="light"
                         leftSection={<IconTrash size={14} />}
                         loading={cleanupFileRestoreRun.isPending}
-                        onClick={() => handleCleanupFileSession(r.id, r.vm_name)}
+                        onClick={() => handleCleanupFileSession(r.id, r.vm_name, r.used_secondary)}
                       >
                         Aufräumen
                       </Button>

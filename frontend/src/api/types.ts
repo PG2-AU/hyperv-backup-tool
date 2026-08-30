@@ -599,6 +599,7 @@ export interface FileRestoreRun {
   default_destination_path?: string | null;
   cleanup_needed: boolean;
   expires_at?: string | null;
+  used_secondary: boolean;
   error_message?: string | null;
   started_at: string;
   finished_at?: string | null;
