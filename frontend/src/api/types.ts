@@ -718,6 +718,7 @@ export interface VmBackupRun {
   network_adapters: VmBackupRunNetworkAdapter[];
   pci_devices: string[];
   vhds: VmBackupRunVhd[];
+  restore_source: "primary" | "secondary";
 }
 
 export interface VmRecreateRun {

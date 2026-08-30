@@ -145,6 +145,7 @@ class VmBackupRunRead(BaseModel):
     network_adapters: list[VmBackupRunNetworkAdapterRead] = []
     pci_devices: list[str] = []
     vhds: list[VmBackupRunVhdRead] = []
+    restore_source: str = "primary"
 
 
 class VmRecreateRunStepRead(BaseModel):
@@ -226,31 +227,60 @@ def list_vm_backup_runs(
     """Backup-Laeufe, die diese VM abdeckten -- fuer die Auswahl eines
     Wiederherstellungspunkts bei der kompletten Neuerstellung einer
     geloeschten VM. Funktioniert unabhaengig davon, ob die VM noch im
-    Inventory existiert (nutzt nur BackupRunVmConfig, nicht HyperVVm)."""
+    Inventory existiert (nutzt nur BackupRunVmConfig, nicht HyperVVm).
+
+    Analog zur Primaer-vor-Sekundaer-Regel bei Einzel-VHDX-/Datei-Restore
+    (siehe list_backups_for_object in jobs.py): ein Lauf, dessen Snapshot(s)
+    auf dem Primaersystem geloescht wurden, bleibt sichtbar/waehlbar,
+    solange er auf einem SnapMirror-Ziel mit eingerichteter
+    Restore-Infrastruktur noch vorhanden ist (restore_source='secondary').
+    Ist er weder primaer noch sekundaer restorebar, wird der Lauf gar nicht
+    erst angeboten -- die Neuerstellung wuerde sonst zwangslaeufig fehlschlagen."""
+    infra_keys = {(c.netapp_cluster_id, c.svm_name) for c in db.query(RestoreInfraConfig).all()}
+
+    def _restorable_destination(r: BackupRunSnapshot):
+        return next(
+            (d for d in r.destinations if d.present and d.destination_netapp_cluster_id and (d.destination_netapp_cluster_id, d.destination_svm_name) in infra_keys),
+            None,
+        )
+
     configs = (
         db.query(BackupRunVmConfig)
         .filter(BackupRunVmConfig.vm_name == vm_name)
         .order_by(BackupRunVmConfig.created_at.desc())
         .all()
     )
-    return [
-        VmBackupRunRead(
-            run_id=cfg.run_id, created_at=cfg.created_at, policy_name=cfg.run.policy_name,
-            consistency=cfg.run.consistency, cpu_count=cfg.cpu_count, generation=cfg.generation,
-            memory_startup_bytes=cfg.memory_startup_bytes, dynamic_memory_enabled=cfg.dynamic_memory_enabled,
-            host_name=cfg.host_name,
-            network_adapters=[
-                VmBackupRunNetworkAdapterRead(name=n.get("name", ""), switch_name=n.get("switch_name"), vlan_id=n.get("vlan_id"))
-                for n in (cfg.network_adapters or [])
-            ],
-            pci_devices=cfg.pci_devices or [],
-            vhds=[
-                VmBackupRunVhdRead(name=v.get("name", ""), size_bytes=v.get("size_bytes"), csv_name=v.get("csv_name"))
-                for v in (cfg.vhds or [])
-            ],
+
+    result: list[VmBackupRunRead] = []
+    for cfg in configs:
+        vhd_volume_keys = {
+            (v.get("netapp_cluster_id"), v.get("svm_name"), v.get("volume_name")) for v in (cfg.vhds or [])
+        }
+        snapshots = db.query(BackupRunSnapshot).filter(BackupRunSnapshot.run_id == cfg.run_id).all()
+        relevant = [s for s in snapshots if (s.netapp_cluster_id, s.svm_name, s.volume_name) in vhd_volume_keys]
+        if not relevant or not all(s.success or _restorable_destination(s) is not None for s in relevant):
+            continue
+        restore_source = "secondary" if any(not s.success for s in relevant) else "primary"
+
+        result.append(
+            VmBackupRunRead(
+                run_id=cfg.run_id, created_at=cfg.created_at, policy_name=cfg.run.policy_name,
+                consistency=cfg.run.consistency, cpu_count=cfg.cpu_count, generation=cfg.generation,
+                memory_startup_bytes=cfg.memory_startup_bytes, dynamic_memory_enabled=cfg.dynamic_memory_enabled,
+                host_name=cfg.host_name,
+                network_adapters=[
+                    VmBackupRunNetworkAdapterRead(name=n.get("name", ""), switch_name=n.get("switch_name"), vlan_id=n.get("vlan_id"))
+                    for n in (cfg.network_adapters or [])
+                ],
+                pci_devices=cfg.pci_devices or [],
+                vhds=[
+                    VmBackupRunVhdRead(name=v.get("name", ""), size_bytes=v.get("size_bytes"), csv_name=v.get("csv_name"))
+                    for v in (cfg.vhds or [])
+                ],
+                restore_source=restore_source,
+            )
         )
-        for cfg in configs
-    ]
+    return result
 
 
 @router.get("/runs", response_model=list[RestoreRunRead])
@@ -718,6 +748,30 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 if snapshot is None or not snapshot.snapshot_name:
                     raise RuntimeError(f"VHD '{vhd_name}': kein passender Snapshot in diesem Backup-Lauf gefunden")
 
+                # Primaer-vor-Sekundaer-Regel (Nutzer-Vorgabe, siehe
+                # _execute_restore): existiert der Snapshot nicht mehr auf
+                # dem Primaersystem (snapshot.success == False, siehe
+                # run_snapshot_reconciliation), automatisch auf ein noch
+                # vorhandenes SnapMirror-Ziel ausweichen -- keine manuelle
+                # Auswahl noetig. Bisher fehlte dieser Fallback hier
+                # komplett, eine VM-Neuerstellung aus einem nur noch
+                # sekundaer vorhandenen Snapshot schlug daher fehl.
+                used_secondary = False
+                if not snapshot.success:
+                    usable_dest = next(
+                        (d for d in snapshot.destinations if d.present and d.destination_netapp_cluster_id), None,
+                    )
+                    if usable_dest is None:
+                        raise RuntimeError(
+                            f"VHD '{vhd_name}': Snapshot ist weder auf dem Primärsystem noch auf einem "
+                            "bekannten SnapMirror-Ziel vorhanden"
+                        )
+                    vhd_lun_path = vhd_lun_path.replace(f"/vol/{vhd_volume}/", f"/vol/{usable_dest.destination_volume_name}/")
+                    vhd_svm = usable_dest.destination_svm_name
+                    vhd_volume = usable_dest.destination_volume_name
+                    vhd_cluster_id = usable_dest.destination_netapp_cluster_id
+                    used_secondary = True
+
                 netapp_cluster = db.get(NetAppCluster, vhd_cluster_id)
                 if netapp_cluster is None:
                     raise RuntimeError(f"VHD '{vhd_name}': NetApp-Cluster nicht gefunden")
@@ -739,19 +793,34 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 new_lun_name = f"recreate_{slug}_{i}_{suffix}.lun"
 
                 clone_lun_uuid: str | None = None
+                clone_volume_uuid: str | None = None
                 disk_number: int | None = None
                 mount_dir: str | None = None
                 target_iqn: str | None = None
                 try:
                     with _StepCtx(db, run.id, f"clone-lun-{i}", f"LUN fuer {vhd_name} klonen", step_model=VmRecreateRunStep) as ctx:
-                        clone = netapp_service.clone_lun_from_snapshot(
-                            volume_name=vhd_volume, svm_name=vhd_svm, source_lun_path=vhd_lun_path,
-                            snapshot_name=snapshot.snapshot_name, new_lun_name=new_lun_name,
-                        )
+                        if used_secondary:
+                            # SnapMirror-Ziel ist ein DP-Volume -- LUNs lassen
+                            # sich dort nicht direkt per Snapshot klonen,
+                            # daher das gesamte Volume per FlexClone klonen
+                            # (siehe _execute_restore fuer Details/Herkunft).
+                            clone_volume_name = f"recreate_{slug}_{i}_{suffix}"
+                            clone_volume_uuid = netapp_service.clone_volume_from_snapshot(
+                                svm_name=vhd_svm, source_volume_name=vhd_volume,
+                                snapshot_name=snapshot.snapshot_name, new_volume_name=clone_volume_name,
+                            )
+                            cloned_lun_path = vhd_lun_path.replace(f"/vol/{vhd_volume}/", f"/vol/{clone_volume_name}/")
+                            clone = netapp_service.find_lun_by_path(vhd_svm, cloned_lun_path)
+                            ctx.row.message = f"Volume-Klon '{clone_volume_name}' -> {clone.name} (Serial {clone.serial_number}, Sekundärsystem)"
+                        else:
+                            clone = netapp_service.clone_lun_from_snapshot(
+                                volume_name=vhd_volume, svm_name=vhd_svm, source_lun_path=vhd_lun_path,
+                                snapshot_name=snapshot.snapshot_name, new_lun_name=new_lun_name,
+                            )
+                            ctx.row.message = f"{clone.name} (Serial {clone.serial_number})"
                         clone_lun_uuid = clone.uuid
                         if not clone.serial_number:
                             raise RuntimeError("Geklonte LUN hat keine Seriennummer geliefert")
-                        ctx.row.message = f"{clone.name} (Serial {clone.serial_number})"
 
                     with _StepCtx(db, run.id, f"map-lun-{i}", f"LUN fuer {vhd_name} der Restore-Igroup zuordnen", step_model=VmRecreateRunStep):
                         netapp_service.create_lun_map(vhd_svm, clone.name, igroup_name)
@@ -796,7 +865,15 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                         mount_dir = None
                         proxy_service.iscsi_disconnect(proxy_session, target_iqn)
                         netapp_service.delete_lun_map(clone_lun_uuid, igroup_name, vhd_svm)
-                        netapp_service.delete_lun(clone_lun_uuid)
+                        if used_secondary:
+                            # Beim Sekundaer-Pfad wurde kein eigenstaendiger
+                            # LUN-Klon angelegt, sondern das gesamte Volume
+                            # geklont -- dessen Loeschen entfernt die darin
+                            # enthaltene LUN gleich mit.
+                            netapp_service.delete_volume(clone_volume_uuid)
+                            clone_volume_uuid = None
+                        else:
+                            netapp_service.delete_lun(clone_lun_uuid)
                         clone_lun_uuid = None
                 except Exception:
                     if disk_number is not None and mount_dir:
@@ -808,8 +885,14 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                             netapp_service.delete_lun_map(clone_lun_uuid, igroup_name, vhd_svm)
                         except NetAppConnectionError:
                             pass
+                        if not used_secondary:
+                            try:
+                                netapp_service.delete_lun(clone_lun_uuid)
+                            except NetAppConnectionError:
+                                pass
+                    if used_secondary and clone_volume_uuid:
                         try:
-                            netapp_service.delete_lun(clone_lun_uuid)
+                            netapp_service.delete_volume(clone_volume_uuid)
                         except NetAppConnectionError:
                             pass
                     raise

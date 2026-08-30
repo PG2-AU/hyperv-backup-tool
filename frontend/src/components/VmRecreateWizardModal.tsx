@@ -89,6 +89,9 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
                         <Badge color={r.consistency === "ApplicationConsistent" ? "green" : "gray"} variant="light" size="sm">
                           {r.consistency === "ApplicationConsistent" ? "App-konsistent" : "Crash-konsistent"}
                         </Badge>
+                        <Badge color={r.restore_source === "secondary" ? "orange" : "blue"} variant="light" size="sm">
+                          {r.restore_source === "secondary" ? "Sekundär" : "Primär"}
+                        </Badge>
                         <Text size="xs" c="dimmed">
                           {r.policy_name} · {r.vhds.length} VHD(s)
                         </Text>
@@ -117,6 +120,9 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
             <Text size="sm">RAM: {formatBytes(selectedRun.memory_startup_bytes)}</Text>
             <Text size="sm">Generation {selectedRun.generation ?? "-"}</Text>
             <Text size="sm">Ziel-Host: {selectedRun.host_name ?? "-"}</Text>
+            <Badge color={selectedRun.restore_source === "secondary" ? "orange" : "blue"} variant="light">
+              {selectedRun.restore_source === "secondary" ? "Von Sekundärsystem (SnapMirror-Ziel)" : "Von Primärsystem"}
+            </Badge>
           </Group>
 
           {selectedRun.network_adapters.length > 0 && (
