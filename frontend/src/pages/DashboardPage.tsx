@@ -7,7 +7,6 @@ import {
   IconDatabase,
   IconServer2,
   IconShieldCheck,
-  IconStack2,
 } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 
@@ -16,7 +15,6 @@ import {
   useHyperVClusters,
   useJobRuns,
   useNetAppClusters,
-  usePolicies,
   useSnapMirrorRelationships,
   useSvms,
   useVms,
@@ -74,17 +72,17 @@ function StatCard({
   color?: string;
 }) {
   return (
-    <Paper p="md">
-      <Group justify="space-between" align="flex-start">
-        <div>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+    <Paper p="sm">
+      <Group justify="space-between" align="flex-start" wrap="nowrap">
+        <div style={{ overflow: "hidden" }}>
+          <Text size="xs" c="dimmed" tt="uppercase" fw={700} truncate>
             {label}
           </Text>
-          <Text size="xl" fw={700} c={color}>
+          <Text size="lg" fw={700} c={color} truncate>
             {value}
           </Text>
           {sub ? (
-            <Text size="xs" c="dimmed">
+            <Text size="xs" c="dimmed" truncate>
               {sub}
             </Text>
           ) : null}
@@ -98,7 +96,6 @@ function StatCard({
 export function DashboardPage() {
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
-  const { data: policies } = usePolicies();
   const { data: runs } = useJobRuns();
   const { data: hyperVClusters } = useHyperVClusters();
   const { data: netAppClusters } = useNetAppClusters();
@@ -164,35 +161,34 @@ export function DashboardPage() {
     <Stack>
       <Title order={3}>Dashboard</Title>
 
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+      <SimpleGrid cols={{ base: 1, xs: 2, sm: 3, lg: 5 }}>
         <StatCard
-          icon={<IconServer2 size={28} />}
+          icon={<IconServer2 size={24} />}
           label="Hyper-V Cluster"
           value={String(hyperVClusters?.length ?? "-")}
           sub="Gesamt"
         />
         <StatCard
-          icon={<IconShieldCheck size={28} />}
+          icon={<IconShieldCheck size={24} />}
           label="Geschuetzte VMs"
           value={String(protectedVms)}
           sub={vms ? `von ${vms.length} gesamt` : undefined}
         />
-        <StatCard icon={<IconStack2 size={28} />} label="Aktive Policies" value={String(policies?.filter((p) => p.enabled).length ?? "-")} />
         <StatCard
-          icon={<IconClockHour4 size={28} />}
+          icon={<IconClockHour4 size={24} />}
           label="Letztes Backup"
           value={lastSuccessfulRun ? formatDateTime(lastSuccessfulRun.started_at) : "-"}
           sub={lastSuccessfulRun ? "Erfolgreich" : undefined}
         />
         <StatCard
-          icon={<IconDatabase size={28} />}
+          icon={<IconDatabase size={24} />}
           label="SnapMirror Status"
           value={referencedRelationships.length > 0 ? (snapMirrorAllHealthy ? "OK" : `${unhealthyRelationships} Fehler`) : "-"}
           sub={referencedRelationships.length > 0 ? (snapMirrorAllHealthy ? "Alle Replikationen gesund" : "Pruefung noetig") : undefined}
           color={referencedRelationships.length > 0 ? (snapMirrorAllHealthy ? "green" : "red") : undefined}
         />
         <StatCard
-          icon={<IconAlertTriangle size={28} />}
+          icon={<IconAlertTriangle size={24} />}
           label="Warnungen"
           value={String(warningsCount)}
           sub={warningsCount > 0 ? "Benoetigen Aufmerksamkeit" : undefined}
