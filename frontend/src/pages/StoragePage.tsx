@@ -44,7 +44,6 @@ import {
   useLuns,
   useMetroClusterStatus,
   useNetAppClusters,
-  useNetworkInterfaces,
   usePlatforms,
   useSnapMirrorRelationships,
   useSvmPeers,
@@ -387,7 +386,6 @@ export function StoragePage() {
   const { data: clusterPeers } = useClusterPeers();
   const { data: svmPeers } = useSvmPeers();
   const { data: relationships } = useSnapMirrorRelationships();
-  const { data: networkInterfaces } = useNetworkInterfaces();
   const { data: platforms } = usePlatforms();
   const { data: aggregates } = useAggregates();
   const { data: mcc } = useMetroClusterStatus();
@@ -461,7 +459,6 @@ export function StoragePage() {
     [relationships],
   );
 
-  const nifStats = useMemo(() => ({ states: groupCount(networkInterfaces, (i) => i.state) }), [networkInterfaces]);
 
   const igroupStats = useMemo(
     () => ({ osTypes: groupCount(igroups, (ig) => ig.os_type), protocols: groupCount(igroups, (ig) => ig.protocol) }),
@@ -520,7 +517,6 @@ export function StoragePage() {
           <Tabs.Tab value="cluster-peers">Cluster Peer</Tabs.Tab>
           <Tabs.Tab value="svm-peers">SVM Peer</Tabs.Tab>
           <Tabs.Tab value="snapmirror">SnapMirror-Beziehungen</Tabs.Tab>
-          <Tabs.Tab value="network-interfaces">Network Interfaces</Tabs.Tab>
           <Tabs.Tab value="metrocluster">MetroCluster</Tabs.Tab>
         </Tabs.List>
 
@@ -954,44 +950,6 @@ export function StoragePage() {
           {relationships?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine SnapMirror-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
-            </Text>
-          )}
-        </Tabs.Panel>
-
-        <Tabs.Panel value="network-interfaces" pt="md">
-          <StatRibbon>
-            <StatCard label="Anzahl LIFs" value={networkInterfaces?.length ?? 0} />
-            <DistributionCard label="Status" items={nifStats.states} />
-          </StatRibbon>
-          <Table striped highlightOnHover>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Cluster</Table.Th>
-                <Table.Th>Name</Table.Th>
-                <Table.Th>SVM</Table.Th>
-                <Table.Th>Adresse</Table.Th>
-                <Table.Th>Status</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {networkInterfaces?.map((iface) => (
-                <Table.Tr key={iface.id}>
-                  <Table.Td>{iface.cluster_name}</Table.Td>
-                  <Table.Td>{iface.name ?? "-"}</Table.Td>
-                  <Table.Td>{iface.svm_name ?? "-"}</Table.Td>
-                  <Table.Td>{iface.address ?? "-"}</Table.Td>
-                  <Table.Td>
-                    <Badge color={iface.state === "up" ? "green" : "gray"} variant="light">
-                      {iface.state ?? "-"}
-                    </Badge>
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-          {networkInterfaces?.length === 0 && (
-            <Text c="dimmed" size="sm" ta="center" py="md">
-              Noch keine Network Interfaces erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
         </Tabs.Panel>
