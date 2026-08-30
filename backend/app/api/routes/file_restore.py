@@ -143,7 +143,11 @@ def trigger_file_restore(
     db: Session = Depends(get_db), user=Depends(require_permission(Permission.RESTORE_RUN)),
 ) -> FileRestoreRun:
     snapshot = db.get(BackupRunSnapshot, payload.snapshot_id)
-    if snapshot is None or not snapshot.success:
+    # Nicht mehr nur success=True akzeptieren: ein auf dem Primaersystem
+    # geloeschter Snapshot ist weiterhin nutzbar, wenn er auf einem
+    # bekannten SnapMirror-Ziel noch vorhanden ist (siehe _execute_restore
+    # fuer denselben Fix im normalen VHDX-Restore-Pfad).
+    if snapshot is None or not (snapshot.success or any(d.present and d.destination_netapp_cluster_id for d in snapshot.destinations)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gewählter Snapshot ist ungültig")
 
     run = FileRestoreRun(
@@ -226,10 +230,19 @@ def _cleanup_file_restore_run(db: Session, run: FileRestoreRun) -> None:
                 netapp_service.delete_lun_map(run.clone_lun_uuid, run.igroup_name, run.svm_name)
             except NetAppConnectionError:
                 pass
-            try:
-                netapp_service.delete_lun(run.clone_lun_uuid)
-            except NetAppConnectionError:
-                pass
+            if run.clone_volume_uuid:
+                # Sekundaer-Pfad (SnapMirror-Ziel): kein eigenstaendiger
+                # LUN-Klon, sondern ein komplettes Volume geklont -- dessen
+                # Loeschen entfernt die LUN gleich mit.
+                try:
+                    netapp_service.delete_volume(run.clone_volume_uuid)
+                except NetAppConnectionError:
+                    pass
+            else:
+                try:
+                    netapp_service.delete_lun(run.clone_lun_uuid)
+                except NetAppConnectionError:
+                    pass
 
     run.cleanup_needed = False
     run.cleanup_done_at = datetime.now(timezone.utc)
@@ -254,6 +267,8 @@ def cleanup_file_restore(
 def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
     db = SessionLocal()
     clone_lun_uuid: str | None = None
+    clone_volume_uuid: str | None = None
+    used_secondary = False
     netapp_service = None
     svm_name: str | None = None
     igroup_name: str | None = None
@@ -298,6 +313,26 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
                 lun_path = vhd_entry["lun_name"]
                 netapp_cluster_id = vhd_entry.get("netapp_cluster_id")
 
+                # Primaer-vor-Sekundaer-Regel, identisch zu _execute_restore
+                # (siehe dort fuer die ausfuehrliche Begruendung): existiert
+                # der Snapshot nicht mehr auf dem Primaersystem, automatisch
+                # auf ein bekanntes, noch vorhandenes SnapMirror-Ziel
+                # ausweichen -- keine manuelle Auswahl.
+                if not snapshot.success:
+                    usable_dest = next(
+                        (d for d in snapshot.destinations if d.present and d.destination_netapp_cluster_id), None,
+                    )
+                    if usable_dest is None:
+                        raise RuntimeError(
+                            "Snapshot ist weder auf dem Primärsystem noch auf einem bekannten "
+                            "SnapMirror-Ziel vorhanden"
+                        )
+                    lun_path = lun_path.replace(f"/vol/{volume_name}/", f"/vol/{usable_dest.destination_volume_name}/")
+                    svm_name = usable_dest.destination_svm_name
+                    volume_name = usable_dest.destination_volume_name
+                    netapp_cluster_id = usable_dest.destination_netapp_cluster_id
+                    used_secondary = True
+
                 netapp_cluster = db.get(NetAppCluster, netapp_cluster_id)
                 if netapp_cluster is None:
                     raise RuntimeError("NetApp-Cluster der LUN nicht gefunden")
@@ -311,7 +346,8 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
                         f"Keine Restore-Infrastruktur für SVM '{svm_name}' eingerichtet "
                         "(Restore > Setup > Restore-Infrastruktur einrichten)."
                     )
-                ctx.row.message = f"CSV {csv_name} -> Volume {volume_name} @ {svm_name}"
+                system_label = "Sekundärsystem (SnapMirror-Ziel)" if used_secondary else "Primärsystem"
+                ctx.row.message = f"CSV {csv_name} -> Volume {volume_name} @ {svm_name} ({system_label})"
 
             with _StepCtx(db, run.id, "connect-proxy", "Verbindung zum Restore-Proxy-Host", step_model=FileRestoreRunStep) as ctx:
                 proxy_service, proxy_session, proxy = _connect_proxy(db)
@@ -327,14 +363,30 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
             new_lun_name = f"filerestore_{slug}_{suffix}.lun"
 
             with _StepCtx(db, run.id, "clone-lun", "LUN aus Snapshot klonen", step_model=FileRestoreRunStep) as ctx:
-                clone = netapp_service.clone_lun_from_snapshot(
-                    volume_name=volume_name, svm_name=svm_name, source_lun_path=lun_path,
-                    snapshot_name=snapshot.snapshot_name, new_lun_name=new_lun_name,
-                )
+                if used_secondary:
+                    # SnapMirror-Ziel ist ein DP-Volume -- LUN-Klone aus
+                    # einem Snapshot funktionieren dort nicht (siehe
+                    # _execute_restore fuer die ausfuehrliche Begruendung).
+                    # Stattdessen wird das gesamte DP-Volume per FlexClone
+                    # geklont, die LUN ist darin bereits fertig enthalten.
+                    clone_volume_name = f"filerestore_{slug}_{suffix}"
+                    clone_volume_uuid = netapp_service.clone_volume_from_snapshot(
+                        svm_name=svm_name, source_volume_name=volume_name,
+                        snapshot_name=snapshot.snapshot_name, new_volume_name=clone_volume_name,
+                    )
+                    cloned_lun_path = lun_path.replace(f"/vol/{volume_name}/", f"/vol/{clone_volume_name}/")
+                    clone = netapp_service.find_lun_by_path(svm_name, cloned_lun_path)
+                    ctx.row.message = f"Volume-Klon '{clone_volume_name}' -> {clone.name} (Serial {clone.serial_number})"
+                    run.clone_volume_uuid = clone_volume_uuid
+                else:
+                    clone = netapp_service.clone_lun_from_snapshot(
+                        volume_name=volume_name, svm_name=svm_name, source_lun_path=lun_path,
+                        snapshot_name=snapshot.snapshot_name, new_lun_name=new_lun_name,
+                    )
+                    ctx.row.message = f"{clone.name} (Serial {clone.serial_number})"
                 clone_lun_uuid = clone.uuid
                 if not clone.serial_number:
                     raise RuntimeError("Geklonte LUN hat keine Seriennummer geliefert")
-                ctx.row.message = f"{clone.name} (Serial {clone.serial_number})"
                 run.clone_lun_uuid = clone_lun_uuid
                 run.clone_lun_name = clone.name
                 run.netapp_cluster_id = netapp_cluster_id
@@ -416,8 +468,14 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
                     netapp_service.delete_lun_map(clone_lun_uuid, igroup_name, svm_name)
                 except NetAppConnectionError:
                     pass
+                if not used_secondary:
+                    try:
+                        netapp_service.delete_lun(clone_lun_uuid)
+                    except NetAppConnectionError:
+                        pass
+            if used_secondary and clone_volume_uuid and netapp_service:
                 try:
-                    netapp_service.delete_lun(clone_lun_uuid)
+                    netapp_service.delete_volume(clone_volume_uuid)
                 except NetAppConnectionError:
                     pass
     finally:

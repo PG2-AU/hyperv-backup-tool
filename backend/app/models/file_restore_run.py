@@ -60,6 +60,11 @@ class FileRestoreRun(Base):
     proxy_vhd_mount_dir: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     clone_lun_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
     clone_lun_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Nur gesetzt, wenn vom Sekundaersystem (SnapMirror-Ziel) restored
+    # wurde -- dort wird statt eines LUN-Klons das gesamte DP-Volume per
+    # FlexClone geklont (siehe _execute_file_restore_open), Cleanup muss
+    # dann das ganze Volume statt nur eine LUN loeschen.
+    clone_volume_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
     netapp_cluster_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     igroup_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
