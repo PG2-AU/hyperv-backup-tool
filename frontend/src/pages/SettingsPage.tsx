@@ -303,7 +303,6 @@ export function SettingsPage() {
           <Tabs.Tab value="netapp-snapmirror-policies">SnapMirror-Policies</Tabs.Tab>
           <Tabs.Tab value="netapp-schedules">Schedules</Tabs.Tab>
           <Tabs.Tab value="ad">Active Directory</Tabs.Tab>
-          <Tabs.Tab value="netapp">NetApp-Verbindung</Tabs.Tab>
           <Tabs.Tab value="hyperv">Hyper-V-Hosts</Tabs.Tab>
           <Tabs.Tab value="updates">Updates (Git)</Tabs.Tab>
         </Tabs.List>
@@ -436,7 +435,7 @@ export function SettingsPage() {
         <Tabs.Panel value="netapp-snapmirror-policies" pt="md">
           <Paper p="md">
             <Group justify="space-between" mb="sm">
-              <Title order={5}>NetApp SnapMirror-Policies</Title>
+              <Title order={5}>SnapMirror-Policies</Title>
               <Button leftSection={<IconPlus size={16} />} onClick={() => setPolicyFormOpen(true)}>
                 Policy anlegen
               </Button>
@@ -512,7 +511,7 @@ export function SettingsPage() {
         <Tabs.Panel value="netapp-schedules" pt="md">
           <Paper p="md">
             <Group justify="space-between" mb="sm">
-              <Title order={5}>NetApp-Schedules</Title>
+              <Title order={5}>Schedules</Title>
               <Button leftSection={<IconPlus size={16} />} onClick={() => setNetappScheduleFormOpen(true)}>
                 Schedule anlegen
               </Button>
@@ -569,16 +568,6 @@ export function SettingsPage() {
               <ConfigRow label="Domain Controller" value={settings?.ad_server || "-"} />
               <ConfigRow label="Domaene" value={settings?.ad_domain || "-"} />
               <ConfigRow label="Base DN" value={settings?.ad_base_dn || "-"} />
-            </Stack>
-          </Paper>
-        </Tabs.Panel>
-
-        <Tabs.Panel value="netapp" pt="md">
-          <Paper p="md" maw={520}>
-            <Stack gap="xs">
-              <ConfigRow label="Cluster-Management-LIF" value={settings?.ontap_cluster_mgmt_lif || "-"} />
-              <ConfigRow label="SSL-Verifizierung" value={settings?.ontap_verify_ssl ? "Ja" : "Nein"} />
-              <ConfigRow label="MetroCluster" value={settings?.ontap_is_metrocluster ? "Ja" : "Nein"} />
             </Stack>
           </Paper>
         </Tabs.Panel>
@@ -704,7 +693,7 @@ export function SettingsPage() {
       <ProcessModal opened={!!process} onClose={() => setProcess(null)} plan={process} />
 
       <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
-        Die Tabs "Active Directory", "NetApp-Verbindung" und "Updates (Git)" zeigen die aktuell aktive
+        Die Tabs "Active Directory" und "Updates (Git)" zeigen die aktuell aktive
         Server-Konfiguration (aus Umgebungsvariablen/.env) nur an. Bearbeitung direkt aus der GUI folgt fuer diese
         Bereiche in einer kommenden Iteration. Die globalen WinRM-Einstellungen unter "Hyper-V-Hosts" gelten ebenso
         nur zur Anzeige -- sie werden fuer alle registrierten Hyper-V-Cluster verwendet.
