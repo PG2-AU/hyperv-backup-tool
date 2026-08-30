@@ -317,6 +317,8 @@ def _netapp_service_for(cluster: NetAppCluster) -> NetAppOntapService:
 def _execute_restore(run_id: str) -> None:  # noqa: C901
     db = SessionLocal()
     clone_lun_uuid: str | None = None
+    clone_volume_uuid: str | None = None
+    used_secondary = False
     netapp_service: NetAppOntapService | None = None
     svm_name: str | None = None
     igroup_name: str | None = None
@@ -371,6 +373,33 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                         lun_path = vhd_entry["lun_name"]
                         netapp_cluster_id = vhd_entry.get("netapp_cluster_id")
 
+                # Primaer-vor-Sekundaer-Regel (Nutzer-Vorgabe): existiert der
+                # Snapshot noch auf dem Primaersystem (snapshot.success wird
+                # von run_snapshot_reconciliation auf False gesetzt, sobald
+                # er dort extern geloescht wurde), wird IMMER von dort
+                # restored. Erst wenn das nicht mehr der Fall ist, weicht der
+                # Restore automatisch auf ein bekanntes, noch vorhandenes
+                # SnapMirror-Ziel aus (BackupRunSnapshotDestination, siehe
+                # run_snapshot_reconciliation) -- keine manuelle Auswahl noetig.
+                used_secondary = False
+                if svm_name and volume_name and lun_path and netapp_cluster_id and not snapshot.success:
+                    usable_dest = next(
+                        (d for d in snapshot.destinations if d.present and d.destination_netapp_cluster_id), None,
+                    )
+                    if usable_dest is None:
+                        raise RuntimeError(
+                            "Snapshot ist weder auf dem Primärsystem noch auf einem bekannten "
+                            "SnapMirror-Ziel vorhanden"
+                        )
+                    # LUN-Pfad-Konvention von ONTAP: /vol/<volume>/<lun-basename> --
+                    # SnapMirror spiegelt eine LUN unter demselben Basisnamen,
+                    # nur der Volume-Anteil des Pfads unterscheidet sich.
+                    lun_path = lun_path.replace(f"/vol/{volume_name}/", f"/vol/{usable_dest.destination_volume_name}/")
+                    svm_name = usable_dest.destination_svm_name
+                    volume_name = usable_dest.destination_volume_name
+                    netapp_cluster_id = usable_dest.destination_netapp_cluster_id
+                    used_secondary = True
+
                 if not (svm_name and volume_name and lun_path and netapp_cluster_id):
                     csv = db.query(HyperVCsv).filter(
                         HyperVCsv.cluster_id == run.hyperv_cluster_id, HyperVCsv.name == csv_name,
@@ -416,7 +445,8 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 if vm is None or not vm.host_name:
                     raise RuntimeError(f"VM '{run.vm_name}' bzw. deren Knoten nicht gefunden")
 
-                ctx.row.message = f"CSV {csv_name} -> Volume {volume_name} @ {svm_name}"
+                system_label = "Sekundärsystem (SnapMirror-Ziel)" if used_secondary else "Primärsystem"
+                ctx.row.message = f"CSV {csv_name} -> Volume {volume_name} @ {svm_name} ({system_label})"
 
             settings = get_settings()
             proxy = db.query(RestoreProxyHost).first()
@@ -462,14 +492,31 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
             new_lun_name = f"restore_{slug}_{suffix}.lun"
 
             with _StepCtx(db, run.id, "clone-lun", "LUN aus Snapshot klonen") as ctx:
-                clone = netapp_service.clone_lun_from_snapshot(
-                    volume_name=volume_name, svm_name=svm_name, source_lun_path=lun_path,
-                    snapshot_name=snapshot.snapshot_name, new_lun_name=new_lun_name,
-                )
+                if used_secondary:
+                    # SnapMirror-Ziel ist ein DP-Volume -- LUNs lassen sich
+                    # dort NICHT direkt per Snapshot klonen ('This operation
+                    # is supported only on volumes of type "RW"', live
+                    # verifiziert). Stattdessen wird das gesamte DP-Volume
+                    # per FlexClone geklont (ergibt ein unabhaengiges
+                    # RW-Volume mit der LUN bereits fertig darin), die LUN
+                    # danach im Klon per Pfad gefunden statt neu geklont.
+                    clone_volume_name = f"restore_{slug}_{suffix}"
+                    clone_volume_uuid = netapp_service.clone_volume_from_snapshot(
+                        svm_name=svm_name, source_volume_name=volume_name,
+                        snapshot_name=snapshot.snapshot_name, new_volume_name=clone_volume_name,
+                    )
+                    cloned_lun_path = lun_path.replace(f"/vol/{volume_name}/", f"/vol/{clone_volume_name}/")
+                    clone = netapp_service.find_lun_by_path(svm_name, cloned_lun_path)
+                    ctx.row.message = f"Volume-Klon '{clone_volume_name}' -> {clone.name} (Serial {clone.serial_number})"
+                else:
+                    clone = netapp_service.clone_lun_from_snapshot(
+                        volume_name=volume_name, svm_name=svm_name, source_lun_path=lun_path,
+                        snapshot_name=snapshot.snapshot_name, new_lun_name=new_lun_name,
+                    )
+                    ctx.row.message = f"{clone.name} (Serial {clone.serial_number})"
                 clone_lun_uuid = clone.uuid
                 if not clone.serial_number:
                     raise RuntimeError("Geklonte LUN hat keine Seriennummer geliefert")
-                ctx.row.message = f"{clone.name} (Serial {clone.serial_number})"
 
             with _StepCtx(db, run.id, "map-lun", "LUN der Restore-Igroup zuordnen"):
                 netapp_service.create_lun_map(svm_name, clone.name, igroup_name)
@@ -515,7 +562,14 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 mount_dir = None
                 proxy_service.iscsi_disconnect(proxy_session, target_iqn)
                 netapp_service.delete_lun_map(clone_lun_uuid, igroup_name, svm_name)
-                netapp_service.delete_lun(clone_lun_uuid)
+                if used_secondary:
+                    # Beim Sekundaer-Pfad wurde kein eigenstaendiger LUN-Klon
+                    # angelegt, sondern das gesamte Volume geklont -- dessen
+                    # Loeschen entfernt die darin enthaltene LUN gleich mit.
+                    netapp_service.delete_volume(clone_volume_uuid)
+                    clone_volume_uuid = None
+                else:
+                    netapp_service.delete_lun(clone_lun_uuid)
                 clone_lun_uuid = None
 
             if run.mode == RestoreMode.ADD:
@@ -577,8 +631,14 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                     netapp_service.delete_lun_map(clone_lun_uuid, igroup_name, svm_name)
                 except NetAppConnectionError:
                     pass
+                if not used_secondary:
+                    try:
+                        netapp_service.delete_lun(clone_lun_uuid)
+                    except NetAppConnectionError:
+                        pass
+            if used_secondary and clone_volume_uuid and netapp_service:
                 try:
-                    netapp_service.delete_lun(clone_lun_uuid)
+                    netapp_service.delete_volume(clone_volume_uuid)
                 except NetAppConnectionError:
                     pass
     finally:
@@ -852,7 +912,12 @@ def trigger_restore(
     db: Session = Depends(get_db), user=Depends(require_permission(Permission.RESTORE_RUN)),
 ) -> RestoreRun:
     snapshot = db.get(BackupRunSnapshot, payload.snapshot_id)
-    if snapshot is None or not snapshot.success:
+    # Nicht mehr nur success=True akzeptieren: ein auf dem Primaersystem
+    # geloeschter Snapshot (success=False) ist weiterhin restorebar, wenn
+    # er auf einem bekannten SnapMirror-Ziel noch vorhanden ist -- der
+    # eigentliche Primaer-vor-Sekundaer-Entscheid faellt dann live im
+    # resolve-Schritt von _execute_restore (siehe dort).
+    if snapshot is None or not (snapshot.success or any(d.present and d.destination_netapp_cluster_id for d in snapshot.destinations)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gewählter Snapshot ist ungültig")
     vm = db.query(HyperVVm).filter(HyperVVm.name == payload.vm_name).first()
     if vm is None:

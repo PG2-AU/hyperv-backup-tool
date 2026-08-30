@@ -32,10 +32,11 @@ from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.backup_policy import BackupPolicy, RetentionType
-from app.models.backup_run import BackupRun, BackupRunSnapshot
+from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapshotDestination
 from app.models.file_restore_run import FileRestoreRun
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.netapp_cluster import NetAppCluster
+from app.models.netapp_discovery import NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.schedule import Schedule, ScheduleType
 from app.models.scheduler_status import SchedulerStatus
 
@@ -138,9 +139,76 @@ def run_snapshot_reconciliation() -> None:
                     row.success = False
                     row.error_message = f"Snapshot wurde extern geloescht (Abgleich am {now_str} UTC)"
             db.commit()
+
+        _reconcile_snapshot_destinations(db, rows, clusters)
     finally:
         _touch(db, "last_snapshot_reconciliation_at")
         db.close()
+
+
+def _reconcile_snapshot_destinations(db: Session, rows: list[BackupRunSnapshot], clusters: dict[str, NetAppCluster]) -> None:
+    """Zweiter Teil des Snapshot-Abgleichs: prueft fuer jeden (weiterhin)
+    erfolgreichen Snapshot, ob er per SnapMirror auf eine discoverte
+    Ziel-Beziehung repliziert wurde -- Grundlage fuer den Restore-von-
+    SnapMirror-Destination-Workflow (siehe BackupRunSnapshotDestination).
+    Snapshot-Namen bleiben beim SnapMirror-Transfer unveraendert (live
+    verifiziert), der Abgleich erfolgt daher per Namensvergleich wie beim
+    Quell-Abgleich oben."""
+    clusters_by_name = {c.name: c for c in clusters.values()}
+    now = datetime.now(timezone.utc)
+
+    for row in rows:
+        if not row.success or not row.snapshot_name or not row.svm_name or not row.volume_name:
+            continue
+        relationships = (
+            db.query(NetAppSnapMirrorRelationship)
+            .filter(NetAppSnapMirrorRelationship.source_path == f"{row.svm_name}:{row.volume_name}")
+            .all()
+        )
+        if not relationships:
+            continue
+
+        existing_by_key = {(d.destination_svm_name, d.destination_volume_name): d for d in row.destinations}
+
+        for rel in relationships:
+            if not rel.destination_path or ":" not in rel.destination_path:
+                continue
+            dest_svm, dest_volume = rel.destination_path.split(":", 1)
+            dest = existing_by_key.get((dest_svm, dest_volume))
+            if dest is None:
+                dest = BackupRunSnapshotDestination(
+                    backup_run_snapshot_id=row.id, destination_svm_name=dest_svm, destination_volume_name=dest_volume,
+                )
+                db.add(dest)
+            dest.relationship_uuid = rel.uuid
+            dest.destination_netapp_cluster_name = rel.destination_cluster_name
+
+            dest_cluster = clusters_by_name.get(rel.destination_cluster_name) if rel.destination_cluster_name else None
+            if dest_cluster is None:
+                # Ziel-Cluster nicht in dieser App registriert -- Praesenz
+                # kann nicht live geprueft werden, letzter bekannter Stand
+                # bleibt unveraendert stehen.
+                continue
+            dest.destination_netapp_cluster_id = dest_cluster.id
+
+            dest_volume_row = (
+                db.query(NetAppVolume)
+                .filter(NetAppVolume.cluster_id == dest_cluster.id, NetAppVolume.svm_name == dest_svm, NetAppVolume.name == dest_volume)
+                .first()
+            )
+            if dest_volume_row is None or not dest_volume_row.uuid:
+                continue
+            dest.destination_volume_uuid = dest_volume_row.uuid
+
+            try:
+                dest_service = _netapp_service_for(dest_cluster)
+                dest_names = dest_service.list_snapshot_names(dest_volume_row.uuid)
+            except Exception as exc:
+                _log(f"Ziel-Abgleich uebersprungen fuer '{dest_svm}:{dest_volume}': {exc}")
+                continue
+            dest.present = row.snapshot_name in dest_names
+            dest.last_checked_at = now
+        db.commit()
 
 
 def run_retention_cleanup() -> None:

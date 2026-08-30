@@ -77,6 +77,51 @@ class BackupRunSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     run = relationship("BackupRun", back_populates="snapshots")
+    destinations = relationship("BackupRunSnapshotDestination", back_populates="snapshot", cascade="all, delete-orphan")
+
+
+class BackupRunSnapshotDestination(Base):
+    """Ob ein Snapshot per SnapMirror auf ein Ziel-Volume repliziert wurde
+    -- eine Zeile pro (Snapshot, Ziel), da eine Quelle mehrere Ziele haben
+    kann (Fan-out, z.B. eine Quelle wird sowohl ins Trainings- als auch ins
+    Demo-Environment gespiegelt). Wird periodisch von
+    app.core.scheduler.run_snapshot_reconciliation aktualisiert: pro
+    erfolgreichem BackupRunSnapshot werden die dafuer discoverten
+    NetAppSnapMirrorRelationship-Zeilen aufgeloest und am jeweiligen
+    Ziel-Volume geprueft, ob der (namensgleiche, SnapMirror aendert den
+    Namen beim Transfer nicht) Snapshot dort tatsaechlich angekommen ist --
+    haengt vom SnapMirror-Label der Policy ab, ob das ueberhaupt der Fall
+    ist (siehe Retention-Regeln der auf der Beziehung aktiven SnapMirror-
+    Policy, SnapMirrorCheckPanel.tsx zeigt diese an).
+
+    Grundlage fuer den Restore-von-SnapMirror-Destination-Workflow (siehe
+    app.api.routes.restore) -- ein bestaetigt vorhandener Ziel-Snapshot
+    kann als alternative Quelle fuer den LUN-Klon verwendet werden, z.B.
+    wenn die urspruengliche Quelle nicht erreichbar ist oder deren eigene
+    Snapshot-Retention den Snapshot bereits entfernt hat, das Ziel ihn aber
+    noch haelt (eigener, unabhaengiger Lebenszyklus -- live verifiziert:
+    ein auf der Quelle geloeschter Snapshot blieb auf dem Ziel bestehen)."""
+
+    __tablename__ = "backup_run_snapshot_destinations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    backup_run_snapshot_id: Mapped[str] = mapped_column(String(36), ForeignKey("backup_run_snapshots.id", ondelete="CASCADE"))
+    relationship_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Unser eigener registrierter NetAppCluster, sofern der Ziel-Cluster
+    # (per destination_cluster_name aus der discoverten Beziehung) mit
+    # einem in dieser App bekannten Cluster uebereinstimmt -- ohne das kann
+    # die Praesenz zwar (bei geteiltem Cluster wie im Demo-Setup) trotzdem
+    # geprueft werden, ein Restore davon ist aber nur mit registriertem
+    # Cluster + passender RestoreInfraConfig fuer die Ziel-SVM moeglich.
+    destination_netapp_cluster_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    destination_netapp_cluster_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    destination_svm_name: Mapped[str] = mapped_column(String(255))
+    destination_volume_name: Mapped[str] = mapped_column(String(255))
+    destination_volume_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    present: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_checked_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    snapshot = relationship("BackupRunSnapshot", back_populates="destinations")
 
 
 class BackupRunVmConfig(Base):

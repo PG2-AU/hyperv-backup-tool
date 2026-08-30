@@ -70,6 +70,7 @@ export function BackupsModal({ opened, onClose, scope, name }: BackupsModalProps
                 <Table.Tr>
                   <Table.Th>Erstellt</Table.Th>
                   <Table.Th>Konsistenz</Table.Th>
+                  <Table.Th>System</Table.Th>
                   <Table.Th>Policy</Table.Th>
                   <Table.Th>Volume</Table.Th>
                   <Table.Th>SVM / Cluster</Table.Th>
@@ -86,6 +87,11 @@ export function BackupsModal({ opened, onClose, scope, name }: BackupsModalProps
                     <Table.Td>
                       <Badge color={b.consistency === "ApplicationConsistent" ? "green" : "gray"} variant="light">
                         {b.consistency === "ApplicationConsistent" ? "App-konsistent" : "Crash-konsistent"}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge color={b.restore_source === "secondary" ? "orange" : "blue"} variant="light">
+                        {b.restore_source === "secondary" ? "Sekundär" : "Primär"}
                       </Badge>
                     </Table.Td>
                     <Table.Td>{b.policy_name}</Table.Td>

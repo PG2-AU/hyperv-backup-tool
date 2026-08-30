@@ -45,10 +45,18 @@ from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
+from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_run import RestoreStepStatus
 from app.models.schedule import Schedule
 from app.models.snapmirror_label import SnapMirrorLabel
-from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite, BackupSnapshotRead, BackupSnapshotVhdRead
+from app.schemas.backup import (
+    BackupJobRun,
+    BackupPolicyRead,
+    BackupPolicyWrite,
+    BackupSnapshotDestinationRead,
+    BackupSnapshotRead,
+    BackupSnapshotVhdRead,
+)
 from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppOntapService
 
@@ -333,8 +341,28 @@ def list_backups_for_object(
     if not keys:
         return []
 
-    rows = db.query(BackupRunSnapshot).filter(BackupRunSnapshot.success.is_(True)).all()
-    matched = [r for r in rows if (r.netapp_cluster_id, r.svm_name or "", r.volume_name or "") in keys]
+    # RestoreInfraConfig-Schluessel einmal vorladen, um pro Ziel zu pruefen,
+    # ob ein Restore davon ueberhaupt technisch moeglich ist (registrierter
+    # Cluster reicht allein nicht, die Ziel-SVM braucht eine eigene
+    # Restore-Infrastruktur, siehe Restore > Setup).
+    infra_keys = {(c.netapp_cluster_id, c.svm_name) for c in db.query(RestoreInfraConfig).all()}
+
+    def _restorable_destination(r: BackupRunSnapshot):
+        return next(
+            (d for d in r.destinations if d.present and d.destination_netapp_cluster_id and (d.destination_netapp_cluster_id, d.destination_svm_name) in infra_keys),
+            None,
+        )
+
+    # Anders als frueher NICHT mehr auf success=True gefiltert: ein auf dem
+    # Primaersystem geloeschter Snapshot (success=False, siehe
+    # run_snapshot_reconciliation) bleibt sichtbar/waehlbar, solange er auf
+    # einem restorebaren SnapMirror-Ziel noch vorhanden ist (Nutzer-Vorgabe:
+    # Primaer vor Sekundaer, aber Sekundaer soll trotzdem nutzbar sein).
+    rows = db.query(BackupRunSnapshot).all()
+    matched = [
+        r for r in rows
+        if (r.netapp_cluster_id, r.svm_name or "", r.volume_name or "") in keys and (r.success or _restorable_destination(r) is not None)
+    ]
     if scope == BackupScope.VM:
         # Ein Snapshot deckt ggf. mehrere VMs ab (gemeinsames CSV/Volume) --
         # per detach-vm kann eine VM manuell aus vm_names entfernt werden
@@ -377,6 +405,18 @@ def list_backups_for_object(
             snapshot_name=r.snapshot_name,
             snapshot_uuid=r.snapshot_uuid,
             vhds=vhds_by_run_id.get(r.run_id, []),
+            restore_source="primary" if r.success else "secondary",
+            destinations=[
+                BackupSnapshotDestinationRead(
+                    svm_name=d.destination_svm_name,
+                    volume_name=d.destination_volume_name,
+                    cluster_name=d.destination_netapp_cluster_name,
+                    present=d.present,
+                    restorable=bool(d.present and d.destination_netapp_cluster_id and (d.destination_netapp_cluster_id, d.destination_svm_name) in infra_keys),
+                    last_checked_at=d.last_checked_at,
+                )
+                for d in r.destinations
+            ],
         )
         for r in matched
     ]

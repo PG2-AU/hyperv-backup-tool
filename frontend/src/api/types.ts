@@ -550,6 +550,17 @@ export interface BackupSnapshot {
   snapshot_name?: string | null;
   snapshot_uuid?: string | null;
   vhds: BackupSnapshotVhd[];
+  destinations: BackupSnapshotDestination[];
+  restore_source: "primary" | "secondary";
+}
+
+export interface BackupSnapshotDestination {
+  svm_name: string;
+  volume_name: string;
+  cluster_name?: string | null;
+  present: boolean;
+  restorable: boolean;
+  last_checked_at: string;
 }
 
 export interface BackupJobRun {

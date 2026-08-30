@@ -83,6 +83,21 @@ class BackupSnapshotVhdRead(BaseModel):
     size_bytes: int | None = None
 
 
+class BackupSnapshotDestinationRead(BaseModel):
+    """Eine per SnapMirror discoverte Ziel-Beziehung fuer diesen Snapshot
+    (siehe BackupRunSnapshotDestination) -- 'present' und 'restorable'
+    unterscheiden sich, weil Praesenz auch fuer nicht in dieser App
+    registrierte Ziel-Cluster getrackt werden kann, ein Restore davon aber
+    eine registrierte RestoreInfraConfig fuer die Ziel-SVM braucht."""
+
+    svm_name: str
+    volume_name: str
+    cluster_name: str | None = None
+    present: bool
+    restorable: bool
+    last_checked_at: datetime
+
+
 class BackupSnapshotRead(BaseModel):
     """Ein vorhandener Snapshot, der eine bestimmte VM oder ein bestimmtes CSV
     abdeckt (fuer die 'Backups anzeigen'-Funktion im Inventory) -- unabhaengig
@@ -101,6 +116,14 @@ class BackupSnapshotRead(BaseModel):
     snapshot_name: str | None = None
     snapshot_uuid: str | None = None
     vhds: list[BackupSnapshotVhdRead] = []
+    destinations: list[BackupSnapshotDestinationRead] = []
+    # "primary": Snapshot ist noch auf dem urspruenglichen (Quell-)Volume
+    # vorhanden, ein Restore verwendet IMMER dieses (Nutzer-Vorgabe: Primaer
+    # vor Sekundaer). "secondary": auf der Quelle nicht mehr vorhanden
+    # (per Abgleich erkannt geloescht), Restore weicht automatisch auf ein
+    # noch vorhandenes SnapMirror-Ziel aus. "unavailable": weder noch --
+    # dieser Snapshot ist ueberhaupt nicht mehr restorebar.
+    restore_source: str = "primary"
 
 
 class BackupJobRun(BaseModel):

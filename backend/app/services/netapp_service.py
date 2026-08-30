@@ -845,6 +845,58 @@ class NetAppOntapService:
                 size_bytes=_get_nested(lun, "space.size"),
             )
 
+    def clone_volume_from_snapshot(self, svm_name: str, source_volume_name: str, snapshot_name: str, new_volume_name: str) -> str:
+        """FlexClone eines kompletten Volumes aus einem Snapshot -- fuer den
+        Restore von einer SnapMirror-Destination. LUNs lassen sich per
+        clone_lun_from_snapshot() nur auf RW-Volumes direkt aus einem
+        Snapshot klonen ('This operation is supported only on volumes of
+        type "RW"', live gegen ein echtes DP-Volume verifiziert) -- eine
+        SnapMirror-Destination ist aber immer ein DP-Volume (Data
+        Protection, read-only Spiegel). Ein FlexClone des GESAMTEN
+        DP-Volumes erzeugt dagegen ein neues, unabhaengiges RW-Volume mit
+        der darin bereits fertig enthaltenen LUN -- kein zusaetzlicher
+        LUN-Klon-Schritt noetig, die LUN wird stattdessen per
+        find_lun_by_path() im neuen Volume gefunden. Liefert die UUID des
+        neuen Volumes (fuer das spaetere Aufraeumen per delete_volume --
+        der Aufrufer kennt new_volume_name bereits selbst)."""
+        with self._connection():
+            payload = {
+                "name": new_volume_name,
+                "svm": {"name": svm_name},
+                "clone": {
+                    "parent_svm": {"name": svm_name},
+                    "parent_volume": {"name": source_volume_name},
+                    "parent_snapshot": {"name": snapshot_name},
+                    "is_flexclone": True,
+                },
+            }
+            try:
+                volume = Volume.from_dict(payload)
+                volume.post(hydrate=True, poll=True, poll_timeout=180)
+                volume.get(fields="uuid")
+                return volume.uuid
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Volume-Klon konnte nicht erstellt werden: {exc}") from exc
+
+    def find_lun_by_path(self, svm_name: str, lun_path: str) -> LunCloneInfo:
+        """Fragt eine bereits existierende LUN (z.B. innerhalb eines per
+        clone_volume_from_snapshot erzeugten Volume-Klons) anhand ihres
+        vollen Pfads ab, statt sie neu zu klonen -- Gegenstueck zu
+        clone_lun_from_snapshot fuer den Restore-von-SnapMirror-Destination-
+        Pfad."""
+        with self._connection():
+            try:
+                matches = list(Lun.get_collection(**{"svm.name": svm_name, "name": lun_path}))
+                if not matches:
+                    raise NetAppConnectionError(f"LUN '{lun_path}' nicht gefunden")
+                lun = matches[0]
+                lun.get(fields="serial_number,space.size")
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN '{lun_path}' konnte nicht abgefragt werden: {exc}") from exc
+            return LunCloneInfo(
+                uuid=lun.uuid, name=lun.name, serial_number=_get_nested(lun, "serial_number"), size_bytes=_get_nested(lun, "space.size"),
+            )
+
     def create_volume(
         self, svm_name: str, name: str, aggregate_name: str, size_bytes: int,
         *, security_style: str | None = None, guarantee_type: str | None = None, volume_type: str | None = None,

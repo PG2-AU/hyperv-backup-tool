@@ -13,6 +13,7 @@ import {
   Stepper,
   Text,
   TextInput,
+  Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconAlertTriangle, IconCheck, IconMinus, IconX } from "@tabler/icons-react";
@@ -256,6 +257,17 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
                           <Badge color={b.consistency === "ApplicationConsistent" ? "green" : "gray"} variant="light" size="sm">
                             {b.consistency === "ApplicationConsistent" ? "App-konsistent" : "Crash-konsistent"}
                           </Badge>
+                          {b.restore_source === "secondary" ? (
+                            <Tooltip label="Auf dem Primärsystem nicht mehr vorhanden -- Restore erfolgt automatisch vom SnapMirror-Ziel">
+                              <Badge color="orange" variant="light" size="sm">
+                                Sekundärsystem
+                              </Badge>
+                            </Tooltip>
+                          ) : (
+                            <Badge color="blue" variant="light" size="sm">
+                              Primärsystem
+                            </Badge>
+                          )}
                           <Text size="xs" c="dimmed">
                             {b.policy_name}
                           </Text>
