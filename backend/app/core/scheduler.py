@@ -283,11 +283,34 @@ def run_retention_cleanup() -> None:
                     if not result.success:
                         _log(f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}') konnte nicht geloescht werden: {result.message}")
                         continue
-                    db.delete(row)
-                    _log(
-                        f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}', "
-                        f"Retention {policy.retention_type.value}={policy.retention_value}) geloescht"
-                    )
+
+                    # Vor dem Verwerfen der Zeile live pruefen, ob der
+                    # Snapshot noch auf einem SnapMirror-Ziel vorhanden ist
+                    # (nicht auf ggf. bis zu 24h alte BackupRunSnapshot-
+                    # Destination-Daten verlassen -- direkt nachschauen).
+                    # Ist er das, bleibt die Zeile (nur success=False, wie
+                    # bei extern auf der Quelle geloeschten Snapshots) statt
+                    # per Cascade auch die Ziel-Tracking-Infos zu verlieren
+                    # -- sonst waere der Snapshot trotz noch vorhandener
+                    # Kopie auf dem Sekundaersystem ploetzlich gar nicht mehr
+                    # restorebar.
+                    _reconcile_snapshot_destinations(db, [row], clusters)
+                    if any(d.present for d in row.destinations):
+                        row.success = False
+                        row.error_message = (
+                            f"Auf dem Primärsystem per Retention entfernt ({policy.retention_type.value}="
+                            f"{policy.retention_value}) -- auf einem SnapMirror-Ziel weiterhin vorhanden."
+                        )
+                        _log(
+                            f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}') auf der Quelle "
+                            "geloescht, bleibt aber ueber ein SnapMirror-Ziel restorebar."
+                        )
+                    else:
+                        db.delete(row)
+                        _log(
+                            f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}', "
+                            f"Retention {policy.retention_type.value}={policy.retention_value}) geloescht"
+                        )
                 db.commit()
     finally:
         _touch(db, "last_retention_cleanup_at")
