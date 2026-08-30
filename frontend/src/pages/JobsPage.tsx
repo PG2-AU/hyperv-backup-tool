@@ -417,12 +417,7 @@ export function JobsPage() {
                       <Button size="xs" variant="subtle" leftSection={<IconStack2 size={14} />} onClick={() => showSnapshots(run)}>
                         Snapshots
                       </Button>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        leftSection={<IconTerminal2 size={14} />}
-                        onClick={() => showLog(run.job_id ?? undefined)}
-                      >
+                      <Button size="xs" variant="subtle" leftSection={<IconTerminal2 size={14} />} onClick={() => showLog(run.id)}>
                         Log
                       </Button>
                     </Group>

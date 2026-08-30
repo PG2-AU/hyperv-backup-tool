@@ -14,6 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.db.types import DateTime
 from app.models.backup_policy import BackupScope
+from app.models.restore_run import RestoreStepStatus
 
 
 class JobStatus(str, enum.Enum):
@@ -49,6 +50,7 @@ class BackupRun(Base):
 
     snapshots = relationship("BackupRunSnapshot", back_populates="run", cascade="all, delete-orphan")
     vm_configs = relationship("BackupRunVmConfig", back_populates="run", cascade="all, delete-orphan")
+    steps = relationship("BackupRunStep", back_populates="run", cascade="all, delete-orphan", order_by="BackupRunStep.created_at")
 
 
 class BackupRunSnapshot(Base):
@@ -114,3 +116,24 @@ class BackupRunVmConfig(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     run = relationship("BackupRun", back_populates="vm_configs")
+
+
+class BackupRunStep(Base):
+    """Detaillierter Schritt-fuer-Schritt-Verlauf eines Backup-Laufs
+    (Checkpoint erstellen/entfernen, Snapshot je Volume, SnapMirror-Update)
+    -- analog zu RestoreRunStep/VmRecreateRunStep, siehe deren _StepCtx in
+    app.api.routes.restore, hier wiederverwendet fuer trigger_job_run.
+    Grundlage fuer den echten Job-Log-Viewer (GET /api/logs), der bisher
+    nur Demo-Daten zeigte."""
+
+    __tablename__ = "backup_run_steps"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("backup_runs.id", ondelete="CASCADE"))
+    step: Mapped[str] = mapped_column(String(100))
+    label: Mapped[str] = mapped_column(String(255))
+    status: Mapped[RestoreStepStatus] = mapped_column(String(20), default=RestoreStepStatus.PENDING)
+    message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    run = relationship("BackupRun", back_populates="steps")

@@ -283,7 +283,17 @@ class _StepCtx:
     def __exit__(self, exc_type, exc, tb) -> bool:
         if exc is None:
             self.row.status = RestoreStepStatus.SUCCESS
-            self.row.message = "OK"
+            # Nur auf "OK" defaulten, wenn der Aufrufer innerhalb des
+            # with-Blocks keine eigene, aussagekraeftigere Nachricht gesetzt
+            # hat (z.B. ctx.row.message = f"Snapshot '{name}' erstellt") --
+            # frueher wurde hier bedingungslos ueberschrieben, wodurch jede
+            # custom gesetzte Erfolgsmeldung verloren ging (nur bei Fehlern
+            # sichtbar). Betraf bisher niemanden sichtbar, weil die
+            # Restore-Wizards nur die Fehlermeldung anzeigen -- fuer das
+            # neue detaillierte Backup-Job-Log (siehe logs.py) sind die
+            # Erfolgsmeldungen aber der eigentliche Sinn der Anzeige.
+            if not self.row.message:
+                self.row.message = "OK"
         else:
             self.row.status = RestoreStepStatus.ERROR
             self.row.message = str(exc)[:2000]

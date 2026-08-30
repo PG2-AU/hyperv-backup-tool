@@ -39,11 +39,13 @@ from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
-from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunVmConfig, JobStatus
+from app.api.routes.restore import _StepCtx
+from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunStep, BackupRunVmConfig, JobStatus
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
+from app.models.restore_run import RestoreStepStatus
 from app.models.schedule import Schedule
 from app.models.snapmirror_label import SnapMirrorLabel
 from app.schemas.backup import BackupJobRun, BackupPolicyRead, BackupPolicyWrite, BackupSnapshotRead, BackupSnapshotVhdRead
@@ -466,6 +468,9 @@ def trigger_job_run(
     # eigentlichen Snapshot-Aufrufe noch laufen (siehe GET /jobs/runs?status=running,
     # von der Laufende-Jobs-Anzeige im Frontend gepollt).
 
+    with _StepCtx(db, run.id, "targets", "Ziele aufgelöst", step_model=BackupRunStep) as ctx:
+        ctx.row.message = ", ".join(all_targets) if all_targets else "(keine)"
+
     clusters_by_id = {c.id: c for c in db.query(NetAppCluster).all()}
     volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
     snapshot_suffix = now.strftime("%Y%m%d%H%M%S")
@@ -553,18 +558,24 @@ def trigger_job_run(
             hv_vm = hyperv_vms_by_name.get(vm_name)
             hv_cluster = hyperv_clusters_by_id.get(hv_vm.cluster_id) if hv_vm else None
             if hv_vm is None or hv_cluster is None:
-                errors.append(f"VM '{vm_name}': Hyper-V-Cluster nicht gefunden, Checkpoint uebersprungen (Backup laeuft crash-konsistent weiter)")
+                msg = "Hyper-V-Cluster nicht gefunden, Checkpoint uebersprungen (Backup laeuft crash-konsistent weiter)"
+                errors.append(f"VM '{vm_name}': {msg}")
+                with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
+                    ctx.row.status = RestoreStepStatus.SKIPPED
+                    ctx.row.message = msg
                 continue
             try:
-                hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
-                hv_password = decrypt_secret(hv_cluster.encrypted_password)
-                cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
-                owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or hv_vm.host_name
-                node_address = hv_service.resolve_node_address(cno_session, owner_node)
-                node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
-                node_session = node_service.connect(hv_cluster.username, hv_password)
-                node_service.create_checkpoint(node_session, vm_name, checkpoint_name, policy.consistency)
-                active_checkpoints.append((node_service, node_session, vm_name))
+                with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
+                    hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
+                    hv_password = decrypt_secret(hv_cluster.encrypted_password)
+                    cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
+                    owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or hv_vm.host_name
+                    node_address = hv_service.resolve_node_address(cno_session, owner_node)
+                    node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
+                    node_session = node_service.connect(hv_cluster.username, hv_password)
+                    node_service.create_checkpoint(node_session, vm_name, checkpoint_name, policy.consistency)
+                    active_checkpoints.append((node_service, node_session, vm_name))
+                    ctx.row.message = f"Checkpoint '{checkpoint_name}' auf Knoten '{node_address}' erstellt"
             except Exception as exc:
                 errors.append(f"VM '{vm_name}': Checkpoint konnte nicht erstellt werden ({exc}) -- Backup laeuft crash-konsistent weiter")
 
@@ -584,20 +595,27 @@ def trigger_job_run(
         if volume is not None:
             row.volume_uuid = volume.uuid
 
+        target_label = target.volume_name or ", ".join(sorted(target.csv_names)) or "?"
+
         if cluster is None or not target.svm_name or not target.volume_name:
             row.success = False
             row.error_message = "NetApp-Cluster oder -Volume nicht auflösbar"
             errors.append(f"{target.volume_name or '?'}: {row.error_message}")
             db.add(row)
+            with _StepCtx(db, run.id, f"snapshot-{target_label}", f"Snapshot erstellen: {target_label}", step_model=BackupRunStep) as ctx:
+                ctx.row.status = RestoreStepStatus.SKIPPED
+                ctx.row.message = row.error_message
             continue
 
         snapshot_name = f"hvnb_{slug}_{snapshot_suffix}"
         try:
-            service = _netapp_service_for(cluster)
-            snap = service.create_snapshot(target.volume_name, target.svm_name, snapshot_name, snapmirror_label=label)
-            row.snapshot_name = snap.name
-            row.snapshot_uuid = snap.uuid
-            row.success = True
+            with _StepCtx(db, run.id, f"snapshot-{target_label}", f"Snapshot erstellen: {target_label}", step_model=BackupRunStep) as ctx:
+                service = _netapp_service_for(cluster)
+                snap = service.create_snapshot(target.volume_name, target.svm_name, snapshot_name, snapmirror_label=label)
+                row.snapshot_name = snap.name
+                row.snapshot_uuid = snap.uuid
+                row.success = True
+                ctx.row.message = f"Snapshot '{snap.name}' auf Volume '{target.volume_name}' @ {target.svm_name} erstellt"
         except Exception as exc:
             row.success = False
             row.error_message = str(exc)
@@ -618,25 +636,34 @@ def trigger_job_run(
         # sehen und ueber den Check-Panel-Hinweis die Beziehung anlegen.
         if row.success and policy.snapmirror_update:
             try:
-                rel = (
-                    db.query(NetAppSnapMirrorRelationship)
-                    .filter(NetAppSnapMirrorRelationship.source_path == f"{target.svm_name}:{target.volume_name}")
-                    .first()
-                )
-                if rel is None or not rel.uuid:
-                    errors.append(f"{target.volume_name}: Kein SnapMirror-Update ausgeloest (keine Beziehung konfiguriert)")
-                else:
-                    sm_result = service.trigger_snapmirror_update(rel.uuid)
-                    if not sm_result.success:
-                        errors.append(f"{target.volume_name}: SnapMirror-Update fehlgeschlagen ({sm_result.message})")
+                with _StepCtx(
+                    db, run.id, f"snapmirror-{target_label}", f"SnapMirror-Update: {target_label}", step_model=BackupRunStep,
+                ) as ctx:
+                    rel = (
+                        db.query(NetAppSnapMirrorRelationship)
+                        .filter(NetAppSnapMirrorRelationship.source_path == f"{target.svm_name}:{target.volume_name}")
+                        .first()
+                    )
+                    if rel is None or not rel.uuid:
+                        msg = "Kein SnapMirror-Update ausgeloest (keine Beziehung konfiguriert)"
+                        errors.append(f"{target.volume_name}: {msg}")
+                        ctx.row.status = RestoreStepStatus.SKIPPED
+                        ctx.row.message = msg
+                    else:
+                        sm_result = service.trigger_snapmirror_update(rel.uuid)
+                        if not sm_result.success:
+                            raise RuntimeError(sm_result.message)
+                        ctx.row.message = f"Update fuer Beziehung {rel.source_path} -> {rel.destination_path} ausgeloest"
             except Exception as exc:
                 errors.append(f"{target.volume_name}: SnapMirror-Update fehlgeschlagen ({exc})")
 
     for node_service, node_session, vm_name in active_checkpoints:
         try:
-            result = node_service.remove_checkpoint(node_session, vm_name, checkpoint_name)
-            if not result.success:
-                errors.append(f"VM '{vm_name}': Checkpoint konnte nicht entfernt werden: {result.error}")
+            with _StepCtx(db, run.id, f"checkpoint-remove-{vm_name}", f"Checkpoint entfernen: {vm_name}", step_model=BackupRunStep) as ctx:
+                result = node_service.remove_checkpoint(node_session, vm_name, checkpoint_name)
+                if not result.success:
+                    raise RuntimeError(result.error)
+                ctx.row.message = f"Checkpoint '{checkpoint_name}' entfernt"
         except Exception as exc:
             errors.append(f"VM '{vm_name}': Checkpoint-Entfernung fehlgeschlagen: {exc}")
 
