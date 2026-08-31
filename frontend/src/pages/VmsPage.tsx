@@ -276,7 +276,7 @@ export function VmsPage() {
   const [selectedCsv, setSelectedCsv] = useState<Csv | null>(null);
   const [backupsTarget, setBackupsTarget] = useState<{ scope: BackupScope; name: string } | null>(null);
   const [vmSearch, setVmSearch] = useState("");
-  const filteredVms = (vms ?? []).filter((vm) => vm.name.toLowerCase().includes(vmSearch.trim().toLowerCase()));
+  const filteredVms = (vms ?? []).filter((vm) => matchesAllColumns(vm, vmSearch));
   const [csvSearch, setCsvSearch] = useState("");
   const filteredCsvs = (csvs ?? []).filter((csv) => matchesAllColumns(csv, csvSearch));
   const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();

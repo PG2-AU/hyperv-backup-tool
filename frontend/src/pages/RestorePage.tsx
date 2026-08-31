@@ -21,6 +21,7 @@ import { VmRecreateWizardModal } from "@/components/VmRecreateWizardModal";
 import type { FileRestoreRun, VmWithBackups } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
+import { matchesAllColumns } from "@/utils/search";
 
 const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
 
@@ -45,7 +46,7 @@ export function RestorePage() {
 
   const cleanupPending = runs?.filter((r) => r.cleanup_needed) ?? [];
   const openFileSessions = fileRestoreRuns?.filter((r) => r.cleanup_needed) ?? [];
-  const filteredVms = (vms ?? []).filter((vm) => vm.name.toLowerCase().includes(vmSearch.trim().toLowerCase()));
+  const filteredVms = (vms ?? []).filter((vm) => matchesAllColumns(vm, vmSearch));
 
   function handleCleanup(runId: string, vmName: string) {
     confirmAction({
