@@ -34,6 +34,15 @@ const LEVEL_COLOR: Record<LogLevel, string> = {
   ERROR: "red",
 };
 
+const RANGE_OPTIONS = [
+  { value: "6", label: "Letzte 6 Stunden" },
+  { value: "12", label: "Letzte 12 Stunden" },
+  { value: "24", label: "Letzte 24 Stunden" },
+  { value: "48", label: "Letzte 2 Tage" },
+  { value: "96", label: "Letzte 4 Tage" },
+  { value: "168", label: "Letzte Woche" },
+];
+
 function formatEntry(e: LogEntry): string {
   const ts = new Date(e.timestamp).toISOString();
   return `[${ts}] ${e.level.padEnd(7)} ${e.source}${e.context ? `(${e.context})` : ""}: ${e.message}`;
@@ -42,15 +51,17 @@ function formatEntry(e: LogEntry): string {
 export function LogViewer({ context }: { context?: string }) {
   const [level, setLevel] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [hours, setHours] = useState<string>("24");
 
   const { data: entries, isFetching, refetch } = useQuery({
-    queryKey: ["logs", context, level, search],
+    queryKey: ["logs", context, level, search, context ? undefined : hours],
     queryFn: async () => {
       const response = await apiClient.get<LogEntry[]>("/logs", {
         params: {
           context: context || undefined,
           level: level || undefined,
           search: search || undefined,
+          hours: context ? undefined : Number(hours),
         },
       });
       return response.data;
@@ -78,6 +89,9 @@ export function LogViewer({ context }: { context?: string }) {
     <Stack h="100%" gap="sm">
       <Group justify="space-between" wrap="nowrap">
         <Group gap="xs" wrap="nowrap">
+          {!context && (
+            <Select data={RANGE_OPTIONS} value={hours} onChange={(v) => setHours(v ?? "24")} allowDeselect={false} w={190} />
+          )}
           <Select
             placeholder="Level"
             data={["DEBUG", "INFO", "WARNING", "ERROR"]}

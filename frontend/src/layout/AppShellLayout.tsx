@@ -31,7 +31,7 @@ import logo from "@/assets/logo.png";
 import { LogViewer } from "@/components/LogViewer";
 import { RunningJobsIndicator } from "@/components/RunningJobsIndicator";
 import { VersionFooter } from "@/components/VersionFooter";
-import { NAV_ITEMS, resolveSearchContext } from "@/layout/navConfig";
+import { NAV_ITEMS } from "@/layout/navConfig";
 import { useAuthStore } from "@/store/authStore";
 
 export function AppShellLayout() {
@@ -43,8 +43,6 @@ export function AppShellLayout() {
   const logout = useAuthStore((s) => s.logout);
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const isDark = colorScheme === "dark";
-
-  const currentContext = resolveSearchContext(location.pathname, location.search);
 
   function isActive(path?: string) {
     if (!path) return false;
@@ -74,7 +72,7 @@ export function AppShellLayout() {
 
           <Group wrap="nowrap">
             <RunningJobsIndicator />
-            <Tooltip label="Troubleshooting-Log">
+            <Tooltip label="System Log">
               <ActionIcon variant="default" size="lg" onClick={openLogs}>
                 <IconTerminal2 size={18} />
               </ActionIcon>
@@ -176,7 +174,7 @@ export function AppShellLayout() {
         onClose={closeLogs}
         position="bottom"
         size="45%"
-        title={`Troubleshooting-Log${currentContext ? ` – ${currentContext}` : ""}`}
+        title="System Log"
       >
         <LogViewer context={undefined} />
       </Drawer>

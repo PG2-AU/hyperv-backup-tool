@@ -39,12 +39,21 @@ from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.schedule import Schedule, ScheduleType
 from app.models.scheduler_status import SchedulerStatus
+from app.models.system_log import SystemLogEvent
 
 _scheduler: BackgroundScheduler | None = None
 
 
-def _log(message: str) -> None:
+def _log(db: Session | None, message: str, level: str = "INFO") -> None:
+    """Schreibt eine Hintergrund-Meldung ins Container-Log UND (falls eine
+    DB-Session uebergeben wird) persistiert sie als SystemLogEvent, damit sie
+    im "System Log" in der GUI sichtbar ist (siehe app.api.routes.logs) --
+    vorher nur per print() ins Container-Log geschrieben und damit fuer die
+    GUI nicht abrufbar."""
     print(f"[scheduler] {datetime.now(timezone.utc).isoformat()} {message}", flush=True)
+    if db is not None:
+        db.add(SystemLogEvent(level=level, source="scheduler", message=message))
+        db.commit()
 
 
 def _touch(db: Session, field_name: str) -> None:
@@ -68,12 +77,12 @@ def run_health_checks() -> None:
             try:
                 _refresh_hyperv_status(db, cluster)
             except Exception as exc:  # WinRM-Verbindungsfehler sind keine einheitliche Exception-Klasse
-                _log(f"Health-Check fehlgeschlagen fuer Hyper-V-Cluster '{cluster.name}': {exc}")
+                _log(db, f"Health-Check fehlgeschlagen fuer Hyper-V-Cluster '{cluster.name}': {exc}", level="WARNING")
         for cluster in db.query(NetAppCluster).all():
             try:
                 _refresh_netapp_status(db, cluster)
             except Exception as exc:
-                _log(f"Health-Check fehlgeschlagen fuer NetApp-Cluster '{cluster.name}': {exc}")
+                _log(db, f"Health-Check fehlgeschlagen fuer NetApp-Cluster '{cluster.name}': {exc}", level="WARNING")
         _touch(db, "last_health_check_at")
     finally:
         db.close()
@@ -86,12 +95,12 @@ def run_discovery() -> None:
             try:
                 _run_hyperv_discovery(db, cluster)
             except Exception as exc:
-                _log(f"Discovery fehlgeschlagen fuer Hyper-V-Cluster '{cluster.name}': {exc}")
+                _log(db, f"Discovery fehlgeschlagen fuer Hyper-V-Cluster '{cluster.name}': {exc}", level="WARNING")
         for cluster in db.query(NetAppCluster).all():
             try:
                 _run_netapp_discovery(db, cluster)
             except Exception as exc:
-                _log(f"Discovery fehlgeschlagen fuer NetApp-Cluster '{cluster.name}': {exc}")
+                _log(db, f"Discovery fehlgeschlagen fuer NetApp-Cluster '{cluster.name}': {exc}", level="WARNING")
         _touch(db, "last_discovery_at")
     finally:
         db.close()
@@ -131,7 +140,7 @@ def run_snapshot_reconciliation() -> None:
                 service = _netapp_service_for(cluster)
                 real_names = service.list_snapshot_names(volume_uuid)
             except Exception as exc:
-                _log(f"Snapshot-Abgleich uebersprungen fuer Cluster '{cluster.name}'/Volume '{volume_uuid}': {exc}")
+                _log(db, f"Snapshot-Abgleich uebersprungen fuer Cluster '{cluster.name}'/Volume '{volume_uuid}': {exc}", level="WARNING")
                 continue
 
             for row in group_rows:
@@ -204,7 +213,7 @@ def _reconcile_snapshot_destinations(db: Session, rows: list[BackupRunSnapshot],
                 dest_service = _netapp_service_for(dest_cluster)
                 dest_names = dest_service.list_snapshot_names(dest_volume_row.uuid)
             except Exception as exc:
-                _log(f"Ziel-Abgleich uebersprungen fuer '{dest_svm}:{dest_volume}': {exc}")
+                _log(db, f"Ziel-Abgleich uebersprungen fuer '{dest_svm}:{dest_volume}': {exc}", level="WARNING")
                 continue
             dest.present = row.snapshot_name in dest_names
             dest.last_checked_at = now
@@ -271,17 +280,25 @@ def run_retention_cleanup() -> None:
                 try:
                     service = _netapp_service_for(cluster)
                 except Exception as exc:
-                    _log(f"Retention uebersprungen fuer Cluster '{cluster.name}': {exc}")
+                    _log(db, f"Retention uebersprungen fuer Cluster '{cluster.name}': {exc}", level="WARNING")
                     continue
 
                 for row in to_delete:
                     try:
                         result = service.delete_snapshot(row.volume_uuid, row.snapshot_uuid)
                     except Exception as exc:
-                        _log(f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}') konnte nicht geloescht werden: {exc}")
+                        _log(
+                            db,
+                            f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}') konnte nicht geloescht werden: {exc}",
+                            level="ERROR",
+                        )
                         continue
                     if not result.success:
-                        _log(f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}') konnte nicht geloescht werden: {result.message}")
+                        _log(
+                            db,
+                            f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}') konnte nicht geloescht werden: {result.message}",
+                            level="ERROR",
+                        )
                         continue
 
                     # Vor dem Verwerfen der Zeile live pruefen, ob der
@@ -302,14 +319,16 @@ def run_retention_cleanup() -> None:
                             f"{policy.retention_value}) -- auf einem SnapMirror-Ziel weiterhin vorhanden."
                         )
                         _log(
+                            db,
                             f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}') auf der Quelle "
-                            "geloescht, bleibt aber ueber ein SnapMirror-Ziel restorebar."
+                            "geloescht, bleibt aber ueber ein SnapMirror-Ziel restorebar.",
                         )
                     else:
                         db.delete(row)
                         _log(
+                            db,
                             f"Retention: Snapshot '{row.snapshot_name}' (Policy '{policy.name}', "
-                            f"Retention {policy.retention_type.value}={policy.retention_value}) geloescht"
+                            f"Retention {policy.retention_type.value}={policy.retention_value}) geloescht",
                         )
                 db.commit()
     finally:
@@ -341,9 +360,9 @@ def run_file_restore_expiry() -> None:
                 _cleanup_file_restore_run(db, run)
                 run.error_message = "Automatisch aufgeraeumt (Zeitlimit ueberschritten)"
                 db.commit()
-                _log(f"Datei-Restore-Session fuer VM '{run.vm_name}' automatisch aufgeraeumt (Zeitlimit ueberschritten)")
+                _log(db, f"Datei-Restore-Session fuer VM '{run.vm_name}' automatisch aufgeraeumt (Zeitlimit ueberschritten)")
             except Exception as exc:
-                _log(f"Automatisches Aufraeumen der Datei-Restore-Session fuer VM '{run.vm_name}' fehlgeschlagen: {exc}")
+                _log(db, f"Automatisches Aufraeumen der Datei-Restore-Session fuer VM '{run.vm_name}' fehlgeschlagen: {exc}", level="ERROR")
     finally:
         _touch(db, "last_file_restore_expiry_at")
         db.close()
@@ -386,7 +405,7 @@ def run_scheduled_backups() -> None:
         try:
             tz = ZoneInfo(settings.schedule_timezone)
         except Exception:
-            _log(f"Ungueltige HVNB_SCHEDULE_TIMEZONE '{settings.schedule_timezone}', falle auf UTC zurueck")
+            _log(db, f"Ungueltige HVNB_SCHEDULE_TIMEZONE '{settings.schedule_timezone}', falle auf UTC zurueck", level="WARNING")
             tz = timezone.utc
         now_local = datetime.now(tz)
 
@@ -397,9 +416,9 @@ def run_scheduled_backups() -> None:
                 continue
             try:
                 trigger_job_run(policy.id, db=db, user=None)
-                _log(f"Geplanter Backup-Lauf gestartet: Policy '{policy.name}' (Zeitplan '{schedule.name}')")
+                _log(db, f"Geplanter Backup-Lauf gestartet: Policy '{policy.name}' (Zeitplan '{schedule.name}')")
             except Exception as exc:
-                _log(f"Geplanter Backup-Lauf fuer Policy '{policy.name}' fehlgeschlagen: {exc}")
+                _log(db, f"Geplanter Backup-Lauf fuer Policy '{policy.name}' fehlgeschlagen: {exc}", level="ERROR")
     finally:
         db.close()
 
@@ -437,14 +456,19 @@ def start_scheduler() -> BackgroundScheduler:
         id="file-restore-expiry", replace_existing=True, max_instances=1,
     )
     scheduler.start()
-    _log(
-        f"gestartet (Health-Check alle {settings.healthcheck_interval_minutes}min, "
-        f"Discovery alle {settings.discovery_interval_minutes}min, "
-        f"Snapshot-Abgleich taeglich um {settings.snapshot_reconcile_hour:02d}:00 UTC, "
-        f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
-        f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone}, "
-        f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h))"
-    )
+    startup_db = SessionLocal()
+    try:
+        _log(
+            startup_db,
+            f"gestartet (Health-Check alle {settings.healthcheck_interval_minutes}min, "
+            f"Discovery alle {settings.discovery_interval_minutes}min, "
+            f"Snapshot-Abgleich taeglich um {settings.snapshot_reconcile_hour:02d}:00 UTC, "
+            f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
+            f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone}, "
+            f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h))",
+        )
+    finally:
+        startup_db.close()
     _scheduler = scheduler
     return scheduler
 
