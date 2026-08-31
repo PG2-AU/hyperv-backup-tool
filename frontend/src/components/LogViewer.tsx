@@ -16,6 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
 import { apiClient } from "@/api/client";
+import { useDisplayStore } from "@/store/displayStore";
 
 type LogLevel = "DEBUG" | "INFO" | "WARNING" | "ERROR";
 
@@ -52,6 +53,7 @@ export function LogViewer({ context }: { context?: string }) {
   const [level, setLevel] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [hours, setHours] = useState<string>("6");
+  const logFontSizePx = useDisplayStore((s) => s.logFontSizePx);
 
   const { data: entries, isFetching, refetch } = useQuery({
     queryKey: ["logs", context, level, search, context ? undefined : hours],
@@ -133,7 +135,7 @@ export function LogViewer({ context }: { context?: string }) {
               align="flex-start"
               style={{
                 fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                fontSize: 12,
+                fontSize: logFontSizePx,
                 cursor: "pointer",
               }}
               onClick={() => copyEntry(entry)}

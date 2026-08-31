@@ -33,6 +33,7 @@ import { RunningJobsIndicator } from "@/components/RunningJobsIndicator";
 import { VersionFooter } from "@/components/VersionFooter";
 import { NAV_ITEMS } from "@/layout/navConfig";
 import { useAuthStore } from "@/store/authStore";
+import { CONTENT_FONT_SCALE, useDisplayStore } from "@/store/displayStore";
 
 export function AppShellLayout() {
   const [navOpened, { toggle: toggleNav }] = useDisclosure();
@@ -43,6 +44,15 @@ export function AppShellLayout() {
   const logout = useAuthStore((s) => s.logout);
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const isDark = colorScheme === "dark";
+  const contentFontSize = useDisplayStore((s) => s.contentFontSize);
+  const scale = CONTENT_FONT_SCALE[contentFontSize];
+  const contentFontStyle = {
+    "--mantine-font-size-xs": `${0.75 * scale}rem`,
+    "--mantine-font-size-sm": `${0.875 * scale}rem`,
+    "--mantine-font-size-md": `${1 * scale}rem`,
+    "--mantine-font-size-lg": `${1.125 * scale}rem`,
+    "--mantine-font-size-xl": `${1.25 * scale}rem`,
+  } as React.CSSProperties;
 
   function isActive(path?: string) {
     if (!path) return false;
@@ -166,7 +176,9 @@ export function AppShellLayout() {
       </AppShell.Navbar>
 
       <AppShell.Main>
-        <Outlet />
+        <div style={contentFontStyle}>
+          <Outlet />
+        </div>
       </AppShell.Main>
 
       <Drawer

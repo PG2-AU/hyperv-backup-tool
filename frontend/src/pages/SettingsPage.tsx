@@ -46,6 +46,7 @@ import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { buildHyperVClusterCreationSteps } from "@/utils/hypervSteps";
 import { buildPolicyCreationSteps, buildPolicyEditSteps, buildScheduleCreationSteps } from "@/utils/netappSteps";
+import { LOG_FONT_SIZE_OPTIONS, useDisplayStore, type ContentFontSize } from "@/store/displayStore";
 
 // ONTAP-REST kennt auf Policy-Ebene nur type=async/sync/continuous; die
 // feinere Kategorie, die die ONTAP-CLI als "Type" zeigt (vault,
@@ -204,6 +205,10 @@ function ChangePasswordModal({ user, onClose }: { user: UserRead | null; onClose
 
 export function SettingsPage() {
   const [params, setParams] = useSearchParams();
+  const contentFontSize = useDisplayStore((s) => s.contentFontSize);
+  const setContentFontSize = useDisplayStore((s) => s.setContentFontSize);
+  const logFontSizePx = useDisplayStore((s) => s.logFontSizePx);
+  const setLogFontSizePx = useDisplayStore((s) => s.setLogFontSizePx);
   const activeTab = params.get("tab") ?? "users";
   const { data: users } = useUsers();
   const { data: roles } = useRoles();
@@ -304,6 +309,7 @@ export function SettingsPage() {
           <Tabs.Tab value="netapp-schedules">Schedules</Tabs.Tab>
           <Tabs.Tab value="ad">Active Directory</Tabs.Tab>
           <Tabs.Tab value="hyperv">Hyper-V-Hosts</Tabs.Tab>
+          <Tabs.Tab value="display">Ansicht</Tabs.Tab>
           <Tabs.Tab value="updates">Updates (Git)</Tabs.Tab>
         </Tabs.List>
 
@@ -694,6 +700,39 @@ export function SettingsPage() {
               </Stack>
             </Paper>
           </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="display" pt="md">
+          <Paper p="md" maw={520}>
+            <Title order={5} mb={4}>
+              Ansicht
+            </Title>
+            <Text size="xs" c="dimmed" mb="md">
+              Gilt nur für diesen Browser (wie das Farbschema), nicht serverweit für alle Benutzer.
+            </Text>
+            <Stack gap="md">
+              <Select
+                label="Content-Schriftgröße"
+                description="Schriftgröße für Tabellen und Texte im Hauptbereich"
+                data={[
+                  { value: "small", label: "Klein" },
+                  { value: "normal", label: "Standard" },
+                  { value: "large", label: "Groß" },
+                ]}
+                value={contentFontSize}
+                onChange={(v) => v && setContentFontSize(v as ContentFontSize)}
+                allowDeselect={false}
+              />
+              <Select
+                label="Log-Schriftgröße"
+                description="Schriftgröße im System-Log-Viewer"
+                data={LOG_FONT_SIZE_OPTIONS.map((px) => ({ value: String(px), label: `${px}px` }))}
+                value={String(logFontSizePx)}
+                onChange={(v) => v && setLogFontSizePx(Number(v))}
+                allowDeselect={false}
+              />
+            </Stack>
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="updates" pt="md">
