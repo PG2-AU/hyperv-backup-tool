@@ -364,9 +364,16 @@ export function SettingsPage() {
             <ChangePasswordModal user={passwordModalUser} onClose={() => setPasswordModalUser(null)} />
 
             <Paper p="md">
-              <Title order={5} mb="sm">
-                Rollen
-              </Title>
+              <Group gap="xs" mb={4}>
+                <Title order={5}>Rollen</Title>
+                <Badge color="gray" variant="light" size="sm">
+                  Verwaltung noch nicht implementiert
+                </Badge>
+              </Group>
+              <Text size="xs" c="dimmed" mb="sm">
+                Nur Anzeige der vier Standardrollen. Eigene Rollen anlegen oder eine Zuweisung auf bestimmte Objekte (z.B. nur eine
+                VM-Gruppe) einschränken ist noch nicht möglich -- jede Rollenzuweisung gilt aktuell immer global.
+              </Text>
               <Table striped highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
@@ -563,6 +570,17 @@ export function SettingsPage() {
 
         <Tabs.Panel value="ad" pt="md">
           <Paper p="md" maw={520}>
+            <Group gap="xs" mb={4}>
+              <Title order={5}>Active Directory</Title>
+              <Badge color="gray" variant="light" size="sm">
+                Noch nicht vollständig implementiert
+              </Badge>
+            </Group>
+            <Text size="xs" c="dimmed" mb="sm">
+              Die Anmeldung per LDAP-Bind funktioniert bereits, aber neu angelegte AD-Benutzer bekommen noch keine Rolle automatisch
+              zugewiesen (kein Gruppe-zu-Rolle-Mapping) und müssten manuell berechtigt werden. Konfiguration erfolgt weiterhin nur
+              über Server-Umgebungsvariablen, nicht über diese Seite.
+            </Text>
             <Stack gap="xs">
               <ConfigRow label="AD-Integration aktiv" value={settings?.ad_enabled ? "Ja" : "Nein"} />
               <ConfigRow label="Domain Controller" value={settings?.ad_server || "-"} />
