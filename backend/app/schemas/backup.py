@@ -20,6 +20,7 @@ class BackupPolicyWrite(BaseModel):
     retention_value: int
     snapshot_locking_enabled: bool = False
     snapshot_locking_days: int | None = None
+    email_alert_on_failure: bool = False
 
     @model_validator(mode="after")
     def _validate(self) -> "BackupPolicyWrite":
@@ -51,6 +52,7 @@ class BackupPolicyRead(BaseModel):
     snapshot_locking_enabled: bool
     snapshot_locking_days: int | None = None
     metrocluster_aware: bool
+    email_alert_on_failure: bool
     enabled: bool
     created_at: datetime
 

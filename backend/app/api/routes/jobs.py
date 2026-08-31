@@ -49,6 +49,7 @@ from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_run import RestoreStepStatus
 from app.models.schedule import Schedule
 from app.models.snapmirror_label import SnapMirrorLabel
+from app.services.email_service import notify_backup_failure
 from app.schemas.backup import (
     BackupJobRun,
     BackupPolicyRead,
@@ -97,6 +98,7 @@ def create_job(
         retention_value=payload.retention_value,
         snapshot_locking_enabled=payload.snapshot_locking_enabled,
         snapshot_locking_days=payload.snapshot_locking_days,
+        email_alert_on_failure=payload.email_alert_on_failure,
     )
     db.add(policy)
     db.commit()
@@ -130,6 +132,7 @@ def update_job(
     policy.retention_value = payload.retention_value
     policy.snapshot_locking_enabled = payload.snapshot_locking_enabled
     policy.snapshot_locking_days = payload.snapshot_locking_days
+    policy.email_alert_on_failure = payload.email_alert_on_failure
     db.commit()
     db.refresh(policy)
     return policy
@@ -624,12 +627,16 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
     Scheduler heraus (run_scheduled_backups) -- oeffnet dafuer immer eine
     eigene DB-Session, analog zu _execute_restore/_execute_vm_recreate."""
     db = SessionLocal()
+    policy = None  # fuer den aeussersten except-Block, falls die Zuweisung unten nie erreicht wird
     try:
         run = db.get(BackupRun, run_id)
         if run is None:
             return
         policy = db.get(BackupPolicy, run.policy_id)
         if policy is None:
+            # Policy wurde geloescht -- kein Zugriff mehr auf
+            # email_alert_on_failure moeglich, daher hier bewusst kein
+            # E-Mail-Alert (seltener Randfall).
             run.status = JobStatus.FAILED
             run.error_message = "Policy wurde zwischenzeitlich geloescht"
             run.finished_at = datetime.now(timezone.utc)
@@ -792,6 +799,8 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         run.status = JobStatus.FAILED if errors else JobStatus.SUCCEEDED
         run.error_message = "; ".join(errors) if errors else None
         db.commit()
+        if run.status == JobStatus.FAILED:
+            notify_backup_failure(db, run.policy_name, run.id, run.error_message, run.targets, policy.email_alert_on_failure)
     except Exception as exc:
         run = db.get(BackupRun, run_id)
         if run is not None:
@@ -799,6 +808,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             run.error_message = str(exc)[:2000]
             run.finished_at = datetime.now(timezone.utc)
             db.commit()
+            notify_backup_failure(db, run.policy_name, run.id, run.error_message, run.targets, bool(policy and policy.email_alert_on_failure))
     finally:
         db.close()
 

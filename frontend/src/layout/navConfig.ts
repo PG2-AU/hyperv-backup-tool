@@ -86,6 +86,7 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Schedules", path: "/settings?tab=netapp-schedules" },
       { label: "Active-Directory-Integration", path: "/settings?tab=ad" },
       { label: "Hyper-V-Hosts", path: "/settings?tab=hyperv" },
+      { label: "E-Mail", path: "/settings?tab=email" },
       { label: "Ansicht", path: "/settings?tab=display" },
       { label: "Updates (Git)", path: "/settings?tab=updates" },
     ],

@@ -50,6 +50,7 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
   const [retentionValue, setRetentionValue] = useState<number | string>(7);
   const [lockingEnabled, setLockingEnabled] = useState(false);
   const [lockingDays, setLockingDays] = useState<number | string>(30);
+  const [emailAlertOnFailure, setEmailAlertOnFailure] = useState(false);
 
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [labelModalOpen, setLabelModalOpen] = useState(false);
@@ -66,6 +67,7 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
       setRetentionValue(policy.retention_value);
       setLockingEnabled(policy.snapshot_locking_enabled);
       setLockingDays(policy.snapshot_locking_days ?? 30);
+      setEmailAlertOnFailure(policy.email_alert_on_failure);
     } else {
       setName("");
       setScheduleId(null);
@@ -76,6 +78,7 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
       setRetentionValue(7);
       setLockingEnabled(false);
       setLockingDays(30);
+      setEmailAlertOnFailure(false);
     }
   }, [opened, policy]);
 
@@ -90,6 +93,7 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
       retention_value: Number(retentionValue),
       snapshot_locking_enabled: lockingEnabled,
       snapshot_locking_days: lockingEnabled ? Number(lockingDays) : null,
+      email_alert_on_failure: emailAlertOnFailure,
     };
 
     const mutation = isEdit ? updatePolicy.mutateAsync({ id: policy!.id, payload }) : createPolicy.mutateAsync(payload);
@@ -173,6 +177,13 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
 
           <Switch label="Snapshot Locking (WORM)" checked={lockingEnabled} onChange={(e) => setLockingEnabled(e.currentTarget.checked)} />
           {lockingEnabled && <NumberInput label="Snapshot Locking: Anzahl Tage" min={1} value={lockingDays} onChange={setLockingDays} />}
+
+          <Switch
+            label="Bei Fehlschlag per E-Mail benachrichtigen"
+            description="Setzt eine konfigurierte, aktivierte SMTP-Verbindung unter Settings > E-Mail voraus"
+            checked={emailAlertOnFailure}
+            onChange={(e) => setEmailAlertOnFailure(e.currentTarget.checked)}
+          />
 
           <Group justify="flex-end" mt="sm">
             <Button variant="default" onClick={onClose}>

@@ -37,6 +37,8 @@ import type {
   RestoreRun,
   TriggerRestorePayload,
   CopyFileRestoreSelectionPayload,
+  EmailConfig,
+  EmailConfigWritePayload,
   FileEntry,
   FileRestoreRun,
   TriggerFileRestorePayload,
@@ -237,6 +239,7 @@ export interface BackupPolicyWritePayload {
   retention_value: number;
   snapshot_locking_enabled: boolean;
   snapshot_locking_days?: number | null;
+  email_alert_on_failure: boolean;
 }
 
 export function useCreatePolicy() {
@@ -761,5 +764,26 @@ export function useCleanupFileRestoreRun() {
   return useMutation({
     mutationFn: async (id: string) => (await apiClient.post<FileRestoreRun>(`/file-restore/runs/${id}/cleanup`)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["file-restore-runs"] }),
+  });
+}
+
+export function useEmailConfig() {
+  return useQuery({
+    queryKey: ["email-config"],
+    queryFn: async () => (await apiClient.get<EmailConfig>("/email-config")).data,
+  });
+}
+
+export function useUpdateEmailConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: EmailConfigWritePayload) => (await apiClient.put<EmailConfig>("/email-config", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["email-config"] }),
+  });
+}
+
+export function useSendTestEmail() {
+  return useMutation({
+    mutationFn: async (recipient: string) => (await apiClient.post("/email-config/test", { recipient })).data,
   });
 }

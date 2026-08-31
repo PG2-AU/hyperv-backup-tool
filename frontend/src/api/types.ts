@@ -501,8 +501,43 @@ export interface BackupPolicy {
   snapshot_locking_enabled: boolean;
   snapshot_locking_days?: number | null;
   metrocluster_aware: boolean;
+  email_alert_on_failure: boolean;
   enabled: boolean;
   created_at: string;
+}
+
+export interface EmailConfig {
+  id: string;
+  enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_encryption: "none" | "starttls" | "ssl";
+  smtp_username?: string | null;
+  has_password: boolean;
+  from_address: string;
+  from_name: string;
+  recipients: string;
+  notify_on_restore_failure: boolean;
+  daily_summary_enabled: boolean;
+  daily_summary_hour: number;
+  last_test_at?: string | null;
+  last_test_error?: string | null;
+  updated_at?: string | null;
+}
+
+export interface EmailConfigWritePayload {
+  enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_encryption: "none" | "starttls" | "ssl";
+  smtp_username?: string | null;
+  smtp_password?: string | null;
+  from_address: string;
+  from_name: string;
+  recipients: string;
+  notify_on_restore_failure: boolean;
+  daily_summary_enabled: boolean;
+  daily_summary_hour: number;
 }
 
 export interface PolicySummary {

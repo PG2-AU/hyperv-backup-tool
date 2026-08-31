@@ -52,6 +52,7 @@ from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_proxy_host import RestoreProxyHost
 from app.models.restore_run import RestoreMode, RestoreRun, RestoreRunStep, RestoreStatus, RestoreStepStatus
 from app.models.vm_recreate_run import VmRecreateRun, VmRecreateRunStep
+from app.services.email_service import notify_restore_failure
 from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppConnectionError, NetAppOntapService
 
@@ -662,6 +663,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
             run.error_message = str(exc)[:2000]
             run.finished_at = datetime.now(timezone.utc)
             db.commit()
+            notify_restore_failure(db, "Restore", run.vm_name, run.id, run.error_message)
             # Best-effort Aufraeumen der temporaeren LUN, falls der Fehler
             # nach dem Klonen, aber vor dem regulaeren Cleanup-Schritt auftrat.
             if proxy_service and proxy_session and disk_number is not None and mount_dir:
@@ -982,6 +984,7 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
             run.error_message = str(exc)[:2000]
             run.finished_at = datetime.now(timezone.utc)
             db.commit()
+            notify_restore_failure(db, "VM-Neuerstellung", run.target_vm_name or run.vm_name, run.id, run.error_message)
     finally:
         db.close()
 

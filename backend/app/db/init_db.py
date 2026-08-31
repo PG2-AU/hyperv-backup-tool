@@ -74,7 +74,10 @@ def init_db(db: Session) -> None:
         },
     )
     _add_missing_columns(engine, "backup_run_vm_configs", {"hyperv_cluster_id": "VARCHAR(36)"})
-    _add_missing_columns(engine, "scheduler_status", {"last_retention_cleanup_at": "DATETIME", "last_file_restore_expiry_at": "DATETIME"})
+    _add_missing_columns(
+        engine, "scheduler_status",
+        {"last_retention_cleanup_at": "DATETIME", "last_file_restore_expiry_at": "DATETIME", "last_email_summary_sent_date": "VARCHAR(10)"},
+    )
     _add_missing_columns(engine, "file_restore_runs", {"clone_volume_uuid": "VARCHAR(36)"})
     _add_missing_columns(
         engine, "netapp_snapmirror_policies",
@@ -84,6 +87,15 @@ def init_db(db: Session) -> None:
         engine, "vm_recreate_runs",
         {"target_vm_name": "VARCHAR(255)", "disconnect_network": "BOOLEAN", "destination_csv_name": "VARCHAR(255)"},
     )
+    _add_missing_columns(engine, "backup_policies", {"email_alert_on_failure": "BOOLEAN"})
+    # _add_missing_columns liefert bei bereits vorhandenen Zeilen NULL statt
+    # False (kein SQL-Default beim ALTER TABLE) -- BackupPolicyRead.
+    # email_alert_on_failure ist aber ein Pflicht-bool (nicht optional), ohne
+    # Backfill wuerde list_jobs()/get_job() fuer jede VOR dieser Migration
+    # angelegte Policy mit einem Pydantic-Validierungsfehler abbrechen.
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE backup_policies SET email_alert_on_failure = 0 WHERE email_alert_on_failure IS NULL"))
+        conn.commit()
 
     for role_name, permissions in DEFAULT_ROLES.items():
         existing = db.query(Role).filter(Role.name == role_name).first()

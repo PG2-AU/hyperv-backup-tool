@@ -23,3 +23,8 @@ class SchedulerStatus(Base):
     last_snapshot_reconciliation_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_retention_cleanup_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_file_restore_expiry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # ISO-Datum ("YYYY-MM-DD", lokale Zeitzone HVNB_SCHEDULE_TIMEZONE) des
+    # zuletzt verschickten Tages-E-Mail-Summarys -- verhindert Doppelversand,
+    # da run_daily_email_summary alle 15 Minuten prueft, ob die konfigurierte
+    # Stunde erreicht ist (siehe app.core.scheduler).
+    last_email_summary_sent_date: Mapped[str | None] = mapped_column(String(10), nullable=True)

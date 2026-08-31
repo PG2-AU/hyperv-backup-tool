@@ -45,6 +45,12 @@ class BackupPolicy(Base):
     snapshot_locking_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     snapshot_locking_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     metrocluster_aware: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Ob ein fehlgeschlagener Lauf dieser Policy per E-Mail gemeldet wird
+    # (siehe app.services.email_service.notify_backup_failure) -- pro Policy
+    # statt global schaltbar, da nicht jede Policy gleich kritisch ist.
+    # Setzt zusaetzlich voraus, dass SMTP unter Settings > E-Mail konfiguriert
+    # und aktiviert ist.
+    email_alert_on_failure: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 

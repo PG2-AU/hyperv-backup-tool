@@ -40,6 +40,7 @@ from app.models.netapp_cluster import NetAppCluster
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_proxy_host import RestoreProxyHost
 from app.models.restore_run import RestoreStatus, RestoreStepStatus
+from app.services.email_service import notify_restore_failure
 from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppConnectionError
 
@@ -455,6 +456,7 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
             run.error_message = str(exc)[:2000]
             run.finished_at = datetime.now(timezone.utc)
             db.commit()
+            notify_restore_failure(db, "Datei-Restore", run.vm_name, run.id, run.error_message)
             # Best-effort Aufraeumen dessen, was bereits aufgebaut wurde --
             # gleiches Muster wie im Fehlerfall von _execute_restore.
             if proxy_service and proxy_session:

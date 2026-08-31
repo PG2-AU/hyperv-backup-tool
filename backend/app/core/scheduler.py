@@ -32,14 +32,18 @@ from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.backup_policy import BackupPolicy, RetentionType
-from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapshotDestination
+from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapshotDestination, JobStatus
+from app.models.email_config import EmailConfig
 from app.models.file_restore_run import FileRestoreRun
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppSnapMirrorRelationship, NetAppVolume
+from app.models.restore_run import RestoreRun, RestoreStatus
 from app.models.schedule import Schedule, ScheduleType
 from app.models.scheduler_status import SchedulerStatus
 from app.models.system_log import SystemLogEvent
+from app.models.vm_recreate_run import VmRecreateRun
+from app.services.email_service import DailySummaryFailure, DailySummaryRow, DailySummaryStats, send_daily_summary
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -368,6 +372,66 @@ def run_file_restore_expiry() -> None:
         db.close()
 
 
+def run_daily_email_summary() -> None:
+    """Verschickt einmal taeglich (konfigurierbare lokale Stunde, siehe
+    EmailConfig.daily_summary_hour) eine Zusammenfassung aller Backup-/
+    Restore-/VM-Neuerstellungs-Laeufe der letzten 24 Stunden per E-Mail
+    (Settings > E-Mail). Laeuft alle 15 Minuten (siehe start_scheduler) und
+    prueft selbst, ob die konfigurierte Stunde erreicht UND heute noch
+    keine Zusammenfassung verschickt wurde -- dadurch wirkt eine spaeter in
+    der GUI geaenderte Uhrzeit sofort, ohne Container-Neustart (anders als
+    ein fix bei start_scheduler registrierter CronTrigger)."""
+    db = SessionLocal()
+    try:
+        config = db.query(EmailConfig).first()
+        if config is None or not config.enabled or not config.daily_summary_enabled:
+            return
+        settings = get_settings()
+        try:
+            tz = ZoneInfo(settings.schedule_timezone)
+        except Exception:
+            tz = timezone.utc
+        now_local = datetime.now(tz)
+        if now_local.hour != config.daily_summary_hour:
+            return
+        today_label = now_local.strftime("%Y-%m-%d")
+        status_row = db.query(SchedulerStatus).first()
+        if status_row is not None and status_row.last_email_summary_sent_date == today_label:
+            return
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        rows = []
+        failures = []
+
+        backup_runs = db.query(BackupRun).filter(BackupRun.started_at >= cutoff).all()
+        backup_failed = [r for r in backup_runs if r.status == JobStatus.FAILED]
+        rows.append(DailySummaryRow("Backup-Laeufe", len(backup_runs), len(backup_runs) - len(backup_failed), len(backup_failed)))
+        failures.extend(DailySummaryFailure("Backup", r.policy_name, r.error_message) for r in backup_failed)
+
+        restore_runs = db.query(RestoreRun).filter(RestoreRun.started_at >= cutoff).all()
+        restore_failed = [r for r in restore_runs if r.status == RestoreStatus.FAILED]
+        rows.append(DailySummaryRow("Restore-Laeufe", len(restore_runs), len(restore_runs) - len(restore_failed), len(restore_failed)))
+        failures.extend(DailySummaryFailure("Restore", r.vm_name, r.error_message) for r in restore_failed)
+
+        recreate_runs = db.query(VmRecreateRun).filter(VmRecreateRun.started_at >= cutoff).all()
+        recreate_failed = [r for r in recreate_runs if r.status == RestoreStatus.FAILED]
+        rows.append(
+            DailySummaryRow("VM-Neuerstellungen", len(recreate_runs), len(recreate_runs) - len(recreate_failed), len(recreate_failed))
+        )
+        failures.extend(DailySummaryFailure("VM-Neuerstellung", r.target_vm_name or r.vm_name, r.error_message) for r in recreate_failed)
+
+        stats = DailySummaryStats(today_label, rows, failures)
+        send_daily_summary(db, config, stats)
+
+        if status_row is None:
+            status_row = SchedulerStatus()
+            db.add(status_row)
+        status_row.last_email_summary_sent_date = today_label
+        db.commit()
+    finally:
+        db.close()
+
+
 def _schedule_is_due(schedule: Schedule, now_local: datetime) -> bool:
     """Prueft, ob ein Schedule genau zur aktuellen (lokalen) Minute faellig
     ist. 'times' enthaelt "HH:MM"-Strings (bei HOURLY mehrere, sonst genau
@@ -462,6 +526,10 @@ def start_scheduler() -> BackgroundScheduler:
         run_file_restore_expiry, IntervalTrigger(hours=1),
         id="file-restore-expiry", replace_existing=True, max_instances=1,
     )
+    scheduler.add_job(
+        run_daily_email_summary, IntervalTrigger(minutes=15),
+        id="daily-email-summary", replace_existing=True, max_instances=1,
+    )
     scheduler.start()
     startup_db = SessionLocal()
     try:
@@ -472,7 +540,8 @@ def start_scheduler() -> BackgroundScheduler:
             f"Snapshot-Abgleich taeglich um {settings.snapshot_reconcile_hour:02d}:00 UTC, "
             f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
             f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone}, "
-            f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h))",
+            f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h), "
+            f"E-Mail-Tageszusammenfassung alle 15min geprueft)",
         )
     finally:
         startup_db.close()
