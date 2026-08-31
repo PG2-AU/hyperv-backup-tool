@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import {
+  ActionIcon,
   Badge,
   Button,
   Group,
-  Menu,
   Modal,
   MultiSelect,
   Paper,
@@ -22,11 +22,11 @@ import { notifications } from "@mantine/notifications";
 import {
   IconCertificate,
   IconEdit,
-  IconInfoCircle,
   IconLink,
   IconPlus,
   IconRadar2,
   IconRefresh,
+  IconSearch,
   IconShieldCheck,
   IconShieldOff,
   IconTrash,
@@ -52,7 +52,6 @@ import {
   useVolumes,
 } from "@/api/hooks";
 import { ClusterPeerFormModal } from "@/components/ClusterPeerFormModal";
-import { ContextMenuDropdown, useContextMenu } from "@/components/ContextMenu";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { IgroupFormModal } from "@/components/IgroupFormModal";
 import { LunEditModal } from "@/components/LunEditModal";
@@ -69,6 +68,7 @@ import type { NetAppCluster, NetAppClusterPeer, NetAppLun, NetAppVolume, SnapMir
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, formatLagTime } from "@/utils/format";
+import { matchesAllColumns } from "@/utils/search";
 import {
   buildLunCreationSteps,
   buildLunDeleteSteps,
@@ -214,7 +214,6 @@ function ClusterTab() {
   const deleteCluster = useDeleteNetAppCluster();
   const discoverCluster = useDiscoverNetAppCluster();
   const [addOpen, setAddOpen] = useState(false);
-  const menu = useContextMenu<NetAppCluster>();
 
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [discoveryCluster, setDiscoveryCluster] = useState<NetAppCluster | null>(null);
@@ -305,11 +304,12 @@ function ClusterTab() {
               <Table.Th>Cluster Health</Table.Th>
               <Table.Th>MetroCluster</Table.Th>
               <Table.Th>Letzte Prüfung</Table.Th>
+              <Table.Th>Aktionen</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {clusters?.map((cluster) => (
-              <Table.Tr key={cluster.id} onContextMenu={(e) => menu.open(e, cluster)} style={{ cursor: "context-menu" }}>
+              <Table.Tr key={cluster.id}>
                 <Table.Td>
                   {cluster.name}
                   {cluster.ontap_cluster_name && cluster.ontap_cluster_name !== cluster.name && (
@@ -336,6 +336,32 @@ function ClusterTab() {
                 </Table.Td>
                 <Table.Td>{cluster.is_metrocluster ? "Ja" : "Nein"}</Table.Td>
                 <Table.Td>{cluster.last_checked_at ? new Date(cluster.last_checked_at).toLocaleString("de-DE") : "nie"}</Table.Td>
+                <Table.Td>
+                  <Group gap="xs" wrap="nowrap">
+                    <Tooltip label="Verbindung erneut prüfen">
+                      <ActionIcon variant="light" onClick={() => handleVerify(cluster)}>
+                        <IconRefresh size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                    <Tooltip label="Discovery erneut ausführen">
+                      <ActionIcon variant="light" onClick={() => runDiscovery(cluster)}>
+                        <IconRadar2 size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                    {cluster.auth_method === "password" && (
+                      <Tooltip label="Auf Zertifikat umstellen">
+                        <ActionIcon variant="light" onClick={() => handleEnrollCertificate(cluster)}>
+                          <IconCertificate size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                    <Tooltip label="Entfernen">
+                      <ActionIcon variant="light" color="red" onClick={() => handleDelete(cluster)}>
+                        <IconTrash size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
+                </Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
@@ -357,24 +383,6 @@ function ClusterTab() {
         steps={discoverCluster.data}
         isLoading={discoverCluster.isPending}
       />
-
-      <ContextMenuDropdown position={menu.state?.position ?? null} opened={!!menu.state} onClose={menu.close}>
-        <Menu.Label>{menu.state?.data.name}</Menu.Label>
-        <Menu.Item leftSection={<IconRefresh size={16} />} onClick={() => menu.state && handleVerify(menu.state.data)}>
-          Verbindung erneut prüfen
-        </Menu.Item>
-        <Menu.Item leftSection={<IconRadar2 size={16} />} onClick={() => menu.state && runDiscovery(menu.state.data)}>
-          Discovery erneut ausführen
-        </Menu.Item>
-        {menu.state?.data.auth_method === "password" && (
-          <Menu.Item leftSection={<IconCertificate size={16} />} onClick={() => menu.state && handleEnrollCertificate(menu.state.data)}>
-            Auf Zertifikat umstellen
-          </Menu.Item>
-        )}
-        <Menu.Item leftSection={<IconTrash size={16} />} color="red" onClick={() => menu.state && handleDelete(menu.state.data)}>
-          Entfernen
-        </Menu.Item>
-      </ContextMenuDropdown>
     </>
   );
 }
@@ -393,10 +401,15 @@ export function StoragePage() {
   const { data: aggregates } = useAggregates();
   const { data: mcc } = useMetroClusterStatus();
   const { data: clusters } = useNetAppClusters();
-  const relMenu = useContextMenu<SnapMirrorRelationship>();
-  const volMenu = useContextMenu<NetAppVolume>();
-  const lunMenu = useContextMenu<NetAppLun>();
   const [extraVolCols, setExtraVolCols] = useState<string[]>([]);
+  const [svmSearch, setSvmSearch] = useState("");
+  const [volumeSearch, setVolumeSearch] = useState("");
+  const [lunSearch, setLunSearch] = useState("");
+  const [igroupSearch, setIgroupSearch] = useState("");
+  const filteredSvms = (svms ?? []).filter((s) => matchesAllColumns(s, svmSearch));
+  const filteredVolumes = (volumes ?? []).filter((v) => matchesAllColumns(v, volumeSearch));
+  const filteredLuns = (luns ?? []).filter((l) => matchesAllColumns(l, lunSearch));
+  const filteredIgroups = (igroups ?? []).filter((ig) => matchesAllColumns(ig, igroupSearch));
   const [peerDetail, setPeerDetail] = useState<NetAppClusterPeer | null>(null);
   const [igroupFormOpen, setIgroupFormOpen] = useState(false);
   const [lunFormOpen, setLunFormOpen] = useState(false);
@@ -533,6 +546,15 @@ export function StoragePage() {
           <StatRibbon>
             <StatCard label="Anzahl SVMs" value={svms?.length ?? 0} />
           </StatRibbon>
+          <Group justify="flex-end" mb="xs">
+            <TextInput
+              placeholder="Suchen…"
+              leftSection={<IconSearch size={14} />}
+              value={svmSearch}
+              onChange={(e) => setSvmSearch(e.currentTarget.value)}
+              w={280}
+            />
+          </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -545,7 +567,7 @@ export function StoragePage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {svms?.map((svm) => (
+              {filteredSvms.map((svm) => (
                 <Table.Tr key={svm.id}>
                   <Table.Td>{svm.cluster_name}</Table.Td>
                   <Table.Td>{svm.name}</Table.Td>
@@ -566,6 +588,11 @@ export function StoragePage() {
               Noch keine SVMs erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          {(svms?.length ?? 0) > 0 && filteredSvms.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Keine SVM passt zur Suche „{svmSearch}".
+            </Text>
+          )}
           </Paper>
         </Tabs.Panel>
 
@@ -577,10 +604,16 @@ export function StoragePage() {
             <CapacityBarCard label="Kapazität" used={volumeStats.totalUsed} total={volumeStats.totalSize} formatValue={formatBytes} />
             <DistributionCard label="Security Style" items={volumeStats.securityStyles} />
           </StatRibbon>
+          <Group justify="flex-end" mb="xs">
+            <TextInput
+              placeholder="Suchen…"
+              leftSection={<IconSearch size={14} />}
+              value={volumeSearch}
+              onChange={(e) => setVolumeSearch(e.currentTarget.value)}
+              w={280}
+            />
+          </Group>
           <Group justify="space-between" mb="xs">
-            <Button leftSection={<IconPlus size={16} />} onClick={() => setVolumeFormOpen(true)}>
-              Volume anlegen
-            </Button>
             <MultiSelect
               placeholder="Weitere Attribute anzeigen..."
               data={[
@@ -594,10 +627,10 @@ export function StoragePage() {
               clearable
               w={360}
             />
+            <Button leftSection={<IconPlus size={16} />} onClick={() => setVolumeFormOpen(true)}>
+              Volume anlegen
+            </Button>
           </Group>
-          <Text size="xs" c="dimmed" mb={4}>
-            Rechtsklick auf ein Volume für Bearbeiten / Löschen / SnapMirror-Replikation erstellen.
-          </Text>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -614,11 +647,12 @@ export function StoragePage() {
                 {extraVolCols.includes("autogrow") && <Table.Th>Autogrow</Table.Th>}
                 {extraVolCols.includes("snapshot_policy") && <Table.Th>Snapshot Policy</Table.Th>}
                 {extraVolCols.includes("encryption") && <Table.Th>Verschlüsselung</Table.Th>}
+                <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {volumes?.map((vol) => (
-                <Table.Tr key={vol.id} onContextMenu={(e) => volMenu.open(e, vol)} style={{ cursor: "context-menu" }}>
+              {filteredVolumes.map((vol) => (
+                <Table.Tr key={vol.id}>
                   <Table.Td>{vol.cluster_name}</Table.Td>
                   <Table.Td>{vol.svm_name ?? "-"}</Table.Td>
                   <Table.Td>{vol.name}</Table.Td>
@@ -678,6 +712,31 @@ export function StoragePage() {
                       )}
                     </Table.Td>
                   )}
+                  <Table.Td>
+                    <Group gap="xs" wrap="nowrap">
+                      <Tooltip label="Bearbeiten">
+                        <ActionIcon
+                          variant="light"
+                          onClick={() => {
+                            setSelectedVolume(vol);
+                            setVolumeEditOpen(true);
+                          }}
+                        >
+                          <IconEdit size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="SnapMirror-Replikation erstellen">
+                        <ActionIcon variant="light" onClick={() => openSnapmirrorForVolume(vol)}>
+                          <IconLink size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Löschen">
+                        <ActionIcon variant="light" color="red" onClick={() => handleDeleteVolume(vol)}>
+                          <IconTrash size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -685,6 +744,11 @@ export function StoragePage() {
           {volumes?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine Volumes erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+          {(volumes?.length ?? 0) > 0 && filteredVolumes.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Kein Volume passt zur Suche „{volumeSearch}".
             </Text>
           )}
           </Paper>
@@ -698,14 +762,18 @@ export function StoragePage() {
             <StatCard label="Provisioniert" value={formatBytes(lunStats.totalSize)} />
             <DistributionCard label="OS-Type" items={lunStats.osTypes} />
           </StatRibbon>
-          <Group justify="flex-end" mb="xs">
+          <Group justify="space-between" mb="xs">
+            <TextInput
+              placeholder="Suchen…"
+              leftSection={<IconSearch size={14} />}
+              value={lunSearch}
+              onChange={(e) => setLunSearch(e.currentTarget.value)}
+              w={280}
+            />
             <Button leftSection={<IconPlus size={16} />} onClick={() => setLunFormOpen(true)}>
               LUN anlegen
             </Button>
           </Group>
-          <Text size="xs" c="dimmed" mb={4}>
-            Rechtsklick auf eine LUN für Bearbeiten / Löschen.
-          </Text>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -717,11 +785,12 @@ export function StoragePage() {
                 <Table.Th>Größe</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>LUN-Mapping (IGroups)</Table.Th>
+                <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {luns?.map((lun) => (
-                <Table.Tr key={lun.id} onContextMenu={(e) => lunMenu.open(e, lun)} style={{ cursor: "context-menu" }}>
+              {filteredLuns.map((lun) => (
+                <Table.Tr key={lun.id}>
                   <Table.Td>{lun.cluster_name}</Table.Td>
                   <Table.Td>{lun.svm_name ?? "-"}</Table.Td>
                   <Table.Td>{lun.volume_name ?? "-"}</Table.Td>
@@ -734,6 +803,26 @@ export function StoragePage() {
                     </Badge>
                   </Table.Td>
                   <Table.Td>{lun.mapped_igroups ?? "-"}</Table.Td>
+                  <Table.Td>
+                    <Group gap="xs" wrap="nowrap">
+                      <Tooltip label="Bearbeiten">
+                        <ActionIcon
+                          variant="light"
+                          onClick={() => {
+                            setSelectedLun(lun);
+                            setLunEditOpen(true);
+                          }}
+                        >
+                          <IconEdit size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Löschen">
+                        <ActionIcon variant="light" color="red" onClick={() => handleDeleteLun(lun)}>
+                          <IconTrash size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -741,6 +830,11 @@ export function StoragePage() {
           {luns?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine LUNs erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+          {(luns?.length ?? 0) > 0 && filteredLuns.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Keine LUN passt zur Suche „{lunSearch}".
             </Text>
           )}
           </Paper>
@@ -754,7 +848,14 @@ export function StoragePage() {
             <DistributionCard label="OS-Type" items={igroupStats.osTypes} />
             <DistributionCard label="Protocol" items={igroupStats.protocols} />
           </StatRibbon>
-          <Group justify="flex-end" mb="xs">
+          <Group justify="space-between" mb="xs">
+            <TextInput
+              placeholder="Suchen…"
+              leftSection={<IconSearch size={14} />}
+              value={igroupSearch}
+              onChange={(e) => setIgroupSearch(e.currentTarget.value)}
+              w={280}
+            />
             <Button leftSection={<IconPlus size={16} />} onClick={() => setIgroupFormOpen(true)}>
               IGroup anlegen
             </Button>
@@ -771,7 +872,7 @@ export function StoragePage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {igroups?.map((ig) => (
+              {filteredIgroups.map((ig) => (
                 <Table.Tr key={ig.id}>
                   <Table.Td>{ig.cluster_name}</Table.Td>
                   <Table.Td>{ig.svm_name ?? "-"}</Table.Td>
@@ -786,6 +887,11 @@ export function StoragePage() {
           {igroups?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine Initiator-Gruppen erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+          {(igroups?.length ?? 0) > 0 && filteredIgroups.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Keine IGroup passt zur Suche „{igroupSearch}".
             </Text>
           )}
           </Paper>
@@ -925,11 +1031,12 @@ export function StoragePage() {
                 <Table.Th>Last Transfer Error</Table.Th>
                 <Table.Th>Schedule</Table.Th>
                 <Table.Th>Policy</Table.Th>
+                <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {relationships?.map((rel) => (
-                <Table.Tr key={rel.id} onContextMenu={(e) => relMenu.open(e, rel)} style={{ cursor: "context-menu" }}>
+                <Table.Tr key={rel.id}>
                   <Table.Td>{rel.cluster_name}</Table.Td>
                   <Table.Td>{rel.source_path}</Table.Td>
                   <Table.Td>{rel.destination_path}</Table.Td>
@@ -966,6 +1073,26 @@ export function StoragePage() {
                   </Table.Td>
                   <Table.Td>{rel.schedule_name ?? "-"}</Table.Td>
                   <Table.Td>{rel.policy_name ?? "-"}</Table.Td>
+                  <Table.Td>
+                    <Group gap="xs" wrap="nowrap">
+                      <Tooltip label="Bearbeiten">
+                        <ActionIcon
+                          variant="light"
+                          onClick={() => {
+                            setSelectedRelationship(rel);
+                            setSnapmirrorEditOpen(true);
+                          }}
+                        >
+                          <IconEdit size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="SnapMirror-Update erzwingen">
+                        <ActionIcon variant="light" onClick={() => triggerUpdate(rel)}>
+                          <IconRefresh size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -1108,61 +1235,6 @@ export function StoragePage() {
           </Paper>
         </Tabs.Panel>
       </Tabs>
-
-      <ContextMenuDropdown position={relMenu.state?.position ?? null} opened={!!relMenu.state} onClose={relMenu.close}>
-        <Menu.Label>{relMenu.state?.data.source_path}</Menu.Label>
-        <Menu.Item
-          leftSection={<IconEdit size={16} />}
-          onClick={() => {
-            if (!relMenu.state) return;
-            setSelectedRelationship(relMenu.state.data);
-            setSnapmirrorEditOpen(true);
-          }}
-        >
-          Bearbeiten
-        </Menu.Item>
-        <Menu.Item leftSection={<IconRefresh size={16} />} onClick={() => relMenu.state && triggerUpdate(relMenu.state.data)}>
-          SnapMirror-Update erzwingen
-        </Menu.Item>
-        <Menu.Item leftSection={<IconInfoCircle size={16} />}>Details anzeigen</Menu.Item>
-      </ContextMenuDropdown>
-
-      <ContextMenuDropdown position={volMenu.state?.position ?? null} opened={!!volMenu.state} onClose={volMenu.close}>
-        <Menu.Label>{volMenu.state?.data.name}</Menu.Label>
-        <Menu.Item
-          leftSection={<IconEdit size={16} />}
-          onClick={() => {
-            if (!volMenu.state) return;
-            setSelectedVolume(volMenu.state.data);
-            setVolumeEditOpen(true);
-          }}
-        >
-          Bearbeiten
-        </Menu.Item>
-        <Menu.Item leftSection={<IconLink size={16} />} onClick={() => volMenu.state && openSnapmirrorForVolume(volMenu.state.data)}>
-          SnapMirror-Replikation erstellen
-        </Menu.Item>
-        <Menu.Item leftSection={<IconTrash size={16} />} color="red" onClick={() => volMenu.state && handleDeleteVolume(volMenu.state.data)}>
-          Löschen
-        </Menu.Item>
-      </ContextMenuDropdown>
-
-      <ContextMenuDropdown position={lunMenu.state?.position ?? null} opened={!!lunMenu.state} onClose={lunMenu.close}>
-        <Menu.Label>{lunMenu.state?.data.name}</Menu.Label>
-        <Menu.Item
-          leftSection={<IconEdit size={16} />}
-          onClick={() => {
-            if (!lunMenu.state) return;
-            setSelectedLun(lunMenu.state.data);
-            setLunEditOpen(true);
-          }}
-        >
-          Bearbeiten
-        </Menu.Item>
-        <Menu.Item leftSection={<IconTrash size={16} />} color="red" onClick={() => lunMenu.state && handleDeleteLun(lunMenu.state.data)}>
-          Löschen
-        </Menu.Item>
-      </ContextMenuDropdown>
 
       <IgroupFormModal opened={igroupFormOpen} onClose={() => setIgroupFormOpen(false)} clusters={clusters} svms={svms} />
       <LunFormModal
