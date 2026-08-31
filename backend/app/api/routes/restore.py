@@ -864,14 +864,18 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                         rel_parts = after_csv[1].split("\\")
                         filename = rel_parts[-1]
                         relative_dir = "\\".join(rel_parts[:-1])
-                    # Bei Side-by-side-Restore mit gewaehlter Ziel-CSV landet
-                    # die Kopie dort statt auf der Original-CSV der VM (siehe
-                    # destination_csv_name in RecreateVmRequest) -- die
-                    # relative Unterordner-Struktur bleibt erhalten, nur die
-                    # CSV selbst wechselt.
+                    # Ziel-CSV: Original-CSV der VHD, oder bei Side-by-side-
+                    # Restore die gewaehlte destination_csv_name (siehe
+                    # RecreateVmRequest). Die Kopie landet IMMER unter
+                    # {csv}\{Ziel-VM-Name}\Virtual Hard Disks -- unabhaengig
+                    # davon, wie die Original-VHD tatsaechlich abgelegt war
+                    # (z.B. eine geteilte "Virtual Hard Disks"-Ablage ohne
+                    # VM-Unterordner), damit alle Dateien der neu erstellten
+                    # VM konsistent in einem einzigen, nach ihr benannten
+                    # Ordner liegen (siehe auch storage_path unten).
                     dest_csv = run.destination_csv_name or vhd_csv
                     local_path = f"{mount_dir}\\{relative_dir}\\{filename}" if relative_dir else f"{mount_dir}\\{filename}"
-                    remote_dir = f"ClusterStorage\\{dest_csv}" + (f"\\{relative_dir}" if relative_dir else "")
+                    remote_dir = f"ClusterStorage\\{dest_csv}\\{target_name}\\Virtual Hard Disks"
 
                     with _StepCtx(db, run.id, f"copy-{i}", f"{vhd_name} auf CSV kopieren", step_model=VmRecreateRunStep) as ctx:
                         remote_size = proxy_service.copy_file_to_share(
@@ -919,8 +923,13 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                             pass
                     raise
 
+            # New-VM -Path haengt den VM-Namen selbst schon als Unterordner
+            # an (-> {Path}\{Name}\Virtual Machines\...) -- storage_path
+            # darf den Zielnamen deshalb NICHT bereits enthalten, sonst
+            # entsteht eine doppelt verschachtelte Struktur
+            # ({csv}\{name}\{name}\Virtual Machines\..., live beobachtet).
             first_csv = run.destination_csv_name or vm_config.vhds[0].get("csv_name")
-            storage_path = f"C:\\ClusterStorage\\{first_csv}\\{target_name}"
+            storage_path = f"C:\\ClusterStorage\\{first_csv}"
             with _StepCtx(db, run.id, "create-vm", "VM anlegen", step_model=VmRecreateRunStep) as ctx:
                 new_vm_uuid = node_service.create_vm(node_session, target_name, vm_config.generation or 2, storage_path)
                 run.new_vm_uuid = new_vm_uuid
