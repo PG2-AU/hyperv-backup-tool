@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ActionIcon, Badge, Box, Group, Paper, Progress, Stack, Table, Tabs, Text, TextInput, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Box, Group, Paper, Progress, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import {
   IconChevronsRight,
   IconCpu,
@@ -10,7 +10,6 @@ import {
   IconInfoCircle,
   IconNetwork,
   IconPlayerPlay,
-  IconSearch,
   IconServer,
   IconServer2,
   IconServerCog,
@@ -22,9 +21,11 @@ import { useSearchParams } from "react-router-dom";
 import { useCsvs, useVms } from "@/api/hooks";
 import { BackupsModal } from "@/components/BackupsModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
+import { SearchInput } from "@/components/SearchInput";
 import type { BackupScope, Csv, PolicySummary, Vm } from "@/api/types";
 import { formatBytes } from "@/utils/format";
 import { useRunPolicy } from "@/utils/runPolicy";
+import { matchesAllColumns } from "@/utils/search";
 
 const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
 
@@ -276,6 +277,8 @@ export function VmsPage() {
   const [backupsTarget, setBackupsTarget] = useState<{ scope: BackupScope; name: string } | null>(null);
   const [vmSearch, setVmSearch] = useState("");
   const filteredVms = (vms ?? []).filter((vm) => vm.name.toLowerCase().includes(vmSearch.trim().toLowerCase()));
+  const [csvSearch, setCsvSearch] = useState("");
+  const filteredCsvs = (csvs ?? []).filter((csv) => matchesAllColumns(csv, csvSearch));
   const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
 
   function showBackups(scope: BackupScope, name: string) {
@@ -319,15 +322,9 @@ export function VmsPage() {
 
         <Tabs.Panel value="vms" pt="md">
           <Paper p="md">
-            <Group justify="space-between" mb="sm">
-              <Title order={5}>Virtuelle Maschinen</Title>
-              <TextInput
-                placeholder="VM-Name suchen…"
-                leftSection={<IconSearch size={14} />}
-                value={vmSearch}
-                onChange={(e) => setVmSearch(e.currentTarget.value)}
-                w={280}
-              />
+            <Title order={5} mb="sm">Virtuelle Maschinen</Title>
+            <Group justify="flex-start" mb="sm">
+              <SearchInput value={vmSearch} onChange={setVmSearch} placeholder="VM-Name suchen…" />
             </Group>
             <Table striped highlightOnHover>
             <Table.Thead>
@@ -402,6 +399,9 @@ export function VmsPage() {
             <Title order={5} mb="sm">
               Cluster Shared Volumes
             </Title>
+            <Group justify="flex-start" mb="sm">
+              <SearchInput value={csvSearch} onChange={setCsvSearch} />
+            </Group>
             <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -419,7 +419,7 @@ export function VmsPage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {csvs?.map((csv) => {
+              {filteredCsvs.map((csv) => {
                 const usedPct =
                   csv.capacity_bytes && csv.capacity_bytes > 0
                     ? Math.round(((csv.used_bytes ?? 0) / csv.capacity_bytes) * 100)
@@ -491,6 +491,11 @@ export function VmsPage() {
               })}
             </Table.Tbody>
           </Table>
+          {(csvs?.length ?? 0) > 0 && filteredCsvs.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Kein CSV passt zur Suche „{csvSearch}".
+            </Text>
+          )}
           </Paper>
         </Tabs.Panel>
       </Tabs>

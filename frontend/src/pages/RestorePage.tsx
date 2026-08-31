@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { ActionIcon, Alert, Badge, Button, Group, Paper, Stack, Table, Tabs, Text, TextInput, Title } from "@mantine/core";
+import { ActionIcon, Alert, Badge, Button, Group, Paper, Stack, Table, Tabs, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconDatabaseImport, IconInfoCircle, IconPlus, IconRefresh, IconSearch, IconTrash } from "@tabler/icons-react";
+import { IconDatabaseImport, IconInfoCircle, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -16,6 +16,7 @@ import {
 import { FileRestoreSessionModal } from "@/components/FileRestoreSessionModal";
 import { RestoreSetupWizardModal } from "@/components/RestoreSetupWizardModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
+import { SearchInput } from "@/components/SearchInput";
 import { VmRecreateWizardModal } from "@/components/VmRecreateWizardModal";
 import type { FileRestoreRun, VmWithBackups } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
@@ -184,17 +185,11 @@ export function RestorePage() {
         </Stack>
       )}
 
-      <Group justify="space-between" align="center">
-        <Text size="sm" fw={600}>
-          VMs mit vorhandenen Backups
-        </Text>
-        <TextInput
-          placeholder="VM-Name suchen…"
-          leftSection={<IconSearch size={14} />}
-          value={vmSearch}
-          onChange={(e) => setVmSearch(e.currentTarget.value)}
-          w={280}
-        />
+      <Text size="sm" fw={600}>
+        VMs mit vorhandenen Backups
+      </Text>
+      <Group justify="flex-start">
+        <SearchInput value={vmSearch} onChange={setVmSearch} placeholder="VM-Name suchen…" />
       </Group>
       <Table striped highlightOnHover>
         <Table.Thead>
