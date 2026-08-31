@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HVNB Architektur</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;600;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  :root {
+    --bg: #F5F7F9;
+    --surface: #FFFFFF;
+    --surface-sunken: #EEF1F4;
+    --border: #DBE1E7;
+    --border-strong: #B9C2CB;
+    --ink: #10161D;
+    --ink-dim: #4B5768;
+    --ink-faint: #7C8896;
+    --teal: #0D7A82;
+    --teal-ink: #075257;
+    --teal-tint: #E4F2F1;
+    --amber: #A85F0B;
+    --amber-ink: #7A4508;
+    --amber-tint: #F7ECDD;
+    --core: #3A4A63;
+    --core-tint: #E9EDF3;
+    --good: #1E7A4C;
+    --good-tint: #E4F3EA;
+    --shadow: 0 1px 2px rgba(16, 22, 29, 0.04);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0D1116;
+      --surface: #151B22;
+      --surface-sunken: #10151B;
+      --border: #2A333D;
+      --border-strong: #3C4753;
+      --ink: #E7ECF1;
+      --ink-dim: #A7B2BE;
+      --ink-faint: #78838F;
+      --teal: #5BC2C7;
+      --teal-ink: #A9E4E6;
+      --teal-tint: #132326;
+      --amber: #E3A85B;
+      --amber-ink: #F0CB98;
+      --amber-tint: #241B0F;
+      --core: #9DAEC9;
+      --core-tint: #1A212C;
+      --good: #6FCB98;
+      --good-tint: #142420;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0D1116;
+    --surface: #151B22;
+    --surface-sunken: #10151B;
+    --border: #2A333D;
+    --border-strong: #3C4753;
+    --ink: #E7ECF1;
+    --ink-dim: #A7B2BE;
+    --ink-faint: #78838F;
+    --teal: #5BC2C7;
+    --teal-ink: #A9E4E6;
+    --teal-tint: #132326;
+    --amber: #E3A85B;
+    --amber-ink: #F0CB98;
+    --amber-tint: #241B0F;
+    --core: #9DAEC9;
+    --core-tint: #1A212C;
+    --good: #6FCB98;
+    --good-tint: #142420;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Public Sans", -apple-system, "Segoe UI", sans-serif;
+    font-size: 16.5px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--teal); color: var(--surface); }
+
+  a { color: var(--teal-ink); text-decoration-color: var(--border-strong); text-underline-offset: 2px; }
+  a:hover { text-decoration-color: currentColor; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+  code, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+    font-size: 0.88em;
+  }
+
+  code {
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    padding: 0.05em 0.4em;
+    border-radius: 3px;
+  }
+
+  .page {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: clamp(28px, 6vw, 64px) clamp(18px, 5vw, 28px) 96px;
+  }
+
+  /* ---------- Header ---------- */
+
+  header.hero {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 28px;
+    margin-bottom: 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .eyebrow {
+    font-family: "Martian Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  h1.title {
+    font-family: "Martian Mono", ui-monospace, monospace;
+    font-weight: 800;
+    font-size: clamp(28px, 4.4vw, 40px);
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .subtitle {
+    color: var(--ink-dim);
+    font-size: 1.08em;
+    max-width: 62ch;
+    text-wrap: balance;
+  }
+
+  .metaline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+
+  .metaline b { color: var(--ink-dim); font-weight: 500; }
+
+  /* ---------- Nav ---------- */
+
+  nav.toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 4px;
+    margin-bottom: 56px;
+  }
+
+  nav.toc a {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-dim);
+    text-decoration: none;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 5px 10px;
+    border-radius: 3px;
+  }
+
+  nav.toc a:hover { border-color: var(--border-strong); color: var(--ink); }
+
+  /* ---------- Sections ---------- */
+
+  section { margin-bottom: 60px; }
+  section:target { scroll-margin-top: 20px; }
+
+  h2 {
+    font-family: "Martian Mono", ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink);
+    margin: 0 0 4px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  h2 .num { color: var(--ink-faint); font-weight: 400; }
+
+  h3 {
+    font-family: "Public Sans", sans-serif;
+    font-weight: 700;
+    font-size: 1.15em;
+    margin: 0 0 8px;
+  }
+
+  .section-intro {
+    color: var(--ink-dim);
+    max-width: 68ch;
+    margin: 10px 0 24px;
+  }
+
+  p { max-width: 68ch; }
+  section > p:last-child { margin-bottom: 0; }
+
+  /* ---------- Requirement list ---------- */
+
+  .reqs {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+  }
+
+  .req {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 14px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .req .mark {
+    font-family: "IBM Plex Mono", monospace;
+    color: var(--teal-ink);
+    font-weight: 500;
+    padding-top: 2px;
+  }
+
+  .req strong { display: block; margin-bottom: 2px; }
+  .req span.detail { color: var(--ink-dim); font-size: 0.96em; }
+
+  /* ---------- Diagram panel ---------- */
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: var(--shadow);
+    padding: clamp(12px, 3vw, 22px);
+    overflow-x: auto;
+  }
+
+  .panel-caption {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin-top: 10px;
+    text-align: center;
+  }
+
+  pre.mermaid { margin: 0; display: flex; justify-content: center; }
+
+  /* ---------- Layer cards ---------- */
+
+  .layers {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .layer {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px 18px;
+    display: grid;
+    grid-template-columns: 128px 1fr;
+    gap: 6px 18px;
+    align-items: start;
+  }
+
+  .layer .chip {
+    font-family: "Martian Mono", monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 3px;
+    justify-self: start;
+    white-space: nowrap;
+  }
+
+  .chip.core { background: var(--core-tint); color: var(--core); }
+  .chip.storage { background: var(--teal-tint); color: var(--teal-ink); }
+  .chip.compute { background: var(--amber-tint); color: var(--amber-ink); }
+
+  .layer h3 { grid-column: 2; margin: 0; font-size: 1.05em; }
+  .layer .chip { grid-row: 1; }
+  .layer .desc { grid-column: 2; color: var(--ink-dim); font-size: 0.96em; margin: 0; }
+  .layer .stack { grid-column: 2; font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-faint); margin-top: 2px; }
+
+  @media (max-width: 560px) {
+    .layer { grid-template-columns: 1fr; }
+    .layer h3, .layer .desc, .layer .stack, .layer .chip { grid-column: 1; }
+  }
+
+  /* ---------- Glossary ---------- */
+
+  .glossary { border-top: 1px solid var(--border); }
+  .term {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 18px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .term dt {
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .term dd { margin: 0; color: var(--ink-dim); font-size: 0.96em; }
+
+  @media (max-width: 560px) {
+    .term { grid-template-columns: 1fr; gap: 4px; }
+  }
+
+  /* ---------- Steps ---------- */
+
+  .steps {
+    counter-reset: step;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .step {
+    counter-increment: step;
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 14px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .step::before {
+    content: counter(step, decimal-leading-zero);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    padding-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .step p { margin: 0; }
+  .step strong { color: var(--ink); }
+
+  .callout {
+    margin-top: 16px;
+    border-left: 3px solid var(--teal);
+    background: var(--teal-tint);
+    padding: 12px 16px;
+    border-radius: 0 4px 4px 0;
+    font-size: 0.95em;
+    color: var(--teal-ink);
+    max-width: 68ch;
+  }
+
+  /* ---------- Table ---------- */
+
+  .tbl-wrap { overflow-x: auto; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.94em;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 10px 14px 10px 0;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  th {
+    font-family: "Martian Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+
+  td.label { font-weight: 600; white-space: nowrap; }
+  td .mono-cell { font-family: "IBM Plex Mono", monospace; font-size: 0.92em; color: var(--ink-dim); }
+
+  /* ---------- Footer ---------- */
+
+  footer {
+    margin-top: 72px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--ink-faint);
+    font-size: 12.5px;
+    font-family: "IBM Plex Mono", monospace;
+  }
+</style>
+</head>
+<body>
+
+
+<div class="page">
+
+  <header class="hero">
+    <div class="eyebrow">Internes Ops-Tool · Architekturdokument</div>
+    <h1 class="title">Hyper-V NetApp Backup Tool</h1>
+    <p class="subtitle">
+      Snapshot-basierte Datensicherung für Hyper-V-Failover-Cluster auf NetApp-ONTAP-Storage,
+      inklusive SnapMirror-Replikation und mehreren Wiederherstellungswegen.
+    </p>
+    <div class="metaline">
+      <span><b>Zielgruppe:</b> Infrastruktur-/Storage-Admins</span>
+      <span><b>Betrieb:</b> ein Server, eine Instanz</span>
+      <span><b>Codename intern:</b> HVNB</span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#zweck">Zweck &amp; Anforderungen</a>
+    <a href="#architektur">Architektur</a>
+    <a href="#schichten">Schichten</a>
+    <a href="#konzepte">Kernkonzepte</a>
+    <a href="#backup">Ablauf: Backup</a>
+    <a href="#restore">Ablauf: Restore</a>
+    <a href="#varianten">Restore-Varianten</a>
+    <a href="#betrieb">Betrieb</a>
+    <a href="#stack">Tech-Stack</a>
+  </nav>
+
+  <section id="zweck">
+    <h2><span class="num">01</span> Zweck &amp; Anforderungen</h2>
+    <p class="section-intro">
+      Klassische Agenten-Backups sind auf virtualisierten Windows-Failover-Clustern teuer und langsam.
+      Das Tool sichert stattdessen auf Storage-Ebene: Hyper-V liefert die Anwendungskonsistenz
+      (Checkpoints), NetApp ONTAP liefert die eigentlichen, platzsparenden Snapshots. Daraus ergeben
+      sich die zentralen Anforderungen:
+    </p>
+    <div class="reqs">
+      <div class="req">
+        <span class="mark">01</span>
+        <div><strong>Storage-basierte Sicherung ohne Agenten</strong>
+          <span class="detail">Hyper-V-Checkpoint (crash- oder anwendungskonsistent) + NetApp-Snapshot pro betroffenem Volume, gesteuert über Policies mit Zeitplan und Retention.</span>
+        </div>
+      </div>
+      <div class="req">
+        <span class="mark">02</span>
+        <div><strong>Zwei Schutz-Granularitäten</strong>
+          <span class="detail">Eine Schutzgruppe kann einzelne VMs oder ganze Cluster Shared Volumes (CSV) umfassen — je nachdem, ob VMs individuell oder blockweise gesichert werden sollen.</span>
+        </div>
+      </div>
+      <div class="req">
+        <span class="mark">03</span>
+        <div><strong>Off-Site-Kopie via SnapMirror, automatisch genutzt</strong>
+          <span class="detail">Nach jedem Backup optional ein SnapMirror-Update anstoßen. Beim Restore wird immer zuerst das Primärsystem geprüft — erst wenn der Snapshot dort fehlt, greift automatisch die Replik auf dem SnapMirror-Ziel, ganz ohne manuelle Auswahl.</span>
+        </div>
+      </div>
+      <div class="req">
+        <span class="mark">04</span>
+        <div><strong>Mehrere Wiederherstellungswege</strong>
+          <span class="detail">Vom einzelnen Datei-Restore bis zur kompletten Neuerstellung einer gelöschten VM oder einem Side-by-side-Klon zu Testzwecken — siehe Abschnitt&nbsp;06.</span>
+        </div>
+      </div>
+      <div class="req">
+        <span class="mark">05</span>
+        <div><strong>Rollenbasierte Zugriffskontrolle</strong>
+          <span class="detail">Eigene Benutzerverwaltung mit Rechte-Rollen, optional angebunden an Active Directory — das Tool greift auf produktive Infrastruktur zu.</span>
+        </div>
+      </div>
+      <div class="req">
+        <span class="mark">06</span>
+        <div><strong>Geringer Betriebsaufwand</strong>
+          <span class="detail">Ein internes Werkzeug für ein kleines Team, kein Multi-Tenant-SaaS — entsprechend schlank gehalten: eine Instanz, ein Container, Selbst-Update statt CI/CD-Pipeline.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="architektur">
+    <h2><span class="num">02</span> Architekturüberblick</h2>
+    <p class="section-intro">
+      Eine Single-Page-Oberfläche spricht mit einem einzigen FastAPI-Backend, das seinerseits drei
+      externe Welten orchestriert: die Hyper-V-Cluster (Compute), die NetApp-Cluster (Storage) und
+      einen dedizierten Restore-Proxy-Host, der als neutraler Umschlagplatz für Wiederherstellungen dient.
+    </p>
+    <div class="panel">
+      <pre class="mermaid">
+%%{init: {'theme':'base', 'themeVariables': {
+  'background':'#ffffff','primaryColor':'#ffffff','primaryBorderColor':'#0D7A82',
+  'primaryTextColor':'#10161D','lineColor':'#4B5768','secondaryColor':'#F7ECDD',
+  'secondaryBorderColor':'#A85F0B','tertiaryColor':'#E9EDF3','tertiaryBorderColor':'#3A4A63',
+  'fontFamily':'IBM Plex Mono, monospace','fontSize':'13px'
+}}}%%
+flowchart TB
+  Browser["Browser<br/>React · TypeScript · Mantine"]
+  API["FastAPI-Backend<br/>REST/JSON · SQLAlchemy · SQLite"]
+  Scheduler["APScheduler<br/>Discovery · Backups · Retention"]
+  subgraph Compute["Compute"]
+    HV["Hyper-V-Failover-Cluster<br/>WinRM / PowerShell"]
+  end
+  subgraph Storage["Storage"]
+    NA["NetApp-ONTAP-Cluster<br/>REST-API"]
+    NA2["SnapMirror-Ziel<br/>(anderer NetApp-Cluster)"]
+  end
+  Proxy["Restore-Proxy-Host<br/>WinRM + iSCSI-Initiator"]
+
+  Browser <--> API
+  API --> Scheduler
+  API -- "Checkpoints, Discovery" --> HV
+  API -- "Snapshots, Klone, SnapMirror" --> NA
+  NA -. "Replikation" .-> NA2
+  API -- "Mount, Kopie, Browse" --> Proxy
+  Proxy -- "iSCSI: LUN-/Volume-Klon" --> NA
+  Proxy -- "iSCSI: LUN-/Volume-Klon" --> NA2
+  Proxy -- "SMB-Kopie / VHDX anhängen" --> HV
+      </pre>
+    </div>
+    <p class="panel-caption">Datenfluss bei Discovery/Backup (durchgezogen) und Restore (über den Proxy-Host)</p>
+  </section>
+
+  <section id="schichten">
+    <h2><span class="num">03</span> Die Schichten</h2>
+    <p class="section-intro">Vier Verantwortungsbereiche, sauber getrennt:</p>
+    <div class="layers">
+      <div class="layer">
+        <span class="chip core">Client</span>
+        <h3>Oberfläche</h3>
+        <p class="desc">Dashboard, Inventar, Schutzgruppen, Job-Verlauf und die Restore-Wizards. Reine Anzeige- und Formularlogik, kein eigener Zustand über einen Request hinaus.</p>
+        <p class="stack">React · TypeScript · Mantine UI · TanStack Query</p>
+      </div>
+      <div class="layer">
+        <span class="chip core">Kern</span>
+        <h3>API &amp; Domänenlogik</h3>
+        <p class="desc">Policies, Schutzgruppen, Zeitpläne, Backup-/Restore-Läufe als Datenbank-Modelle; jeder mehrstufige Vorgang schreibt seinen Fortschritt Schritt für Schritt mit, damit er live verfolgt und im Nachhinein geprüft werden kann.</p>
+        <p class="stack">FastAPI · Pydantic · SQLAlchemy 2.0 · SQLite</p>
+      </div>
+      <div class="layer">
+        <span class="chip compute">Integration</span>
+        <h3>Hyper-V-Anbindung</h3>
+        <p class="desc">PowerShell-Remoting gegen den Cluster-Zugriffspunkt und einzelne Knoten: Inventar auslesen, Checkpoints setzen, VMs anlegen/konfigurieren, Cluster-Rollen registrieren.</p>
+        <p class="stack">pywinrm · NTLM / CredSSP</p>
+      </div>
+      <div class="layer">
+        <span class="chip storage">Integration</span>
+        <h3>NetApp-Anbindung</h3>
+        <p class="desc">ONTAP-REST-API für Snapshots, LUN-/Volume-Klone, SnapMirror-Beziehungen und -Policies. Ein DP-Volume (SnapMirror-Ziel) kann keine LUN direkt klonen — dafür wird das gesamte Volume per FlexClone gespiegelt.</p>
+        <p class="stack">netapp_ontap SDK</p>
+      </div>
+      <div class="layer">
+        <span class="chip storage">Infrastruktur</span>
+        <h3>Restore-Proxy-Host</h3>
+        <p class="desc">Ein schlanker Windows-Host mit nativem iSCSI-Initiator, den das Backend per WinRM fernsteuert. Hier werden Klone gemountet, VHDX durchsucht und Dateien kopiert — ohne dass ein Hyper-V-Produktivknoten selbst iSCSI sprechen muss.</p>
+        <p class="stack">WinRM · iSCSI · SMB</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="konzepte">
+    <h2><span class="num">04</span> Kernkonzepte</h2>
+    <p class="section-intro">Das Vokabular, mit dem sich der Rest der Anwendung erklärt:</p>
+    <dl class="glossary">
+      <div class="term"><dt>Policy</dt><dd>Bündelt Konsistenz-Typ (crash/app), Zeitplan, Retention und optional eine SnapMirror-Regel. Wiederverwendbar über mehrere Schutzgruppen.</dd></div>
+      <div class="term"><dt>Schutzgruppe</dt><dd>Eine Menge von VMs oder CSVs, die gemeinsam nach derselben Policy gesichert werden.</dd></div>
+      <div class="term"><dt>Backup-Lauf</dt><dd>Eine Ausführung einer Policy: pro betroffenem NetApp-Volume ein Snapshot, pro Schritt (Checkpoint, Snapshot, SnapMirror-Update) ein protokollierter Eintrag.</dd></div>
+      <div class="term"><dt>Primär / Sekundär</dt><dd>Ein Snapshot gilt als „primär“, solange er auf dem Quellsystem existiert. Wird er dort entfernt, aber liegt noch auf einem SnapMirror-Ziel vor, gilt er als „sekundär“ — weiterhin restorebar, nur die Quelle wechselt automatisch.</dd></div>
+      <div class="term"><dt>Restore-Infrastruktur</dt><dd>Pro Ziel-SVM hinterlegte iSCSI-/Igroup-Konfiguration, ohne die kein Restore für diese SVM technisch möglich ist.</dd></div>
+    </dl>
+  </section>
+
+  <section id="backup">
+    <h2><span class="num">05</span> Ablauf: Backup</h2>
+    <p class="section-intro">Ausgelöst manuell oder per Zeitplan, für eine ganze Schutzgruppe:</p>
+    <div class="steps">
+      <div class="step"><p><strong>Checkpoint je VM.</strong> Hyper-V erstellt einen Produktions- (anwendungskonsistenten) oder Standard-Checkpoint, abhängig von der Policy.</p></div>
+      <div class="step"><p><strong>Snapshot je Volume.</strong> NetApp erstellt für jedes betroffene Volume einen benannten Snapshot — der eigentliche, platzsparende Wiederherstellungspunkt.</p></div>
+      <div class="step"><p><strong>Checkpoint entfernen.</strong> Der Hyper-V-Checkpoint wird sofort wieder gelöscht; er diente nur der Konsistenz während des Snapshots.</p></div>
+      <div class="step"><p><strong>SnapMirror-Update (optional).</strong> Ist die Policy dafür konfiguriert, wird die Replikation zum Ziel-System angestoßen — asynchron, blockiert den Lauf nicht.</p></div>
+      <div class="step"><p><strong>VM-Konfiguration sichern.</strong> CPU, RAM, Netzwerkadapter und die VHD-zu-LUN-Zuordnung werden zum Zeitpunkt der Sicherung mit gespeichert — Grundlage für eine spätere komplette Neuerstellung.</p></div>
+    </div>
+    <div class="callout">Jeder dieser Schritte landet einzeln im Job-Verlauf — inklusive Klartext-Fehlermeldung, falls er fehlschlägt.</div>
+  </section>
+
+  <section id="restore">
+    <h2><span class="num">06</span> Ablauf: Restore</h2>
+    <p class="section-intro">
+      Der interessante Teil ist die Quellenwahl: die Anwendung entscheidet selbst, ob vom
+      Primär- oder Sekundärsystem restored wird — nie der Nutzer.
+    </p>
+    <div class="panel">
+      <pre class="mermaid">
+%%{init: {'theme':'base', 'themeVariables': {
+  'background':'#ffffff','primaryColor':'#ffffff','primaryBorderColor':'#0D7A82',
+  'primaryTextColor':'#10161D','lineColor':'#4B5768','secondaryColor':'#F7ECDD',
+  'secondaryBorderColor':'#A85F0B','tertiaryColor':'#E9EDF3','tertiaryBorderColor':'#3A4A63',
+  'fontFamily':'IBM Plex Mono, monospace','fontSize':'13px'
+}}}%%
+flowchart LR
+  A["Snapshot gewählt"] --> B{"Noch auf dem<br/>Primärsystem?"}
+  B -- ja --> C["LUN aus Snapshot klonen<br/>(RW-Volume)"]
+  B -- nein --> D{"Auf einem<br/>SnapMirror-Ziel<br/>vorhanden?"}
+  D -- ja --> E["Ganzes DP-Volume<br/>per FlexClone spiegeln"]
+  D -- nein --> F["Kein Restore möglich"]
+  C --> G["iSCSI-Mount auf<br/>Restore-Proxy-Host"]
+  E --> G
+  G --> H["Kopieren / Anhängen /<br/>VM erstellen"]
+  H --> I["Temporären Klon<br/>aufräumen"]
+      </pre>
+    </div>
+    <p class="panel-caption">Automatischer Primär-vor-Sekundär-Fallback, keine manuelle Quellenauswahl</p>
+    <p class="section-intro" style="margin-top:22px;">
+      Technischer Hintergrund: Ein SnapMirror-Ziel ist ein schreibgeschütztes DP-Volume — ein direkter
+      LUN-Klon daraus wird von ONTAP abgelehnt. Der Restore-Pfad weicht in diesem Fall auf einen
+      Klon des <em>gesamten</em> Volumes aus, in dem die LUN bereits enthalten ist.
+    </p>
+  </section>
+
+  <section id="varianten">
+    <h2><span class="num">07</span> Restore-Varianten</h2>
+    <p class="section-intro">Ab dem geklonten/gemounteten Snapshot verzweigt der Restore in fünf Varianten:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Variante</th><th>Wirkung</th><th>Betrifft Original</th></tr></thead>
+        <tbody>
+          <tr><td class="label">Anhängen</td><td>VHDX als Zusatzdisk an die laufende VM hängen, kein Downtime.</td><td class="mono-cell">unverändert</td></tr>
+          <tr><td class="label">Ersetzen</td><td>Laufende VHDX kurz stoppen, austauschen, alte Datei löschen.</td><td class="mono-cell">wird ersetzt</td></tr>
+          <tr><td class="label">Datei-Restore</td><td>VHDX schreibgeschützt mounten, im Dateibaum durchsuchen, gezielt Dateien kopieren.</td><td class="mono-cell">unverändert</td></tr>
+          <tr><td class="label">VM neu erstellen</td><td>Komplette Neuerstellung einer <em>gelöschten</em> VM unter demselben Namen.</td><td class="mono-cell">existiert nicht mehr</td></tr>
+          <tr><td class="label">Side-by-side</td><td>Komplette VM unter neuem Namen zusätzlich anlegen — eigener Speicherort, Netzwerk optional getrennt.</td><td class="mono-cell">läuft parallel weiter</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="betrieb">
+    <h2><span class="num">08</span> Betrieb &amp; Deployment</h2>
+    <p class="section-intro">Bewusst klein gehalten, passend zum Nutzerkreis:</p>
+    <div class="steps">
+      <div class="step"><p><strong>Ein Container.</strong> Backend, Frontend-Build und SQLite-Datenbank laufen zusammen in einem rootless Podman-Container.</p></div>
+      <div class="step"><p><strong>Selbst-Update statt Pipeline.</strong> Ein Supervisor-Prozess zieht periodisch <code>git pull</code>, installiert Abhängigkeiten bei Bedarf nach und startet neu — kein separates CI/CD-System nötig.</p></div>
+      <div class="step"><p><strong>Additive Schema-Migration.</strong> Neue Datenbankspalten werden beim Start automatisch ergänzt, ohne bestehende Daten anzufassen.</p></div>
+      <div class="step"><p><strong>Hintergrund-Jobs im selben Prozess.</strong> Discovery, geplante Backups, Retention und Aufräumarbeiten laufen als eingebettete Scheduler-Jobs — kein separater Worker.</p></div>
+    </div>
+  </section>
+
+  <section id="stack">
+    <h2><span class="num">09</span> Tech-Stack im Überblick</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Bereich</th><th>Technologie</th></tr></thead>
+        <tbody>
+          <tr><td class="label">Oberfläche</td><td class="mono-cell">React · TypeScript · Mantine UI · TanStack Query</td></tr>
+          <tr><td class="label">Backend</td><td class="mono-cell">Python · FastAPI · Pydantic · SQLAlchemy 2.0</td></tr>
+          <tr><td class="label">Datenhaltung</td><td class="mono-cell">SQLite (einzelne Datei)</td></tr>
+          <tr><td class="label">Hintergrund-Jobs</td><td class="mono-cell">APScheduler (In-Process)</td></tr>
+          <tr><td class="label">Hyper-V-Anbindung</td><td class="mono-cell">pywinrm (WinRM / PowerShell-Remoting)</td></tr>
+          <tr><td class="label">NetApp-Anbindung</td><td class="mono-cell">netapp_ontap (offizielles REST-SDK)</td></tr>
+          <tr><td class="label">Auth</td><td class="mono-cell">Eigene RBAC-Rollen, optional Active Directory</td></tr>
+          <tr><td class="label">Deployment</td><td class="mono-cell">Podman (rootless) · git-basiertes Selbst-Update</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>HVNB — Architekturdokument · zur internen Weitergabe</footer>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true, securityLevel: "loose" });
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   AppShell,
   Box,
   Burger,
@@ -15,7 +16,15 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconChevronDown, IconLogout, IconMoon, IconSun, IconTerminal2, IconUserCircle } from "@tabler/icons-react";
+import {
+  IconChevronDown,
+  IconFileText,
+  IconLogout,
+  IconMoon,
+  IconSun,
+  IconTerminal2,
+  IconUserCircle,
+} from "@tabler/icons-react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import logo from "@/assets/logo.png";
@@ -143,6 +152,20 @@ export function AppShellLayout() {
           })}
         </AppShell.Section>
         <AppShell.Section style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}>
+          <Anchor
+            href="/docs/architecture.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            size="xs"
+            underline="hover"
+            px="xs"
+            pt={6}
+            display="flex"
+            style={{ alignItems: "center", gap: 6 }}
+          >
+            <IconFileText size={14} stroke={1.5} />
+            Architektur-Dokumentation
+          </Anchor>
           <VersionFooter />
         </AppShell.Section>
       </AppShell.Navbar>
