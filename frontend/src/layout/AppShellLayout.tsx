@@ -28,7 +28,6 @@ import {
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import logo from "@/assets/logo.png";
-import { ContextSearch } from "@/components/ContextSearch";
 import { LogViewer } from "@/components/LogViewer";
 import { RunningJobsIndicator } from "@/components/RunningJobsIndicator";
 import { VersionFooter } from "@/components/VersionFooter";
@@ -74,7 +73,6 @@ export function AppShellLayout() {
           </Group>
 
           <Group wrap="nowrap">
-            <ContextSearch />
             <RunningJobsIndicator />
             <Tooltip label="Troubleshooting-Log">
               <ActionIcon variant="default" size="lg" onClick={openLogs}>
@@ -153,9 +151,8 @@ export function AppShellLayout() {
         </AppShell.Section>
         <AppShell.Section style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}>
           <Anchor
-            href="/docs/architecture.html"
-            target="_blank"
-            rel="noopener noreferrer"
+            component={Link}
+            to="/docs"
             size="xs"
             underline="hover"
             px="xs"

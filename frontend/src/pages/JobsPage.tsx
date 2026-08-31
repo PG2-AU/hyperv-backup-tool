@@ -172,10 +172,13 @@ export function JobsPage() {
         </Tabs.List>
 
         <Tabs.Panel value="policies" pt="md">
-          <Stack>
-            <Button leftSection={<IconPlus size={16} />} onClick={openCreate} style={{ alignSelf: "flex-end" }}>
-              Neue Policy
-            </Button>
+          <Paper p="md">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>Policies</Title>
+              <Button leftSection={<IconPlus size={16} />} onClick={openCreate}>
+                Neue Policy
+              </Button>
+            </Group>
             <Table striped highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
@@ -255,14 +258,17 @@ export function JobsPage() {
                 ))}
               </Table.Tbody>
             </Table>
-          </Stack>
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="protection-groups" pt="md">
-          <Stack>
-            <Button leftSection={<IconPlus size={16} />} onClick={openCreateGroup} style={{ alignSelf: "flex-end" }}>
-              Protection Group anlegen
-            </Button>
+          <Paper p="md">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>Protection Groups</Title>
+              <Button leftSection={<IconPlus size={16} />} onClick={openCreateGroup}>
+                Protection Group anlegen
+              </Button>
+            </Group>
             <Table striped highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
@@ -332,7 +338,7 @@ export function JobsPage() {
                 Noch keine Protection Groups angelegt.
               </Text>
             )}
-          </Stack>
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="schedules" pt="md">
@@ -389,7 +395,11 @@ export function JobsPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="runs" pt="md">
-          <Table striped highlightOnHover>
+          <Paper p="md">
+            <Title order={5} mb="sm">
+              Job-Verlauf
+            </Title>
+            <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Job</Table.Th>
@@ -426,6 +436,7 @@ export function JobsPage() {
               ))}
             </Table.Tbody>
           </Table>
+          </Paper>
         </Tabs.Panel>
       </Tabs>
 
