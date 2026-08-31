@@ -30,14 +30,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from ntpath import basename as win_basename
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
 from app.api.routes.restore import _StepCtx
 from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunStep, BackupRunVmConfig, JobStatus
@@ -53,6 +53,7 @@ from app.schemas.backup import (
     BackupJobRun,
     BackupPolicyRead,
     BackupPolicyWrite,
+    BackupRunStepRead,
     BackupSnapshotDestinationRead,
     BackupSnapshotRead,
     BackupSnapshotVhdRead,
@@ -158,7 +159,21 @@ def list_job_runs(
     return [_to_run_read(r) for r in runs]
 
 
-def _to_run_read(run: BackupRun) -> BackupJobRun:
+@router.get("/runs/{run_id}", response_model=BackupJobRun)
+def get_job_run(
+    run_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW)),
+) -> BackupJobRun:
+    """Einzelner Lauf inkl. Schritt-fuer-Schritt-Verlauf -- Grundlage fuer die
+    Live-Fortschrittsanzeige waehrend ein Job noch laeuft (gepollt von
+    RunningJobsIndicator.tsx, analog zu den Restore-/VM-Neuerstellungs-
+    Wizards)."""
+    run = db.get(BackupRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lauf nicht gefunden")
+    return _to_run_read(run, include_steps=True)
+
+
+def _to_run_read(run: BackupRun, include_steps: bool = False) -> BackupJobRun:
     return BackupJobRun(
         id=run.id,
         job_id=run.policy_id,
@@ -170,6 +185,16 @@ def _to_run_read(run: BackupRun) -> BackupJobRun:
         targets=run.targets or [],
         error_message=run.error_message,
         snapshots=list(run.snapshots),
+        steps=[
+            # s.status ist zur Laufzeit bereits ein reiner str (die Spalte ist
+            # als String(20) angelegt, kein SQLAlchemy-Enum-Typ -- .value
+            # existiert daher nur auf frisch zugewiesenen Enum-Werten VOR dem
+            # naechsten DB-Read, nicht auf aus der DB geladenen Zeilen).
+            BackupRunStepRead(step=s.step, label=s.label, status=str(s.status), message=s.message)
+            for s in run.steps
+        ]
+        if include_steps
+        else [],
     )
 
 
@@ -472,13 +497,27 @@ def detach_vm_from_backup_snapshot(
     db.commit()
 
 
-@router.post("/{job_id}/run", response_model=BackupJobRun)
-def trigger_job_run(
-    job_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_RUN)),
-) -> BackupJobRun:
-    policy = db.get(BackupPolicy, job_id)
-    if policy is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
+class _JobAlreadyRunningError(RuntimeError):
+    pass
+
+
+class _NoTargetsError(RuntimeError):
+    pass
+
+
+def _start_job_run(policy: BackupPolicy, db: Session) -> tuple[BackupRun, list[str]]:
+    """Schneller, rein lokaler Teil eines Backup-Laufs: Ziele aufloesen, Lauf-
+    Zeile + VM-Konfiguration anlegen. Bewusst OHNE WinRM-/NetApp-Aufrufe,
+    damit dieser Teil synchron im Request bleiben kann -- die eigentliche,
+    ggf. lange dauernde Ausfuehrung (Checkpoints/Snapshots/SnapMirror-Update)
+    uebernimmt _execute_job_run als Hintergrund-Task (siehe trigger_job_run
+    weiter unten), damit "Jetzt ausfuehren" sofort zurueckkehrt und der
+    Fortschritt live gepollt werden kann (RunningJobsIndicator.tsx) statt den
+    ganzen Request lang zu blockieren. Frueher lief das alles synchron in
+    einem einzigen Request -- ein laufender Job war dadurch fuer die eigene
+    Session unsichtbar, bis er komplett fertig war."""
+    if db.query(BackupRun).filter(BackupRun.policy_id == policy.id, BackupRun.status == JobStatus.RUNNING).first() is not None:
+        raise _JobAlreadyRunningError(f"Policy '{policy.name}' hat bereits einen laufenden Job.")
 
     targets, warnings = _resolve_targets(db, policy)
     if not targets:
@@ -487,7 +526,7 @@ def trigger_job_run(
             detail += " " + "; ".join(warnings)
         else:
             detail += " Der Policy ist keine Resource Group mit Zielen zugeordnet."
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+        raise _NoTargetsError(detail)
 
     now = datetime.now(timezone.utc)
     all_targets = sorted({vm for t in targets for vm in t.vm_names} | {csv for t in targets for csv in t.csv_names})
@@ -512,10 +551,6 @@ def trigger_job_run(
         ctx.row.message = ", ".join(all_targets) if all_targets else "(keine)"
 
     clusters_by_id = {c.id: c for c in db.query(NetAppCluster).all()}
-    volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
-    snapshot_suffix = now.strftime("%Y%m%d%H%M%S")
-    slug = _slugify(policy.name)
-    label = policy.snapmirror_label.name if policy.snapmirror_label else None
 
     # VM-Konfiguration zum Backup-Zeitpunkt sichern (CPU/RAM/NICs/PCI/VHD-
     # Liste inkl. CSV/LUN-Zuordnung) -- kopiert aus der zuletzt discoverten
@@ -578,139 +613,197 @@ def trigger_job_run(
             )
         db.commit()
 
-    errors: list[str] = list(warnings)
+    return run, warnings
 
-    # Applikationskonsistenz: pro betroffener VM VORHER einen Hyper-V-
-    # Production-Checkpoint erzeugen (VSS-Quiesce) -- die dabei eingefrorene
-    # Basis-VHDX enthaelt danach exakt den konsistenten Stand, den der
-    # gleich folgende Storage-Snapshot festhaelt. Alle Checkpoints werden
-    # erst NACH allen Snapshots (unten) wieder entfernt, damit eine VM mit
-    # Disks auf mehreren Volumes fuer alle ihre Snapshots denselben
-    # eingefrorenen Stand zeigt. Scheitert der Checkpoint fuer eine VM, wird
-    # das vermerkt, die VM wird aber trotzdem (crash-konsistent) gesichert
-    # statt den ganzen Lauf abzubrechen.
-    checkpoint_name = f"hvnb_{slug}_{snapshot_suffix}"
-    active_checkpoints: list[tuple[HyperVService, object, str]] = []
-    if policy.consistency == ConsistencyType.APPLICATION_CONSISTENT and vm_names_in_run:
-        settings = get_settings()
-        hyperv_clusters_by_id = {c.id: c for c in db.query(HyperVCluster).all()}
-        for vm_name in vm_names_in_run:
-            hv_vm = hyperv_vms_by_name.get(vm_name)
-            hv_cluster = hyperv_clusters_by_id.get(hv_vm.cluster_id) if hv_vm else None
-            if hv_vm is None or hv_cluster is None:
-                msg = "Hyper-V-Cluster nicht gefunden, Checkpoint uebersprungen (Backup laeuft crash-konsistent weiter)"
-                errors.append(f"VM '{vm_name}': {msg}")
-                with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
-                    ctx.row.status = RestoreStepStatus.SKIPPED
-                    ctx.row.message = msg
-                continue
-            try:
-                with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
-                    hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
-                    hv_password = decrypt_secret(hv_cluster.encrypted_password)
-                    cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
-                    owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or hv_vm.host_name
-                    node_address = hv_service.resolve_node_address(cno_session, owner_node)
-                    node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
-                    node_session = node_service.connect(hv_cluster.username, hv_password)
-                    node_service.create_checkpoint(node_session, vm_name, checkpoint_name, policy.consistency)
-                    active_checkpoints.append((node_service, node_session, vm_name))
-                    ctx.row.message = f"Checkpoint '{checkpoint_name}' auf Knoten '{node_address}' erstellt"
-            except Exception as exc:
-                errors.append(f"VM '{vm_name}': Checkpoint konnte nicht erstellt werden ({exc}) -- Backup laeuft crash-konsistent weiter")
 
-    for target in targets:
-        row = BackupRunSnapshot(
-            run_id=run.id,
-            netapp_cluster_id=target.netapp_cluster_id,
-            netapp_cluster_name=target.netapp_cluster_name,
-            svm_name=target.svm_name,
-            volume_name=target.volume_name,
-            csv_names=sorted(target.csv_names),
-            lun_names=sorted(target.lun_names),
-            vm_names=sorted(target.vm_names),
-        )
-        cluster = clusters_by_id.get(target.netapp_cluster_id)
-        volume = volumes_by_key.get((target.netapp_cluster_id, target.svm_name, target.volume_name))
-        if volume is not None:
-            row.volume_uuid = volume.uuid
+def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
+    """Fuehrt den eigentlichen, potenziell langwierigen Teil eines Backup-
+    Laufs aus (Checkpoints, Snapshots, SnapMirror-Update, Checkpoint-
+    Entfernung). Laeuft entweder als FastAPI-Hintergrund-Task (manuelles
+    "Jetzt ausfuehren", siehe trigger_job_run) oder synchron direkt aus dem
+    Scheduler heraus (run_scheduled_backups) -- oeffnet dafuer immer eine
+    eigene DB-Session, analog zu _execute_restore/_execute_vm_recreate."""
+    db = SessionLocal()
+    try:
+        run = db.get(BackupRun, run_id)
+        if run is None:
+            return
+        policy = db.get(BackupPolicy, run.policy_id)
+        if policy is None:
+            run.status = JobStatus.FAILED
+            run.error_message = "Policy wurde zwischenzeitlich geloescht"
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+            return
 
-        target_label = target.volume_name or ", ".join(sorted(target.csv_names)) or "?"
+        targets, _ = _resolve_targets(db, policy)
+        clusters_by_id = {c.id: c for c in db.query(NetAppCluster).all()}
+        volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
+        snapshot_suffix = run.started_at.strftime("%Y%m%d%H%M%S")
+        slug = _slugify(policy.name)
+        label = policy.snapmirror_label.name if policy.snapmirror_label else None
+        vm_names_in_run = sorted({vm for t in targets for vm in t.vm_names})
+        hyperv_vms_by_name = {v.name: v for v in db.query(HyperVVm).filter(HyperVVm.name.in_(vm_names_in_run)).all()}
 
-        if cluster is None or not target.svm_name or not target.volume_name:
-            row.success = False
-            row.error_message = "NetApp-Cluster oder -Volume nicht auflösbar"
-            errors.append(f"{target.volume_name or '?'}: {row.error_message}")
-            db.add(row)
-            with _StepCtx(db, run.id, f"snapshot-{target_label}", f"Snapshot erstellen: {target_label}", step_model=BackupRunStep) as ctx:
-                ctx.row.status = RestoreStepStatus.SKIPPED
-                ctx.row.message = row.error_message
-            continue
+        errors: list[str] = list(initial_warnings)
 
-        snapshot_name = f"hvnb_{slug}_{snapshot_suffix}"
-        try:
-            with _StepCtx(db, run.id, f"snapshot-{target_label}", f"Snapshot erstellen: {target_label}", step_model=BackupRunStep) as ctx:
-                service = _netapp_service_for(cluster)
-                snap = service.create_snapshot(target.volume_name, target.svm_name, snapshot_name, snapmirror_label=label)
-                row.snapshot_name = snap.name
-                row.snapshot_uuid = snap.uuid
-                row.success = True
-                ctx.row.message = f"Snapshot '{snap.name}' auf Volume '{target.volume_name}' @ {target.svm_name} erstellt"
-        except Exception as exc:
-            row.success = False
-            row.error_message = str(exc)
-            errors.append(f"{target.volume_name}: {exc}")
-        db.add(row)
-
-        # SnapMirror-Update anstossen, falls die Policy das vorsieht --
-        # eigener try/except (nicht Teil des Snapshot-try/except oben), damit
-        # ein Fehler hier nicht faelschlich den erfolgreich erstellten
-        # Snapshot als fehlgeschlagen markiert. Nutzt die per Discovery
-        # bereits bekannte Beziehung (kein zusaetzlicher Live-Aufruf zum
-        # Aufloesen noetig, siehe auch POST /api/resource-groups/
-        # check-snapmirror, das dieselbe Tabelle fuer die Praesenzpruefung
-        # im Policy-/Protection-Group-Formular nutzt). Fehlt die Beziehung
-        # oder schlaegt der Trigger fehl, wird das wie ein Checkpoint-Fehler
-        # oben als Warnung vermerkt (Lauf insgesamt FAILED, der Snapshot
-        # selbst bleibt aber gueltig und restorebar) -- der Nutzer soll das
-        # sehen und ueber den Check-Panel-Hinweis die Beziehung anlegen.
-        if row.success and policy.snapmirror_update:
-            try:
-                with _StepCtx(
-                    db, run.id, f"snapmirror-{target_label}", f"SnapMirror-Update: {target_label}", step_model=BackupRunStep,
-                ) as ctx:
-                    rel = (
-                        db.query(NetAppSnapMirrorRelationship)
-                        .filter(NetAppSnapMirrorRelationship.source_path == f"{target.svm_name}:{target.volume_name}")
-                        .first()
-                    )
-                    if rel is None or not rel.uuid:
-                        msg = "Kein SnapMirror-Update ausgeloest (keine Beziehung konfiguriert)"
-                        errors.append(f"{target.volume_name}: {msg}")
+        # Applikationskonsistenz: pro betroffener VM VORHER einen Hyper-V-
+        # Production-Checkpoint erzeugen (VSS-Quiesce) -- die dabei eingefrorene
+        # Basis-VHDX enthaelt danach exakt den konsistenten Stand, den der
+        # gleich folgende Storage-Snapshot festhaelt. Alle Checkpoints werden
+        # erst NACH allen Snapshots (unten) wieder entfernt, damit eine VM mit
+        # Disks auf mehreren Volumes fuer alle ihre Snapshots denselben
+        # eingefrorenen Stand zeigt. Scheitert der Checkpoint fuer eine VM, wird
+        # das vermerkt, die VM wird aber trotzdem (crash-konsistent) gesichert
+        # statt den ganzen Lauf abzubrechen.
+        checkpoint_name = f"hvnb_{slug}_{snapshot_suffix}"
+        active_checkpoints: list[tuple[HyperVService, object, str]] = []
+        if policy.consistency == ConsistencyType.APPLICATION_CONSISTENT and vm_names_in_run:
+            settings = get_settings()
+            hyperv_clusters_by_id = {c.id: c for c in db.query(HyperVCluster).all()}
+            for vm_name in vm_names_in_run:
+                hv_vm = hyperv_vms_by_name.get(vm_name)
+                hv_cluster = hyperv_clusters_by_id.get(hv_vm.cluster_id) if hv_vm else None
+                if hv_vm is None or hv_cluster is None:
+                    msg = "Hyper-V-Cluster nicht gefunden, Checkpoint uebersprungen (Backup laeuft crash-konsistent weiter)"
+                    errors.append(f"VM '{vm_name}': {msg}")
+                    with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
                         ctx.row.status = RestoreStepStatus.SKIPPED
                         ctx.row.message = msg
-                    else:
-                        sm_result = service.trigger_snapmirror_update(rel.uuid)
-                        if not sm_result.success:
-                            raise RuntimeError(sm_result.message)
-                        ctx.row.message = f"Update fuer Beziehung {rel.source_path} -> {rel.destination_path} ausgeloest"
+                    continue
+                try:
+                    with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
+                        hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
+                        hv_password = decrypt_secret(hv_cluster.encrypted_password)
+                        cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
+                        owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or hv_vm.host_name
+                        node_address = hv_service.resolve_node_address(cno_session, owner_node)
+                        node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
+                        node_session = node_service.connect(hv_cluster.username, hv_password)
+                        node_service.create_checkpoint(node_session, vm_name, checkpoint_name, policy.consistency)
+                        active_checkpoints.append((node_service, node_session, vm_name))
+                        ctx.row.message = f"Checkpoint '{checkpoint_name}' auf Knoten '{node_address}' erstellt"
+                except Exception as exc:
+                    errors.append(f"VM '{vm_name}': Checkpoint konnte nicht erstellt werden ({exc}) -- Backup laeuft crash-konsistent weiter")
+
+        for target in targets:
+            row = BackupRunSnapshot(
+                run_id=run.id,
+                netapp_cluster_id=target.netapp_cluster_id,
+                netapp_cluster_name=target.netapp_cluster_name,
+                svm_name=target.svm_name,
+                volume_name=target.volume_name,
+                csv_names=sorted(target.csv_names),
+                lun_names=sorted(target.lun_names),
+                vm_names=sorted(target.vm_names),
+            )
+            cluster = clusters_by_id.get(target.netapp_cluster_id)
+            volume = volumes_by_key.get((target.netapp_cluster_id, target.svm_name, target.volume_name))
+            if volume is not None:
+                row.volume_uuid = volume.uuid
+
+            target_label = target.volume_name or ", ".join(sorted(target.csv_names)) or "?"
+
+            if cluster is None or not target.svm_name or not target.volume_name:
+                row.success = False
+                row.error_message = "NetApp-Cluster oder -Volume nicht auflösbar"
+                errors.append(f"{target.volume_name or '?'}: {row.error_message}")
+                db.add(row)
+                with _StepCtx(db, run.id, f"snapshot-{target_label}", f"Snapshot erstellen: {target_label}", step_model=BackupRunStep) as ctx:
+                    ctx.row.status = RestoreStepStatus.SKIPPED
+                    ctx.row.message = row.error_message
+                continue
+
+            snapshot_name = f"hvnb_{slug}_{snapshot_suffix}"
+            try:
+                with _StepCtx(db, run.id, f"snapshot-{target_label}", f"Snapshot erstellen: {target_label}", step_model=BackupRunStep) as ctx:
+                    service = _netapp_service_for(cluster)
+                    snap = service.create_snapshot(target.volume_name, target.svm_name, snapshot_name, snapmirror_label=label)
+                    row.snapshot_name = snap.name
+                    row.snapshot_uuid = snap.uuid
+                    row.success = True
+                    ctx.row.message = f"Snapshot '{snap.name}' auf Volume '{target.volume_name}' @ {target.svm_name} erstellt"
             except Exception as exc:
-                errors.append(f"{target.volume_name}: SnapMirror-Update fehlgeschlagen ({exc})")
+                row.success = False
+                row.error_message = str(exc)
+                errors.append(f"{target.volume_name}: {exc}")
+            db.add(row)
 
-    for node_service, node_session, vm_name in active_checkpoints:
-        try:
-            with _StepCtx(db, run.id, f"checkpoint-remove-{vm_name}", f"Checkpoint entfernen: {vm_name}", step_model=BackupRunStep) as ctx:
-                result = node_service.remove_checkpoint(node_session, vm_name, checkpoint_name)
-                if not result.success:
-                    raise RuntimeError(result.error)
-                ctx.row.message = f"Checkpoint '{checkpoint_name}' entfernt"
-        except Exception as exc:
-            errors.append(f"VM '{vm_name}': Checkpoint-Entfernung fehlgeschlagen: {exc}")
+            # SnapMirror-Update anstossen, falls die Policy das vorsieht --
+            # eigener try/except (nicht Teil des Snapshot-try/except oben), damit
+            # ein Fehler hier nicht faelschlich den erfolgreich erstellten
+            # Snapshot als fehlgeschlagen markiert. Nutzt die per Discovery
+            # bereits bekannte Beziehung (kein zusaetzlicher Live-Aufruf zum
+            # Aufloesen noetig, siehe auch POST /api/resource-groups/
+            # check-snapmirror, das dieselbe Tabelle fuer die Praesenzpruefung
+            # im Policy-/Protection-Group-Formular nutzt). Fehlt die Beziehung
+            # oder schlaegt der Trigger fehl, wird das wie ein Checkpoint-Fehler
+            # oben als Warnung vermerkt (Lauf insgesamt FAILED, der Snapshot
+            # selbst bleibt aber gueltig und restorebar) -- der Nutzer soll das
+            # sehen und ueber den Check-Panel-Hinweis die Beziehung anlegen.
+            if row.success and policy.snapmirror_update:
+                try:
+                    with _StepCtx(
+                        db, run.id, f"snapmirror-{target_label}", f"SnapMirror-Update: {target_label}", step_model=BackupRunStep,
+                    ) as ctx:
+                        rel = (
+                            db.query(NetAppSnapMirrorRelationship)
+                            .filter(NetAppSnapMirrorRelationship.source_path == f"{target.svm_name}:{target.volume_name}")
+                            .first()
+                        )
+                        if rel is None or not rel.uuid:
+                            msg = "Kein SnapMirror-Update ausgeloest (keine Beziehung konfiguriert)"
+                            errors.append(f"{target.volume_name}: {msg}")
+                            ctx.row.status = RestoreStepStatus.SKIPPED
+                            ctx.row.message = msg
+                        else:
+                            sm_result = service.trigger_snapmirror_update(rel.uuid)
+                            if not sm_result.success:
+                                raise RuntimeError(sm_result.message)
+                            ctx.row.message = f"Update fuer Beziehung {rel.source_path} -> {rel.destination_path} ausgeloest"
+                except Exception as exc:
+                    errors.append(f"{target.volume_name}: SnapMirror-Update fehlgeschlagen ({exc})")
 
-    run.finished_at = datetime.now(timezone.utc)
-    run.status = JobStatus.FAILED if errors else JobStatus.SUCCEEDED
-    run.error_message = "; ".join(errors) if errors else None
-    db.commit()
-    db.refresh(run)
+        for node_service, node_session, vm_name in active_checkpoints:
+            try:
+                with _StepCtx(db, run.id, f"checkpoint-remove-{vm_name}", f"Checkpoint entfernen: {vm_name}", step_model=BackupRunStep) as ctx:
+                    result = node_service.remove_checkpoint(node_session, vm_name, checkpoint_name)
+                    if not result.success:
+                        raise RuntimeError(result.error)
+                    ctx.row.message = f"Checkpoint '{checkpoint_name}' entfernt"
+            except Exception as exc:
+                errors.append(f"VM '{vm_name}': Checkpoint-Entfernung fehlgeschlagen: {exc}")
 
+        run.finished_at = datetime.now(timezone.utc)
+        run.status = JobStatus.FAILED if errors else JobStatus.SUCCEEDED
+        run.error_message = "; ".join(errors) if errors else None
+        db.commit()
+    except Exception as exc:
+        run = db.get(BackupRun, run_id)
+        if run is not None:
+            run.status = JobStatus.FAILED
+            run.error_message = str(exc)[:2000]
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+    finally:
+        db.close()
+
+
+@router.post("/{job_id}/run", response_model=BackupJobRun, status_code=status.HTTP_202_ACCEPTED)
+def trigger_job_run(
+    job_id: str, background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_RUN)),
+) -> BackupJobRun:
+    policy = db.get(BackupPolicy, job_id)
+    if policy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
+
+    try:
+        run, warnings = _start_job_run(policy, db)
+    except _JobAlreadyRunningError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except _NoTargetsError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    background_tasks.add_task(_execute_job_run, run.id, warnings)
     return _to_run_read(run)

@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.api.routes.file_restore import _cleanup_file_restore_run
 from app.api.routes.hyperv_clusters import _refresh_status as _refresh_hyperv_status
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
-from app.api.routes.jobs import trigger_job_run
+from app.api.routes.jobs import _execute_job_run, _start_job_run
 from app.api.routes.netapp_clusters import _discover_and_persist as _run_netapp_discovery
 from app.api.routes.netapp_clusters import _refresh_status as _refresh_netapp_status
 from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
@@ -415,7 +415,14 @@ def run_scheduled_backups() -> None:
             if schedule is None or not _schedule_is_due(schedule, now_local):
                 continue
             try:
-                trigger_job_run(policy.id, db=db, user=None)
+                # _execute_job_run laeuft hier bewusst synchron (nicht als
+                # Hintergrund-Task wie beim manuellen "Jetzt ausfuehren", siehe
+                # trigger_job_run in jobs.py) -- run_scheduled_backups selbst
+                # laeuft ja bereits im eigenen APScheduler-Hintergrund-Thread,
+                # und max_instances=1 auf diesem Job (siehe start_scheduler)
+                # verhindert ueberlappende Ausfuehrungen.
+                run, warnings = _start_job_run(policy, db)
+                _execute_job_run(run.id, warnings)
                 _log(db, f"Geplanter Backup-Lauf gestartet: Policy '{policy.name}' (Zeitplan '{schedule.name}')")
             except Exception as exc:
                 _log(db, f"Geplanter Backup-Lauf fuer Policy '{policy.name}' fehlgeschlagen: {exc}", level="ERROR")

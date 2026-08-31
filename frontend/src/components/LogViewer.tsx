@@ -51,7 +51,7 @@ function formatEntry(e: LogEntry): string {
 export function LogViewer({ context }: { context?: string }) {
   const [level, setLevel] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [hours, setHours] = useState<string>("24");
+  const [hours, setHours] = useState<string>("6");
 
   const { data: entries, isFetching, refetch } = useQuery({
     queryKey: ["logs", context, level, search, context ? undefined : hours],
@@ -70,6 +70,10 @@ export function LogViewer({ context }: { context?: string }) {
   });
 
   const formattedText = useMemo(() => (entries ?? []).map(formatEntry).join("\n"), [entries]);
+  // Anzeige neueste zuerst (umgekehrt zur chronologischen API-Reihenfolge),
+  // "Alles kopieren" bleibt bewusst chronologisch (oldest-to-newest liest
+  // sich beim Einfuegen in ein Ticket/eine Nachricht natuerlicher).
+  const displayEntries = useMemo(() => [...(entries ?? [])].reverse(), [entries]);
 
   async function copyAll() {
     await navigator.clipboard.writeText(formattedText);
@@ -90,7 +94,7 @@ export function LogViewer({ context }: { context?: string }) {
       <Group justify="space-between" wrap="nowrap">
         <Group gap="xs" wrap="nowrap">
           {!context && (
-            <Select data={RANGE_OPTIONS} value={hours} onChange={(v) => setHours(v ?? "24")} allowDeselect={false} w={190} />
+            <Select data={RANGE_OPTIONS} value={hours} onChange={(v) => setHours(v ?? "6")} allowDeselect={false} w={190} />
           )}
           <Select
             placeholder="Level"
@@ -121,7 +125,7 @@ export function LogViewer({ context }: { context?: string }) {
 
       <ScrollArea style={{ flex: 1 }} type="auto">
         <Stack gap={4}>
-          {(entries ?? []).map((entry, idx) => (
+          {displayEntries.map((entry, idx) => (
             <Group
               key={idx}
               gap="xs"

@@ -210,6 +210,15 @@ export function useRunningJobRuns(enabled: boolean) {
   });
 }
 
+export function useJobRun(id: string | undefined, poll: boolean) {
+  return useQuery({
+    queryKey: ["job-run", id],
+    queryFn: async () => (await apiClient.get<BackupJobRun>(`/jobs/runs/${id}`)).data,
+    enabled: !!id,
+    refetchInterval: (query) => (poll && query.state.data?.status === "running" ? 3000 : false),
+  });
+}
+
 export function useTriggerJobRun() {
   const queryClient = useQueryClient();
   return useMutation({

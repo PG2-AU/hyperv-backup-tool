@@ -577,6 +577,7 @@ export interface BackupJobRun {
   targets: string[];
   error_message?: string | null;
   snapshots: BackupRunSnapshot[];
+  steps: RestoreRunStep[];
 }
 
 export interface RestoreInitiatorInfo {

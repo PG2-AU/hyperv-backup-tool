@@ -1,9 +1,17 @@
 import { useEffect, useState } from "react";
-import { ActionIcon, Badge, Group, Indicator, Popover, Stack, Text, Tooltip } from "@mantine/core";
-import { IconActivity } from "@tabler/icons-react";
+import { ActionIcon, Badge, Divider, Group, Indicator, Loader, Popover, Stack, Text, Tooltip } from "@mantine/core";
+import { IconActivity, IconCheck, IconMinus, IconX } from "@tabler/icons-react";
 
-import { useRunningJobRuns } from "@/api/hooks";
+import { useJobRun, useRunningJobRuns } from "@/api/hooks";
 import { useAuthStore } from "@/store/authStore";
+
+const STEP_STATUS_ICON: Record<string, React.ReactNode> = {
+  pending: <IconMinus size={13} color="var(--mantine-color-gray-5)" />,
+  running: <Loader size={11} />,
+  success: <IconCheck size={13} color="var(--mantine-color-green-6)" />,
+  error: <IconX size={13} color="var(--mantine-color-red-6)" />,
+  skipped: <IconMinus size={13} color="var(--mantine-color-gray-5)" />,
+};
 
 function useNowTick(intervalMs: number) {
   const [, setTick] = useState(0);
@@ -20,6 +28,35 @@ function formatElapsed(startedAt: string): string {
   return `${minutes}m ${seconds % 60}s`;
 }
 
+// Zeigt die einzelnen Tasks eines laufenden Jobs live an (gepollt), damit
+// "laeuft gerade" nicht mehr eine Blackbox ist -- man sieht genau, welcher
+// Schritt (Checkpoint/Snapshot/SnapMirror je Ziel) gerade dran ist.
+function RunningJobSteps({ runId }: { runId: string }) {
+  const { data: run } = useJobRun(runId, true);
+
+  if (!run || run.steps.length === 0) {
+    return (
+      <Text size="xs" c="dimmed" ml={20}>
+        Wird gestartet…
+      </Text>
+    );
+  }
+
+  return (
+    <Stack gap={3} ml={20}>
+      {run.steps.map((s) => (
+        <Group key={s.step} gap={6} wrap="nowrap" align="flex-start">
+          {STEP_STATUS_ICON[s.status] ?? STEP_STATUS_ICON.pending}
+          <Text size="xs" c={s.status === "error" ? "red" : "dimmed"} style={{ flex: 1 }}>
+            {s.label}
+            {s.status === "error" && s.message ? `: ${s.message}` : ""}
+          </Text>
+        </Group>
+      ))}
+    </Stack>
+  );
+}
+
 export function RunningJobsIndicator() {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canView = hasPermission("backup:view");
@@ -31,7 +68,7 @@ export function RunningJobsIndicator() {
   const count = runs?.length ?? 0;
 
   return (
-    <Popover width={320} position="bottom-end" withArrow shadow="md">
+    <Popover width={360} position="bottom-end" withArrow shadow="md">
       <Popover.Target>
         <Tooltip label="Laufende Backup-Jobs">
           <Indicator color="blue" label={count} size={16} disabled={count === 0} offset={4}>
@@ -42,7 +79,7 @@ export function RunningJobsIndicator() {
         </Tooltip>
       </Popover.Target>
       <Popover.Dropdown>
-        <Stack gap="xs">
+        <Stack gap="sm">
           <Text size="sm" fw={600}>
             Laufende Backup-Jobs
           </Text>
@@ -51,15 +88,19 @@ export function RunningJobsIndicator() {
               Aktuell läuft kein Backup-Job.
             </Text>
           )}
-          {runs?.map((run) => (
-            <Group key={run.id} justify="space-between" wrap="nowrap" gap="xs">
-              <Text size="sm" truncate>
-                {run.job_name}
-              </Text>
-              <Badge color="blue" variant="light">
-                {formatElapsed(run.started_at)}
-              </Badge>
-            </Group>
+          {runs?.map((run, idx) => (
+            <Stack key={run.id} gap={4}>
+              {idx > 0 && <Divider />}
+              <Group justify="space-between" wrap="nowrap" gap="xs">
+                <Text size="sm" truncate>
+                  {run.job_name}
+                </Text>
+                <Badge color="blue" variant="light">
+                  {formatElapsed(run.started_at)}
+                </Badge>
+              </Group>
+              <RunningJobSteps runId={run.id} />
+            </Stack>
           ))}
         </Stack>
       </Popover.Dropdown>

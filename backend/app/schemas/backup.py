@@ -126,6 +126,13 @@ class BackupSnapshotRead(BaseModel):
     restore_source: str = "primary"
 
 
+class BackupRunStepRead(BaseModel):
+    step: str
+    label: str
+    status: str
+    message: str | None = None
+
+
 class BackupJobRun(BaseModel):
     id: str
     job_id: str | None = None
@@ -137,3 +144,8 @@ class BackupJobRun(BaseModel):
     targets: list[str]
     error_message: str | None = None
     snapshots: list[BackupRunSnapshotRead] = []
+    # Nur befuellt vom Einzel-Lauf-Endpunkt (GET /jobs/runs/{id}), NICHT von
+    # der Liste (GET /jobs/runs) -- sonst waechst deren Antwort mit jedem
+    # historischen Lauf unnoetig. Grundlage fuer die Live-Fortschrittsanzeige
+    # waehrend ein Job noch laeuft (siehe RunningJobsIndicator.tsx).
+    steps: list[BackupRunStepRead] = []

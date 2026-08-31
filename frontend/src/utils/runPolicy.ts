@@ -13,11 +13,15 @@ export function useRunPolicy() {
 
   function runPolicy(policy: PolicySummary) {
     triggerRun.mutate(policy.id, {
-      onSuccess: (run) =>
+      // Der Job laeuft jetzt im Hintergrund weiter (siehe RunningJobsIndicator
+      // in der Kopfzeile fuer den Live-Fortschritt) -- die Antwort hier
+      // bedeutet nur "gestartet", nicht mehr "fertig" wie frueher, als der
+      // Request bis zum kompletten Abschluss blockierte.
+      onSuccess: () =>
         notifications.show({
-          title: run.status === "succeeded" ? "Job erfolgreich" : "Job fehlgeschlagen",
-          message: run.error_message ?? policy.name,
-          color: run.status === "succeeded" ? "green" : "red",
+          title: "Job gestartet",
+          message: `${policy.name} läuft – Fortschritt siehe Kopfzeile.`,
+          color: "blue",
         }),
       onError: (err) =>
         notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Job konnte nicht gestartet werden."), color: "red" }),
