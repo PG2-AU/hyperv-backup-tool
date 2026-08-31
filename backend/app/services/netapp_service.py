@@ -92,6 +92,7 @@ class SnapshotInfo:
     volume_name: str
     create_time: str
     snapmirror_label: str | None = None
+    expiry_time: str | None = None
 
 
 @dataclass
@@ -1310,20 +1311,31 @@ class NetAppOntapService:
             except NetAppRestError:
                 return False
 
-    def create_snapshot(self, volume_name: str, svm_name: str, snapshot_name: str, snapmirror_label: str | None = None) -> SnapshotInfo:
+    def create_snapshot(
+        self, volume_name: str, svm_name: str, snapshot_name: str,
+        snapmirror_label: str | None = None, expiry_time: datetime | None = None,
+    ) -> SnapshotInfo:
+        """expiry_time setzt ONTAPs eingebauten Snapshot-Schutz (REST-Feld
+        'expiry_time' auf der Snapshot-Ressource, seit ONTAP 9.x verfuegbar,
+        KEIN SnapLock-Lizenz noetig): vor diesem Zeitpunkt lehnt ONTAP jeden
+        Loeschversuch ab -- weder ueber diese App noch manuell per CLI/
+        System Manager. Erfuellt genau das, was die Policy-Option 'Snapshot
+        Locking' (snapshot_locking_enabled/-_days) verspricht; vorher wurde
+        dieser Wert zwar gespeichert und angezeigt, aber nie an NetApp
+        uebergeben -- die Sperre hatte also nie eine echte Wirkung."""
         with self._connection():
             volume = Volume.find(name=volume_name, **{"svm.name": svm_name})
             if volume is None:
                 raise ValueError(f"Volume '{volume_name}' auf SVM '{svm_name}' nicht gefunden")
 
-            snapshot = Snapshot.from_dict(
-                {
-                    "name": snapshot_name,
-                    "volume": {"uuid": volume.uuid},
-                    "svm": {"name": svm_name},
-                    **({"snapmirror_label": snapmirror_label} if snapmirror_label else {}),
-                }
-            )
+            payload = {
+                "name": snapshot_name,
+                "volume": {"uuid": volume.uuid},
+                "svm": {"name": svm_name},
+                **({"snapmirror_label": snapmirror_label} if snapmirror_label else {}),
+                **({"expiry_time": expiry_time.isoformat()} if expiry_time else {}),
+            }
+            snapshot = Snapshot.from_dict(payload)
             snapshot.post()
             snapshot.get()
             return SnapshotInfo(
@@ -1332,6 +1344,7 @@ class NetAppOntapService:
                 volume_name=volume_name,
                 create_time=str(getattr(snapshot, "create_time", "")),
                 snapmirror_label=snapmirror_label,
+                expiry_time=str(getattr(snapshot, "expiry_time", "")) or None,
             )
 
     def list_snapshot_names(self, volume_uuid: str) -> set[str]:

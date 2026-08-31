@@ -27,7 +27,7 @@ abzubrechen -- Best-Effort pro VM, analog zum Rest dieser Funktion."""
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from ntpath import basename as win_basename
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -642,6 +642,16 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         snapshot_suffix = run.started_at.strftime("%Y%m%d%H%M%S")
         slug = _slugify(policy.name)
         label = policy.snapmirror_label.name if policy.snapmirror_label else None
+        # Snapshot Locking: expiry_time an NetApp uebergeben, damit die Sperre
+        # tatsaechlich wirkt (siehe create_snapshot in netapp_service.py) --
+        # ab Erstellzeitpunkt des Laufs gerechnet, nicht ab Snapshot-Erstellung
+        # je Ziel, damit alle Snapshots eines Laufs zum selben Zeitpunkt
+        # ablaufen, unabhaengig von kleinen Zeitversaetzen zwischen Zielen.
+        snapshot_expiry = (
+            run.started_at + timedelta(days=policy.snapshot_locking_days)
+            if policy.snapshot_locking_enabled and policy.snapshot_locking_days
+            else None
+        )
         vm_names_in_run = sorted({vm for t in targets for vm in t.vm_names})
         hyperv_vms_by_name = {v.name: v for v in db.query(HyperVVm).filter(HyperVVm.name.in_(vm_names_in_run)).all()}
 
@@ -718,11 +728,15 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             try:
                 with _StepCtx(db, run.id, f"snapshot-{target_label}", f"Snapshot erstellen: {target_label}", step_model=BackupRunStep) as ctx:
                     service = _netapp_service_for(cluster)
-                    snap = service.create_snapshot(target.volume_name, target.svm_name, snapshot_name, snapmirror_label=label)
+                    snap = service.create_snapshot(
+                        target.volume_name, target.svm_name, snapshot_name,
+                        snapmirror_label=label, expiry_time=snapshot_expiry,
+                    )
                     row.snapshot_name = snap.name
                     row.snapshot_uuid = snap.uuid
                     row.success = True
-                    ctx.row.message = f"Snapshot '{snap.name}' auf Volume '{target.volume_name}' @ {target.svm_name} erstellt"
+                    lock_note = f", gesperrt bis {snapshot_expiry.strftime('%Y-%m-%d %H:%M UTC')}" if snapshot_expiry else ""
+                    ctx.row.message = f"Snapshot '{snap.name}' auf Volume '{target.volume_name}' @ {target.svm_name} erstellt{lock_note}"
             except Exception as exc:
                 row.success = False
                 row.error_message = str(exc)
