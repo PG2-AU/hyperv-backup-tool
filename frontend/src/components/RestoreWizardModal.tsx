@@ -162,18 +162,27 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
   // BackupRunVmConfig vorhanden, vhds ist dann leer).
   const vhdOptions = selectedSnapshot?.vhds.length
     ? selectedSnapshot.vhds
-    : (vmFull?.vhds ?? []).map((v) => ({ name: v.name, path: v.full_path, size_bytes: v.size_bytes }));
+    : (vmFull?.vhds ?? []).map((v) => ({ name: v.name, path: v.full_path, size_bytes: v.size_bytes, used_bytes: v.used_bytes }));
 
-  // Kapazitaetsschaetzung "CSV danach": bei add/replace pro betroffener
-  // (Original-)CSV, bei Side-by-side entweder auf die gewaehlte Ziel-CSV
-  // gesammelt oder -- ohne Auswahl -- pro urspruenglicher CSV wie im
-  // Original. "files" hat keine dauerhafte CSV-Auswirkung, daher leer.
+  // Kapazitaetsschaetzung "CSV danach": basiert bewusst auf dem BELEGTEN
+  // Platz der VHDX (Get-VHD -> FileSize), nicht der logischen/maximalen
+  // Groesse -- beim Kopieren der Datei (Restore/VM-Neuerstellung) wird
+  // exakt der aktuelle Dateiumfang auf dem Ziel-CSV belegt, nicht die
+  // logische Groesse einer dynamisch wachsenden VHDX. Fallback auf
+  // size_bytes fuer VHDs ohne erfassten used_bytes (Backups von vor dieser
+  // Ergaenzung, oder feste/nicht-dynamische VHDs).
+  const occupiedBytes = (v: { size_bytes?: number | null; used_bytes?: number | null }) => v.used_bytes ?? v.size_bytes ?? 0;
+
+  // Bei add/replace pro betroffener (Original-)CSV, bei Side-by-side
+  // entweder auf die gewaehlte Ziel-CSV gesammelt oder -- ohne Auswahl --
+  // pro urspruenglicher CSV wie im Original. "files" hat keine dauerhafte
+  // CSV-Auswirkung, daher leer.
   const findCsv = (name: string) => (csvs ?? []).find((c) => c.name === name && c.hyperv_cluster_name === vm?.cluster);
-  const liveSizeByVhdName = new Map((vmFull?.vhds ?? []).map((v) => [v.name, v.size_bytes ?? 0]));
+  const liveSizeByVhdName = new Map((vmFull?.vhds ?? []).map((v) => [v.name, occupiedBytes(v)]));
 
   let capacityEstimates: CapacityEstimate[] = [];
   if (restoreKind === "clone") {
-    const totalAdded = (selectedSnapshot?.vhds ?? []).reduce((sum, v) => sum + (v.size_bytes ?? 0), 0);
+    const totalAdded = (selectedSnapshot?.vhds ?? []).reduce((sum, v) => sum + occupiedBytes(v), 0);
     if (cloneDestinationCsv) {
       const csv = findCsv(cloneDestinationCsv);
       capacityEstimates = csv ? [{ csv, addedBytes: totalAdded, removedBytes: 0 }] : [];
@@ -182,7 +191,7 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
       for (const v of selectedSnapshot?.vhds ?? []) {
         const name = csvNameFromPath(v.path);
         if (!name) continue;
-        byCsv.set(name, (byCsv.get(name) ?? 0) + (v.size_bytes ?? 0));
+        byCsv.set(name, (byCsv.get(name) ?? 0) + occupiedBytes(v));
       }
       capacityEstimates = Array.from(byCsv.entries())
         .map(([name, addedBytes]) => ({ csv: findCsv(name), addedBytes, removedBytes: 0 }))
@@ -196,7 +205,7 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
       const name = csvNameFromPath(path);
       if (!name) continue;
       const entry = byCsv.get(name) ?? { addedBytes: 0, removedBytes: 0 };
-      entry.addedBytes += vhd.size_bytes ?? 0;
+      entry.addedBytes += occupiedBytes(vhd);
       if (restoreKind === "replace") entry.removedBytes += liveSizeByVhdName.get(vhd.name) ?? 0;
       byCsv.set(name, entry);
     }
@@ -515,7 +524,7 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
                         <Group gap="xs">
                           <Text size="sm">{vhd.name}</Text>
                           <Text size="xs" c="dimmed">
-                            ({formatBytes(vhd.size_bytes)})
+                            (belegt: {formatBytes(occupiedBytes(vhd))} / Größe: {formatBytes(vhd.size_bytes)})
                           </Text>
                         </Group>
                       }

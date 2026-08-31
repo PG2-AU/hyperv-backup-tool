@@ -1,6 +1,7 @@
 export interface VhdInfo {
   name: string;
   size_bytes: number;
+  used_bytes?: number | null;
   csv_path: string;
   full_path: string;
 }
@@ -20,6 +21,7 @@ export interface Vm {
   cluster?: string | null;
   csv_paths: string[];
   vhdx_size_bytes?: number | null;
+  vhdx_used_bytes?: number | null;
   vhds: VhdInfo[];
   resource_group_names: string[];
   policy_names: string[];
@@ -572,6 +574,7 @@ export interface BackupSnapshotVhd {
   name: string;
   path: string;
   size_bytes?: number | null;
+  used_bytes?: number | null;
 }
 
 export interface BackupSnapshot {
@@ -733,6 +736,7 @@ export interface RestoreRunStep {
 export interface VmBackupRunVhd {
   name: string;
   size_bytes?: number | null;
+  used_bytes?: number | null;
   csv_name?: string | null;
 }
 

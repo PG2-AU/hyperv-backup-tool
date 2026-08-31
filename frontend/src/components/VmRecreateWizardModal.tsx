@@ -145,6 +145,7 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
               <Table.Tr>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Größe</Table.Th>
+                <Table.Th>Belegter Platz</Table.Th>
                 <Table.Th>CSV</Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -153,6 +154,7 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
                 <Table.Tr key={i}>
                   <Table.Td>{v.name}</Table.Td>
                   <Table.Td>{formatBytes(v.size_bytes)}</Table.Td>
+                  <Table.Td>{formatBytes(v.used_bytes ?? v.size_bytes)}</Table.Td>
                   <Table.Td>{v.csv_name ?? "-"}</Table.Td>
                 </Table.Tr>
               ))}

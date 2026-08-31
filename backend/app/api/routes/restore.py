@@ -117,6 +117,7 @@ class TriggerRestoreRequest(BaseModel):
 class VmBackupRunVhdRead(BaseModel):
     name: str
     size_bytes: int | None = None
+    used_bytes: int | None = None
     csv_name: str | None = None
 
 
@@ -287,7 +288,9 @@ def list_vm_backup_runs(
                 ],
                 pci_devices=cfg.pci_devices or [],
                 vhds=[
-                    VmBackupRunVhdRead(name=v.get("name", ""), size_bytes=v.get("size_bytes"), csv_name=v.get("csv_name"))
+                    VmBackupRunVhdRead(
+                        name=v.get("name", ""), size_bytes=v.get("size_bytes"), used_bytes=v.get("used_bytes"), csv_name=v.get("csv_name"),
+                    )
                     for v in (cfg.vhds or [])
                 ],
                 restore_source=restore_source,

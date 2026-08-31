@@ -102,7 +102,7 @@ function ChainNode({
 function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined; onClose: () => void }) {
   const vhds = vm.vhds.length
     ? vm.vhds
-    : vm.csv_paths.map((p) => ({ name: `${vm.name}.vhdx`, size_bytes: vm.vhdx_size_bytes ?? 0, csv_path: p }));
+    : vm.csv_paths.map((p) => ({ name: `${vm.name}.vhdx`, size_bytes: vm.vhdx_size_bytes ?? 0, used_bytes: vm.vhdx_used_bytes, csv_path: p }));
 
   return (
     <Paper withBorder p="md">
@@ -155,7 +155,13 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
               <Group gap={6} wrap="nowrap">
                 <ChainNode icon={<IconServer2 size={14} />} label="VM" title={vm.name} />
                 <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
-                <ChainNode icon={<IconFileText size={14} />} label="VHD" title={vhd.name} capacityBytes={vhd.size_bytes} />
+                <ChainNode
+                  icon={<IconFileText size={14} />}
+                  label="VHD"
+                  title={vhd.name}
+                  usedBytes={vhd.used_bytes}
+                  capacityBytes={vhd.size_bytes}
+                />
                 <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
                 {csv ? (
                   <>
@@ -335,6 +341,7 @@ export function VmsPage() {
                 <Table.Th>Cluster</Table.Th>
                 <Table.Th>CSV-Pfade</Table.Th>
                 <Table.Th>VHDX-Größe</Table.Th>
+                <Table.Th>Belegter Platz</Table.Th>
                 <Table.Th>Protection Group</Table.Th>
                 <Table.Th>Protected</Table.Th>
                 <Table.Th>Aktionen</Table.Th>
@@ -357,6 +364,7 @@ export function VmsPage() {
                   <Table.Td>{vm.cluster ?? "-"}</Table.Td>
                   <Table.Td>{vm.csv_paths.join(", ")}</Table.Td>
                   <Table.Td>{formatBytes(vm.vhdx_size_bytes)}</Table.Td>
+                  <Table.Td>{formatBytes(vm.vhdx_used_bytes)}</Table.Td>
                   <Table.Td>
                     <ResourceGroupCell groups={vm.resource_group_names} policies={vm.policy_names} />
                   </Table.Td>

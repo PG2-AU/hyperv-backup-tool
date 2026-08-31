@@ -102,10 +102,12 @@ def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Perm
             cluster=cluster_names.get(vm.cluster_id),
             csv_paths=csv_paths,
             vhdx_size_bytes=sum(v.size_bytes or 0 for v in vhds),
+            vhdx_used_bytes=sum(v.used_bytes or 0 for v in vhds),
             vhds=[
                 VhdInfo(
                     name=win_basename(v.path),
                     size_bytes=v.size_bytes or 0,
+                    used_bytes=v.used_bytes,
                     csv_path=f"C:\\ClusterStorage\\{v.csv_name}" if v.csv_name else v.path,
                     full_path=v.path,
                 )

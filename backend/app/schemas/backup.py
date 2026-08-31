@@ -83,6 +83,12 @@ class BackupSnapshotVhdRead(BaseModel):
     name: str
     path: str
     size_bytes: int | None = None
+    # Belegter Platz zum Backup-Zeitpunkt (Get-VHD -> FileSize) -- Basis fuer
+    # die CSV-Kapazitaetsabschaetzung beim Restore, siehe VhdInfo.used_bytes
+    # in schemas/vm.py. Bei vor dieser Ergaenzung erstellten Laeufen fehlt
+    # der Schluessel im gespeicherten JSON -> None (Frontend faellt dann auf
+    # size_bytes zurueck).
+    used_bytes: int | None = None
 
 
 class BackupSnapshotDestinationRead(BaseModel):

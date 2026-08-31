@@ -414,7 +414,9 @@ def list_backups_for_object(
         )
         for cfg in configs:
             vhds_by_run_id[cfg.run_id] = [
-                BackupSnapshotVhdRead(name=v.get("name", ""), path=v.get("path", ""), size_bytes=v.get("size_bytes"))
+                BackupSnapshotVhdRead(
+                    name=v.get("name", ""), path=v.get("path", ""), size_bytes=v.get("size_bytes"), used_bytes=v.get("used_bytes"),
+                )
                 for v in (cfg.vhds or [])
             ]
 
@@ -590,6 +592,7 @@ def _start_job_run(policy: BackupPolicy, db: Session) -> tuple[BackupRun, list[s
                         "name": win_basename(vhd.path),
                         "path": vhd.path,
                         "size_bytes": vhd.size_bytes,
+                        "used_bytes": vhd.used_bytes,
                         "csv_name": vhd.csv_name,
                         "netapp_cluster_id": cluster_ids_by_name.get(csv.netapp_cluster_name) if csv and csv.netapp_cluster_name else None,
                         "netapp_cluster_name": csv.netapp_cluster_name if csv else None,

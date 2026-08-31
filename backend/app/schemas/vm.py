@@ -4,6 +4,13 @@ from pydantic import BaseModel
 class VhdInfo(BaseModel):
     name: str
     size_bytes: int
+    # Tatsaechlich belegter Platz der VHDX-Datei auf dem darunterliegenden
+    # CSV (Get-VHD -> FileSize) -- bei einer dynamisch wachsenden VHDX i.d.R.
+    # kleiner als size_bytes (logische/maximale Groesse, Get-VHD -> Size).
+    # Basis fuer die Kapazitaetsabschaetzung beim Restore (siehe
+    # RestoreWizardModal.tsx), da beim Kopieren der Datei genau dieser Wert
+    # an Platz auf dem Ziel-CSV belegt wird, nicht die logische Groesse.
+    used_bytes: int | None = None
     csv_path: str
     full_path: str
 
@@ -23,6 +30,7 @@ class VmRead(BaseModel):
     cluster: str | None = None
     csv_paths: list[str] = []
     vhdx_size_bytes: int | None = None
+    vhdx_used_bytes: int | None = None
     vhds: list[VhdInfo] = []
     resource_group_names: list[str] = []
     policy_names: list[str] = []
