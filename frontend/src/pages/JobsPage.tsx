@@ -54,6 +54,7 @@ export function JobsPage() {
   const deletePolicy = useDeletePolicy();
   const [logsOpened, { open: openLogs, close: closeLogs }] = useDisclosure(false);
   const [logContext, setLogContext] = useState<string | undefined>(undefined);
+  const [logTitle, setLogTitle] = useState<string | undefined>(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<BackupPolicy | null>(null);
   const [snapshotsOpened, { open: openSnapshots, close: closeSnapshots }] = useDisclosure(false);
@@ -130,8 +131,9 @@ export function JobsPage() {
     });
   }
 
-  function showLog(jobId: string | undefined) {
+  function showLog(jobId: string | undefined, title?: string) {
     setLogContext(jobId);
+    setLogTitle(title);
     openLogs();
   }
 
@@ -243,7 +245,7 @@ export function JobsPage() {
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Log anzeigen">
-                          <ActionIcon variant="light" onClick={() => showLog(policy.id)}>
+                          <ActionIcon variant="light" onClick={() => showLog(policy.id, policy.name)}>
                             <IconTerminal2 size={16} />
                           </ActionIcon>
                         </Tooltip>
@@ -427,7 +429,7 @@ export function JobsPage() {
                       <Button size="xs" variant="subtle" leftSection={<IconStack2 size={14} />} onClick={() => showSnapshots(run)}>
                         Snapshots
                       </Button>
-                      <Button size="xs" variant="subtle" leftSection={<IconTerminal2 size={14} />} onClick={() => showLog(run.id)}>
+                      <Button size="xs" variant="subtle" leftSection={<IconTerminal2 size={14} />} onClick={() => showLog(run.id, run.job_name)}>
                         Log
                       </Button>
                     </Group>
@@ -440,7 +442,13 @@ export function JobsPage() {
         </Tabs.Panel>
       </Tabs>
 
-      <Drawer opened={logsOpened} onClose={closeLogs} position="bottom" size="45%" title="Job-Log">
+      <Drawer
+        opened={logsOpened}
+        onClose={closeLogs}
+        position="right"
+        size="lg"
+        title={logTitle ? `Log: ${logTitle}` : "Job-Log"}
+      >
         <LogViewer context={logContext} />
       </Drawer>
 
