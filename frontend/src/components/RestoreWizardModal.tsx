@@ -7,6 +7,7 @@ import {
   Group,
   Loader,
   Modal,
+  Progress,
   Radio,
   ScrollArea,
   Select,
@@ -33,11 +34,58 @@ import {
 } from "@/api/hooks";
 import { FileBrowser } from "@/components/FileBrowser";
 import { SelectedFileList } from "@/components/SelectedFileList";
-import type { RestoreMode, RestoreRun, VmWithBackups } from "@/api/types";
+import type { Csv, RestoreMode, RestoreRun, VmWithBackups } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
 
 type RestoreKind = RestoreMode | "files" | "clone";
+
+// Backend-Konvention (siehe restore.py/_execute_restore, _execute_vm_recreate):
+// ein VHDX-Pfad hat immer die Form "...ClusterStorage\<CSV-Name>\...".
+function csvNameFromPath(path: string | undefined | null): string | null {
+  if (!path) return null;
+  const m = path.match(/ClusterStorage\\([^\\]+)\\/i);
+  return m ? m[1] : null;
+}
+
+interface CapacityEstimate {
+  csv: Csv;
+  addedBytes: number;
+  removedBytes: number;
+}
+
+function CsvCapacityBar({ estimate }: { estimate: CapacityEstimate }) {
+  const { csv, addedBytes, removedBytes } = estimate;
+  const total = csv.capacity_bytes ?? 0;
+  const before = csv.used_bytes ?? 0;
+  const after = Math.max(0, before + addedBytes - removedBytes);
+  if (total <= 0) {
+    return (
+      <Text size="xs" c="dimmed">
+        {csv.name}: Kapazität unbekannt (noch keine Discovery-Daten).
+      </Text>
+    );
+  }
+  const beforePct = Math.min(100, Math.round((before / total) * 100));
+  const afterPct = Math.min(100, Math.round((after / total) * 100));
+  const color = afterPct >= 90 ? "red" : afterPct >= 75 ? "orange" : "blue";
+  return (
+    <div>
+      <Group justify="space-between" mb={4}>
+        <Text size="xs" fw={600}>
+          {csv.name}
+        </Text>
+        <Text size="xs" c="dimmed">
+          {formatBytes(before)} → {formatBytes(after)} von {formatBytes(total)} ({beforePct}% → {afterPct}%)
+        </Text>
+      </Group>
+      <Progress.Root size="lg">
+        <Progress.Section value={Math.min(beforePct, afterPct)} color="gray" />
+        <Progress.Section value={Math.abs(afterPct - beforePct)} color={color} />
+      </Progress.Root>
+    </div>
+  );
+}
 
 interface RestoreWizardModalProps {
   opened: boolean;
@@ -115,6 +163,47 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
   const vhdOptions = selectedSnapshot?.vhds.length
     ? selectedSnapshot.vhds
     : (vmFull?.vhds ?? []).map((v) => ({ name: v.name, path: v.full_path, size_bytes: v.size_bytes }));
+
+  // Kapazitaetsschaetzung "CSV danach": bei add/replace pro betroffener
+  // (Original-)CSV, bei Side-by-side entweder auf die gewaehlte Ziel-CSV
+  // gesammelt oder -- ohne Auswahl -- pro urspruenglicher CSV wie im
+  // Original. "files" hat keine dauerhafte CSV-Auswirkung, daher leer.
+  const findCsv = (name: string) => (csvs ?? []).find((c) => c.name === name && c.hyperv_cluster_name === vm?.cluster);
+  const liveSizeByVhdName = new Map((vmFull?.vhds ?? []).map((v) => [v.name, v.size_bytes ?? 0]));
+
+  let capacityEstimates: CapacityEstimate[] = [];
+  if (restoreKind === "clone") {
+    const totalAdded = (selectedSnapshot?.vhds ?? []).reduce((sum, v) => sum + (v.size_bytes ?? 0), 0);
+    if (cloneDestinationCsv) {
+      const csv = findCsv(cloneDestinationCsv);
+      capacityEstimates = csv ? [{ csv, addedBytes: totalAdded, removedBytes: 0 }] : [];
+    } else {
+      const byCsv = new Map<string, number>();
+      for (const v of selectedSnapshot?.vhds ?? []) {
+        const name = csvNameFromPath(v.path);
+        if (!name) continue;
+        byCsv.set(name, (byCsv.get(name) ?? 0) + (v.size_bytes ?? 0));
+      }
+      capacityEstimates = Array.from(byCsv.entries())
+        .map(([name, addedBytes]) => ({ csv: findCsv(name), addedBytes, removedBytes: 0 }))
+        .filter((e): e is CapacityEstimate => !!e.csv);
+    }
+  } else if (restoreKind === "add" || restoreKind === "replace") {
+    const byCsv = new Map<string, { addedBytes: number; removedBytes: number }>();
+    for (const path of selectedVhdPaths) {
+      const vhd = vhdOptions.find((v) => v.path === path);
+      if (!vhd) continue;
+      const name = csvNameFromPath(path);
+      if (!name) continue;
+      const entry = byCsv.get(name) ?? { addedBytes: 0, removedBytes: 0 };
+      entry.addedBytes += vhd.size_bytes ?? 0;
+      if (restoreKind === "replace") entry.removedBytes += liveSizeByVhdName.get(vhd.name) ?? 0;
+      byCsv.set(name, entry);
+    }
+    capacityEstimates = Array.from(byCsv.entries())
+      .map(([name, sums]) => ({ csv: findCsv(name), ...sums }))
+      .filter((e): e is CapacityEstimate => !!e.csv);
+  }
 
   useEffect(() => {
     if (!opened) {
@@ -377,6 +466,16 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
                   onChange={setCloneDestinationCsv}
                   clearable
                 />
+                {capacityEstimates.length > 0 && (
+                  <Stack gap="xs">
+                    <Text size="xs" fw={600} c="dimmed">
+                      CSV-Auslastung nach dem Restore
+                    </Text>
+                    {capacityEstimates.map((e) => (
+                      <CsvCapacityBar key={e.csv.name} estimate={e} />
+                    ))}
+                  </Stack>
+                )}
               </Stack>
             ) : restoreKind === "files" ? (
               <Radio.Group
@@ -424,6 +523,17 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
                   ))}
                 </Stack>
               </Checkbox.Group>
+            )}
+
+            {(restoreKind === "add" || restoreKind === "replace") && capacityEstimates.length > 0 && (
+              <Stack gap="xs">
+                <Text size="xs" fw={600} c="dimmed">
+                  CSV-Auslastung nach dem Restore
+                </Text>
+                {capacityEstimates.map((e) => (
+                  <CsvCapacityBar key={e.csv.name} estimate={e} />
+                ))}
+              </Stack>
             )}
 
             {restoreKind === "replace" && (
