@@ -135,21 +135,34 @@ export function LogViewer({ context }: { context?: string }) {
               align="flex-start"
               style={{
                 fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                fontSize: logFontSizePx,
                 cursor: "pointer",
               }}
               onClick={() => copyEntry(entry)}
             >
-              <Text c="dimmed" style={{ whiteSpace: "nowrap" }}>
+              {/* Mantine's Text/Badge setzen font-size ueber ihr eigenes Stylesheet
+                  (var(--text-fz, ...) bzw. var(--badge-fz)) direkt auf sich selbst --
+                  ein per Vererbung von aussen kommender Wert (z.B. auf der Group
+                  gesetzt) wird davon ueberschrieben, da ein am Element selbst
+                  spezifizierter Wert unabhaengig von der Spezifitaet immer vor einem
+                  geerbten Wert gewinnt. Daher muss die Schriftgroesse per inline
+                  style DIREKT auf jedem Text/Badge gesetzt werden -- ein inline
+                  style-Attribut hat hoehere Prioritaet als jede Stylesheet-Regel. */}
+              <Text c="dimmed" style={{ whiteSpace: "nowrap", fontSize: logFontSizePx }}>
                 {new Date(entry.timestamp).toLocaleTimeString("de-DE")}
               </Text>
-              <Badge color={LEVEL_COLOR[entry.level]} size="xs" variant="filled" w={70}>
+              <Badge
+                color={LEVEL_COLOR[entry.level]}
+                size="xs"
+                variant="filled"
+                w={70}
+                style={{ fontSize: logFontSizePx * 0.85 }}
+              >
                 {entry.level}
               </Badge>
-              <Text style={{ whiteSpace: "nowrap" }} c="dimmed">
+              <Text style={{ whiteSpace: "nowrap", fontSize: logFontSizePx }} c="dimmed">
                 {entry.source}
               </Text>
-              <Text style={{ wordBreak: "break-word" }}>{entry.message}</Text>
+              <Text style={{ wordBreak: "break-word", fontSize: logFontSizePx }}>{entry.message}</Text>
             </Group>
           ))}
           {entries?.length === 0 && (
