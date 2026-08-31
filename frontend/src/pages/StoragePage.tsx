@@ -26,7 +26,6 @@ import {
   IconPlus,
   IconRadar2,
   IconRefresh,
-  IconSearch,
   IconShieldCheck,
   IconShieldOff,
   IconTrash,
@@ -58,6 +57,7 @@ import { LunEditModal } from "@/components/LunEditModal";
 import { LunFormModal } from "@/components/LunFormModal";
 import { ProcessModal } from "@/components/ProcessModal";
 import type { ProcessPlan } from "@/components/ProcessModal";
+import { SearchInput } from "@/components/SearchInput";
 import { SnapmirrorEditModal } from "@/components/SnapmirrorEditModal";
 import { SnapmirrorFormModal } from "@/components/SnapmirrorFormModal";
 import { CapacityBarCard, DistributionCard, StatCard, StatRibbon, groupCount } from "@/components/StatRibbon";
@@ -214,6 +214,8 @@ function ClusterTab() {
   const deleteCluster = useDeleteNetAppCluster();
   const discoverCluster = useDiscoverNetAppCluster();
   const [addOpen, setAddOpen] = useState(false);
+  const [clusterSearch, setClusterSearch] = useState("");
+  const filteredClusters = (clusters ?? []).filter((c) => matchesAllColumns(c, clusterSearch));
 
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [discoveryCluster, setDiscoveryCluster] = useState<NetAppCluster | null>(null);
@@ -276,12 +278,7 @@ function ClusterTab() {
   return (
     <>
     <Paper p="md">
-      <Group justify="space-between" mb="sm">
-        <Title order={5}>Cluster</Title>
-        <Button leftSection={<IconPlus size={16} />} onClick={() => setAddOpen(true)}>
-          Cluster hinzufügen
-        </Button>
-      </Group>
+      <Title order={5} mb="sm">Cluster</Title>
 
       <StatRibbon>
         <StatCard label="Anzahl Cluster" value={clusters?.length ?? 0} />
@@ -292,7 +289,14 @@ function ClusterTab() {
         />
       </StatRibbon>
 
-      <div style={{ marginTop: "var(--mantine-spacing-md)" }}>
+      <Group justify="space-between" mb="xs" mt="md">
+        <SearchInput value={clusterSearch} onChange={setClusterSearch} />
+        <Button leftSection={<IconPlus size={16} />} onClick={() => setAddOpen(true)}>
+          Cluster hinzufügen
+        </Button>
+      </Group>
+
+      <div>
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
@@ -308,7 +312,7 @@ function ClusterTab() {
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {clusters?.map((cluster) => (
+            {filteredClusters.map((cluster) => (
               <Table.Tr key={cluster.id}>
                 <Table.Td>
                   {cluster.name}
@@ -371,6 +375,11 @@ function ClusterTab() {
             Noch keine NetApp-Systeme hinzugefügt.
           </Text>
         )}
+        {(clusters?.length ?? 0) > 0 && filteredClusters.length === 0 && (
+          <Text c="dimmed" size="sm" ta="center" py="md">
+            Kein Cluster passt zur Suche „{clusterSearch}".
+          </Text>
+        )}
       </div>
     </Paper>
 
@@ -406,10 +415,20 @@ export function StoragePage() {
   const [volumeSearch, setVolumeSearch] = useState("");
   const [lunSearch, setLunSearch] = useState("");
   const [igroupSearch, setIgroupSearch] = useState("");
+  const [clusterPeerSearch, setClusterPeerSearch] = useState("");
+  const [svmPeerSearch, setSvmPeerSearch] = useState("");
+  const [snapmirrorSearch, setSnapmirrorSearch] = useState("");
+  const [platformSearch, setPlatformSearch] = useState("");
+  const [aggregateSearch, setAggregateSearch] = useState("");
   const filteredSvms = (svms ?? []).filter((s) => matchesAllColumns(s, svmSearch));
   const filteredVolumes = (volumes ?? []).filter((v) => matchesAllColumns(v, volumeSearch));
   const filteredLuns = (luns ?? []).filter((l) => matchesAllColumns(l, lunSearch));
   const filteredIgroups = (igroups ?? []).filter((ig) => matchesAllColumns(ig, igroupSearch));
+  const filteredClusterPeers = (clusterPeers ?? []).filter((p) => matchesAllColumns(p, clusterPeerSearch));
+  const filteredSvmPeers = (svmPeers ?? []).filter((p) => matchesAllColumns(p, svmPeerSearch));
+  const filteredRelationships = (relationships ?? []).filter((r) => matchesAllColumns(r, snapmirrorSearch));
+  const filteredPlatforms = (platforms ?? []).filter((p) => matchesAllColumns(p, platformSearch));
+  const filteredAggregates = (aggregates ?? []).filter((a) => matchesAllColumns(a, aggregateSearch));
   const [peerDetail, setPeerDetail] = useState<NetAppClusterPeer | null>(null);
   const [igroupFormOpen, setIgroupFormOpen] = useState(false);
   const [lunFormOpen, setLunFormOpen] = useState(false);
@@ -546,14 +565,8 @@ export function StoragePage() {
           <StatRibbon>
             <StatCard label="Anzahl SVMs" value={svms?.length ?? 0} />
           </StatRibbon>
-          <Group justify="flex-end" mb="xs">
-            <TextInput
-              placeholder="Suchen…"
-              leftSection={<IconSearch size={14} />}
-              value={svmSearch}
-              onChange={(e) => setSvmSearch(e.currentTarget.value)}
-              w={280}
-            />
+          <Group justify="flex-start" mb="xs">
+            <SearchInput value={svmSearch} onChange={setSvmSearch} />
           </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
@@ -604,16 +617,13 @@ export function StoragePage() {
             <CapacityBarCard label="Kapazität" used={volumeStats.totalUsed} total={volumeStats.totalSize} formatValue={formatBytes} />
             <DistributionCard label="Security Style" items={volumeStats.securityStyles} />
           </StatRibbon>
-          <Group justify="flex-end" mb="xs">
-            <TextInput
-              placeholder="Suchen…"
-              leftSection={<IconSearch size={14} />}
-              value={volumeSearch}
-              onChange={(e) => setVolumeSearch(e.currentTarget.value)}
-              w={280}
-            />
-          </Group>
           <Group justify="space-between" mb="xs">
+            <SearchInput value={volumeSearch} onChange={setVolumeSearch} />
+            <Button leftSection={<IconPlus size={16} />} onClick={() => setVolumeFormOpen(true)}>
+              Volume anlegen
+            </Button>
+          </Group>
+          <Group justify="flex-end" mb="xs">
             <MultiSelect
               placeholder="Weitere Attribute anzeigen..."
               data={[
@@ -627,9 +637,6 @@ export function StoragePage() {
               clearable
               w={360}
             />
-            <Button leftSection={<IconPlus size={16} />} onClick={() => setVolumeFormOpen(true)}>
-              Volume anlegen
-            </Button>
           </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
@@ -763,13 +770,7 @@ export function StoragePage() {
             <DistributionCard label="OS-Type" items={lunStats.osTypes} />
           </StatRibbon>
           <Group justify="space-between" mb="xs">
-            <TextInput
-              placeholder="Suchen…"
-              leftSection={<IconSearch size={14} />}
-              value={lunSearch}
-              onChange={(e) => setLunSearch(e.currentTarget.value)}
-              w={280}
-            />
+            <SearchInput value={lunSearch} onChange={setLunSearch} />
             <Button leftSection={<IconPlus size={16} />} onClick={() => setLunFormOpen(true)}>
               LUN anlegen
             </Button>
@@ -849,13 +850,7 @@ export function StoragePage() {
             <DistributionCard label="Protocol" items={igroupStats.protocols} />
           </StatRibbon>
           <Group justify="space-between" mb="xs">
-            <TextInput
-              placeholder="Suchen…"
-              leftSection={<IconSearch size={14} />}
-              value={igroupSearch}
-              onChange={(e) => setIgroupSearch(e.currentTarget.value)}
-              w={280}
-            />
+            <SearchInput value={igroupSearch} onChange={setIgroupSearch} />
             <Button leftSection={<IconPlus size={16} />} onClick={() => setIgroupFormOpen(true)}>
               IGroup anlegen
             </Button>
@@ -903,7 +898,8 @@ export function StoragePage() {
           <StatRibbon>
             <StatCard label="Anzahl Cluster Peer" value={clusterPeers?.length ?? 0} />
           </StatRibbon>
-          <Group justify="flex-end" mb="xs">
+          <Group justify="space-between" mb="xs">
+            <SearchInput value={clusterPeerSearch} onChange={setClusterPeerSearch} />
             <Button leftSection={<IconLink size={16} />} onClick={() => setClusterPeerFormOpen(true)}>
               Cluster Peer erstellen
             </Button>
@@ -919,7 +915,7 @@ export function StoragePage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {clusterPeers?.map((peer) => (
+              {filteredClusterPeers.map((peer) => (
                 <Table.Tr
                   key={peer.id}
                   onClick={() => setPeerDetail(peer)}
@@ -945,6 +941,11 @@ export function StoragePage() {
               Noch keine Cluster-Peer-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          {(clusterPeers?.length ?? 0) > 0 && filteredClusterPeers.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Kein Cluster Peer passt zur Suche „{clusterPeerSearch}".
+            </Text>
+          )}
           </Paper>
         </Tabs.Panel>
 
@@ -954,7 +955,8 @@ export function StoragePage() {
           <StatRibbon>
             <StatCard label="Anzahl SVM Peer" value={svmPeers?.length ?? 0} />
           </StatRibbon>
-          <Group justify="flex-end" mb="xs">
+          <Group justify="space-between" mb="xs">
+            <SearchInput value={svmPeerSearch} onChange={setSvmPeerSearch} />
             <Button leftSection={<IconLink size={16} />} onClick={() => setSvmPeerFormOpen(true)}>
               SVM Peer erstellen
             </Button>
@@ -971,7 +973,7 @@ export function StoragePage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {svmPeers?.map((peer) => (
+              {filteredSvmPeers.map((peer) => (
                 <Table.Tr key={peer.id}>
                   <Table.Td>{peer.cluster_name}</Table.Td>
                   <Table.Td>{peer.svm_name ?? "-"}</Table.Td>
@@ -992,6 +994,11 @@ export function StoragePage() {
               Noch keine SVM-Peer-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          {(svmPeers?.length ?? 0) > 0 && filteredSvmPeers.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Kein SVM Peer passt zur Suche „{svmPeerSearch}".
+            </Text>
+          )}
           </Paper>
         </Tabs.Panel>
 
@@ -1006,7 +1013,8 @@ export function StoragePage() {
               items={snapmirrorStats.healthy.map((d) => ({ ...d, color: d.key === "OK" ? "green" : "red" }))}
             />
           </StatRibbon>
-          <Group justify="flex-end" mb="xs">
+          <Group justify="space-between" mb="xs">
+            <SearchInput value={snapmirrorSearch} onChange={setSnapmirrorSearch} />
             <Button
               leftSection={<IconLink size={16} />}
               onClick={() => {
@@ -1035,7 +1043,7 @@ export function StoragePage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {relationships?.map((rel) => (
+              {filteredRelationships.map((rel) => (
                 <Table.Tr key={rel.id}>
                   <Table.Td>{rel.cluster_name}</Table.Td>
                   <Table.Td>{rel.source_path}</Table.Td>
@@ -1102,6 +1110,11 @@ export function StoragePage() {
               Noch keine SnapMirror-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          {(relationships?.length ?? 0) > 0 && filteredRelationships.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Keine Beziehung passt zur Suche „{snapmirrorSearch}".
+            </Text>
+          )}
           </Paper>
         </Tabs.Panel>
 
@@ -1114,6 +1127,9 @@ export function StoragePage() {
             <DistributionCard label="ONTAP-Versionen" items={nodeStats.versions} />
             <StatCard label="Ø Uptime" value={nodeStats.avgUptimeDays != null ? `${Math.round(nodeStats.avgUptimeDays)} Tage` : "-"} />
           </StatRibbon>
+          <Group justify="flex-start" mb="xs">
+            <SearchInput value={platformSearch} onChange={setPlatformSearch} />
+          </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -1127,7 +1143,7 @@ export function StoragePage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {platforms?.map((p) => (
+              {filteredPlatforms.map((p) => (
                 <Table.Tr key={p.id}>
                   <Table.Td>{p.cluster_name}</Table.Td>
                   <Table.Td>{p.node_name}</Table.Td>
@@ -1149,6 +1165,11 @@ export function StoragePage() {
               Noch keine Plattform-Informationen erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          {(platforms?.length ?? 0) > 0 && filteredPlatforms.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Kein Node passt zur Suche „{platformSearch}".
+            </Text>
+          )}
           </Paper>
         </Tabs.Panel>
 
@@ -1163,6 +1184,9 @@ export function StoragePage() {
               value={aggregateStats.avgEfficiency != null ? `${aggregateStats.avgEfficiency.toFixed(2)} : 1` : "-"}
             />
           </StatRibbon>
+          <Group justify="flex-start" mb="xs">
+            <SearchInput value={aggregateSearch} onChange={setAggregateSearch} />
+          </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -1176,7 +1200,7 @@ export function StoragePage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {aggregates?.map((agg) => (
+              {filteredAggregates.map((agg) => (
                 <Table.Tr key={agg.id}>
                   <Table.Td>{agg.cluster_name}</Table.Td>
                   <Table.Td>{agg.node_name ?? "-"}</Table.Td>
@@ -1208,6 +1232,11 @@ export function StoragePage() {
           {aggregates?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine Aggregate erkannt. Führe eine Discovery unter Cluster aus.
+            </Text>
+          )}
+          {(aggregates?.length ?? 0) > 0 && filteredAggregates.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Kein Aggregate passt zur Suche „{aggregateSearch}".
             </Text>
           )}
           </Paper>
