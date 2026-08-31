@@ -127,6 +127,7 @@ def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Perm
 @router.get("/csvs", response_model=list[CsvRead])
 def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_VIEW))) -> list[CsvRead]:
     groups = db.query(ResourceGroup).all()
+    cluster_names = {c.id: c.name for c in db.query(HyperVCluster).all()}
 
     volumes_by_key: dict[tuple[str | None, str | None], NetAppVolume] = {
         (v.svm_name, v.name): v for v in db.query(NetAppVolume).all()
@@ -141,6 +142,7 @@ def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Per
             name=csv.name,
             owner_node=csv.owner_node or "",
             state=csv.state or "",
+            hyperv_cluster_name=cluster_names.get(csv.cluster_id),
             volume_path=csv.path or "",
             capacity_bytes=csv.capacity_bytes,
             used_bytes=csv.used_bytes,

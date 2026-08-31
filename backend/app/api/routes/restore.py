@@ -161,6 +161,9 @@ class VmRecreateRunStepRead(BaseModel):
 class VmRecreateRunRead(BaseModel):
     id: str
     vm_name: str
+    target_vm_name: str | None = None
+    disconnect_network: bool = False
+    destination_csv_name: str | None = None
     source_run_id: str
     status: str
     new_vm_uuid: str | None = None
@@ -175,6 +178,15 @@ class VmRecreateRunRead(BaseModel):
 
 class RecreateVmRequest(BaseModel):
     run_id: str
+    # Optional: Side-by-side-Restore -- die VM wird unter diesem Namen
+    # ZUSAETZLICH angelegt, das Original (falls vorhanden) bleibt
+    # unangetastet. Ohne Angabe (None) unveraendertes Verhalten: Neuerstellung
+    # unter dem urspruenglichen Namen, nur moeglich wenn dieser nicht mehr
+    # im Inventory existiert.
+    new_vm_name: str | None = None
+    # Side-by-side-Restore-Optionen, nur relevant zusammen mit new_vm_name:
+    disconnect_network: bool = False
+    destination_csv_name: str | None = None
 
 
 @router.get("/vms", response_model=list[VmWithBackupsRead])
@@ -699,11 +711,12 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 )
                 if vm_config is None or not vm_config.vhds:
                     raise RuntimeError("Keine gespeicherte VM-Konfiguration fuer diesen Backup-Lauf gefunden")
+                target_name = run.target_display_name
                 existing = db.query(HyperVVm).filter(
-                    HyperVVm.cluster_id == run.hyperv_cluster_id, HyperVVm.name == run.vm_name,
+                    HyperVVm.cluster_id == run.hyperv_cluster_id, HyperVVm.name == target_name,
                 ).first()
                 if existing is not None:
-                    raise RuntimeError(f"VM '{run.vm_name}' existiert bereits -- normalen Restore statt Neuerstellung nutzen")
+                    raise RuntimeError(f"VM '{target_name}' existiert bereits -- normalen Restore statt Neuerstellung nutzen")
 
                 snapshots = db.query(BackupRunSnapshot).filter(BackupRunSnapshot.run_id == run.source_run_id).all()
                 snapshot_by_volume = {(s.netapp_cluster_id, s.svm_name, s.volume_name): s for s in snapshots}
@@ -718,7 +731,10 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 settings = get_settings()
                 hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
                 hv_password = decrypt_secret(hv_cluster.encrypted_password)
-                ctx.row.message = f"{len(vm_config.vhds)} VHD(s), urspruenglicher Host {vm_config.host_name}"
+                name_note = f", Ziel-Name '{target_name}'" if target_name != run.vm_name else ""
+                csv_note = f", Ziel-CSV '{run.destination_csv_name}'" if run.destination_csv_name else ""
+                net_note = ", Netzwerk getrennt" if run.disconnect_network else ""
+                ctx.row.message = f"{len(vm_config.vhds)} VHD(s), urspruenglicher Host {vm_config.host_name}{name_note}{csv_note}{net_note}"
 
             with _StepCtx(db, run.id, "connect-node", f"Verbindung zu Knoten '{vm_config.host_name}'", step_model=VmRecreateRunStep) as ctx:
                 cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
@@ -788,7 +804,7 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 lif_address = infra_config.iscsi_lif_address
                 lif_port = infra_config.iscsi_lif_port
 
-                slug = _slugify(run.vm_name)
+                slug = _slugify(target_name)
                 suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
                 new_lun_name = f"recreate_{slug}_{i}_{suffix}.lun"
 
@@ -848,8 +864,14 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                         rel_parts = after_csv[1].split("\\")
                         filename = rel_parts[-1]
                         relative_dir = "\\".join(rel_parts[:-1])
+                    # Bei Side-by-side-Restore mit gewaehlter Ziel-CSV landet
+                    # die Kopie dort statt auf der Original-CSV der VM (siehe
+                    # destination_csv_name in RecreateVmRequest) -- die
+                    # relative Unterordner-Struktur bleibt erhalten, nur die
+                    # CSV selbst wechselt.
+                    dest_csv = run.destination_csv_name or vhd_csv
                     local_path = f"{mount_dir}\\{relative_dir}\\{filename}" if relative_dir else f"{mount_dir}\\{filename}"
-                    remote_dir = f"ClusterStorage\\{vhd_csv}" + (f"\\{relative_dir}" if relative_dir else "")
+                    remote_dir = f"ClusterStorage\\{dest_csv}" + (f"\\{relative_dir}" if relative_dir else "")
 
                     with _StepCtx(db, run.id, f"copy-{i}", f"{vhd_name} auf CSV kopieren", step_model=VmRecreateRunStep) as ctx:
                         remote_size = proxy_service.copy_file_to_share(
@@ -897,21 +919,21 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                             pass
                     raise
 
-            first_csv = vm_config.vhds[0].get("csv_name")
-            storage_path = f"C:\\ClusterStorage\\{first_csv}\\{run.vm_name}"
+            first_csv = run.destination_csv_name or vm_config.vhds[0].get("csv_name")
+            storage_path = f"C:\\ClusterStorage\\{first_csv}\\{target_name}"
             with _StepCtx(db, run.id, "create-vm", "VM anlegen", step_model=VmRecreateRunStep) as ctx:
-                new_vm_uuid = node_service.create_vm(node_session, run.vm_name, vm_config.generation or 2, storage_path)
+                new_vm_uuid = node_service.create_vm(node_session, target_name, vm_config.generation or 2, storage_path)
                 run.new_vm_uuid = new_vm_uuid
                 db.commit()
                 ctx.row.message = new_vm_uuid
 
             with _StepCtx(db, run.id, "attach-disks", "Wiederhergestellte VHDs anhaengen", step_model=VmRecreateRunStep):
                 for path in restored_paths:
-                    node_service.attach_vhd(node_session, run.vm_name, path)
+                    node_service.attach_vhd(node_session, target_name, path)
 
             with _StepCtx(db, run.id, "configure-hardware", "CPU/RAM konfigurieren", step_model=VmRecreateRunStep):
                 node_service.configure_vm_hardware(
-                    node_session, run.vm_name, vm_config.cpu_count,
+                    node_session, target_name, vm_config.cpu_count,
                     vm_config.memory_startup_bytes, vm_config.memory_minimum_bytes, vm_config.memory_maximum_bytes,
                     vm_config.dynamic_memory_enabled,
                 )
@@ -920,10 +942,13 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 with _StepCtx(db, run.id, "configure-network", "Netzwerkadapter anlegen", step_model=VmRecreateRunStep):
                     for nic in vm_config.network_adapters:
                         if nic.get("switch_name"):
-                            node_service.add_network_adapter(node_session, run.vm_name, nic["switch_name"], nic.get("vlan_id"))
+                            node_service.add_network_adapter(
+                                node_session, target_name, nic["switch_name"], nic.get("vlan_id"),
+                                connected=not run.disconnect_network,
+                            )
 
             with _StepCtx(db, run.id, "register-cluster-role", "Als Cluster-Rolle registrieren", step_model=VmRecreateRunStep):
-                hv_service.register_cluster_role(cno_session, run.vm_name)
+                hv_service.register_cluster_role(cno_session, target_name)
 
             with _StepCtx(db, run.id, "post-discovery", "Inventory aktualisieren", step_model=VmRecreateRunStep) as ctx:
                 # Best-effort: die VM ist zu diesem Zeitpunkt bereits
@@ -967,9 +992,25 @@ def recreate_vm(
     if not vm_config.hyperv_cluster_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kein Hyper-V-Cluster fuer diese VM-Konfiguration bekannt")
 
+    target_name = (payload.new_vm_name or "").strip() or vm_name
+    existing = db.query(HyperVVm).filter(
+        HyperVVm.cluster_id == vm_config.hyperv_cluster_id, HyperVVm.name == target_name,
+    ).first()
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"VM '{target_name}' existiert bereits")
+
+    destination_csv_name = (payload.destination_csv_name or "").strip() or None
+    if destination_csv_name is not None:
+        csv = db.query(HyperVCsv).filter(
+            HyperVCsv.cluster_id == vm_config.hyperv_cluster_id, HyperVCsv.name == destination_csv_name,
+        ).first()
+        if csv is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"CSV '{destination_csv_name}' nicht gefunden")
+
     run = VmRecreateRun(
-        hyperv_cluster_id=vm_config.hyperv_cluster_id, vm_name=vm_name, source_run_id=payload.run_id,
-        status=RestoreStatus.RUNNING, started_at=datetime.now(timezone.utc),
+        hyperv_cluster_id=vm_config.hyperv_cluster_id, vm_name=vm_name, target_vm_name=target_name,
+        disconnect_network=payload.disconnect_network, destination_csv_name=destination_csv_name,
+        source_run_id=payload.run_id, status=RestoreStatus.RUNNING, started_at=datetime.now(timezone.utc),
     )
     db.add(run)
     db.commit()

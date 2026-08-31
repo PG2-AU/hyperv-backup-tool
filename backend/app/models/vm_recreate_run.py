@@ -11,7 +11,7 @@ kann (gleiches Muster wie RestoreRun)."""
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import Boolean, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -33,12 +33,30 @@ class VmRecreateRun(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     hyperv_cluster_id: Mapped[str] = mapped_column(String(36), ForeignKey("hyperv_clusters.id", ondelete="CASCADE"))
     vm_name: Mapped[str] = mapped_column(String(255))
+    # Name, unter dem die VM in Hyper-V tatsaechlich angelegt wird. Normal-
+    # fall (Neuerstellung einer geloeschten VM) == vm_name; bei einem
+    # Side-by-side-Restore (Original existiert weiterhin) ein vom Nutzer
+    # gewaehlter, abweichender Name. Bei alten Laeufen (vor diesem Feature)
+    # ist die Spalte leer -- ueberall im Code wird dann auf vm_name
+    # zurueckgefallen (siehe target_display_name-Property).
+    target_vm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Side-by-side-Restore-Optionen (siehe RecreateVmRequest in restore.py):
+    # bei einem Klon neben der weiterlaufenden Original-VM sinnvoll, um
+    # IP-/Netzwerk-Konflikte zu vermeiden und die Kopie nicht auf dieselbe
+    # CSV wie das Original zu legen. Bei der normalen Neuerstellung einer
+    # geloeschten VM bleiben beide auf Default (False/None).
+    disconnect_network: Mapped[bool] = mapped_column(Boolean, default=False)
+    destination_csv_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_run_id: Mapped[str] = mapped_column(String(36))
     status: Mapped[RestoreStatus] = mapped_column(String(20), default=RestoreStatus.RUNNING)
     new_vm_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def target_display_name(self) -> str:
+        return self.target_vm_name or self.vm_name
 
     steps = relationship(
         "VmRecreateRunStep", back_populates="run", cascade="all, delete-orphan", order_by="VmRecreateRunStep.created_at",

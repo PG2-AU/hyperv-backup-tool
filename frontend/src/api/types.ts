@@ -39,6 +39,7 @@ export interface Csv {
   name: string;
   owner_node: string;
   state: string;
+  hyperv_cluster_name?: string | null;
   volume_path: string;
   capacity_bytes?: number | null;
   used_bytes?: number | null;
@@ -724,6 +725,9 @@ export interface VmBackupRun {
 export interface VmRecreateRun {
   id: string;
   vm_name: string;
+  target_vm_name?: string | null;
+  disconnect_network: boolean;
+  destination_csv_name?: string | null;
   source_run_id: string;
   status: "running" | "succeeded" | "failed" | "cleaned_up";
   new_vm_uuid?: string | null;

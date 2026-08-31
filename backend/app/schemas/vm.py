@@ -42,6 +42,7 @@ class CsvRead(BaseModel):
     name: str
     owner_node: str
     state: str
+    hyperv_cluster_name: str | None = None
     volume_path: str
     capacity_bytes: int | None = None
     used_bytes: int | None = None

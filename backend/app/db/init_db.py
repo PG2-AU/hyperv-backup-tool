@@ -80,6 +80,10 @@ def init_db(db: Session) -> None:
         engine, "netapp_snapmirror_policies",
         {"create_snapshot_on_source": "BOOLEAN", "sync_type": "VARCHAR(30)"},
     )
+    _add_missing_columns(
+        engine, "vm_recreate_runs",
+        {"target_vm_name": "VARCHAR(255)", "disconnect_network": "BOOLEAN", "destination_csv_name": "VARCHAR(255)"},
+    )
 
     for role_name, permissions in DEFAULT_ROLES.items():
         existing = db.query(Role).filter(Role.name == role_name).first()

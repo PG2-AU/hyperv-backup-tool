@@ -44,7 +44,7 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
 
   function handleStart() {
     if (!vm || !runId) return;
-    recreateVm.mutate(runId, {
+    recreateVm.mutate({ run_id: runId }, {
       onSuccess: (result) => {
         setRecreateRunId(result.id);
         setActive(2);

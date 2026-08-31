@@ -660,9 +660,17 @@ export function useVmBackupRuns(vmName: string | undefined, enabled: boolean) {
   });
 }
 
+export interface RecreateVmPayload {
+  run_id: string;
+  new_vm_name?: string;
+  disconnect_network?: boolean;
+  destination_csv_name?: string;
+}
+
 export function useRecreateVm(vmName: string | undefined) {
   return useMutation({
-    mutationFn: async (runId: string) => (await apiClient.post<VmRecreateRun>(`/restore/vms/${vmName}/recreate`, { run_id: runId })).data,
+    mutationFn: async (payload: RecreateVmPayload) =>
+      (await apiClient.post<VmRecreateRun>(`/restore/vms/${vmName}/recreate`, payload)).data,
   });
 }
 

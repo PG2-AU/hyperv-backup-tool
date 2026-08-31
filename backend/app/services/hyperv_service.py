@@ -565,14 +565,25 @@ class HyperVService:
         if not result.success:
             raise RuntimeError(f"Hardware-Konfiguration fuer '{vm_name}' fehlgeschlagen: {result.error}")
 
-    def add_network_adapter(self, session: winrm.Session, vm_name: str, switch_name: str, vlan_id: int | None) -> None:
+    def add_network_adapter(
+        self, session: winrm.Session, vm_name: str, switch_name: str, vlan_id: int | None, connected: bool = True,
+    ) -> None:
         escaped_vm = vm_name.replace("'", "''")
         escaped_switch = switch_name.replace("'", "''")
         script = f"Add-VMNetworkAdapter -VMName '{escaped_vm}' -SwitchName '{escaped_switch}' -ErrorAction Stop; "
         if vlan_id:
             script += (
                 f"Get-VMNetworkAdapter -VMName '{escaped_vm}' | Select-Object -Last 1 | "
-                f"Set-VMNetworkAdapterVlan -Access -VlanId {vlan_id} -ErrorAction Stop"
+                f"Set-VMNetworkAdapterVlan -Access -VlanId {vlan_id} -ErrorAction Stop; "
+            )
+        if not connected:
+            # Fuer einen Side-by-side-Restore (Original laeuft parallel
+            # weiter): Adapter bewusst NICHT verbinden, damit die neue VM
+            # ohne IP-/MAC-Konflikt hochfaehrt, aber trotzdem konfiguriert
+            # (VLAN etc.) und mit einem Klick spaeter verbindbar bleibt.
+            script += (
+                f"Get-VMNetworkAdapter -VMName '{escaped_vm}' | Select-Object -Last 1 | "
+                f"Disconnect-VMNetworkAdapter -ErrorAction Stop"
             )
         result = self._run_ps(session, script)
         if not result.success:
@@ -757,6 +768,11 @@ class HyperVService:
             f"net use $share '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1 | Out-Null; "
             "if ($LASTEXITCODE -ne 0) { throw \"net use fehlgeschlagen (Exit $LASTEXITCODE)\" }; "
             "try { "
+            # Zielverzeichnis kann bei einer abweichenden Ziel-CSV (siehe
+            # destination_csv_name bei der Side-by-side-VM-Wiederherstellung)
+            # noch nicht existieren -- New-Item -Force ist idempotent, legt
+            # fehlende Ordner an und tut sonst nichts.
+            f"New-Item -ItemType Directory -Force -Path '{share}\\{escaped_dir}' -ErrorAction Stop | Out-Null; "
             f"Copy-Item -Path '{escaped_src}' -Destination '{dest}' -Force -ErrorAction Stop; "
             f"(Get-Item -Path '{dest}').Length "
             "} finally { "

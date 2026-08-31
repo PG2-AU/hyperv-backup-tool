@@ -9,6 +9,7 @@ import {
   Modal,
   Radio,
   ScrollArea,
+  Select,
   Stack,
   Stepper,
   Text,
@@ -21,10 +22,13 @@ import { IconAlertTriangle, IconCheck, IconMinus, IconX } from "@tabler/icons-re
 import {
   useBackupsForObject,
   useCopyFileRestoreSelection,
+  useCsvs,
   useFileRestoreRun,
+  useRecreateVm,
   useRestoreRun,
   useTriggerFileRestore,
   useTriggerRestore,
+  useVmRecreateRun,
   useVms,
 } from "@/api/hooks";
 import { FileBrowser } from "@/components/FileBrowser";
@@ -33,7 +37,7 @@ import type { RestoreMode, RestoreRun, VmWithBackups } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
 
-type RestoreKind = RestoreMode | "files";
+type RestoreKind = RestoreMode | "files" | "clone";
 
 interface RestoreWizardModalProps {
   opened: boolean;
@@ -73,14 +77,29 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
   const [destinationPath, setDestinationPath] = useState("");
   const [lastCopyResult, setLastCopyResult] = useState<"success" | "error" | null>(null);
 
+  // Side-by-side-Restore: komplette VM unter neuem Namen zusaetzlich
+  // anlegen, Original bleibt unangetastet -- nutzt denselben Endpunkt wie
+  // die Neuerstellung einer geloeschten VM (VmRecreateWizardModal), nur mit
+  // explizitem Zielnamen + optionaler Ziel-CSV/Netzwerk-Trennung.
+  const [cloneName, setCloneName] = useState("");
+  const [cloneDisconnectNetwork, setCloneDisconnectNetwork] = useState(true);
+  const [cloneDestinationCsv, setCloneDestinationCsv] = useState<string | null>(null);
+  const [cloneRunId, setCloneRunId] = useState<string | null>(null);
+
   const { data: backups, isLoading: backupsLoading } = useBackupsForObject("vm", vm?.name, opened && active === 0);
   const { data: vms } = useVms();
+  const { data: csvs } = useCsvs();
   const triggerRestore = useTriggerRestore();
   const { data: run } = useRestoreRun(currentRunId ?? undefined, true);
 
   const triggerFileRestore = useTriggerFileRestore();
   const { data: fileRun } = useFileRestoreRun(fileRunId ?? undefined, true);
   const copySelection = useCopyFileRestoreSelection(fileRunId ?? undefined);
+
+  const recreateVm = useRecreateVm(vm?.name);
+  const { data: cloneRun } = useVmRecreateRun(cloneRunId ?? undefined, true);
+  const cloneDone = cloneRun?.status === "succeeded" || cloneRun?.status === "failed";
+  const clusterCsvs = (csvs ?? []).filter((c) => c.hyperv_cluster_name === vm?.cluster);
 
   const vmFull = vms?.find((v) => v.name === vm?.name);
   const totalCount = finishedRuns.length + (currentVhdPath ? 1 : 0) + queue.length;
@@ -111,8 +130,21 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
       setSelectedFsPaths(new Map());
       setDestinationPath("");
       setLastCopyResult(null);
+      setCloneName("");
+      setCloneDisconnectNetwork(true);
+      setCloneDestinationCsv(null);
+      setCloneRunId(null);
     }
   }, [opened]);
+
+  // Vorschlag fuer den neuen VM-Namen einmalig setzen, sobald der Nutzer in
+  // den Side-by-side-Modus wechselt -- danach frei editierbar.
+  useEffect(() => {
+    if (restoreKind === "clone" && vm && !cloneName) {
+      setCloneName(`${vm.name}-restored`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreKind, vm]);
 
   useEffect(() => {
     setSelectedVhdPaths([]);
@@ -162,7 +194,26 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
   }, [run?.status, run?.id]);
 
   function handleTrigger() {
-    if (!vm || !snapshotId || selectedVhdPaths.length === 0) return;
+    if (!vm || !snapshotId) return;
+    if (restoreKind === "clone") {
+      if (!selectedSnapshot || !cloneName.trim()) return;
+      setActive(3);
+      recreateVm.mutate(
+        {
+          run_id: selectedSnapshot.run_id,
+          new_vm_name: cloneName.trim(),
+          disconnect_network: cloneDisconnectNetwork,
+          destination_csv_name: cloneDestinationCsv ?? undefined,
+        },
+        {
+          onSuccess: (result) => setCloneRunId(result.id),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Neuerstellung konnte nicht gestartet werden."), color: "red" }),
+        },
+      );
+      return;
+    }
+    if (selectedVhdPaths.length === 0) return;
     if (restoreKind === "files") {
       setActive(3);
       triggerFileRestore.mutate(
@@ -224,7 +275,12 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
   // Session bewusst offen (kein erzwungenes Aufraeumen), sie taucht in der
   // Restore-Uebersicht als 'Offene Session' auf und kann dort spaeter
   // wieder geoeffnet oder aufgeraeumt werden.
-  const closeAllowed = restoreKind === "files" ? active < 3 || fileRun?.status !== "running" : batchDone || active < 3;
+  const closeAllowed =
+    restoreKind === "files"
+      ? active < 3 || fileRun?.status !== "running"
+      : restoreKind === "clone"
+        ? active < 3 || cloneDone
+        : batchDone || active < 3;
 
   return (
     <Modal
@@ -293,10 +349,36 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
                 <Radio value="add" label="Als zusätzliche Disk anhängen (kein Downtime, manueller Cleanup später möglich)" />
                 <Radio value="replace" label="Laufende VHDX ersetzen (VM wird kurz gestoppt, alte Datei wird gelöscht)" />
                 <Radio value="files" label="Nur einzelne Dateien/Ordner wiederherstellen (VHDX wird durchsuchbar gemountet)" />
+                <Radio value="clone" label="VM wiederherstellen und bestehende VM beibehalten (Side-by-side, neuer Name)" />
               </Stack>
             </Radio.Group>
 
-            {restoreKind === "files" ? (
+            {restoreKind === "clone" ? (
+              <Stack gap="sm">
+                <TextInput
+                  label="Neuer Name"
+                  description="Die wiederhergestellte VM wird unter diesem Namen zusätzlich angelegt."
+                  value={cloneName}
+                  onChange={(e) => setCloneName(e.currentTarget.value)}
+                  required
+                />
+                <Checkbox
+                  label="Netzwerk trennen"
+                  description="Netzwerkadapter werden angelegt, aber nicht mit einem Switch verbunden -- vermeidet IP-/Namenskonflikte mit dem laufenden Original."
+                  checked={cloneDisconnectNetwork}
+                  onChange={(e) => setCloneDisconnectNetwork(e.currentTarget.checked)}
+                />
+                <Select
+                  label="Speicherort der VM"
+                  description="CSV, auf der alle VHDs der neuen VM abgelegt werden. Ohne Auswahl bleibt die ursprüngliche CSV je VHD erhalten."
+                  placeholder="Wie im Original"
+                  data={clusterCsvs.map((c) => ({ value: c.name, label: c.name }))}
+                  value={cloneDestinationCsv}
+                  onChange={setCloneDestinationCsv}
+                  clearable
+                />
+              </Stack>
+            ) : restoreKind === "files" ? (
               <Radio.Group
                 value={selectedVhdPaths[0] ?? null}
                 onChange={(v) => setSelectedVhdPaths(v ? [v] : [])}
@@ -354,7 +436,7 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
               <Button variant="default" onClick={() => setActive(0)}>
                 Zurück
               </Button>
-              <Button onClick={() => setActive(2)} disabled={selectedVhdPaths.length === 0}>
+              <Button onClick={() => setActive(2)} disabled={restoreKind === "clone" ? !cloneName.trim() : selectedVhdPaths.length === 0}>
                 Weiter
               </Button>
             </Group>
@@ -366,18 +448,41 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
             <Text size="sm">
               VM <strong>{vm?.name}</strong>, Modus{" "}
               <strong>
-                {restoreKind === "files" ? "Dateien durchsuchen" : restoreKind === "add" ? "Zusatzdisk anhängen" : "Ersetzen"}
+                {restoreKind === "files"
+                  ? "Dateien durchsuchen"
+                  : restoreKind === "clone"
+                    ? "Side-by-side wiederherstellen"
+                    : restoreKind === "add"
+                      ? "Zusatzdisk anhängen"
+                      : "Ersetzen"}
               </strong>
               .
             </Text>
-            <Stack gap={4}>
-              {selectedVhdPaths.map((p) => (
-                <Text key={p} size="sm" ff="monospace">
-                  • {p.split("\\").pop()}
+            {restoreKind === "clone" ? (
+              <Stack gap={4}>
+                <Text size="sm">
+                  Neuer Name: <strong>{cloneName}</strong>
                 </Text>
-              ))}
-            </Stack>
-            {restoreKind !== "files" && selectedVhdPaths.length > 1 && (
+                <Text size="sm">
+                  Speicherort: <strong>{cloneDestinationCsv ?? "wie im Original"}</strong>
+                </Text>
+                <Text size="sm">
+                  Netzwerk: <strong>{cloneDisconnectNetwork ? "getrennt" : "verbunden"}</strong>
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Die bestehende VM „{vm?.name}“ bleibt unverändert und läuft weiter.
+                </Text>
+              </Stack>
+            ) : (
+              <Stack gap={4}>
+                {selectedVhdPaths.map((p) => (
+                  <Text key={p} size="sm" ff="monospace">
+                    • {p.split("\\").pop()}
+                  </Text>
+                ))}
+              </Stack>
+            )}
+            {restoreKind !== "files" && restoreKind !== "clone" && selectedVhdPaths.length > 1 && (
               <Text size="xs" c="dimmed">
                 Die {selectedVhdPaths.length} VHDX werden nacheinander wiederhergestellt.
               </Text>
@@ -391,7 +496,11 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
               <Button variant="default" onClick={() => setActive(1)}>
                 Zurück
               </Button>
-              <Button onClick={handleTrigger} loading={triggerRestore.isPending || triggerFileRestore.isPending}>
+              <Button
+                onClick={handleTrigger}
+                loading={triggerRestore.isPending || triggerFileRestore.isPending || recreateVm.isPending}
+                disabled={restoreKind === "clone" && !cloneName.trim()}
+              >
                 {restoreKind === "files" ? "Mounten & durchsuchen" : "Restore starten"}
               </Button>
             </Group>
@@ -399,7 +508,40 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
         </Stepper.Step>
 
         <Stepper.Step label="Fortschritt" description="Live-Status">
-          {restoreKind === "files" ? (
+          {restoreKind === "clone" ? (
+            <Stack mt="md" gap="sm">
+              {cloneRun?.steps.map((s) => (
+                <Group key={s.step} gap="xs" wrap="nowrap" align="flex-start">
+                  {STEP_STATUS_ICON[s.status]}
+                  <Stack gap={0} style={{ flex: 1 }}>
+                    <Text size="sm" fw={600}>
+                      {s.label}
+                    </Text>
+                    {s.status === "error" && (
+                      <Text size="xs" c="red">
+                        {s.message}
+                      </Text>
+                    )}
+                  </Stack>
+                </Group>
+              ))}
+              {cloneRun?.status === "succeeded" && (
+                <Alert icon={<IconCheck size={16} />} color="green" variant="light">
+                  VM „{cloneRun.target_vm_name ?? cloneName}“ erfolgreich erstellt.
+                </Alert>
+              )}
+              {cloneRun?.status === "failed" && (
+                <Alert icon={<IconX size={16} />} color="red" variant="light">
+                  {cloneRun.error_message}
+                </Alert>
+              )}
+              {cloneDone && (
+                <Group justify="flex-end">
+                  <Button onClick={onClose}>Schließen</Button>
+                </Group>
+              )}
+            </Stack>
+          ) : restoreKind === "files" ? (
             <Stack mt="md" gap="md">
               {(!fileRun || fileRun.status === "running") && (
                 <Stack gap="sm" p="sm" style={{ border: "1px solid var(--mantine-color-default-border)", borderRadius: 8 }}>
