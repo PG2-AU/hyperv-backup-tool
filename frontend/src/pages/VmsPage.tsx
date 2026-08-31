@@ -318,16 +318,18 @@ export function VmsPage() {
         </Tabs.List>
 
         <Tabs.Panel value="vms" pt="md">
-          <Group justify="flex-end" mb="sm">
-            <TextInput
-              placeholder="VM-Name suchen…"
-              leftSection={<IconSearch size={14} />}
-              value={vmSearch}
-              onChange={(e) => setVmSearch(e.currentTarget.value)}
-              w={280}
-            />
-          </Group>
-          <Table striped highlightOnHover>
+          <Paper p="md">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>Virtuelle Maschinen</Title>
+              <TextInput
+                placeholder="VM-Name suchen…"
+                leftSection={<IconSearch size={14} />}
+                value={vmSearch}
+                onChange={(e) => setVmSearch(e.currentTarget.value)}
+                w={280}
+              />
+            </Group>
+            <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Name</Table.Th>
@@ -387,15 +389,20 @@ export function VmsPage() {
               ))}
             </Table.Tbody>
           </Table>
-          {(vms?.length ?? 0) > 0 && filteredVms.length === 0 && (
-            <Text c="dimmed" size="sm" ta="center" py="md">
-              Keine VM passt zur Suche „{vmSearch}“.
-            </Text>
-          )}
+            {(vms?.length ?? 0) > 0 && filteredVms.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Keine VM passt zur Suche „{vmSearch}“.
+              </Text>
+            )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="csv" pt="md">
-          <Table striped highlightOnHover>
+          <Paper p="md">
+            <Title order={5} mb="sm">
+              Cluster Shared Volumes
+            </Title>
+            <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Name</Table.Th>
@@ -484,6 +491,7 @@ export function VmsPage() {
               })}
             </Table.Tbody>
           </Table>
+          </Paper>
         </Tabs.Panel>
       </Tabs>
 

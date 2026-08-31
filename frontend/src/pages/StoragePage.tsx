@@ -275,7 +275,15 @@ function ClusterTab() {
   const healthDistribution = groupCount(clusters, (c) => HEALTH_LABEL[c.health]);
 
   return (
-    <Stack>
+    <>
+    <Paper p="md">
+      <Group justify="space-between" mb="sm">
+        <Title order={5}>Cluster</Title>
+        <Button leftSection={<IconPlus size={16} />} onClick={() => setAddOpen(true)}>
+          Cluster hinzufügen
+        </Button>
+      </Group>
+
       <StatRibbon>
         <StatCard label="Anzahl Cluster" value={clusters?.length ?? 0} />
         <DistributionCard label="ONTAP-Versionen" items={versionDistribution} />
@@ -285,13 +293,7 @@ function ClusterTab() {
         />
       </StatRibbon>
 
-      <Group justify="flex-end">
-        <Button leftSection={<IconPlus size={16} />} onClick={() => setAddOpen(true)}>
-          Cluster hinzufügen
-        </Button>
-      </Group>
-
-      <Paper p="md">
+      <div style={{ marginTop: "var(--mantine-spacing-md)" }}>
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
@@ -343,7 +345,8 @@ function ClusterTab() {
             Noch keine NetApp-Systeme hinzugefügt.
           </Text>
         )}
-      </Paper>
+      </div>
+    </Paper>
 
       <AddClusterModal opened={addOpen} onClose={() => setAddOpen(false)} onCreated={runDiscovery} />
 
@@ -372,7 +375,7 @@ function ClusterTab() {
           Entfernen
         </Menu.Item>
       </ContextMenuDropdown>
-    </Stack>
+    </>
   );
 }
 
@@ -525,6 +528,8 @@ export function StoragePage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="svms" pt="md">
+          <Paper p="md">
+          <Title order={5} mb="sm">Storage Virtual Machines</Title>
           <StatRibbon>
             <StatCard label="Anzahl SVMs" value={svms?.length ?? 0} />
           </StatRibbon>
@@ -561,9 +566,12 @@ export function StoragePage() {
               Noch keine SVMs erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="volumes" pt="md">
+          <Paper p="md">
+          <Title order={5} mb="sm">Volumes</Title>
           <StatRibbon>
             <StatCard label="Anzahl Volumes" value={volumes?.length ?? 0} />
             <CapacityBarCard label="Kapazität" used={volumeStats.totalUsed} total={volumeStats.totalSize} formatValue={formatBytes} />
@@ -679,9 +687,12 @@ export function StoragePage() {
               Noch keine Volumes erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="luns" pt="md">
+          <Paper p="md">
+          <Title order={5} mb="sm">LUNs</Title>
           <StatRibbon>
             <StatCard label="Anzahl LUNs" value={luns?.length ?? 0} />
             <StatCard label="Provisioniert" value={formatBytes(lunStats.totalSize)} />
@@ -732,9 +743,12 @@ export function StoragePage() {
               Noch keine LUNs erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="igroups" pt="md">
+          <Paper p="md">
+          <Title order={5} mb="sm">IGroups</Title>
           <StatRibbon>
             <StatCard label="Anzahl IGroups" value={igroups?.length ?? 0} />
             <DistributionCard label="OS-Type" items={igroupStats.osTypes} />
@@ -774,9 +788,12 @@ export function StoragePage() {
               Noch keine Initiator-Gruppen erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="cluster-peers" pt="md">
+          <Paper p="md">
+          <Title order={5} mb="sm">Cluster Peer</Title>
           <StatRibbon>
             <StatCard label="Anzahl Cluster Peer" value={clusterPeers?.length ?? 0} />
           </StatRibbon>
@@ -822,9 +839,12 @@ export function StoragePage() {
               Noch keine Cluster-Peer-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="svm-peers" pt="md">
+          <Paper p="md">
+          <Title order={5} mb="sm">SVM Peer</Title>
           <StatRibbon>
             <StatCard label="Anzahl SVM Peer" value={svmPeers?.length ?? 0} />
           </StatRibbon>
@@ -866,9 +886,12 @@ export function StoragePage() {
               Noch keine SVM-Peer-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="snapmirror" pt="md">
+          <Paper p="md">
+          <Title order={5} mb="sm">SnapMirror-Beziehungen</Title>
           <StatRibbon>
             <StatCard label="Anzahl Beziehungen" value={relationships?.length ?? 0} />
             <DistributionCard label="Status" items={snapmirrorStats.states} />
@@ -952,9 +975,12 @@ export function StoragePage() {
               Noch keine SnapMirror-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="platforms" pt="md">
+          <Paper p="md">
+          <Title order={5} mb="sm">Nodes</Title>
           <StatRibbon>
             <StatCard label="Anzahl Nodes" value={platforms?.length ?? 0} />
             <DistributionCard label="Modelle" items={nodeStats.models} />
@@ -996,9 +1022,12 @@ export function StoragePage() {
               Noch keine Plattform-Informationen erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="aggregates" pt="md">
+          <Paper p="md">
+          <Title order={5} mb="sm">Aggregate</Title>
           <StatRibbon>
             <StatCard label="Anzahl Aggregate" value={aggregates?.length ?? 0} />
             <CapacityBarCard label="Kapazität" used={aggregateStats.totalUsed} total={aggregateStats.totalSize} formatValue={formatBytes} />
@@ -1054,11 +1083,13 @@ export function StoragePage() {
               Noch keine Aggregate erkannt. Führe eine Discovery unter Cluster aus.
             </Text>
           )}
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="metrocluster" pt="md">
-          <Paper p="md" maw={480}>
-            <Stack gap="xs">
+          <Paper p="md">
+            <Title order={5} mb="sm">MetroCluster</Title>
+            <Stack gap="xs" maw={480}>
               <Group justify="space-between">
                 <Text c="dimmed">Konfiguriert</Text>
                 <Text fw={600}>{mcc?.configured ? "Ja" : "Nein"}</Text>

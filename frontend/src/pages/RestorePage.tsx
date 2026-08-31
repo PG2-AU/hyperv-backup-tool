@@ -83,7 +83,9 @@ export function RestorePage() {
         </Tabs.List>
 
         <Tabs.Panel value="overview" pt="md">
+          <Paper p="md">
           <Stack>
+      <Title order={5}>Wiederherstellen</Title>
 
       {cleanupPending.length > 0 && (
         <Stack gap="xs">
@@ -282,6 +284,7 @@ export function RestorePage() {
         </Text>
       )}
           </Stack>
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="setup" pt="md">
