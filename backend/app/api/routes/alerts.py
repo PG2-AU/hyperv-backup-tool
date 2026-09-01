@@ -12,10 +12,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.api.routes.netapp_clusters import _discover_and_persist
 from app.core.rbac import Permission
+from app.core.scheduler import run_alert_check
 from app.db.session import get_db
-from app.models.alert import Alert, AlertConfig, AlertType
+from app.models.alert import Alert, AlertConfig, AlertScope, AlertType
 from app.models.backup_run import BackupRun, JobStatus
+from app.models.netapp_cluster import NetAppCluster
 from app.schemas.alert import AlertConfigRead, AlertConfigUpdate, AlertRead
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -96,8 +99,27 @@ def update_alert_config(
     if config is None:
         config = AlertConfig()
         db.add(config)
-    config.capacity_threshold_percent = payload.capacity_threshold_percent
+    config.volume_threshold_percent = payload.volume_threshold_percent
+    config.lun_threshold_percent = payload.lun_threshold_percent
+    config.snapmirror_lag_threshold_minutes = payload.snapmirror_lag_threshold_minutes
+    config.scope = AlertScope(payload.scope)
     config.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(config)
     return config
+
+
+@router.post("/recheck", status_code=204)
+def recheck_alerts(db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW))) -> None:
+    """Manueller Sofort-Check nach einer Aktion auf der Alarme-Seite (z.B.
+    'Volume vergrößern' -> Resize durchgefuehrt) -- fuehrt zuerst eine volle
+    NetApp-Discovery aus (damit percent_used/used_bytes aktuell sind, statt
+    auf das naechste Discovery-Intervall zu warten), dann den Alert-Check
+    selbst. Ein einzelner nicht erreichbarer Cluster verhindert nicht die
+    Discovery der anderen (best-effort, analog zu run_discovery)."""
+    for cluster in db.query(NetAppCluster).all():
+        try:
+            _discover_and_persist(db, cluster)
+        except Exception:
+            pass
+    run_alert_check()

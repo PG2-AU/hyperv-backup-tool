@@ -91,6 +91,22 @@ def init_db(db: Session) -> None:
     )
     _add_missing_columns(engine, "backup_policies", {"email_alert_on_failure": "BOOLEAN"})
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
+    _add_missing_columns(
+        engine, "alert_config",
+        {
+            "volume_threshold_percent": "INTEGER", "lun_threshold_percent": "INTEGER",
+            "snapmirror_lag_threshold_minutes": "INTEGER", "scope": "VARCHAR(30)",
+        },
+    )
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE alert_config SET volume_threshold_percent = 90 WHERE volume_threshold_percent IS NULL"))
+        conn.execute(text("UPDATE alert_config SET lun_threshold_percent = 90 WHERE lun_threshold_percent IS NULL"))
+        conn.execute(text("UPDATE alert_config SET snapmirror_lag_threshold_minutes = 240 WHERE snapmirror_lag_threshold_minutes IS NULL"))
+        # SQLAlchemys Enum-Spalte speichert per Default den Enum-NAMEN, nicht
+        # den .value-String (anders als bei String(N)-Spalten mit str-Enums)
+        # -- 'ALL' (Name von AlertScope.ALL), nicht 'all'.
+        conn.execute(text("UPDATE alert_config SET scope = 'ALL' WHERE scope IS NULL"))
+        conn.commit()
     # _add_missing_columns liefert bei bereits vorhandenen Zeilen NULL statt
     # False (kein SQL-Default beim ALTER TABLE) -- BackupPolicyRead.
     # email_alert_on_failure ist aber ein Pflicht-bool (nicht optional), ohne

@@ -514,6 +514,7 @@ export type AlertType =
   | "hyperv_cluster_unhealthy"
   | "netapp_cluster_unhealthy"
   | "snapmirror_unhealthy"
+  | "snapmirror_lag_exceeded"
   | "backup_failed";
 
 export interface Alert {
@@ -534,12 +535,20 @@ export interface Alert {
   run_id?: string | null;
 }
 
+export type AlertScope = "all" | "hyperv_referenced";
+
 export interface AlertConfig {
-  capacity_threshold_percent: number;
+  volume_threshold_percent: number;
+  lun_threshold_percent: number;
+  snapmirror_lag_threshold_minutes: number;
+  scope: AlertScope;
 }
 
 export interface AlertConfigWritePayload {
-  capacity_threshold_percent: number;
+  volume_threshold_percent: number;
+  lun_threshold_percent: number;
+  snapmirror_lag_threshold_minutes: number;
+  scope: AlertScope;
 }
 
 export interface SchedulerConfig {

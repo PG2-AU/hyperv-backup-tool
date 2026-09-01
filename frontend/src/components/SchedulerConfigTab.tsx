@@ -2,50 +2,11 @@ import { useEffect, useState } from "react";
 import { Button, Group, NumberInput, Paper, Select, Stack, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 
-import { useAlertConfig, useSchedulerConfig, useUpdateAlertConfig, useUpdateSchedulerConfig } from "@/api/hooks";
+import { useSchedulerConfig, useUpdateSchedulerConfig } from "@/api/hooks";
 import type { SchedulerConfigWritePayload } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => ({ value: String(h), label: `${String(h).padStart(2, "0")}:00 UTC` }));
-
-function AlertThresholdSection() {
-  const { data: config } = useAlertConfig();
-  const updateConfig = useUpdateAlertConfig();
-  const [threshold, setThreshold] = useState<number | string>(90);
-
-  useEffect(() => {
-    if (config) setThreshold(config.capacity_threshold_percent);
-  }, [config]);
-
-  function handleSave() {
-    updateConfig
-      .mutateAsync({ capacity_threshold_percent: Number(threshold) })
-      .then(() => notifications.show({ title: "Gespeichert", message: "Schwellwert wurde aktualisiert", color: "green" }))
-      .catch((err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Schwellwert konnte nicht gespeichert werden."), color: "red" }),
-      );
-  }
-
-  return (
-    <Paper p="md" maw={560}>
-      <Title order={5} mb={4}>
-        Kapazitäts-Warnungen
-      </Title>
-      <Text size="xs" c="dimmed" mb="md">
-        Ab diesem Füllstand wird pro Volume/LUN eine Warnung erzeugt (Dashboard &gt; Warnungen, Seite Alarms). Alle 15 Minuten
-        geprüft, gegen den zuletzt discoverten Füllstand.
-      </Text>
-      <Stack gap="md">
-        <NumberInput label="Schwellwert" min={1} max={100} value={threshold} onChange={setThreshold} suffix=" %" />
-        <Group justify="flex-end">
-          <Button onClick={handleSave} loading={updateConfig.isPending}>
-            Speichern
-          </Button>
-        </Group>
-      </Stack>
-    </Paper>
-  );
-}
 
 export function SchedulerConfigTab() {
   const { data: config } = useSchedulerConfig();
@@ -80,7 +41,6 @@ export function SchedulerConfigTab() {
   }
 
   return (
-    <Stack gap="md">
     <Paper p="md" maw={560}>
       <Title order={5} mb={4}>
         Hintergrundjobs
@@ -131,7 +91,5 @@ export function SchedulerConfigTab() {
         </Group>
       </Stack>
     </Paper>
-    <AlertThresholdSection />
-    </Stack>
   );
 }

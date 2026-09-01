@@ -27,6 +27,16 @@ class AlertType(str, enum.Enum):
     HYPERV_CLUSTER_UNHEALTHY = "hyperv_cluster_unhealthy"
     NETAPP_CLUSTER_UNHEALTHY = "netapp_cluster_unhealthy"
     SNAPMIRROR_UNHEALTHY = "snapmirror_unhealthy"
+    SNAPMIRROR_LAG_EXCEEDED = "snapmirror_lag_exceeded"
+
+
+class AlertScope(str, enum.Enum):
+    ALL = "all"
+    # Nur Volumes/LUNs/SnapMirror-Beziehungen, die ueber eine discoverte
+    # HyperVCsv tatsaechlich als Hyper-V-Storage genutzt werden -- alle
+    # anderen, im NetApp-Cluster ebenfalls vorhandenen Objekte (andere
+    # Workloads auf demselben Cluster) werden dann nicht mitgezaehlt.
+    HYPERV_REFERENCED = "hyperv_referenced"
 
 
 class AlertStatus(str, enum.Enum):
@@ -59,13 +69,17 @@ class Alert(Base):
 
 
 class AlertConfig(Base):
-    """Singleton-Konfiguration fuer die Kapazitaets-Warnschwelle (Settings >
-    Hintergrundjobs) -- die anderen Alert-Typen (Cluster-/SnapMirror-
-    Gesundheit) haben keinen Schwellwert, sie folgen direkt dem bereits
-    discoverten 'healthy'-Zustand."""
+    """Singleton-Konfiguration fuer die Alarme-Seite (Settings > Alarms):
+    Schwellwerte pro Kategorie sowie der Sichtbarkeits-Scope (alle
+    Storage-Objekte vs. nur die tatsaechlich vom Hyper-V-Cluster genutzten).
+    Cluster-Gesundheit hat bewusst keinen eigenen Schwellwert -- sie folgt
+    direkt dem bereits discoverten 'health'-Zustand."""
 
     __tablename__ = "alert_config"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    capacity_threshold_percent: Mapped[int] = mapped_column(Integer, default=90)
+    volume_threshold_percent: Mapped[int] = mapped_column(Integer, default=90)
+    lun_threshold_percent: Mapped[int] = mapped_column(Integer, default=90)
+    snapmirror_lag_threshold_minutes: Mapped[int] = mapped_column(Integer, default=240)
+    scope: Mapped[AlertScope] = mapped_column(Enum(AlertScope), default=AlertScope.ALL)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

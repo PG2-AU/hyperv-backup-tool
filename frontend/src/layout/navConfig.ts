@@ -95,6 +95,7 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Hyper-V-Hosts", path: "/settings?tab=hyperv" },
       { label: "E-Mail", path: "/settings?tab=email" },
       { label: "Hintergrundjobs", path: "/settings?tab=scheduler" },
+      { label: "Alarms", path: "/settings?tab=alerts" },
       { label: "Ansicht", path: "/settings?tab=display" },
       { label: "Updates (Git)", path: "/settings?tab=updates" },
     ],

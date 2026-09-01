@@ -3,6 +3,7 @@ import { Button, Group, Loader, Modal, Stack, Text } from "@mantine/core";
 import { IconCheck, IconMinus, IconX } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { apiClient } from "@/api/client";
 import { apiErrorMessage } from "@/utils/errors";
 
 // Jeder Prozess (LUN/Volume/IGroup/SnapMirror/Hyper-V-Cluster anlegen/
@@ -89,6 +90,15 @@ export function ProcessModal({ opened, onClose, plan }: { opened: boolean; onClo
         // egal ob alle Schritte erfolgreich waren oder nur ein Teil, damit
         // bereits durchgefuehrte Aenderungen sofort sichtbar werden.
         for (const key of STORAGE_QUERY_KEYS) queryClient.invalidateQueries({ queryKey: [key] });
+        // Fire-and-forget: ein Storage-Vorgang (z.B. Volume vergroessert
+        // ueber die Alarme-Seite) kann eine bestehende Warnung aufloesen --
+        // sofortiger Discovery+Alert-Check statt auf das naechste 15min-
+        // Intervall zu warten. Blockiert das Modal nicht (Nutzer sieht
+        // "Fertig" sofort), Alarme-Liste aktualisiert sich im Hintergrund.
+        apiClient
+          .post("/alerts/recheck")
+          .catch(() => {})
+          .finally(() => queryClient.invalidateQueries({ queryKey: ["alerts"] }));
         plan.onSettled?.(failed);
       }
     })();

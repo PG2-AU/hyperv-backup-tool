@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AlertRead(BaseModel):
@@ -24,8 +24,16 @@ class AlertRead(BaseModel):
 
 
 class AlertConfigRead(BaseModel):
-    capacity_threshold_percent: int
+    model_config = ConfigDict(from_attributes=True)
+
+    volume_threshold_percent: int
+    lun_threshold_percent: int
+    snapmirror_lag_threshold_minutes: int
+    scope: str
 
 
 class AlertConfigUpdate(BaseModel):
-    capacity_threshold_percent: int = Field(ge=1, le=100)
+    volume_threshold_percent: int = Field(ge=1, le=100)
+    lun_threshold_percent: int = Field(ge=1, le=100)
+    snapmirror_lag_threshold_minutes: int = Field(ge=1, le=100_000)
+    scope: str

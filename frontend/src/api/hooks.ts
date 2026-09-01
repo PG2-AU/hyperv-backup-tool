@@ -824,6 +824,18 @@ export function useUpdateAlertConfig() {
   });
 }
 
+// Sofort-Check nach einer Aktion auf der Alarme-Seite (z.B. Volume
+// vergrößert) -- Discovery + Alert-Check laufen serverseitig synchron,
+// dauert dadurch spuerbar (mehrere Sekunden je Cluster), daher fire-and-
+// forget mit Ladeindikator statt den Nutzer zu blockieren.
+export function useRecheckAlerts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await apiClient.post("/alerts/recheck")).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+  });
+}
+
 export function useSchedulerConfig() {
   return useQuery({
     queryKey: ["scheduler-config"],

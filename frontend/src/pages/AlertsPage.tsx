@@ -14,6 +14,7 @@ const TYPE_LABEL: Record<AlertType, string> = {
   hyperv_cluster_unhealthy: "Hyper-V-Cluster",
   netapp_cluster_unhealthy: "NetApp-Cluster",
   snapmirror_unhealthy: "SnapMirror",
+  snapmirror_lag_exceeded: "SnapMirror-Lag",
   backup_failed: "Backup fehlgeschlagen",
 };
 
@@ -23,6 +24,7 @@ const TYPE_COLOR: Record<AlertType, string> = {
   hyperv_cluster_unhealthy: "red",
   netapp_cluster_unhealthy: "red",
   snapmirror_unhealthy: "grape",
+  snapmirror_lag_exceeded: "grape",
   backup_failed: "red",
 };
 
@@ -61,7 +63,7 @@ function AlertAction({ alert }: { alert: Alert }) {
       </Tooltip>
     );
   }
-  if (alert.alert_type === "snapmirror_unhealthy") {
+  if (alert.alert_type === "snapmirror_unhealthy" || alert.alert_type === "snapmirror_lag_exceeded") {
     return (
       <Tooltip label="Zu SnapMirror-Beziehungen">
         <ActionIcon component={Link} to="/storage?tab=snapmirror" variant="subtle">
