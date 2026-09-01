@@ -129,7 +129,7 @@ die Datei kann direkt per `podman cp` in den laufenden Container gelegt
 werden:
 
 ```bash
-# Auf dem WSL2-Host: Datei z.B. per Windows-Explorer unter
+# Auf dem WSL2-Host: Datei(en) z.B. per Windows-Explorer unter
 # \\wsl.localhost\<Distro-Name>\home\<Benutzer>\ ablegen, dann:
 podman cp ~/winrm-ca.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem
 ```
@@ -143,11 +143,26 @@ podman-compose up -d
 Da `hvnb-certs` ein benanntes Volume ist, übersteht die Datei den
 Container-Neustart in Schritt 2 unabhängig von der Reihenfolge der beiden
 Befehle. Settings > Updates zeigt anschließend unter "WinRM
-CA-Trust-Datei" den konfigurierten Pfad zur Kontrolle an. Bei mehreren
-Knoten mit jeweils eigenem, nicht CA-signiertem Zertifikat: alle
-Host-Zertifikate hintereinander in dieselbe PEM-Datei einfügen (eine
-PEM-Datei kann mehrere Zertifikate enthalten) — mit einer internen CA
-reicht dagegen der eine CA-Root für alle Knoten.
+CA-Trust-Datei" den konfigurierten Pfad zur Kontrolle an.
+
+**Mehrere Knoten mit jeweils eigenem, selbstsigniertem Zertifikat** (kein
+gemeinsamer CA-Root): `HVNB_WINRM_CA_TRUST_PATH` zeigt auf genau EINEN
+Pfad — die einzelnen PEMs müssen daher vorher zu einer einzigen
+Bundle-Datei zusammengefügt werden (eine PEM-Datei kann beliebig viele
+aneinandergehängte Zertifikate enthalten, genau wie ein öffentliches
+CA-Bundle). Die obigen Befehle also **nicht** pro Host wiederholen
+(überschreibt sonst jedes Mal die vorherige Datei) — stattdessen einmalig:
+
+```bash
+# Alle einzeln uebertragenen Host-PEMs in einem Ordner sammeln, z.B.
+# ~/winrm-certs/host1.pem, host2.pem, ... , dann zu einer Datei
+# zusammenfassen:
+cat ~/winrm-certs/*.pem > ~/winrm-ca-bundle.pem
+podman cp ~/winrm-ca-bundle.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem
+```
+
+Mit einer internen CA reicht dagegen der eine, einmalig exportierte
+CA-Root für alle Knoten — kein Zusammenführen nötig.
 
 Zusätzlich:
 
