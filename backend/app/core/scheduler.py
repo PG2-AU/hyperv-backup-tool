@@ -363,17 +363,29 @@ def _parse_lag_minutes(lag_time: str | None) -> int | None:
 
 def _hyperv_referenced_keys(db: Session) -> tuple[set[str], set[tuple[str, str, str]]]:
     """Ermittelt, welche NetApp-LUNs/-Volumes tatsaechlich als Hyper-V-
-    Storage genutzt werden -- ueber die beim Discovery-Lauf gesetzte
-    HyperVCsv.netapp_lun_id-Zuordnung (siehe hyperv_clusters.py
-    discover_cluster). Liefert (referenzierte LUN-IDs, referenzierte
-    (cluster_id, svm_name, volume_name)-Tripel) fuer AlertScope.
-    HYPERV_REFERENCED in run_alert_check."""
-    referenced_lun_ids = {
-        c.netapp_lun_id for c in db.query(HyperVCsv).filter(HyperVCsv.netapp_lun_id.isnot(None)).all()
+    Storage genutzt werden -- fuer AlertScope.HYPERV_REFERENCED in
+    run_alert_check. Liefert (referenzierte LUN-IDs, referenzierte
+    (cluster_id, svm_name, volume_name)-Tripel).
+
+    Matcht bewusst ueber HyperVCsv.disk_serial_number <-> NetAppLun.
+    serial_number (dieselbe stabile Windows-Disk-Seriennummer, ueber die
+    auch die urspruengliche Zuordnung beim Hyper-V-Discovery-Lauf erfolgt,
+    siehe hyperv_clusters.py discover_cluster) -- NICHT ueber
+    HyperVCsv.netapp_lun_id. Dieses Feld verweist auf NetAppLun.id, die
+    interne Datenbank-ID, die bei JEDER NetApp-LUN-Discovery komplett neu
+    vergeben wird (Loeschen + Neuanlegen aller Zeilen). Ein reiner
+    ID-Abgleich lieferte dadurch faelschlich eine leere Referenzmenge,
+    sobald eine NetApp-Discovery zwischen zwei Hyper-V-Discovery-Laeufen
+    lag -- live vom Nutzer aufgedeckt (Schwellwert 75% richtig konfiguriert,
+    aber trotz Volumes/LUNs bei 80% keine einzige Warnung)."""
+    referenced_serials = {
+        c.disk_serial_number for c in db.query(HyperVCsv).filter(HyperVCsv.disk_serial_number.isnot(None)).all()
     }
+    referenced_lun_ids: set[str] = set()
     referenced_volume_keys: set[tuple[str, str, str]] = set()
-    if referenced_lun_ids:
-        for lun in db.query(NetAppLun).filter(NetAppLun.id.in_(referenced_lun_ids)).all():
+    if referenced_serials:
+        for lun in db.query(NetAppLun).filter(NetAppLun.serial_number.in_(referenced_serials)).all():
+            referenced_lun_ids.add(lun.id)
             if lun.svm_name and lun.volume_name:
                 referenced_volume_keys.add((lun.cluster_id, lun.svm_name, lun.volume_name))
     return referenced_lun_ids, referenced_volume_keys
