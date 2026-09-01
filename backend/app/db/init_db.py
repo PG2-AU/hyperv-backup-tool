@@ -6,11 +6,13 @@ import os
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.rbac import DEFAULT_ROLES
 from app.core.security import hash_password
 from app.db.base import Base
 from app.db.session import engine
 from app.models.role import Role, RoleAssignment
+from app.models.scheduler_config import SchedulerConfig
 from app.models.snapmirror_label import DEFAULT_SNAPMIRROR_LABELS, SnapMirrorLabel
 from app.models.user import User, UserSource
 
@@ -132,3 +134,22 @@ def init_db(db: Session) -> None:
         if existing_label is None:
             db.add(SnapMirrorLabel(name=label_name))
     db.commit()
+
+    # SchedulerConfig-Singleton: Startwerte aus den bisherigen ENV-Variablen
+    # uebernehmen (siehe app.core.config), damit eine bereits ueber .env
+    # angepasste Instanz beim Umstieg auf die GUI-Konfiguration (Settings >
+    # Hintergrundjobs) nicht stillschweigend auf die Hardcoded-Defaults
+    # zurueckfaellt. retention_cleanup_hour hatte vorher kein eigenes Feld
+    # (lief immer 15min nach snapshot_reconcile_hour) -- als Startwert daher
+    # bewusst derselbe Wert.
+    if db.query(SchedulerConfig).first() is None:
+        settings = get_settings()
+        db.add(
+            SchedulerConfig(
+                healthcheck_interval_minutes=settings.healthcheck_interval_minutes,
+                discovery_interval_minutes=settings.discovery_interval_minutes,
+                snapshot_reconcile_hour=settings.snapshot_reconcile_hour,
+                retention_cleanup_hour=settings.snapshot_reconcile_hour,
+            )
+        )
+        db.commit()

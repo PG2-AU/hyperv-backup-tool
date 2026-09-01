@@ -40,6 +40,7 @@ from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.restore_run import RestoreRun, RestoreStatus
 from app.models.schedule import Schedule, ScheduleType
+from app.models.scheduler_config import SchedulerConfig
 from app.models.scheduler_status import SchedulerStatus
 from app.models.system_log import SystemLogEvent
 from app.models.vm_recreate_run import VmRecreateRun
@@ -497,23 +498,38 @@ def run_scheduled_backups() -> None:
 def start_scheduler() -> BackgroundScheduler:
     global _scheduler
     settings = get_settings()
+
+    # Zeitplaene der vier folgenden Jobs sind GUI-konfigurierbar (Settings >
+    # Hintergrundjobs, siehe app.api.routes.scheduler_config) -- die
+    # SchedulerConfig-Singleton-Zeile existiert bereits durch init_db()
+    # (Startwerte aus den bisherigen ENV-Variablen), env-Werte hier nur als
+    # Sicherheitsnetz falls init_db() aus irgendeinem Grund noch nicht
+    # gelaufen ist. Eine spaetere Aenderung ueber die GUI ruft
+    # scheduler.reschedule_job() live auf denselben Job-IDs auf, statt den
+    # Container neu zu starten.
+    startup_db = SessionLocal()
+    try:
+        config = startup_db.query(SchedulerConfig).first()
+    finally:
+        startup_db.close()
+    hc_interval = config.healthcheck_interval_minutes if config else settings.healthcheck_interval_minutes
+    discovery_interval = config.discovery_interval_minutes if config else settings.discovery_interval_minutes
+    snapshot_hour = config.snapshot_reconcile_hour if config else settings.snapshot_reconcile_hour
+    retention_hour = config.retention_cleanup_hour if config else settings.snapshot_reconcile_hour
+
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(
-        run_health_checks, IntervalTrigger(minutes=settings.healthcheck_interval_minutes),
+        run_health_checks, IntervalTrigger(minutes=hc_interval),
         id="health-check", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
-        run_discovery, IntervalTrigger(minutes=settings.discovery_interval_minutes),
+        run_discovery, IntervalTrigger(minutes=discovery_interval),
         id="discovery", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
-        run_snapshot_reconciliation, CronTrigger(hour=settings.snapshot_reconcile_hour, minute=0),
+        run_snapshot_reconciliation, CronTrigger(hour=snapshot_hour, minute=0),
         id="snapshot-reconciliation", replace_existing=True, max_instances=1,
     )
-    # 15 Minuten nach dem Snapshot-Abgleich, damit Retention nicht gegen
-    # denselben Volume-Bestand parallel zum Abgleich arbeitet (nicht
-    # zwingend noetig, aber vermeidet ueberlappende NetApp-API-Last).
-    retention_hour = settings.snapshot_reconcile_hour
     scheduler.add_job(
         run_retention_cleanup, CronTrigger(hour=retention_hour, minute=15),
         id="retention-cleanup", replace_existing=True, max_instances=1,
@@ -535,9 +551,9 @@ def start_scheduler() -> BackgroundScheduler:
     try:
         _log(
             startup_db,
-            f"gestartet (Health-Check alle {settings.healthcheck_interval_minutes}min, "
-            f"Discovery alle {settings.discovery_interval_minutes}min, "
-            f"Snapshot-Abgleich taeglich um {settings.snapshot_reconcile_hour:02d}:00 UTC, "
+            f"gestartet (Health-Check alle {hc_interval}min, "
+            f"Discovery alle {discovery_interval}min, "
+            f"Snapshot-Abgleich taeglich um {snapshot_hour:02d}:00 UTC, "
             f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
             f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone}, "
             f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h), "
@@ -554,3 +570,10 @@ def shutdown_scheduler() -> None:
     if _scheduler is not None:
         _scheduler.shutdown(wait=False)
         _scheduler = None
+
+
+def get_scheduler() -> BackgroundScheduler | None:
+    """Zugriff auf die laufende Scheduler-Instanz fuer app.api.routes.
+    scheduler_config, um bei einer Config-Aenderung ueber die GUI
+    scheduler.reschedule_job() live aufzurufen -- ohne Container-Neustart."""
+    return _scheduler

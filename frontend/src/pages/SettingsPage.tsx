@@ -36,6 +36,7 @@ import {
 import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useUsers, type UserRead } from "@/api/hooks.settings";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { EmailSettingsTab } from "@/components/EmailSettingsTab";
+import { SchedulerConfigTab } from "@/components/SchedulerConfigTab";
 import { HyperVClusterFormModal } from "@/components/HyperVClusterFormModal";
 import { NetAppScheduleFormModal } from "@/components/NetAppScheduleFormModal";
 import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
@@ -311,6 +312,7 @@ export function SettingsPage() {
           <Tabs.Tab value="ad">Active Directory</Tabs.Tab>
           <Tabs.Tab value="hyperv">Hyper-V-Hosts</Tabs.Tab>
           <Tabs.Tab value="email">E-Mail</Tabs.Tab>
+          <Tabs.Tab value="scheduler">Hintergrundjobs</Tabs.Tab>
           <Tabs.Tab value="display">Ansicht</Tabs.Tab>
           <Tabs.Tab value="updates">Updates (Git)</Tabs.Tab>
         </Tabs.List>
@@ -706,6 +708,10 @@ export function SettingsPage() {
 
         <Tabs.Panel value="email" pt="md">
           <EmailSettingsTab />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="scheduler" pt="md">
+          <SchedulerConfigTab />
         </Tabs.Panel>
 
         <Tabs.Panel value="display" pt="md">

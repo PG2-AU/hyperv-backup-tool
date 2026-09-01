@@ -508,6 +508,21 @@ export interface BackupPolicy {
   created_at: string;
 }
 
+export interface SchedulerConfig {
+  healthcheck_interval_minutes: number;
+  discovery_interval_minutes: number;
+  snapshot_reconcile_hour: number;
+  retention_cleanup_hour: number;
+  updated_at?: string | null;
+}
+
+export interface SchedulerConfigWritePayload {
+  healthcheck_interval_minutes: number;
+  discovery_interval_minutes: number;
+  snapshot_reconcile_hour: number;
+  retention_cleanup_hour: number;
+}
+
 export interface EmailConfig {
   id: string;
   enabled: boolean;

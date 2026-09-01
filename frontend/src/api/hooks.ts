@@ -52,6 +52,8 @@ import type {
   ScheduleType,
   SnapMirrorLabel,
   SnapMirrorRelationship,
+  SchedulerConfig,
+  SchedulerConfigWritePayload,
   SvmPeerCreate,
   UpcomingJob,
   Vm,
@@ -793,5 +795,21 @@ export function useUpdateEmailConfig() {
 export function useSendTestEmail() {
   return useMutation({
     mutationFn: async (recipient: string) => (await apiClient.post("/email-config/test", { recipient })).data,
+  });
+}
+
+export function useSchedulerConfig() {
+  return useQuery({
+    queryKey: ["scheduler-config"],
+    queryFn: async () => (await apiClient.get<SchedulerConfig>("/scheduler-config")).data,
+  });
+}
+
+export function useUpdateSchedulerConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: SchedulerConfigWritePayload) =>
+      (await apiClient.put<SchedulerConfig>("/scheduler-config", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scheduler-config"] }),
   });
 }

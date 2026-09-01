@@ -14,6 +14,7 @@ from app.api.routes import (
     resource_groups,
     restore,
     restore_infra,
+    scheduler_config,
     schedules,
     search,
     settings as settings_routes,
@@ -71,6 +72,7 @@ app.include_router(restore_infra.router)
 app.include_router(restore.router)
 app.include_router(file_restore.router)
 app.include_router(email_config.router)
+app.include_router(scheduler_config.router)
 
 
 @app.get("/api/health")
