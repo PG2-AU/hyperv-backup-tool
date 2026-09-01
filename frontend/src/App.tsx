@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShellLayout } from "@/layout/AppShellLayout";
 import { LoginPage } from "@/pages/LoginPage";
 import { RequireAuth } from "@/layout/RequireAuth";
+import { AlertsPage } from "@/pages/AlertsPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { VmsPage } from "@/pages/VmsPage";
 import { StoragePage } from "@/pages/StoragePage";
@@ -23,6 +24,7 @@ export default function App() {
         }
       >
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/alerts" element={<AlertsPage />} />
         <Route path="/vms" element={<VmsPage />} />
         <Route path="/storage" element={<StoragePage />} />
         <Route path="/jobs" element={<JobsPage />} />

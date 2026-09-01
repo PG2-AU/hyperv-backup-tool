@@ -31,13 +31,14 @@ from app.api.routes.netapp_clusters import _refresh_status as _refresh_netapp_st
 from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
 from app.core.config import get_settings
 from app.db.session import SessionLocal
+from app.models.alert import Alert, AlertConfig, AlertStatus, AlertType
 from app.models.backup_policy import BackupPolicy, RetentionType
 from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapshotDestination, JobStatus
 from app.models.email_config import EmailConfig
 from app.models.file_restore_run import FileRestoreRun
-from app.models.hyperv_cluster import HyperVCluster
-from app.models.netapp_cluster import NetAppCluster
-from app.models.netapp_discovery import NetAppSnapMirrorRelationship, NetAppVolume
+from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
+from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
+from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.restore_run import RestoreRun, RestoreStatus
 from app.models.schedule import Schedule, ScheduleType
 from app.models.scheduler_config import SchedulerConfig
@@ -341,6 +342,105 @@ def run_retention_cleanup() -> None:
         db.close()
 
 
+def run_alert_check() -> None:
+    """Prueft die vier Bedingungen, die im Dashboard unter 'Warnungen'
+    gezaehlt werden (siehe app.api.routes.alerts): Kapazitaets-
+    Schwellwerte (Volume/LUN), ungesunde Hyper-V-/NetApp-Cluster, ungesunde
+    SnapMirror-Beziehungen. Nutzt ausschliesslich bereits durch Health-
+    Check/Discovery aktualisierte DB-Werte (kein eigener NetApp-/WinRM-
+    Aufruf hier) -- legt bei neu erkannten Verstoessen einen Alert an und
+    markiert nicht mehr zutreffende als resolved (object_key verhindert
+    doppelte aktive Alarme fuer dasselbe Objekt). Fehlgeschlagene
+    Backup-Laeufe sind bewusst NICHT Teil dieses Checks, siehe
+    app.models.alert."""
+    db = SessionLocal()
+    try:
+        config = db.query(AlertConfig).first()
+        threshold = config.capacity_threshold_percent if config else 90
+        now = datetime.now(timezone.utc)
+
+        active_by_key: dict[tuple[AlertType, str], Alert] = {
+            (a.alert_type, a.object_key): a for a in db.query(Alert).filter(Alert.status == AlertStatus.ACTIVE).all()
+        }
+        seen_keys: set[tuple[AlertType, str]] = set()
+        netapp_cluster_names = {c.id: c.name for c in db.query(NetAppCluster).all()}
+
+        def _trigger(alert_type: AlertType, key: str, **kwargs) -> None:
+            db.add(Alert(alert_type=alert_type, object_key=key, status=AlertStatus.ACTIVE, triggered_at=now, **kwargs))
+            _log(db, f"Neue Warnung ({alert_type.value}): {kwargs.get('object_name')} -- {kwargs.get('message')}", level="WARNING")
+
+        for vol in db.query(NetAppVolume).filter(NetAppVolume.percent_used.isnot(None)).all():
+            if vol.percent_used < threshold:
+                continue
+            key = vol.uuid or f"{vol.cluster_id}:{vol.name}"
+            seen_keys.add((AlertType.CAPACITY_VOLUME, key))
+            if (AlertType.CAPACITY_VOLUME, key) not in active_by_key:
+                _trigger(
+                    AlertType.CAPACITY_VOLUME, key, object_name=vol.name,
+                    netapp_cluster_id=vol.cluster_id, netapp_cluster_name=netapp_cluster_names.get(vol.cluster_id),
+                    svm_name=vol.svm_name, message=f"Volume zu {vol.percent_used}% belegt (Schwellwert {threshold}%)",
+                    threshold_percent=threshold, triggered_percent=vol.percent_used,
+                )
+
+        for lun in db.query(NetAppLun).filter(NetAppLun.used_bytes.isnot(None), NetAppLun.size_bytes.isnot(None)).all():
+            if not lun.size_bytes:
+                continue
+            percent = round(lun.used_bytes / lun.size_bytes * 100)
+            if percent < threshold:
+                continue
+            key = lun.uuid or f"{lun.cluster_id}:{lun.name}"
+            seen_keys.add((AlertType.CAPACITY_LUN, key))
+            if (AlertType.CAPACITY_LUN, key) not in active_by_key:
+                _trigger(
+                    AlertType.CAPACITY_LUN, key, object_name=lun.name,
+                    netapp_cluster_id=lun.cluster_id, netapp_cluster_name=netapp_cluster_names.get(lun.cluster_id),
+                    svm_name=lun.svm_name, message=f"LUN zu {percent}% belegt (Schwellwert {threshold}%)",
+                    threshold_percent=threshold, triggered_percent=percent,
+                )
+
+        for cluster in db.query(HyperVCluster).all():
+            if cluster.health == HyperVClusterHealth.HEALTHY:
+                continue
+            seen_keys.add((AlertType.HYPERV_CLUSTER_UNHEALTHY, cluster.id))
+            if (AlertType.HYPERV_CLUSTER_UNHEALTHY, cluster.id) not in active_by_key:
+                _trigger(
+                    AlertType.HYPERV_CLUSTER_UNHEALTHY, cluster.id, object_name=cluster.name,
+                    hyperv_cluster_id=cluster.id, message=f"Cluster-Status: {cluster.health.value}",
+                )
+
+        for cluster in db.query(NetAppCluster).all():
+            if cluster.health == NetAppClusterHealth.HEALTHY:
+                continue
+            seen_keys.add((AlertType.NETAPP_CLUSTER_UNHEALTHY, cluster.id))
+            if (AlertType.NETAPP_CLUSTER_UNHEALTHY, cluster.id) not in active_by_key:
+                _trigger(
+                    AlertType.NETAPP_CLUSTER_UNHEALTHY, cluster.id, object_name=cluster.name,
+                    netapp_cluster_id=cluster.id, netapp_cluster_name=cluster.name,
+                    message=f"Cluster-Status: {cluster.health.value}",
+                )
+
+        for rel in db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.healthy.is_(False)).all():
+            key = rel.uuid or rel.id
+            seen_keys.add((AlertType.SNAPMIRROR_UNHEALTHY, key))
+            if (AlertType.SNAPMIRROR_UNHEALTHY, key) not in active_by_key:
+                name = f"{rel.source_path or '?'} -> {rel.destination_path or '?'}"
+                _trigger(
+                    AlertType.SNAPMIRROR_UNHEALTHY, key, object_name=name,
+                    netapp_cluster_id=rel.cluster_id, netapp_cluster_name=netapp_cluster_names.get(rel.cluster_id),
+                    message=f"SnapMirror-Beziehung ungesund (Status: {rel.state or 'unbekannt'})",
+                )
+
+        for (alert_type, key), alert in active_by_key.items():
+            if (alert_type, key) not in seen_keys:
+                alert.status = AlertStatus.RESOLVED
+                alert.resolved_at = now
+                _log(db, f"Warnung aufgeloest ({alert_type.value}): {alert.object_name}")
+
+        db.commit()
+    finally:
+        db.close()
+
+
 def run_file_restore_expiry() -> None:
     """Sicherheitsnetz fuer Datei-Restore-Sessions (siehe
     app.api.routes.file_restore): raeumt gemountete VHDX automatisch auf,
@@ -546,6 +646,10 @@ def start_scheduler() -> BackgroundScheduler:
         run_daily_email_summary, IntervalTrigger(minutes=15),
         id="daily-email-summary", replace_existing=True, max_instances=1,
     )
+    scheduler.add_job(
+        run_alert_check, IntervalTrigger(minutes=15),
+        id="alert-check", replace_existing=True, max_instances=1,
+    )
     scheduler.start()
     startup_db = SessionLocal()
     try:
@@ -557,7 +661,8 @@ def start_scheduler() -> BackgroundScheduler:
             f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
             f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone}, "
             f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h), "
-            f"E-Mail-Tageszusammenfassung alle 15min geprueft)",
+            f"E-Mail-Tageszusammenfassung alle 15min geprueft, "
+            f"Warnungs-Check (Kapazitaet/Cluster/SnapMirror) alle 15min)",
         )
     finally:
         startup_db.close()

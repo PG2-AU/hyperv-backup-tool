@@ -90,6 +90,7 @@ def init_db(db: Session) -> None:
         {"target_vm_name": "VARCHAR(255)", "disconnect_network": "BOOLEAN", "destination_csv_name": "VARCHAR(255)"},
     )
     _add_missing_columns(engine, "backup_policies", {"email_alert_on_failure": "BOOLEAN"})
+    _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     # _add_missing_columns liefert bei bereits vorhandenen Zeilen NULL statt
     # False (kein SQL-Default beim ALTER TABLE) -- BackupPolicyRead.
     # email_alert_on_failure ist aber ein Pflicht-bool (nicht optional), ohne

@@ -1,0 +1,172 @@
+import { useState } from "react";
+import { ActionIcon, Badge, Button, Group, Paper, SegmentedControl, Table, Text, Title, Tooltip } from "@mantine/core";
+import { IconExternalLink, IconRefresh } from "@tabler/icons-react";
+import { Link, useNavigate } from "react-router-dom";
+
+import { useAlerts } from "@/api/hooks";
+import { SearchInput } from "@/components/SearchInput";
+import type { Alert, AlertType } from "@/api/types";
+import { matchesAllColumns } from "@/utils/search";
+
+const TYPE_LABEL: Record<AlertType, string> = {
+  capacity_volume: "Kapazität (Volume)",
+  capacity_lun: "Kapazität (LUN)",
+  hyperv_cluster_unhealthy: "Hyper-V-Cluster",
+  netapp_cluster_unhealthy: "NetApp-Cluster",
+  snapmirror_unhealthy: "SnapMirror",
+  backup_failed: "Backup fehlgeschlagen",
+};
+
+const TYPE_COLOR: Record<AlertType, string> = {
+  capacity_volume: "orange",
+  capacity_lun: "orange",
+  hyperv_cluster_unhealthy: "red",
+  netapp_cluster_unhealthy: "red",
+  snapmirror_unhealthy: "grape",
+  backup_failed: "red",
+};
+
+function AlertAction({ alert }: { alert: Alert }) {
+  const navigate = useNavigate();
+
+  if (alert.alert_type === "capacity_volume" && alert.object_uuid) {
+    return (
+      <Button size="xs" variant="light" onClick={() => navigate(`/storage?tab=volumes&editUuid=${alert.object_uuid}`)}>
+        Volume vergrößern
+      </Button>
+    );
+  }
+  if (alert.alert_type === "capacity_lun" && alert.object_uuid) {
+    return (
+      <Button size="xs" variant="light" onClick={() => navigate(`/storage?tab=luns&editUuid=${alert.object_uuid}`)}>
+        LUN vergrößern
+      </Button>
+    );
+  }
+  if (alert.alert_type === "hyperv_cluster_unhealthy") {
+    return (
+      <Tooltip label="Zu Hyper-V-Hosts">
+        <ActionIcon component={Link} to="/settings?tab=hyperv" variant="subtle">
+          <IconExternalLink size={16} />
+        </ActionIcon>
+      </Tooltip>
+    );
+  }
+  if (alert.alert_type === "netapp_cluster_unhealthy") {
+    return (
+      <Tooltip label="Zu Storage > Cluster">
+        <ActionIcon component={Link} to="/storage?tab=clusters" variant="subtle">
+          <IconExternalLink size={16} />
+        </ActionIcon>
+      </Tooltip>
+    );
+  }
+  if (alert.alert_type === "snapmirror_unhealthy") {
+    return (
+      <Tooltip label="Zu SnapMirror-Beziehungen">
+        <ActionIcon component={Link} to="/storage?tab=snapmirror" variant="subtle">
+          <IconExternalLink size={16} />
+        </ActionIcon>
+      </Tooltip>
+    );
+  }
+  if (alert.alert_type === "backup_failed") {
+    return (
+      <Tooltip label="Zum Job-Verlauf">
+        <ActionIcon component={Link} to="/jobs?tab=runs" variant="subtle">
+          <IconExternalLink size={16} />
+        </ActionIcon>
+      </Tooltip>
+    );
+  }
+  return null;
+}
+
+export function AlertsPage() {
+  const { data: alerts, isFetching, refetch } = useAlerts();
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "resolved">("active");
+  const [search, setSearch] = useState("");
+
+  const filtered = (alerts ?? [])
+    .filter((a) => statusFilter === "all" || a.status === statusFilter)
+    .filter((a) => matchesAllColumns(a, search));
+
+  return (
+    <Paper p="md">
+      <Group justify="space-between" mb="sm">
+        <Title order={5}>Alarme</Title>
+        <Tooltip label="Aktualisieren">
+          <ActionIcon variant="default" onClick={() => refetch()} loading={isFetching}>
+            <IconRefresh size={16} />
+          </ActionIcon>
+        </Tooltip>
+      </Group>
+      <Text size="xs" c="dimmed" mb="md">
+        Kapazitäts-Schwellwerte (Volume/LUN), Cluster-/SnapMirror-Gesundheit und fehlgeschlagene Backup-Läufe -- aktuelle und
+        historische Warnungen an einer Stelle.
+      </Text>
+
+      <Group justify="space-between" mb="sm">
+        <SearchInput value={search} onChange={setSearch} placeholder="Alarme durchsuchen…" />
+        <SegmentedControl
+          size="xs"
+          value={statusFilter}
+          onChange={(v) => setStatusFilter(v as typeof statusFilter)}
+          data={[
+            { label: "Aktiv", value: "active" },
+            { label: "Aufgelöst", value: "resolved" },
+            { label: "Alle", value: "all" },
+          ]}
+        />
+      </Group>
+
+      <Table.ScrollContainer minWidth={900}>
+        <Table striped highlightOnHover>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Typ</Table.Th>
+              <Table.Th>Objekt</Table.Th>
+              <Table.Th>Meldung</Table.Th>
+              <Table.Th>Status</Table.Th>
+              <Table.Th>Aufgetreten</Table.Th>
+              <Table.Th>Behoben</Table.Th>
+              <Table.Th>Aktion</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {filtered.length === 0 && (
+              <Table.Tr>
+                <Table.Td colSpan={7}>
+                  <Text size="sm" c="dimmed">
+                    Keine Alarme für die aktuellen Filter.
+                  </Text>
+                </Table.Td>
+              </Table.Tr>
+            )}
+            {filtered.map((alert) => (
+              <Table.Tr key={alert.id}>
+                <Table.Td>
+                  <Badge color={TYPE_COLOR[alert.alert_type]} variant="light">
+                    {TYPE_LABEL[alert.alert_type]}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>{alert.object_name}</Table.Td>
+                <Table.Td>{alert.message}</Table.Td>
+                <Table.Td>
+                  <Badge color={alert.status === "active" ? "red" : "green"} variant="light">
+                    {alert.status === "active" ? "Aktiv" : "Aufgelöst"}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>{new Date(alert.triggered_at).toLocaleString("de-DE")}</Table.Td>
+                <Table.Td>{alert.resolved_at ? new Date(alert.resolved_at).toLocaleString("de-DE") : "-"}</Table.Td>
+                <Table.Td>
+                  <AlertAction alert={alert} />
+                </Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
+    </Paper>
+  );
+}

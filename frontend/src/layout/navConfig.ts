@@ -1,4 +1,5 @@
 import {
+  IconAlertTriangle,
   IconDatabase,
   IconDatabaseImport,
   IconLayoutDashboard,
@@ -27,6 +28,12 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Dashboard",
     icon: IconLayoutDashboard,
     path: "/",
+  },
+  {
+    label: "Alarms",
+    icon: IconAlertTriangle,
+    path: "/alerts",
+    searchContext: "alerts",
   },
   {
     label: "Inventory",

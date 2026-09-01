@@ -508,6 +508,40 @@ export interface BackupPolicy {
   created_at: string;
 }
 
+export type AlertType =
+  | "capacity_volume"
+  | "capacity_lun"
+  | "hyperv_cluster_unhealthy"
+  | "netapp_cluster_unhealthy"
+  | "snapmirror_unhealthy"
+  | "backup_failed";
+
+export interface Alert {
+  id: string;
+  alert_type: AlertType;
+  object_name: string;
+  netapp_cluster_id?: string | null;
+  netapp_cluster_name?: string | null;
+  hyperv_cluster_id?: string | null;
+  svm_name?: string | null;
+  message: string;
+  threshold_percent?: number | null;
+  triggered_percent?: number | null;
+  status: "active" | "resolved";
+  triggered_at: string;
+  resolved_at?: string | null;
+  object_uuid?: string | null;
+  run_id?: string | null;
+}
+
+export interface AlertConfig {
+  capacity_threshold_percent: number;
+}
+
+export interface AlertConfigWritePayload {
+  capacity_threshold_percent: number;
+}
+
 export interface SchedulerConfig {
   healthcheck_interval_minutes: number;
   discovery_interval_minutes: number;

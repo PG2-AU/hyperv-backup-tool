@@ -149,6 +149,7 @@ class NetAppLunRead(BaseModel):
     volume_name: str | None = None
     state: str | None = None
     size_bytes: int | None = None
+    used_bytes: int | None = None
     os_type: str | None = None
     mapped_igroups: str | None = None
     serial_number: str | None = None

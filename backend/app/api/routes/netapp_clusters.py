@@ -99,7 +99,7 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
                 NetAppLun(
                     cluster_id=cluster.id, uuid=lun.uuid, name=lun.name, svm_name=lun.svm_name,
                     volume_name=lun.volume_name, state=lun.state, size_bytes=lun.size_bytes,
-                    os_type=lun.os_type, mapped_igroups=lun.mapped_igroups,
+                    used_bytes=lun.used_bytes, os_type=lun.os_type, mapped_igroups=lun.mapped_igroups,
                     serial_number=lun.serial_number, last_seen_at=now,
                 )
             )

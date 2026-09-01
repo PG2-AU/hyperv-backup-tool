@@ -84,7 +84,7 @@ def list_luns(db: Session = Depends(get_db), user=Depends(require_permission(Per
         NetAppLunRead(
             id=l.id, cluster_id=l.cluster_id, cluster_name=names.get(l.cluster_id, "?"),
             uuid=l.uuid, name=l.name, svm_name=l.svm_name, volume_name=l.volume_name,
-            state=l.state, size_bytes=l.size_bytes, os_type=l.os_type, mapped_igroups=l.mapped_igroups,
+            state=l.state, size_bytes=l.size_bytes, used_bytes=l.used_bytes, os_type=l.os_type, mapped_igroups=l.mapped_igroups,
             serial_number=l.serial_number, last_seen_at=l.last_seen_at,
         )
         for l in db.query(NetAppLun).order_by(NetAppLun.name).all()

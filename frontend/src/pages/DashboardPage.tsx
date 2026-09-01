@@ -11,6 +11,7 @@ import {
 import { Link } from "react-router-dom";
 
 import {
+  useAlerts,
   useCsvs,
   useHyperVClusters,
   useJobRuns,
@@ -65,15 +66,17 @@ function StatCard({
   value,
   sub,
   color,
+  to,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   sub?: string;
   color?: string;
+  to?: string;
 }) {
   return (
-    <Paper p="sm">
+    <Paper p="sm" component={to ? Link : undefined} to={to as string} style={to ? { cursor: "pointer" } : undefined}>
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <div style={{ overflow: "hidden" }}>
           <Text size="xs" c="dimmed" tt="uppercase" fw={700} truncate>
@@ -104,9 +107,9 @@ export function DashboardPage() {
   const { data: svms } = useSvms();
   const { data: volumes } = useVolumes();
   const { data: relationships } = useSnapMirrorRelationships();
+  const { data: alerts } = useAlerts();
   const [jobsRange, setJobsRange] = useState<string>("24h");
 
-  const failedRuns = runs?.filter((r) => r.status === "failed" || r.status === "cleaned_up_after_failure").length ?? 0;
   const protectedVms = vms?.filter((v) => v.protected).length ?? 0;
 
   const lastSuccessfulRun = runs
@@ -129,9 +132,12 @@ export function DashboardPage() {
     );
   });
 
-  const unhealthyClusters = hyperVClusters?.filter((c) => c.health !== "healthy").length ?? 0;
   const unhealthyRelationships = referencedRelationships.filter((r) => !r.healthy).length;
-  const warningsCount = failedRuns + unhealthyClusters + unhealthyRelationships;
+  // Ersetzt die vorherige rein clientseitige Zusammenzaehlung (fehlgeschlagene
+  // Laeufe + ungesunde Cluster + ungesunde Beziehungen) durch die zentrale,
+  // auch fuer die Alarme-Seite genutzte Quelle (siehe app.core.scheduler.
+  // run_alert_check) -- deckt zusaetzlich Kapazitaets-Warnungen ab.
+  const activeAlertsCount = (alerts ?? []).filter((a) => a.status === "active").length;
 
   const snapMirrorAllHealthy = referencedRelationships.length > 0 && unhealthyRelationships === 0;
 
@@ -201,9 +207,10 @@ export function DashboardPage() {
         <StatCard
           icon={<IconAlertTriangle size={24} />}
           label="Warnungen"
-          value={String(warningsCount)}
-          sub={warningsCount > 0 ? "Benoetigen Aufmerksamkeit" : undefined}
-          color={warningsCount > 0 ? "red" : undefined}
+          value={String(activeAlertsCount)}
+          sub={activeAlertsCount > 0 ? "Benötigen Aufmerksamkeit -- Details ansehen" : undefined}
+          color={activeAlertsCount > 0 ? "red" : undefined}
+          to="/alerts"
         />
       </SimpleGrid>
 

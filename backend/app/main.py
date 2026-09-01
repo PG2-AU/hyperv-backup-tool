@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
+    alerts,
     auth,
     email_config,
     file_restore,
@@ -73,6 +74,7 @@ app.include_router(restore.router)
 app.include_router(file_restore.router)
 app.include_router(email_config.router)
 app.include_router(scheduler_config.router)
+app.include_router(alerts.router)
 
 
 @app.get("/api/health")

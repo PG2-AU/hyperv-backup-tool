@@ -69,6 +69,7 @@ class NetAppLun(Base):
     volume_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     state: Mapped[str | None] = mapped_column(String(50), nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     os_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     mapped_igroups: Mapped[str | None] = mapped_column(String(500), nullable=True)
     serial_number: Mapped[str | None] = mapped_column(String(100), nullable=True)

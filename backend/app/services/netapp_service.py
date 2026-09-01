@@ -196,6 +196,7 @@ class DiscoveredLun:
     os_type: str | None
     mapped_igroups: str | None = None
     serial_number: str | None = None
+    used_bytes: int | None = None
 
 
 @dataclass
@@ -461,6 +462,7 @@ class NetAppOntapService:
                                 size_bytes=_get_nested(lun, "space.size"),
                                 os_type=_get_nested(lun, "os_type"),
                                 serial_number=_get_nested(lun, "serial_number"),
+                                used_bytes=_get_nested(lun, "space.used"),
                             )
                         )
                     results.append(DiscoveryStepResult("luns", True, f"{len(luns)} LUN(s) gefunden", len(luns)))

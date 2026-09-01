@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
   Badge,
@@ -443,6 +443,37 @@ export function StoragePage() {
   const [volumeEditOpen, setVolumeEditOpen] = useState(false);
   const [snapmirrorEditOpen, setSnapmirrorEditOpen] = useState(false);
   const [snapmirrorFormOpen, setSnapmirrorFormOpen] = useState(false);
+
+  // Direkteinstieg aus der Alarme-Seite ('Volume vergrößern'/'LUN
+  // vergrößern' bei einer Kapazitäts-Warnung, siehe AlertsPage.tsx) --
+  // ?editUuid=<uuid> zusammen mit ?tab=volumes/luns öffnet das jeweilige
+  // Bearbeiten-Modal direkt, ohne dass das Objekt erst manuell in der
+  // Tabelle gesucht werden muss. Der Parameter wird danach aus der URL
+  // entfernt, damit ein Schließen+Neuladen das Modal nicht erneut öffnet.
+  useEffect(() => {
+    const editUuid = params.get("editUuid");
+    if (!editUuid) return;
+    if (activeTab === "volumes" && volumes) {
+      const vol = volumes.find((v) => v.uuid === editUuid);
+      if (vol) {
+        setSelectedVolume(vol);
+        setVolumeEditOpen(true);
+      }
+      const next = new URLSearchParams(params);
+      next.delete("editUuid");
+      setParams(next, { replace: true });
+    } else if (activeTab === "luns" && luns) {
+      const lun = luns.find((l) => l.uuid === editUuid);
+      if (lun) {
+        setSelectedLun(lun);
+        setLunEditOpen(true);
+      }
+      const next = new URLSearchParams(params);
+      next.delete("editUuid");
+      setParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, volumes, luns]);
   const [snapmirrorInitialSource, setSnapmirrorInitialSource] = useState<{
     clusterId: string;
     svmName: string;

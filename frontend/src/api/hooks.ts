@@ -52,6 +52,9 @@ import type {
   ScheduleType,
   SnapMirrorLabel,
   SnapMirrorRelationship,
+  Alert,
+  AlertConfig,
+  AlertConfigWritePayload,
   SchedulerConfig,
   SchedulerConfigWritePayload,
   SvmPeerCreate,
@@ -795,6 +798,29 @@ export function useUpdateEmailConfig() {
 export function useSendTestEmail() {
   return useMutation({
     mutationFn: async (recipient: string) => (await apiClient.post("/email-config/test", { recipient })).data,
+  });
+}
+
+export function useAlerts() {
+  return useQuery({
+    queryKey: ["alerts"],
+    queryFn: async () => (await apiClient.get<Alert[]>("/alerts")).data,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useAlertConfig() {
+  return useQuery({
+    queryKey: ["alert-config"],
+    queryFn: async () => (await apiClient.get<AlertConfig>("/alerts/config")).data,
+  });
+}
+
+export function useUpdateAlertConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: AlertConfigWritePayload) => (await apiClient.put<AlertConfig>("/alerts/config", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alert-config"] }),
   });
 }
 
