@@ -21,6 +21,7 @@ import { useSearchParams } from "react-router-dom";
 import { useCsvs, useVms } from "@/api/hooks";
 import { BackupsModal } from "@/components/BackupsModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
+import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
 import type { BackupScope, Csv, PolicySummary, Vm } from "@/api/types";
 import { formatBytes } from "@/utils/format";
@@ -281,6 +282,7 @@ export function VmsPage() {
   const [selectedVm, setSelectedVm] = useState<Vm | null>(null);
   const [selectedCsv, setSelectedCsv] = useState<Csv | null>(null);
   const [backupsTarget, setBackupsTarget] = useState<{ scope: BackupScope; name: string } | null>(null);
+  const [restoreWizardTarget, setRestoreWizardTarget] = useState<{ vmName: string; snapshotId: string } | null>(null);
   const [vmSearch, setVmSearch] = useState("");
   const filteredVms = (vms ?? []).filter((vm) => matchesAllColumns(vm, vmSearch));
   const [csvSearch, setCsvSearch] = useState("");
@@ -513,6 +515,30 @@ export function VmsPage() {
         onClose={() => setBackupsTarget(null)}
         scope={backupsTarget?.scope ?? "vm"}
         name={backupsTarget?.name}
+        onOpenRestoreWizard={
+          backupsTarget?.scope === "vm"
+            ? (snapshotId) => {
+                setRestoreWizardTarget({ vmName: backupsTarget.name, snapshotId });
+                setBackupsTarget(null);
+              }
+            : undefined
+        }
+      />
+
+      <RestoreWizardModal
+        opened={!!restoreWizardTarget}
+        onClose={() => setRestoreWizardTarget(null)}
+        vm={
+          restoreWizardTarget
+            ? (() => {
+                const vm = (vms ?? []).find((v) => v.name === restoreWizardTarget.vmName);
+                return vm
+                  ? { name: vm.name, host: vm.host, state: vm.state, cluster: vm.cluster, backup_count: 0, exists_in_inventory: true }
+                  : null;
+              })()
+            : null
+        }
+        initialSnapshotId={restoreWizardTarget?.snapshotId}
       />
 
       <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={runPolicy} />

@@ -1,6 +1,6 @@
 import { ActionIcon, Badge, Loader, Menu, Modal, ScrollArea, Stack, Table, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconDotsVertical, IconTrash, IconUnlink } from "@tabler/icons-react";
+import { IconDotsVertical, IconDatabaseImport, IconTrash, IconUnlink } from "@tabler/icons-react";
 
 import { useBackupsForObject, useDeleteBackupSnapshot, useDetachVmFromBackupSnapshot } from "@/api/hooks";
 import type { BackupScope, BackupSnapshot } from "@/api/types";
@@ -12,9 +12,12 @@ interface BackupsModalProps {
   onClose: () => void;
   scope: BackupScope;
   name: string | undefined;
+  // Nur fuer scope "vm" relevant -- oeffnet den Restore-Wizard mit diesem
+  // Snapshot bereits vorausgewaehlt (siehe RestoreWizardModal.initialSnapshotId).
+  onOpenRestoreWizard?: (snapshotId: string) => void;
 }
 
-export function BackupsModal({ opened, onClose, scope, name }: BackupsModalProps) {
+export function BackupsModal({ opened, onClose, scope, name, onOpenRestoreWizard }: BackupsModalProps) {
   const { data: backups, isLoading } = useBackupsForObject(scope, name, opened);
   const deleteSnapshot = useDeleteBackupSnapshot(scope, name);
   const detachVm = useDetachVmFromBackupSnapshot(scope, name);
@@ -112,6 +115,11 @@ export function BackupsModal({ opened, onClose, scope, name }: BackupsModalProps
                           </ActionIcon>
                         </Menu.Target>
                         <Menu.Dropdown>
+                          {scope === "vm" && onOpenRestoreWizard && (
+                            <Menu.Item leftSection={<IconDatabaseImport size={14} />} onClick={() => onOpenRestoreWizard(b.id)}>
+                              Im Restore-Wizard öffnen
+                            </Menu.Item>
+                          )}
                           {scope === "vm" && (
                             <Menu.Item leftSection={<IconUnlink size={14} />} onClick={() => handleDetachVm(b)}>
                               VM-Informationen aus diesem Backup entfernen

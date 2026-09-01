@@ -91,6 +91,10 @@ interface RestoreWizardModalProps {
   opened: boolean;
   onClose: () => void;
   vm: VmWithBackups | null;
+  // Wird z.B. aus der Backups-Uebersicht (Inventory > VMs) gesetzt, um
+  // direkt mit einem bereits gewaehlten Snapshot in Schritt "VHDX & Modus"
+  // einzusteigen, statt erneut in Schritt "Snapshot" auswaehlen zu muessen.
+  initialSnapshotId?: string | null;
 }
 
 const STEP_STATUS_ICON: Record<string, React.ReactNode> = {
@@ -106,7 +110,7 @@ interface FinishedRun {
   run: RestoreRun;
 }
 
-export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalProps) {
+export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: RestoreWizardModalProps) {
   const [active, setActive] = useState(0);
   const [snapshotId, setSnapshotId] = useState<string | null>(null);
   const [selectedVhdPaths, setSelectedVhdPaths] = useState<string[]>([]);
@@ -134,7 +138,13 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
   const [cloneDestinationCsv, setCloneDestinationCsv] = useState<string | null>(null);
   const [cloneRunId, setCloneRunId] = useState<string | null>(null);
 
-  const { data: backups, isLoading: backupsLoading } = useBackupsForObject("vm", vm?.name, opened && active === 0);
+  // Normalerweise nur auf Schritt "Snapshot" geladen -- bei Direkteinstieg
+  // mit bereits bekanntem initialSnapshotId (siehe oben) wird "backups"
+  // aber auch auf Schritt "VHDX & Modus" gebraucht, um selectedSnapshot
+  // aufzuloesen.
+  const { data: backups, isLoading: backupsLoading } = useBackupsForObject(
+    "vm", vm?.name, opened && (active === 0 || !!initialSnapshotId),
+  );
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
   const triggerRestore = useTriggerRestore();
@@ -232,8 +242,14 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
       setCloneDisconnectNetwork(true);
       setCloneDestinationCsv(null);
       setCloneRunId(null);
+    } else if (initialSnapshotId) {
+      // Direkteinstieg mit bereits gewaehltem Snapshot (siehe
+      // BackupsModal.tsx "Im Restore-Wizard öffnen") -- Schritt "Snapshot"
+      // ueberspringen, direkt bei "VHDX & Modus" weitermachen.
+      setSnapshotId(initialSnapshotId);
+      setActive(1);
     }
-  }, [opened]);
+  }, [opened, initialSnapshotId]);
 
   // Vorschlag fuer den neuen VM-Namen einmalig setzen, sobald der Nutzer in
   // den Side-by-side-Modus wechselt -- danach frei editierbar.
@@ -441,6 +457,9 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
         </Stepper.Step>
 
         <Stepper.Step label="VHDX & Modus" description="Was wiederherstellen">
+          {backupsLoading && !selectedSnapshot ? (
+            <Loader size="sm" mt="md" />
+          ) : (
           <Stack mt="md">
             <Radio.Group value={restoreKind} onChange={(v) => setRestoreKind(v as RestoreKind)} label="Was soll passieren?">
               <Stack gap="xs" mt="xs">
@@ -560,6 +579,7 @@ export function RestoreWizardModal({ opened, onClose, vm }: RestoreWizardModalPr
               </Button>
             </Group>
           </Stack>
+          )}
         </Stepper.Step>
 
         <Stepper.Step label="Start" description="Bestätigen">
