@@ -115,28 +115,113 @@ podman-compose --version
 
 ## 4. Anwendungscode beziehen
 
-Zwei gleichwertige Modelle, je nachdem ob der Server den Git-Server direkt
-erreicht:
+Zwei Ebenen sind hier zu unterscheiden, die leicht durcheinandergeraten:
 
-### Modell A — direkter Netzwerkzugriff zum Git-Server (Regelfall)
+- **Interaktive Git-Nutzung auf dem Server** (manuell `git clone`/`git pull`
+  ausführen, z. B. um nachzuschauen oder das Repo für den ersten
+  `podman-compose`-Aufruf lokal zu haben) — läuft über deinen eigenen
+  SSH-Zugang (Abschnitt 4a).
+- **Der Container selbst** klont/pullt den Anwendungscode unabhängig davon
+  bei jedem Start und jedem Auto-Update (`entrypoint.sh`/`updater.sh`,
+  gesteuert über `HVNB_GIT_REPO_URL`) — dafür empfiehlt sich bei einem
+  privaten Repository **HTTPS mit einem Personal Access Token** (Abschnitt
+  4b), da dafür kein SSH-Schlüsselmaterial in den Container gemountet werden
+  muss.
+
+### 4a. SSH-Zugriff für interaktive Nutzung auf dem Server einrichten
+
+Auf dem Windows-Server, in der WSL2-Distribution:
 
 ```bash
-git clone <REPOSITORY-URL> ~/hyperv-netapp-backup
+ssh-keygen -t ed25519 -C "<servername>-interactive" -f ~/.ssh/hyperv_backup_github -N ""
+
+cat >> ~/.ssh/config << 'EOF'
+Host github-hvnb
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/hyperv_backup_github
+    IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+
+cat ~/.ssh/hyperv_backup_github.pub
+```
+
+Den ausgegebenen öffentlichen Schlüssel bei GitHub hinterlegen — entweder
+unter dem eigenen Account (Settings > SSH and GPG keys, falls der Server-
+Login einer Person zugeordnet ist) oder repo-gebunden als Deploy Key
+(Repository > Settings > Deploy keys > Add deploy key, Lesezugriff reicht).
+
+Test und Erstklon:
+
+```bash
+ssh -T git@github-hvnb
+git clone git@github-hvnb:<ORG>/<REPO>.git ~/hyperv-netapp-backup
 cd ~/hyperv-netapp-backup
 ```
 
-`HVNB_GIT_REPO_URL` in der `.env` (Abschnitt 5) zeigt später auf **dieselbe**
-Repository-URL — der Container klont/pullt beim Start und bei jedem
-Auto-Update davon unabhängig von diesem lokalen Checkout. Der lokale
-Checkout liefert in diesem Schritt nur die Compose-/Dockerfile-Dateien, um
-den Container überhaupt bauen und starten zu können.
+Dieser Checkout liefert die Compose-/Dockerfile-Dateien, um den Container
+in Abschnitt 6 überhaupt bauen und starten zu können — er ist **nicht**
+dieselbe Quelle, aus der der Container selbst später pullt (das regelt
+`HVNB_GIT_REPO_URL`, siehe 4b).
 
-Erfordert einen HTTPS- oder SSH-Clone-URL, den der Container-Prozess ohne
-weitere Interaktion nutzen kann — bei einem privaten Repository also
-entweder einen in die URL eingebetteten Zugangstoken
-(`https://<token>@host/repo.git`) oder einen SSH-Deploy-Key.
+### 4b. HTTPS + Personal Access Token für den Container-eigenen Pull
 
-### Modell B — kein Netzwerkpfad zum Git-Server (abgeschottetes Netz)
+Empfohlener Weg, damit die Instanz direkt von GitHub aktualisiert, ohne
+SSH-Schlüsselmaterial in den Container mounten zu müssen (Container läuft
+als eigener, vom Host-SSH-Setup unabhängiger Prozess).
+
+1. GitHub > Settings > Developer settings > Fine-grained personal access
+   tokens > Generate new token.
+2. **Repository access:** nur auf das eine Repository beschränken (nicht
+   "All repositories").
+3. **Permissions:** unter "Repository permissions" nur **Contents: Read-only**
+   setzen — mehr wird für einen reinen Pull nicht gebraucht.
+4. Token erzeugen und den Wert einmalig kopieren (wird danach nicht mehr
+   angezeigt).
+
+In der `.env` (Abschnitt 5):
+
+```bash
+HVNB_GIT_REPO_URL=https://<GITHUB-BENUTZERNAME>:<TOKEN>@github.com/<ORG>/<REPO>.git
+HVNB_GIT_BRANCH=master
+HVNB_AUTO_UPDATE_ENABLED=true
+```
+
+`entrypoint.sh`/`updater.sh` führen intern nur einen normalen `git clone`/
+`git fetch` gegen diese URL aus — Zugangsdaten in der URL eingebettet werden
+dabei von Git nativ unterstützt, es ist keine zusätzliche Konfiguration im
+Container nötig.
+
+**Wichtig bei einer nachträglichen Änderung von `HVNB_GIT_REPO_URL`**
+(z. B. Umstieg von Modell 4c, oder Token-Rotation): `entrypoint.sh` nutzt
+diese Variable nur für den **erstmaligen** Klon (`/opt/app/.git` existiert
+noch nicht) — ein bereits geklonter Checkout wird bei jedem weiteren Start
+per `git fetch origin` aktualisiert, unabhängig von einer geänderten
+Umgebungsvariable, da `origin` in der beim ersten Klon geschriebenen
+`.git/config` fest verdrahtet ist. `/opt/app` liegt NICHT in einem
+persistenten Volume (nur `/data` und `/etc/hvnb/certs`, siehe
+`docker-compose.yml`) — ein `podman-compose up -d` nach einer `.env`-
+Änderung erkennt die geänderte Konfiguration jedoch und erstellt den
+Container neu, wodurch `/opt/app` leer beginnt und `entrypoint.sh` den
+"erstmaligen Klon"-Pfad mit der neuen URL erneut durchläuft. Ein reines
+`podman restart hvnb-backup` (ohne vorheriges `up -d`) reicht dafür
+**nicht** aus.
+
+Die `.env`-Datei enthält damit ein Secret im Klartext und
+ist bereits über `.gitignore` von Commits ausgeschlossen — trotzdem
+zusätzlich die Dateiberechtigung einschränken:
+
+```bash
+chmod 600 .env
+```
+
+**Rotation/Widerruf:** Token bei Bedarf jederzeit unter GitHub > Settings >
+Developer settings > Fine-grained tokens widerrufen und durch ein neues
+ersetzen (`.env` aktualisieren, danach `podman-compose up -d` um den
+Container mit der neuen URL neu zu starten).
+
+### 4c. Kein Netzwerkpfad zum Git-Server (abgeschottetes Netz)
 
 Wurde in der Referenzumgebung genau so benötigt: eine VLAN-Trennung
 verhinderte jede Verbindung vom Server zum eigentlichen Git-Server. Lösung:
@@ -195,12 +280,15 @@ HVNB_WINRM_TRANSPORT=credssp
 HVNB_WINRM_USE_HTTPS=true
 HVNB_WINRM_PORT=5986
 
-# Git-basiertes Deployment (siehe Abschnitt 4)
-HVNB_GIT_REPO_URL=<Repository-URL, Modell A oder file:// per docker-compose.dev.yml>
-HVNB_GIT_BRANCH=main
+# Git-basiertes Deployment (siehe Abschnitt 4) -- Beispiel fuer 4b
+# (HTTPS + Personal Access Token). Bei Modell 4c (Bare-Repo) wird dieser
+# Wert stattdessen automatisch von docker-compose.dev.yml gesetzt.
+HVNB_GIT_REPO_URL=https://<GITHUB-BENUTZERNAME>:<TOKEN>@github.com/<ORG>/<REPO>.git
+HVNB_GIT_BRANCH=master
 HVNB_AUTO_UPDATE_ENABLED=true
 HVNB_AUTO_UPDATE_INTERVAL_MINUTES=15
 EOF
+chmod 600 .env
 ```
 
 **Wichtig:** NetApp-Cluster, Hyper-V-Hosts, der Restore-Proxy-Host,
@@ -215,13 +303,13 @@ in `.env.example` im Projektwurzelverzeichnis.
 
 ## 6. Container bauen und starten
 
-Modell A (Abschnitt 4):
+Modell 4b (HTTPS + Token, Regelfall):
 
 ```bash
 podman-compose -f docker-compose.yml up -d --build
 ```
 
-Modell B:
+Modell 4c (lokales Bare-Repo):
 
 ```bash
 podman-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
