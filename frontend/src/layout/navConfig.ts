@@ -33,7 +33,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: IconServerCog,
     searchContext: "vms",
     children: [
-      { label: "Virtuelle Maschinen", path: "/vms" },
+      { label: "Virtuelle Maschinen", path: "/vms?tab=vms" },
       { label: "Cluster Shared Volumes", path: "/vms?tab=csv" },
     ],
   },
@@ -53,7 +53,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: IconDatabaseImport,
     searchContext: "restore",
     children: [
-      { label: "Wiederherstellen", path: "/restore" },
+      { label: "Wiederherstellen", path: "/restore?tab=overview" },
       { label: "Setup", path: "/restore?tab=setup" },
     ],
   },
