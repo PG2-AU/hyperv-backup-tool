@@ -131,7 +131,7 @@ export function ProcessModal({ opened, onClose, plan }: { opened: boolean; onClo
                 {step.label}
               </Text>
               {step.status === "error" && (
-                <Text size="xs" c="red" truncate="end">
+                <Text size="xs" c="red" style={{ wordBreak: "break-word" }}>
                   {step.message}
                 </Text>
               )}
