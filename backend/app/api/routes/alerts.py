@@ -106,6 +106,14 @@ def update_alert_config(
     config.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(config)
+
+    # Sofort mit den neuen Schwellwerten/Scope neu bewerten, statt auf das
+    # naechste 15min-Intervall zu warten -- sonst blieben z.B. beim
+    # Umschalten auf den engeren Hyper-V-Scope bestehende, jetzt nicht mehr
+    # zutreffende Alarme faelschlich als 'aktiv' stehen, bis der naechste
+    # periodische Lauf sie aufloest.
+    run_alert_check()
+
     return config
 
 
