@@ -137,8 +137,15 @@ podman cp ~/winrm-ca.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem
 ```bash
 # .env, im Projektverzeichnis:
 echo "HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem" >> .env
-podman-compose up -d
+podman-compose up -d --force-recreate
 ```
+
+**Live bestätigt:** `podman-compose up -d` ohne `--force-recreate` erkennt
+eine reine `.env`-Änderung nicht zuverlässig und lässt den bestehenden
+Container unverändert laufen (kein Fehler, aber die neue Variable kommt
+nie an) — `--force-recreate` erzwingt das Neuerstellen unabhängig von der
+Diff-Erkennung. Mit `podman inspect hvnb-backup --format '{{.Created}}'`
+lässt sich der Zeitstempel vorher/nachher vergleichen, um das zu bestätigen.
 
 Da `hvnb-certs` ein benanntes Volume ist, übersteht die Datei den
 Container-Neustart in Schritt 2 unabhängig von der Reihenfolge der beiden
@@ -345,12 +352,22 @@ per `git fetch origin` aktualisiert, unabhängig von einer geänderten
 Umgebungsvariable, da `origin` in der beim ersten Klon geschriebenen
 `.git/config` fest verdrahtet ist. `/opt/app` liegt NICHT in einem
 persistenten Volume (nur `/data` und `/etc/hvnb/certs`, siehe
-`docker-compose.yml`) — ein `podman-compose up -d` nach einer `.env`-
-Änderung erkennt die geänderte Konfiguration jedoch und erstellt den
-Container neu, wodurch `/opt/app` leer beginnt und `entrypoint.sh` den
-"erstmaligen Klon"-Pfad mit der neuen URL erneut durchläuft. Ein reines
-`podman restart hvnb-backup` (ohne vorheriges `up -d`) reicht dafür
-**nicht** aus.
+`docker-compose.yml`) — der Container muss also tatsächlich **neu
+erstellt** werden, damit `/opt/app` leer beginnt und `entrypoint.sh` den
+"erstmaligen Klon"-Pfad mit der neuen URL erneut durchläuft.
+
+```bash
+podman-compose up -d --force-recreate
+```
+
+Ein reines `podman restart hvnb-backup` reicht dafür **nicht** aus. Ein
+reines `podman-compose up -d` (ohne `--force-recreate`) ebenfalls nicht
+zuverlässig — live bestätigt: `podman-compose` erkennt eine reine
+`.env`-Änderung (Compose-Dateien selbst bleiben gleich) nicht immer als
+Grund für ein Neuerstellen und lässt den bestehenden Container dann
+einfach unverändert weiterlaufen, ohne Fehlermeldung. Mit
+`podman inspect hvnb-backup --format '{{.Created}}'` vor und nach dem
+Befehl lässt sich prüfen, ob tatsächlich neu erstellt wurde.
 
 Die `.env`-Datei enthält damit ein Secret im Klartext und
 ist bereits über `.gitignore` von Commits ausgeschlossen — trotzdem
@@ -362,8 +379,8 @@ chmod 600 .env
 
 **Rotation/Widerruf:** Token bei Bedarf jederzeit unter GitHub > Settings >
 Developer settings > Fine-grained tokens widerrufen und durch ein neues
-ersetzen (`.env` aktualisieren, danach `podman-compose up -d` um den
-Container mit der neuen URL neu zu starten).
+ersetzen (`.env` aktualisieren, danach `podman-compose up -d
+--force-recreate` um den Container mit der neuen URL neu zu erstellen).
 
 ### 4c. Kein Netzwerkpfad zum Git-Server (abgeschottetes Netz)
 
@@ -470,6 +487,14 @@ Erwartet: `uvicorn`, `nginx` (und bei aktiviertem Auto-Update `updater`)
 laufen ohne Fehlermeldungen. Der erste Start dauert spürbar länger (Klonen
 des Repos, `npm ci`, Frontend-Build).
 
+> **Für jede spätere `.env`-Änderung gilt:** `podman-compose up -d` allein
+> erkennt eine reine `.env`-Änderung nicht immer zuverlässig und lässt den
+> bestehenden Container dann einfach unverändert weiterlaufen, ohne
+> Fehlermeldung (live bestätigt). Sicherer ist `podman-compose up -d
+> --force-recreate` — mit `podman inspect hvnb-backup --format
+> '{{.Created}}'` vor und nach dem Befehl lässt sich prüfen, ob tatsächlich
+> neu erstellt wurde.
+
 ## 7. TLS-Zertifikat
 
 Beim allerersten Start erzeugt der Container automatisch ein
@@ -484,7 +509,7 @@ volumes:
   - ./certs:/etc/hvnb/certs # server.crt + server.key ablegen
 ```
 
-Danach den Container neu starten (`podman-compose up -d`).
+Danach den Container neu erstellen (`podman-compose up -d --force-recreate`).
 
 ## 8. Externe Erreichbarkeit von WSL2 aus
 
