@@ -33,6 +33,7 @@ export interface PublicSettings {
   winrm_transport: string;
   winrm_use_https: boolean;
   winrm_port: number;
+  winrm_ca_trust_path: string;
   git_repo_url: string;
   git_branch: string;
   auto_update_enabled: boolean;

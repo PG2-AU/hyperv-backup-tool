@@ -703,6 +703,7 @@ export function SettingsPage() {
                 <ConfigRow label="WinRM-Transport" value={settings?.winrm_transport ?? "-"} />
                 <ConfigRow label="WinRM ueber HTTPS" value={settings?.winrm_use_https ? "Ja" : "Nein"} />
                 <ConfigRow label="WinRM-Port" value={settings?.winrm_port ?? "-"} />
+                <ConfigRow label="WinRM CA-Trust-Datei" value={settings?.winrm_ca_trust_path || "nur System-Truststore"} />
               </Stack>
             </Paper>
           </Stack>

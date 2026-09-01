@@ -154,6 +154,12 @@ class HyperVService:
             auth=(username, password),
             transport=self._settings.winrm_transport,
             server_cert_validation="validate" if self._use_https else "ignore",
+            # 'legacy_requests' ist pywinrms eigener Default (nur der
+            # System-Truststore) -- HVNB_WINRM_CA_TRUST_PATH erlaubt
+            # zusaetzlich eine interne CA/ein selbstsigniertes Zertifikat
+            # explizit als vertrauenswuerdig zu hinterlegen, siehe
+            # DEPLOYMENT.md Abschnitt 1.
+            ca_trust_path=self._settings.winrm_ca_trust_path or "legacy_requests",
             read_timeout_sec=read_timeout_sec,
             operation_timeout_sec=operation_timeout_sec,
         )

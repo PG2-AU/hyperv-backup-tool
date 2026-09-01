@@ -70,10 +70,22 @@ Cluster Name Object (CNO) besitzt, kann wechseln), als Administrator:
 Enable-PSRemoting -Force
 
 # HTTPS-Listener einrichten -- braucht ein Zertifikat im Speicher
-# LocalMachine\My (Thumbprint ermitteln, dann Listener anlegen):
+# LocalMachine\My, dessen Subject/SAN auf den Hostnamen lautet, mit dem
+# der Node spaeter in der GUI angesprochen wird. Ein Failover-Clustering
+# nutzt dort bereits automatisch erzeugte Zertifikate (z.B. "CN=<GUID>.TLS"
+# oder "CN=CLIUSR") -- die sind NICHT geeignet, das sind interne
+# Cluster-Kommunikations-/Dienstkonto-Zertifikate, kein Hostname-Zertifikat.
 Get-ChildItem -Path Cert:\LocalMachine\My
+
+# Eigenes Zertifikat besorgen -- entweder von der internen PKI ausgestellt
+# (Subject/SAN = Hostname des Knotens, empfohlen, siehe Kasten unten) oder
+# fuer Tests selbstsigniert:
+$hostname = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
+$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)
+$cert.Thumbprint
+
 New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * `
-    -CertificateThumbprint "<Thumbprint>" -Force
+    -CertificateThumbprint $cert.Thumbprint -Force
 
 # Eingehende WinRM-HTTPS-Verbindungen zulassen
 Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
@@ -85,6 +97,49 @@ New-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -Direction Inbound -Protoc
 # Remote-Befehl seinerseits auf ein weiteres Netzwerkziel zugreifen muss):
 Enable-WSManCredSSP -Role Server
 ```
+
+**Zertifikat-Vertrauen im Container einrichten:** die App validiert das
+WinRM-Zertifikat bei HTTPS strikt (`server_cert_validation="validate"`,
+siehe `hyperv_service.py`) — der Container kennt eine interne CA oder ein
+selbstsigniertes Zertifikat aber standardmäßig nicht, die Verbindung
+schlägt sonst trotz korrekt eingerichtetem Listener fehl. Lösung:
+`HVNB_WINRM_CA_TRUST_PATH` auf eine PEM-Datei zeigen lassen, die das
+Zertifikat als zusätzlich vertrauenswürdig hinterlegt (pywinrm
+`ca_trust_path`, additiv zum normalen System-Truststore).
+
+```powershell
+# Auf dem Hyper-V-Host: das (oeffentliche!) Zertifikat exportieren --
+# bei einer internen CA stattdessen nur den CA-ROOT einmalig exportieren,
+# das deckt dann automatisch ALLE damit ausgestellten Knoten-Zertifikate
+# ab, statt jeden Knoten einzeln pflegen zu muessen.
+certutil -encode C:\temp\winrm-host.cer C:\temp\winrm-ca.pem
+# .pem-Datei per RDP-Dateitransfer o.ae. auf den WSL2-Host uebertragen.
+```
+
+```bash
+# Auf dem WSL2-Host, im Projektverzeichnis:
+mkdir -p certs
+cp /pfad/zur/winrm-ca.pem certs/winrm-ca.pem
+```
+
+```yaml
+# docker-compose.yml -- zusaetzliche Volume-Zeile:
+volumes:
+  - ./certs/winrm-ca.pem:/etc/hvnb/certs/winrm-ca.pem:ro
+```
+
+```bash
+# .env:
+HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem
+```
+
+Danach `podman-compose up -d` (Container neu erstellen, damit die neue
+Volume-Zeile wirkt). Settings > Updates zeigt anschließend unter "WinRM
+CA-Trust-Datei" den konfigurierten Pfad zur Kontrolle an. Bei mehreren
+Knoten mit jeweils eigenem, nicht CA-signiertem Zertifikat: alle
+Host-Zertifikate hintereinander in dieselbe PEM-Datei einfügen (eine
+PEM-Datei kann mehrere Zertifikate enthalten) — mit einer internen CA
+reicht dagegen der eine CA-Root für alle Knoten.
 
 Zusätzlich:
 

@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     winrm_transport: Literal["ntlm", "kerberos", "credssp"] = "ntlm"
     winrm_use_https: bool = True
     winrm_port: int = 5986
+    # Pfad zu einer PEM-Datei (CA-Root- oder auch nur das Host-Zertifikat
+    # selbst), gegen die das WinRM-HTTPS-Zertifikat der Hyper-V-Hosts
+    # zusaetzlich zum System-Truststore geprueft wird (pywinrm
+    # 'ca_trust_path') -- noetig, weil ein von einer internen CA
+    # ausgestelltes oder selbstsigniertes Zertifikat sonst nicht vom
+    # Container als vertrauenswuerdig erkannt wird. Leer = nur der
+    # Standard-System-Truststore (siehe DEPLOYMENT.md Abschnitt 1).
+    winrm_ca_trust_path: str = ""
 
     # --- Periodischer Hintergrundabgleich (app.core.scheduler) ---
     healthcheck_interval_minutes: int = 15

@@ -34,6 +34,7 @@ class PublicSettings(BaseModel):
     winrm_transport: str
     winrm_use_https: bool
     winrm_port: int
+    winrm_ca_trust_path: str
 
     git_repo_url: str
     git_branch: str
