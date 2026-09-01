@@ -28,12 +28,12 @@ class AlertConfigRead(BaseModel):
 
     volume_threshold_percent: int
     lun_threshold_percent: int
-    snapmirror_lag_threshold_minutes: int
+    snapmirror_lag_threshold_hours: int
     scope: str
 
 
 class AlertConfigUpdate(BaseModel):
     volume_threshold_percent: int = Field(ge=1, le=100)
     lun_threshold_percent: int = Field(ge=1, le=100)
-    snapmirror_lag_threshold_minutes: int = Field(ge=1, le=100_000)
+    snapmirror_lag_threshold_hours: int = Field(ge=1, le=8760)
     scope: str

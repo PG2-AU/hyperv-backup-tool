@@ -80,6 +80,6 @@ class AlertConfig(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     volume_threshold_percent: Mapped[int] = mapped_column(Integer, default=90)
     lun_threshold_percent: Mapped[int] = mapped_column(Integer, default=90)
-    snapmirror_lag_threshold_minutes: Mapped[int] = mapped_column(Integer, default=240)
+    snapmirror_lag_threshold_hours: Mapped[int] = mapped_column(Integer, default=4)
     scope: Mapped[AlertScope] = mapped_column(Enum(AlertScope), default=AlertScope.ALL)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

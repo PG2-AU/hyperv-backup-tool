@@ -101,7 +101,7 @@ def update_alert_config(
         db.add(config)
     config.volume_threshold_percent = payload.volume_threshold_percent
     config.lun_threshold_percent = payload.lun_threshold_percent
-    config.snapmirror_lag_threshold_minutes = payload.snapmirror_lag_threshold_minutes
+    config.snapmirror_lag_threshold_hours = payload.snapmirror_lag_threshold_hours
     config.scope = AlertScope(payload.scope)
     config.updated_at = datetime.now(timezone.utc)
     db.commit()

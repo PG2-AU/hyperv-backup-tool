@@ -411,7 +411,7 @@ def run_alert_check() -> None:
         config = db.query(AlertConfig).first()
         vol_threshold = config.volume_threshold_percent if config else 90
         lun_threshold = config.lun_threshold_percent if config else 90
-        lag_threshold = config.snapmirror_lag_threshold_minutes if config else 240
+        lag_threshold_hours = config.snapmirror_lag_threshold_hours if config else 4
         scope = config.scope if config else AlertScope.ALL
         now = datetime.now(timezone.utc)
 
@@ -510,15 +510,16 @@ def run_alert_check() -> None:
                     )
 
             lag_minutes = _parse_lag_minutes(rel.lag_time)
-            if lag_minutes is not None and lag_minutes >= lag_threshold:
+            if lag_minutes is not None and lag_minutes >= lag_threshold_hours * 60:
+                lag_hours_actual = round(lag_minutes / 60)
                 key = f"lag:{rel.uuid or rel.id}"
                 seen_keys.add((AlertType.SNAPMIRROR_LAG_EXCEEDED, key))
                 if (AlertType.SNAPMIRROR_LAG_EXCEEDED, key) not in active_by_key:
                     _trigger(
                         AlertType.SNAPMIRROR_LAG_EXCEEDED, key, object_name=name,
                         netapp_cluster_id=rel.cluster_id, netapp_cluster_name=netapp_cluster_names.get(rel.cluster_id),
-                        message=f"SnapMirror-Lag {lag_minutes}min (Schwellwert {lag_threshold}min)",
-                        threshold_percent=lag_threshold, triggered_percent=lag_minutes,
+                        message=f"SnapMirror-Lag {lag_hours_actual}h (Schwellwert {lag_threshold_hours}h)",
+                        threshold_percent=lag_threshold_hours, triggered_percent=lag_hours_actual,
                     )
 
         for (alert_type, key), alert in active_by_key.items():

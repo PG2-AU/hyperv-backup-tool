@@ -95,13 +95,25 @@ def init_db(db: Session) -> None:
         engine, "alert_config",
         {
             "volume_threshold_percent": "INTEGER", "lun_threshold_percent": "INTEGER",
-            "snapmirror_lag_threshold_minutes": "INTEGER", "scope": "VARCHAR(30)",
+            "snapmirror_lag_threshold_minutes": "INTEGER", "snapmirror_lag_threshold_hours": "INTEGER", "scope": "VARCHAR(30)",
         },
     )
     with engine.connect() as conn:
         conn.execute(text("UPDATE alert_config SET volume_threshold_percent = 90 WHERE volume_threshold_percent IS NULL"))
         conn.execute(text("UPDATE alert_config SET lun_threshold_percent = 90 WHERE lun_threshold_percent IS NULL"))
-        conn.execute(text("UPDATE alert_config SET snapmirror_lag_threshold_minutes = 240 WHERE snapmirror_lag_threshold_minutes IS NULL"))
+        # snapmirror_lag_threshold_minutes war der urspruengliche Feldname
+        # (Nutzer-Wunsch: Eingabe in Stunden statt Minuten) -- bereits
+        # gespeicherte Minutenwerte in die neue Stunden-Spalte uebernehmen,
+        # bevor die alte Spalte (bleibt in SQLite bestehen, wird aber nicht
+        # mehr gelesen/geschrieben) ignoriert wird.
+        conn.execute(
+            text(
+                "UPDATE alert_config SET snapmirror_lag_threshold_hours = "
+                "CAST(ROUND(snapmirror_lag_threshold_minutes / 60.0) AS INTEGER) "
+                "WHERE snapmirror_lag_threshold_hours IS NULL AND snapmirror_lag_threshold_minutes IS NOT NULL"
+            )
+        )
+        conn.execute(text("UPDATE alert_config SET snapmirror_lag_threshold_hours = 4 WHERE snapmirror_lag_threshold_hours IS NULL"))
         # SQLAlchemys Enum-Spalte speichert per Default den Enum-NAMEN, nicht
         # den .value-String (anders als bei String(N)-Spalten mit str-Enums)
         # -- 'ALL' (Name von AlertScope.ALL), nicht 'all'.

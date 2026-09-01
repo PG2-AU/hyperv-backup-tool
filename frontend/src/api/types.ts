@@ -540,14 +540,14 @@ export type AlertScope = "all" | "hyperv_referenced";
 export interface AlertConfig {
   volume_threshold_percent: number;
   lun_threshold_percent: number;
-  snapmirror_lag_threshold_minutes: number;
+  snapmirror_lag_threshold_hours: number;
   scope: AlertScope;
 }
 
 export interface AlertConfigWritePayload {
   volume_threshold_percent: number;
   lun_threshold_percent: number;
-  snapmirror_lag_threshold_minutes: number;
+  snapmirror_lag_threshold_hours: number;
   scope: AlertScope;
 }
 

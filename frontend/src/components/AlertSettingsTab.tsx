@@ -12,14 +12,14 @@ export function AlertSettingsTab() {
 
   const [volumeThreshold, setVolumeThreshold] = useState<number | string>(90);
   const [lunThreshold, setLunThreshold] = useState<number | string>(90);
-  const [lagThreshold, setLagThreshold] = useState<number | string>(240);
+  const [lagThreshold, setLagThreshold] = useState<number | string>(4);
   const [scope, setScope] = useState<AlertScope>("all");
 
   useEffect(() => {
     if (!config) return;
     setVolumeThreshold(config.volume_threshold_percent);
     setLunThreshold(config.lun_threshold_percent);
-    setLagThreshold(config.snapmirror_lag_threshold_minutes);
+    setLagThreshold(config.snapmirror_lag_threshold_hours);
     setScope(config.scope);
   }, [config]);
 
@@ -27,7 +27,7 @@ export function AlertSettingsTab() {
     const payload: AlertConfigWritePayload = {
       volume_threshold_percent: Number(volumeThreshold),
       lun_threshold_percent: Number(lunThreshold),
-      snapmirror_lag_threshold_minutes: Number(lagThreshold),
+      snapmirror_lag_threshold_hours: Number(lagThreshold),
       scope,
     };
     updateConfig
@@ -70,10 +70,10 @@ export function AlertSettingsTab() {
           label="Schwellwert SnapMirror-Lag"
           description="Ab dieser Verzögerung wird pro SnapMirror-Beziehung eine Warnung erzeugt, unabhängig vom Gesundheitsstatus"
           min={1}
-          max={100_000}
+          max={8760}
           value={lagThreshold}
           onChange={setLagThreshold}
-          suffix=" min"
+          suffix=" h"
         />
         <Select
           label="Sichtbarkeit"
