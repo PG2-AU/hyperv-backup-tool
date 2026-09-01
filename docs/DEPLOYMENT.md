@@ -108,10 +108,16 @@ Zertifikat als zusätzlich vertrauenswürdig hinterlegt (pywinrm
 `ca_trust_path`, additiv zum normalen System-Truststore).
 
 ```powershell
-# Auf dem Hyper-V-Host: das (oeffentliche!) Zertifikat exportieren --
-# bei einer internen CA stattdessen nur den CA-ROOT einmalig exportieren,
-# das deckt dann automatisch ALLE damit ausgestellten Knoten-Zertifikate
-# ab, statt jeden Knoten einzeln pflegen zu muessen.
+# Auf dem Hyper-V-Host: das (oeffentliche!) Zertifikat erst als .cer
+# exportieren -- bei einer internen CA stattdessen nur den CA-ROOT
+# einmalig exportieren, das deckt dann automatisch ALLE damit
+# ausgestellten Knoten-Zertifikate ab, statt jeden Knoten einzeln zu
+# pflegen. $cert ist das oben mit New-SelfSignedCertificate erzeugte
+# Zertifikats-Objekt (bzw. das von der internen PKI erhaltene).
+New-Item -ItemType Directory -Path C:\temp -Force | Out-Null
+Export-Certificate -Cert $cert -FilePath C:\temp\winrm-host.cer
+
+# .cer (DER-binaer) zu .pem (Base64) konvertieren:
 certutil -encode C:\temp\winrm-host.cer C:\temp\winrm-ca.pem
 # .pem-Datei per RDP-Dateitransfer o.ae. auf den WSL2-Host uebertragen.
 ```
