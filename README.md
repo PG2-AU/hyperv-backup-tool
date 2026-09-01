@@ -67,6 +67,11 @@ cp .env.example .env  # HVNB_GIT_REPO_URL etc. setzen
 docker compose up -d --build
 ```
 
+Für eine vollständige Installationsanleitung ausgehend von einem frischen,
+domain-gejointen Windows Server (WSL2-Einrichtung, Netzwerk-/Zertifikats-
+/Persistenz-Konfiguration bis zur lauffähigen GUI) siehe
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 Der Container klont/pullt beim Start das in `HVNB_GIT_REPO_URL`
 konfigurierte Repository nach `/opt/app`, installiert Backend- und
 Frontend-Abhaengigkeiten, baut das Frontend und startet Backend + nginx

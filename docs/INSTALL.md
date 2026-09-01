@@ -1,5 +1,11 @@
 # Installation: Hyper-V NetApp Backup auf dediziertem Windows Server
 
+> **Hinweis:** Für eine allgemeingültige, aufgeräumte Schritt-für-Schritt-
+> Anleitung siehe [DEPLOYMENT.md](DEPLOYMENT.md). Dieses Dokument hier ist
+> das dazugehörige Feldprotokoll der ursprünglichen Ersteinrichtung, inkl.
+> aller dabei aufgetretenen Umgebungs-Besonderheiten (konkrete IPs,
+> Netzwerksegmentierung dieser einen Instanz usw.).
+
 Diese Anleitung entsteht live beim Ersteinrichten einer produktiven Instanz auf
 einem dedizierten, domain-joined Windows Server (statt Entwickler-Workstation).
 Jeder Schritt ist gegen die reale Umgebung verifiziert, bevor er hier landet.
