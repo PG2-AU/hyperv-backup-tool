@@ -161,9 +161,7 @@ export function AlertsPage() {
                 </Table.Td>
                 <Table.Td>{new Date(alert.triggered_at).toLocaleString("de-DE")}</Table.Td>
                 <Table.Td>{alert.resolved_at ? new Date(alert.resolved_at).toLocaleString("de-DE") : "-"}</Table.Td>
-                <Table.Td>
-                  <AlertAction alert={alert} />
-                </Table.Td>
+                <Table.Td>{alert.status === "active" && <AlertAction alert={alert} />}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
