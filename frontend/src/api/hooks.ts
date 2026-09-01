@@ -176,10 +176,10 @@ export function useJobRuns() {
   });
 }
 
-export function useUpcomingJobs(count = 3) {
+export function useUpcomingJobs(hours = 24) {
   return useQuery({
-    queryKey: ["upcoming-jobs", count],
-    queryFn: async () => (await apiClient.get<UpcomingJob[]>("/jobs/upcoming", { params: { count } })).data,
+    queryKey: ["upcoming-jobs", hours],
+    queryFn: async () => (await apiClient.get<UpcomingJob[]>("/jobs/upcoming", { params: { hours } })).data,
   });
 }
 

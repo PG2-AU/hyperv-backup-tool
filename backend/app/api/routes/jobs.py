@@ -79,17 +79,22 @@ def list_jobs(db: Session = Depends(get_db), user=Depends(require_permission(Per
     return db.query(BackupPolicy).order_by(BackupPolicy.name).all()
 
 
-def _next_occurrence(schedule: Schedule, now_local: datetime) -> datetime | None:
-    """Naechster faelliger Zeitpunkt eines Zeitplans ab (exklusiv) now_local,
-    in derselben lokalen Zeitzone -- fuer die Dashboard-Vorschau der naechsten
-    Laeufe (list_upcoming_jobs). Iteriert Tag fuer Tag (bis zu 40 Tage
-    voraus, deckt auch den ungewoehnlichsten MONTHLY-Randfall ab, z.B. Tag 31
-    kurz vor einem Februar), prueft pro Kandidatentag dieselbe Wochentag-/
+def _occurrences_within(schedule: Schedule, start_local: datetime, end_local: datetime) -> list[datetime]:
+    """Alle Vorkommen eines Zeitplans im Intervall (start_local, end_local],
+    in derselben lokalen Zeitzone -- fuer die Dashboard-Vorschau der
+    naechsten Laeufe (list_upcoming_jobs). Ein HOURLY-Zeitplan kann dabei
+    mehrfach im selben Fenster vorkommen (z.B. 6x/Tag), WEEKLY/MONTHLY
+    typischerweise hoechstens einmal. Iteriert Tag fuer Tag ueber die Spanne
+    (plus einen Tag Puffer), prueft pro Kandidatentag dieselbe Wochentag-/
     Monatstag-Bedingung wie _schedule_is_due in app.core.scheduler, dann
     jede konfigurierte Uhrzeit dieses Tages der Reihe nach."""
     times_sorted = sorted(schedule.times)
-    for day_offset in range(40):
-        candidate_date = (now_local + timedelta(days=day_offset)).date()
+    occurrences: list[datetime] = []
+    day_span = (end_local.date() - start_local.date()).days + 1
+    for day_offset in range(day_span + 1):
+        candidate_date = (start_local + timedelta(days=day_offset)).date()
+        if candidate_date > end_local.date():
+            break
         if schedule.schedule_type == ScheduleType.WEEKLY and (
             schedule.weekday is None or candidate_date.weekday() != schedule.weekday
         ):
@@ -103,32 +108,36 @@ def _next_occurrence(schedule: Schedule, now_local: datetime) -> datetime | None
                 hour, minute = (int(p) for p in t.split(":"))
             except ValueError:
                 continue
-            candidate = now_local.replace(
+            candidate = start_local.replace(
                 year=candidate_date.year, month=candidate_date.month, day=candidate_date.day,
                 hour=hour, minute=minute, second=0, microsecond=0,
             )
-            if candidate > now_local:
-                return candidate
-    return None
+            if start_local < candidate <= end_local:
+                occurrences.append(candidate)
+    return occurrences
 
 
 @router.get("/upcoming", response_model=list[UpcomingJobRead])
 def list_upcoming_jobs(
-    count: int = Query(default=3, ge=1, le=20),
+    hours: int = Query(default=24, ge=1, le=24 * 31),
     db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.BACKUP_VIEW)),
 ) -> list[UpcomingJobRead]:
-    """Naechste faellige geplante Backup-Laeufe ueber alle Policies hinweg,
-    chronologisch sortiert -- Grundlage fuer die Dashboard-Vorschau ('Jobs',
-    siehe DashboardPage.tsx). Nutzt dieselbe Zeitzonen-/Zeitplan-Logik wie
-    run_scheduled_backups (app.core.scheduler._schedule_is_due), nur
-    vorausschauend statt nur fuer die aktuelle Minute."""
+    """Alle faelligen geplanten Backup-Laeufe ueber alle Policies hinweg
+    innerhalb der naechsten `hours` Stunden, chronologisch sortiert --
+    Grundlage fuer die Dashboard-Vorschau ('Jobs', siehe DashboardPage.tsx).
+    Policyuebergreifend: eine Policy mit z.B. einem HOURLY-Zeitplan
+    erscheint mit jedem einzelnen Vorkommen im Fenster, nicht nur einmal.
+    Nutzt dieselbe Zeitzonen-/Zeitplan-Logik wie run_scheduled_backups
+    (app.core.scheduler._schedule_is_due), nur vorausschauend ueber ein
+    ganzes Fenster statt nur fuer die aktuelle Minute."""
     settings = get_settings()
     try:
         tz = ZoneInfo(settings.schedule_timezone)
     except Exception:
         tz = timezone.utc
     now_local = datetime.now(tz)
+    end_local = now_local + timedelta(hours=hours)
 
     policies = (
         db.query(BackupPolicy)
@@ -140,20 +149,18 @@ def list_upcoming_jobs(
         schedule = db.get(Schedule, policy.schedule_id)
         if schedule is None or not schedule.times:
             continue
-        next_run = _next_occurrence(schedule, now_local)
-        if next_run is None:
-            continue
-        upcoming.append(
-            UpcomingJobRead(
-                policy_id=policy.id,
-                policy_name=policy.name,
-                schedule_name=schedule.name,
-                consistency=policy.consistency,
-                next_run_at=next_run.astimezone(timezone.utc),
+        for occurrence in _occurrences_within(schedule, now_local, end_local):
+            upcoming.append(
+                UpcomingJobRead(
+                    policy_id=policy.id,
+                    policy_name=policy.name,
+                    schedule_name=schedule.name,
+                    consistency=policy.consistency,
+                    next_run_at=occurrence.astimezone(timezone.utc),
+                )
             )
-        )
     upcoming.sort(key=lambda u: u.next_run_at)
-    return upcoming[:count]
+    return upcoming
 
 
 @router.post("", response_model=BackupPolicyRead, status_code=status.HTTP_201_CREATED)

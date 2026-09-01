@@ -98,7 +98,7 @@ export function DashboardPage() {
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
   const { data: runs } = useJobRuns();
-  const { data: upcomingJobs } = useUpcomingJobs(3);
+  const { data: upcomingJobs } = useUpcomingJobs(24);
   const { data: hyperVClusters } = useHyperVClusters();
   const { data: netAppClusters } = useNetAppClusters();
   const { data: svms } = useSvms();
@@ -342,7 +342,7 @@ export function DashboardPage() {
                 </Table.Thead>
                 <Table.Tbody>
                   {(upcomingJobs ?? []).map((job) => (
-                    <Table.Tr key={`upcoming-${job.policy_id}`}>
+                    <Table.Tr key={`upcoming-${job.policy_id}-${job.next_run_at}`}>
                       <Table.Td>{job.policy_name}</Table.Td>
                       <Table.Td>-</Table.Td>
                       <Table.Td>-</Table.Td>
