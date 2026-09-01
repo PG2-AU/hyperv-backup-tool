@@ -10,6 +10,16 @@ GIT_BRANCH="${HVNB_GIT_BRANCH:-main}"
 
 log() { echo "[entrypoint] $(date -u +%FT%TZ) $*"; }
 
+# Entfernt in HVNB_GIT_REPO_URL eingebettete Zugangsdaten
+# (https://user:token@host/...) ausschliesslich fuer Logausgaben -- git
+# selbst bekommt beim eigentlichen clone/fetch weiterhin die volle,
+# unveraenderte URL. Ohne diese Redaktion wuerde ein per HTTPS+Token
+# konfiguriertes Repository (siehe DEPLOYMENT.md 4b) den Token im
+# Klartext in 'podman logs' sichtbar machen.
+redact_url() {
+  printf '%s' "$1" | sed -E 's#(https?://)[^/@[:space:]]+@#\1***@#'
+}
+
 # Unter rootless Podman/Docker kann der abgebildete UID-Bereich vom
 # Dateibesitzer der gemounteten/erstellten Verzeichnisse abweichen; git
 # verweigert Operationen dann mit "dubious ownership". APP_DIR ist unser
@@ -22,7 +32,7 @@ if [ -z "${GIT_REPO_URL}" ]; then
 fi
 
 if [ ! -d "${APP_DIR}/.git" ]; then
-  log "Kein bestehendes Repository gefunden, klone ${GIT_REPO_URL} (${GIT_BRANCH})..."
+  log "Kein bestehendes Repository gefunden, klone $(redact_url "${GIT_REPO_URL}") (${GIT_BRANCH})..."
   git clone --branch "${GIT_BRANCH}" --single-branch "${GIT_REPO_URL}" "${APP_DIR}"
 else
   log "Bestehendes Repository gefunden, hole aktuellste Version (${GIT_BRANCH})..."
