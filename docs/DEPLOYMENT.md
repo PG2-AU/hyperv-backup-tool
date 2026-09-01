@@ -50,6 +50,72 @@ Host spricht — WSL2 bringt beides auf eine Maschine.
       sondern nach dem ersten Login komplett über die Web-GUI eingerichtet
       (siehe Abschnitt 10)
 
+### WinRM auf jedem Hyper-V-Host aktivieren
+
+Die Applikation spricht mit den Hyper-V-Clusterknoten ausschließlich per
+WinRM/PowerShell-Remoting (`winrm.Session`, siehe
+`backend/app/services/hyperv_service.py`) — nie per SMB oder RPC direkt.
+Ohne einen laufenden, erreichbaren WinRM-HTTPS-Listener lässt sich der
+Cluster in **Settings > Hyper-V-Hosts** nicht hinzufügen; ein typischer
+Fehler dabei: `Host '<IP>' ist auf Port 5986 nicht erreichbar: timed out`
+— das ist ein reiner TCP-Verbindungsfehler, tritt also auf, **bevor**
+überhaupt Zugangsdaten geprüft werden (Listener fehlt, Firewall blockiert,
+oder Netzwerkpfad/VLAN-Trennung).
+
+**Auf JEDEM Clusterknoten** (nicht nur einem — welcher Knoten gerade den
+Cluster Name Object (CNO) besitzt, kann wechseln), als Administrator:
+
+```powershell
+# WinRM-Dienst aktivieren (meist bereits per Default aktiv)
+Enable-PSRemoting -Force
+
+# HTTPS-Listener einrichten -- braucht ein Zertifikat im Speicher
+# LocalMachine\My (Thumbprint ermitteln, dann Listener anlegen):
+Get-ChildItem -Path Cert:\LocalMachine\My
+New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * `
+    -CertificateThumbprint "<Thumbprint>" -Force
+
+# Eingehende WinRM-HTTPS-Verbindungen zulassen
+Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
+New-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow
+
+# Nur noetig, wenn HVNB_WINRM_TRANSPORT=credssp (der in dieser App
+# empfohlene Standard, siehe .env-Beispiel in Abschnitt 5 -- CredSSP
+# vermeidet das klassische WinRM-"Double-Hop"-Problem, falls ein
+# Remote-Befehl seinerseits auf ein weiteres Netzwerkziel zugreifen muss):
+Enable-WSManCredSSP -Role Server
+```
+
+Zusätzlich:
+
+- Der verbindende Account (in der GUI beim Hinzufügen des Clusters
+  hinterlegt) braucht **lokale Administratorrechte** auf jedem Knoten.
+- `HVNB_WINRM_TRANSPORT` (Abschnitt 5) muss zum serverseitig aktivierten
+  Verfahren passen — `credssp` erfordert exakt den obigen
+  `Enable-WSManCredSSP -Role Server`-Schritt, `ntlm` kommt ohne diesen
+  Schritt aus (nur Listener + Firewall nötig), unterstützt aber keine
+  Double-Hop-Szenarien.
+
+**Verbindung isoliert testen**, bevor der Cluster in der GUI hinzugefügt
+wird — zuerst lokal auf dem Hyper-V-Host selbst:
+
+```powershell
+Test-NetConnection -ComputerName localhost -Port 5986
+```
+
+Danach von der WSL2-Distribution aus (dort, wo der Container läuft), um
+den tatsächlichen Netzwerkpfad zu prüfen:
+
+```bash
+timeout 3 bash -c "echo > /dev/tcp/<Hyper-V-Host-IP>/5986" && echo "erreichbar" || echo "NICHT erreichbar"
+```
+
+Schlägt nur der zweite Test fehl (lokal auf dem Host aber funktioniert es):
+Firewall oder Netzwerksegmentierung (VLAN) zwischen WSL2-Host und
+Hyper-V-Cluster prüfen — genau dieses Muster (Server erreichbar,
+aber durch eine VLAN-Trennung vom App-Host aus nicht) trat bereits beim
+Code-Bezug in der Referenzumgebung auf, siehe Abschnitt 4c.
+
 ## 2. WSL2 aktivieren und Linux-Distribution einrichten
 
 PowerShell als Administrator:
