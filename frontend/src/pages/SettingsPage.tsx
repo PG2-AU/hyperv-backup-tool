@@ -74,11 +74,11 @@ const HYPERV_HEALTH_LABEL: Record<string, string> = {
 
 function ConfigRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <Group justify="space-between">
-      <Text c="dimmed" size="sm">
+    <Group justify="space-between" wrap="nowrap" align="flex-start" gap="md">
+      <Text c="dimmed" size="sm" style={{ flexShrink: 0 }}>
         {label}
       </Text>
-      <Text size="sm" fw={600}>
+      <Text size="sm" fw={600} ta="right" style={{ wordBreak: "break-all" }}>
         {value}
       </Text>
     </Group>
@@ -742,7 +742,7 @@ export function SettingsPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="updates" pt="md">
-          <Paper p="md" maw={520}>
+          <Paper p="md" maw={860}>
             <Stack gap="xs">
               <ConfigRow label="Git-Repository" value={settings?.git_repo_url || "nicht konfiguriert"} />
               <ConfigRow label="Branch" value={settings?.git_branch ?? "-"} />

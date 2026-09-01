@@ -4,6 +4,7 @@ TODO(iteration): Schreibender Zugriff (Speichern aus der GUI) folgt, sobald
 die Konfiguration statt ENV/.env auch in der DB verwaltet werden kann.
 """
 
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,10 +25,24 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 APP_DIR = Path("/opt/app")
 
 
+def _redact_git_url(url: str) -> str:
+    """Entfernt in einer HTTPS-Git-URL eingebettete Zugangsdaten
+    (https://user:token@host/...), bevor sie ueber diesen (als
+    'nicht-sensitiv' dokumentierten) Endpunkt an die GUI ausgeliefert wird
+    -- analog zu redact_url() in docker/entrypoint.sh. HVNB_GIT_REPO_URL
+    kann bei einem privaten Repository per HTTPS+Token konfiguriert sein
+    (siehe DEPLOYMENT.md 4b), der Token darf hier nicht im Klartext
+    landen. file://- und git@-URLs sowie HTTPS ohne eingebettete
+    Zugangsdaten bleiben unveraendert."""
+    return re.sub(r"(https?://)[^/@\s]+@", r"\1***@", url)
+
+
 @router.get("", response_model=PublicSettings)
 def get_public_settings(user=Depends(require_permission(Permission.SETTINGS_MANAGE))) -> PublicSettings:
     settings = get_settings()
-    return PublicSettings(**{field: getattr(settings, field) for field in PublicSettings.model_fields})
+    data = {field: getattr(settings, field) for field in PublicSettings.model_fields}
+    data["git_repo_url"] = _redact_git_url(data["git_repo_url"])
+    return PublicSettings(**data)
 
 
 @router.get("/version", response_model=VersionInfo)
