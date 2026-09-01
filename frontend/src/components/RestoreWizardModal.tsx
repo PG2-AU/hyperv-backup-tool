@@ -7,6 +7,7 @@ import {
   Group,
   Loader,
   Modal,
+  Paper,
   Progress,
   Radio,
   ScrollArea,
@@ -461,6 +462,30 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
             <Loader size="sm" mt="md" />
           ) : (
           <Stack mt="md">
+            {selectedSnapshot && (
+              <Paper withBorder p="xs">
+                <Group gap="xs" wrap="wrap">
+                  <Text size="sm" fw={600}>
+                    Ausgewählter Snapshot:
+                  </Text>
+                  <Text size="sm">{new Date(selectedSnapshot.created_at).toLocaleString("de-DE")}</Text>
+                  <Badge color={selectedSnapshot.consistency === "ApplicationConsistent" ? "green" : "gray"} variant="light">
+                    {selectedSnapshot.consistency === "ApplicationConsistent" ? "App-konsistent" : "Crash-konsistent"}
+                  </Badge>
+                  <Badge color={selectedSnapshot.restore_source === "secondary" ? "orange" : "blue"} variant="light">
+                    {selectedSnapshot.restore_source === "secondary" ? "Sekundär" : "Primär"}
+                  </Badge>
+                  <Text size="xs" c="dimmed">
+                    {selectedSnapshot.policy_name}
+                  </Text>
+                  {selectedSnapshot.snapshot_name && (
+                    <Text size="xs" c="dimmed" ff="monospace">
+                      {selectedSnapshot.snapshot_name}
+                    </Text>
+                  )}
+                </Group>
+              </Paper>
+            )}
             <Radio.Group value={restoreKind} onChange={(v) => setRestoreKind(v as RestoreKind)} label="Was soll passieren?">
               <Stack gap="xs" mt="xs">
                 <Radio value="add" label="Als zusätzliche Disk anhängen (kein Downtime, manueller Cleanup später möglich)" />
