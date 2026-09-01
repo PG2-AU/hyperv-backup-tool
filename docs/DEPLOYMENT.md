@@ -122,25 +122,27 @@ certutil -encode C:\temp\winrm-host.cer C:\temp\winrm-ca.pem
 # .pem-Datei per RDP-Dateitransfer o.ae. auf den WSL2-Host uebertragen.
 ```
 
-```bash
-# Auf dem WSL2-Host, im Projektverzeichnis:
-mkdir -p certs
-cp /pfad/zur/winrm-ca.pem certs/winrm-ca.pem
-```
-
-```yaml
-# docker-compose.yml -- zusaetzliche Volume-Zeile:
-volumes:
-  - ./certs/winrm-ca.pem:/etc/hvnb/certs/winrm-ca.pem:ro
-```
+`/etc/hvnb/certs` im Container ist bereits ein **persistentes benanntes
+Volume** (`hvnb-certs`, dort liegt auch schon das TLS-Zertifikat der GUI)
+— dafür ist also keine zusätzliche Zeile in `docker-compose.yml` nötig,
+die Datei kann direkt per `podman cp` in den laufenden Container gelegt
+werden:
 
 ```bash
-# .env:
-HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem
+# Auf dem WSL2-Host: Datei z.B. per Windows-Explorer unter
+# \\wsl.localhost\<Distro-Name>\home\<Benutzer>\ ablegen, dann:
+podman cp ~/winrm-ca.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem
 ```
 
-Danach `podman-compose up -d` (Container neu erstellen, damit die neue
-Volume-Zeile wirkt). Settings > Updates zeigt anschließend unter "WinRM
+```bash
+# .env, im Projektverzeichnis:
+echo "HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem" >> .env
+podman-compose up -d
+```
+
+Da `hvnb-certs` ein benanntes Volume ist, übersteht die Datei den
+Container-Neustart in Schritt 2 unabhängig von der Reihenfolge der beiden
+Befehle. Settings > Updates zeigt anschließend unter "WinRM
 CA-Trust-Datei" den konfigurierten Pfad zur Kontrolle an. Bei mehreren
 Knoten mit jeweils eigenem, nicht CA-signiertem Zertifikat: alle
 Host-Zertifikate hintereinander in dieselbe PEM-Datei einfügen (eine
