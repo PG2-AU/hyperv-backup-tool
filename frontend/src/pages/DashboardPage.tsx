@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Anchor, Badge, Grid, Group, Paper, SegmentedControl, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
+import { Anchor, Badge, Grid, Group, Paper, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -23,8 +22,6 @@ import {
   useVolumes,
 } from "@/api/hooks";
 import type { BackupJobRun, BackupRunSnapshot } from "@/api/types";
-
-const RANGE_HOURS: Record<string, number> = { "24h": 24, "7d": 24 * 7 };
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: "green",
@@ -108,7 +105,6 @@ export function DashboardPage() {
   const { data: volumes } = useVolumes();
   const { data: relationships } = useSnapMirrorRelationships();
   const { data: alerts } = useAlerts();
-  const [jobsRange, setJobsRange] = useState<string>("24h");
 
   const protectedVms = vms?.filter((v) => v.protected).length ?? 0;
 
@@ -155,7 +151,10 @@ export function DashboardPage() {
     }
   }
 
-  const jobsRangeCutoff = Date.now() - RANGE_HOURS[jobsRange] * 60 * 60 * 1000;
+  // Fest auf 24h -- deckungsgleich mit dem Blick nach vorne (useUpcomingJobs(24)
+  // weiter unten), damit die Tabelle insgesamt "letzte und kommende 24
+  // Stunden" zeigt, ohne wählbaren Zeitraum (vormals 24h/7-Tage-Umschalter).
+  const jobsRangeCutoff = Date.now() - 24 * 60 * 60 * 1000;
   const jobsInRange = (runs ?? [])
     .filter((r) => new Date(r.started_at).getTime() >= jobsRangeCutoff)
     .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
@@ -333,17 +332,11 @@ export function DashboardPage() {
 
         <Grid.Col span={{ base: 12, md: 6 }}>
           <Paper p="md" h="100%">
-            <Group justify="space-between" mb="sm">
+            <Group justify="space-between" mb="sm" align="flex-end">
               <Title order={5}>Jobs</Title>
-              <SegmentedControl
-                size="xs"
-                value={jobsRange}
-                onChange={setJobsRange}
-                data={[
-                  { label: "Letzte 24h", value: "24h" },
-                  { label: "Letzte 7 Tage", value: "7d" },
-                ]}
-              />
+              <Text size="xs" c="dimmed">
+                Letzte und kommende 24 Stunden
+              </Text>
             </Group>
             <Table.ScrollContainer minWidth={500}>
               <Table striped highlightOnHover>
