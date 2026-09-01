@@ -53,6 +53,7 @@ import type {
   SnapMirrorLabel,
   SnapMirrorRelationship,
   SvmPeerCreate,
+  UpcomingJob,
   Vm,
 } from "@/api/types";
 
@@ -172,6 +173,13 @@ export function useJobRuns() {
   return useQuery({
     queryKey: ["job-runs"],
     queryFn: async () => (await apiClient.get<BackupJobRun[]>("/jobs/runs")).data,
+  });
+}
+
+export function useUpcomingJobs(count = 3) {
+  return useQuery({
+    queryKey: ["upcoming-jobs", count],
+    queryFn: async () => (await apiClient.get<UpcomingJob[]>("/jobs/upcoming", { params: { count } })).data,
   });
 }
 

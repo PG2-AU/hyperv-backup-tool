@@ -17,6 +17,7 @@ import {
   useNetAppClusters,
   useSnapMirrorRelationships,
   useSvms,
+  useUpcomingJobs,
   useVms,
   useVolumes,
 } from "@/api/hooks";
@@ -97,6 +98,7 @@ export function DashboardPage() {
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
   const { data: runs } = useJobRuns();
+  const { data: upcomingJobs } = useUpcomingJobs(3);
   const { data: hyperVClusters } = useHyperVClusters();
   const { data: netAppClusters } = useNetAppClusters();
   const { data: svms } = useSvms();
@@ -316,7 +318,7 @@ export function DashboardPage() {
         <Grid.Col span={{ base: 12, md: 6 }}>
           <Paper p="md" h="100%">
             <Group justify="space-between" mb="sm">
-              <Title order={5}>Job-Laeufe</Title>
+              <Title order={5}>Jobs</Title>
               <SegmentedControl
                 size="xs"
                 value={jobsRange}
@@ -335,15 +337,28 @@ export function DashboardPage() {
                     <Table.Th>Scope</Table.Th>
                     <Table.Th>Ziele</Table.Th>
                     <Table.Th>Status</Table.Th>
-                    <Table.Th>Gestartet</Table.Th>
+                    <Table.Th>Zeitpunkt</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {jobsInRange.length === 0 ? (
+                  {(upcomingJobs ?? []).map((job) => (
+                    <Table.Tr key={`upcoming-${job.policy_id}`}>
+                      <Table.Td>{job.policy_name}</Table.Td>
+                      <Table.Td>-</Table.Td>
+                      <Table.Td>-</Table.Td>
+                      <Table.Td>
+                        <Badge color="indigo" variant="light">
+                          Geplant
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>{new Date(job.next_run_at).toLocaleString("de-DE")}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                  {jobsInRange.length === 0 && (upcomingJobs?.length ?? 0) === 0 ? (
                     <Table.Tr>
                       <Table.Td colSpan={5}>
                         <Text size="sm" c="dimmed">
-                          Keine Job-Laeufe in diesem Zeitraum.
+                          Keine Job-Laeufe in diesem Zeitraum und keine geplanten Jobs.
                         </Text>
                       </Table.Td>
                     </Table.Tr>

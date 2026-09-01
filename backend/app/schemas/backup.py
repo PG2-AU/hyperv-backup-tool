@@ -57,6 +57,17 @@ class BackupPolicyRead(BaseModel):
     created_at: datetime
 
 
+class UpcomingJobRead(BaseModel):
+    """Naechster faelliger Lauf einer geplanten Policy -- fuer die
+    Dashboard-Vorschau ('Jobs'), siehe list_upcoming_jobs in jobs.py."""
+
+    policy_id: str
+    policy_name: str
+    schedule_name: str
+    consistency: ConsistencyType
+    next_run_at: datetime
+
+
 class BackupRunSnapshotRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

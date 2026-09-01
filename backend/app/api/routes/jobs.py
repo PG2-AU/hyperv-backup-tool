@@ -29,6 +29,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from ntpath import basename as win_basename
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -47,7 +48,7 @@ from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_run import RestoreStepStatus
-from app.models.schedule import Schedule
+from app.models.schedule import Schedule, ScheduleType
 from app.models.snapmirror_label import SnapMirrorLabel
 from app.services.email_service import notify_backup_failure
 from app.schemas.backup import (
@@ -58,6 +59,7 @@ from app.schemas.backup import (
     BackupSnapshotDestinationRead,
     BackupSnapshotRead,
     BackupSnapshotVhdRead,
+    UpcomingJobRead,
 )
 from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppOntapService
@@ -75,6 +77,83 @@ def _validate_references(payload: BackupPolicyWrite, db: Session) -> None:
 @router.get("", response_model=list[BackupPolicyRead])
 def list_jobs(db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW))) -> list[BackupPolicy]:
     return db.query(BackupPolicy).order_by(BackupPolicy.name).all()
+
+
+def _next_occurrence(schedule: Schedule, now_local: datetime) -> datetime | None:
+    """Naechster faelliger Zeitpunkt eines Zeitplans ab (exklusiv) now_local,
+    in derselben lokalen Zeitzone -- fuer die Dashboard-Vorschau der naechsten
+    Laeufe (list_upcoming_jobs). Iteriert Tag fuer Tag (bis zu 40 Tage
+    voraus, deckt auch den ungewoehnlichsten MONTHLY-Randfall ab, z.B. Tag 31
+    kurz vor einem Februar), prueft pro Kandidatentag dieselbe Wochentag-/
+    Monatstag-Bedingung wie _schedule_is_due in app.core.scheduler, dann
+    jede konfigurierte Uhrzeit dieses Tages der Reihe nach."""
+    times_sorted = sorted(schedule.times)
+    for day_offset in range(40):
+        candidate_date = (now_local + timedelta(days=day_offset)).date()
+        if schedule.schedule_type == ScheduleType.WEEKLY and (
+            schedule.weekday is None or candidate_date.weekday() != schedule.weekday
+        ):
+            continue
+        if schedule.schedule_type == ScheduleType.MONTHLY and (
+            schedule.day_of_month is None or candidate_date.day != schedule.day_of_month
+        ):
+            continue
+        for t in times_sorted:
+            try:
+                hour, minute = (int(p) for p in t.split(":"))
+            except ValueError:
+                continue
+            candidate = now_local.replace(
+                year=candidate_date.year, month=candidate_date.month, day=candidate_date.day,
+                hour=hour, minute=minute, second=0, microsecond=0,
+            )
+            if candidate > now_local:
+                return candidate
+    return None
+
+
+@router.get("/upcoming", response_model=list[UpcomingJobRead])
+def list_upcoming_jobs(
+    count: int = Query(default=3, ge=1, le=20),
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.BACKUP_VIEW)),
+) -> list[UpcomingJobRead]:
+    """Naechste faellige geplante Backup-Laeufe ueber alle Policies hinweg,
+    chronologisch sortiert -- Grundlage fuer die Dashboard-Vorschau ('Jobs',
+    siehe DashboardPage.tsx). Nutzt dieselbe Zeitzonen-/Zeitplan-Logik wie
+    run_scheduled_backups (app.core.scheduler._schedule_is_due), nur
+    vorausschauend statt nur fuer die aktuelle Minute."""
+    settings = get_settings()
+    try:
+        tz = ZoneInfo(settings.schedule_timezone)
+    except Exception:
+        tz = timezone.utc
+    now_local = datetime.now(tz)
+
+    policies = (
+        db.query(BackupPolicy)
+        .filter(BackupPolicy.enabled.is_(True), BackupPolicy.schedule_id.isnot(None))
+        .all()
+    )
+    upcoming: list[UpcomingJobRead] = []
+    for policy in policies:
+        schedule = db.get(Schedule, policy.schedule_id)
+        if schedule is None or not schedule.times:
+            continue
+        next_run = _next_occurrence(schedule, now_local)
+        if next_run is None:
+            continue
+        upcoming.append(
+            UpcomingJobRead(
+                policy_id=policy.id,
+                policy_name=policy.name,
+                schedule_name=schedule.name,
+                consistency=policy.consistency,
+                next_run_at=next_run.astimezone(timezone.utc),
+            )
+        )
+    upcoming.sort(key=lambda u: u.next_run_at)
+    return upcoming[:count]
 
 
 @router.post("", response_model=BackupPolicyRead, status_code=status.HTTP_201_CREATED)

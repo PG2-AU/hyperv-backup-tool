@@ -604,6 +604,14 @@ export interface BackupSnapshotDestination {
   last_checked_at: string;
 }
 
+export interface UpcomingJob {
+  policy_id: string;
+  policy_name: string;
+  schedule_name: string;
+  consistency: ConsistencyType;
+  next_run_at: string;
+}
+
 export interface BackupJobRun {
   id: string;
   job_id?: string | null;
