@@ -154,6 +154,15 @@ export function DashboardPage() {
     .filter((r) => new Date(r.started_at).getTime() >= jobsRangeCutoff)
     .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
 
+  // Absteigend nach Zeitpunkt (am weitesten in der Zukunft zuerst), damit
+  // die gesamte Tabelle (geplante + bereits gelaufene Jobs) als EINE
+  // durchgaengige Reihenfolge von neu/zukuenftig nach alt gelesen werden
+  // kann -- direkt oberhalb von jobsInRange (das mit dem juengsten
+  // vergangenen Lauf beginnt) steht so der zeitnaechste geplante Job.
+  const upcomingJobsSorted = [...(upcomingJobs ?? [])].sort(
+    (a, b) => new Date(b.next_run_at).getTime() - new Date(a.next_run_at).getTime(),
+  );
+
   const recentSnapshots: (BackupRunSnapshot & { started_at: string })[] = (runs ?? [])
     .flatMap((r) => r.snapshots.filter((s) => s.success).map((s) => ({ ...s, started_at: r.started_at })))
     .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
@@ -341,7 +350,7 @@ export function DashboardPage() {
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {(upcomingJobs ?? []).map((job) => (
+                  {upcomingJobsSorted.map((job) => (
                     <Table.Tr key={`upcoming-${job.policy_id}-${job.next_run_at}`}>
                       <Table.Td>{job.policy_name}</Table.Td>
                       <Table.Td>-</Table.Td>
