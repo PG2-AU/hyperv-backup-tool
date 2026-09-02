@@ -52,6 +52,14 @@ export interface VersionInfo {
   last_file_restore_expiry_at?: string | null;
 }
 
+export interface CommitInfo {
+  hash: string;
+  short_hash: string;
+  date: string;
+  subject: string;
+  body?: string | null;
+}
+
 export interface UserCreatePayload {
   username: string;
   display_name?: string;
@@ -100,6 +108,14 @@ export function useVersion() {
   return useQuery({
     queryKey: ["version"],
     queryFn: async () => (await apiClient.get<VersionInfo>("/settings/version")).data,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useVersionHistory(limit = 100) {
+  return useQuery({
+    queryKey: ["version-history", limit],
+    queryFn: async () => (await apiClient.get<CommitInfo[]>("/settings/version-history", { params: { limit } })).data,
     staleTime: 5 * 60 * 1000,
   });
 }

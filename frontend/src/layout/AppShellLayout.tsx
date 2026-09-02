@@ -18,7 +18,9 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import {
   IconChevronDown,
+  IconCloudDownload,
   IconFileText,
+  IconHistory,
   IconLogout,
   IconMoon,
   IconSun,
@@ -170,6 +172,30 @@ export function AppShellLayout() {
           >
             <IconFileText size={14} stroke={1.5} />
             Architektur-Dokumentation
+          </Anchor>
+          <Anchor
+            component={Link}
+            to="/docs/deployment"
+            size="xs"
+            underline="hover"
+            px="xs"
+            display="flex"
+            style={{ alignItems: "center", gap: 6 }}
+          >
+            <IconCloudDownload size={14} stroke={1.5} />
+            Installation & Deployment
+          </Anchor>
+          <Anchor
+            component={Link}
+            to="/version-history"
+            size="xs"
+            underline="hover"
+            px="xs"
+            display="flex"
+            style={{ alignItems: "center", gap: 6 }}
+          >
+            <IconHistory size={14} stroke={1.5} />
+            Versionshistorie
           </Anchor>
           <VersionFooter />
         </AppShell.Section>

@@ -11,6 +11,7 @@ import { JobsPage } from "@/pages/JobsPage";
 import { RestorePage } from "@/pages/RestorePage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { DocsPage } from "@/pages/DocsPage";
+import { VersionHistoryPage } from "@/pages/VersionHistoryPage";
 
 export default function App() {
   return (
@@ -30,7 +31,12 @@ export default function App() {
         <Route path="/jobs" element={<JobsPage />} />
         <Route path="/restore" element={<RestorePage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/docs" element={<DocsPage />} />
+        <Route path="/docs" element={<DocsPage src="/docs/architecture.html" title="Architektur-Dokumentation" />} />
+        <Route
+          path="/docs/deployment"
+          element={<DocsPage src="/docs/deployment.html" title="Installations- & Deployment-Dokumentation" />}
+        />
+        <Route path="/version-history" element={<VersionHistoryPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

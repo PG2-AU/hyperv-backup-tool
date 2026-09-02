@@ -18,7 +18,7 @@ from app.core.config import get_settings
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.scheduler_status import SchedulerStatus
-from app.schemas.settings import PublicSettings, VersionInfo
+from app.schemas.settings import CommitInfo, PublicSettings, VersionInfo
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -108,3 +108,42 @@ def get_version(db: Session = Depends(get_db), user=Depends(get_current_user)) -
             else None
         ),
     )
+
+
+@router.get("/version-history", response_model=list[CommitInfo])
+def get_version_history(limit: int = 100, user=Depends(get_current_user)) -> list[CommitInfo]:
+    """Liste der letzten Commits (neuester zuerst) fuer die Versionshistorie-
+    Seite (Fusszeile-Link) -- zeigt, welche Aenderungen mit welchem Push
+    aufs verfolgte Repository (HVNB_GIT_REPO_URL) ausgeliefert wurden.
+    Nutzt die ASCII-Steuerzeichen \\x1f (Feldtrenner) / \\x1e
+    (Datensatztrenner) statt z.B. '|', da Commit-Nachrichten in diesem
+    Projekt selbst laengere Freitext-Absaetze mit Sonderzeichen enthalten
+    koennen, die sonst mit einem sichtbaren Trennzeichen kollidieren
+    wuerden."""
+    field_sep = "\x1f"
+    record_sep = "\x1e"
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(APP_DIR), "log", f"-n{limit}",
+                f"--pretty=format:%H{field_sep}%h{field_sep}%ad{field_sep}%s{field_sep}%b{record_sep}",
+                "--date=iso-strict",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return []
+    if result.returncode != 0:
+        return []
+
+    commits: list[CommitInfo] = []
+    for record in result.stdout.split(record_sep):
+        record = record.strip("\n")
+        if not record:
+            continue
+        parts = record.split(field_sep)
+        if len(parts) < 4:
+            continue
+        body = parts[4].strip() if len(parts) > 4 and parts[4].strip() else None
+        commits.append(CommitInfo(hash=parts[0], short_hash=parts[1], date=parts[2], subject=parts[3], body=body))
+    return commits

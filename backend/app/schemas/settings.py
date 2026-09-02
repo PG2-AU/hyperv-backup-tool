@@ -1,6 +1,17 @@
 from pydantic import BaseModel
 
 
+class CommitInfo(BaseModel):
+    """Ein einzelner Git-Commit fuer die Versionshistorie (Fusszeile-Link
+    'Versionshistorie') -- siehe get_version_history in settings.py."""
+
+    hash: str
+    short_hash: str
+    date: str
+    subject: str
+    body: str | None = None
+
+
 class VersionInfo(BaseModel):
     """Aktuell deployter Git-Commit + Zeitpunkt des letzten Deploys, fuer die
     Fusszeile im Hauptmenue -- fuer alle angemeldeten Benutzer sichtbar
