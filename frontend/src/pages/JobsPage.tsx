@@ -454,7 +454,8 @@ export function JobsPage() {
             <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Job</Table.Th>
+                <Table.Th>Protection Group</Table.Th>
+                <Table.Th>Policy</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Gestartet</Table.Th>
                 <Table.Th>Beendet</Table.Th>
@@ -465,6 +466,17 @@ export function JobsPage() {
             <Table.Tbody>
               {runs?.map((run) => (
                 <Table.Tr key={run.id}>
+                  <Table.Td>
+                    {/* Nur bei einem geplanten Lauf gesetzt -- ein manuelles
+                    "Jetzt ausfuehren" auf der ganzen Policy betrifft
+                    potenziell mehrere Resource Groups auf einmal, siehe
+                    BackupJobRun.resource_group_name. */}
+                    {run.resource_group_name ?? (
+                      <Text span c="dimmed" size="sm">
+                        Alle Gruppen
+                      </Text>
+                    )}
+                  </Table.Td>
                   <Table.Td>{run.job_name}</Table.Td>
                   <Table.Td>
                     <Badge color={STATUS_COLOR[run.status]} variant="light">
