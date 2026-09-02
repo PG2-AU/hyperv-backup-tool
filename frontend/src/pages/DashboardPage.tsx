@@ -1,4 +1,4 @@
-import { Badge, Grid, Group, Paper, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
+import { Anchor, Badge, Grid, Group, Paper, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -21,8 +21,16 @@ import {
   useVms,
   useVolumes,
 } from "@/api/hooks";
-import { DashboardJobsTimeline } from "@/components/DashboardJobsTimeline";
 import type { BackupJobRun, BackupRunSnapshot } from "@/api/types";
+
+const STATUS_COLOR: Record<string, string> = {
+  succeeded: "green",
+  failed: "red",
+  running: "blue",
+  pending: "gray",
+  cleaning_up: "yellow",
+  cleaned_up_after_failure: "orange",
+};
 
 const HEALTH_COLOR: Record<string, string> = {
   healthy: "green",
@@ -143,6 +151,23 @@ export function DashboardPage() {
     }
   }
 
+
+  // Fest auf 24h -- deckungsgleich mit dem Blick nach vorne (useUpcomingJobs(24)
+  // weiter unten), damit die Tabelle insgesamt "letzte und kommende 24
+  // Stunden" zeigt, ohne wählbaren Zeitraum (vormals 24h/7-Tage-Umschalter).
+  const jobsRangeCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const jobsInRange = (runs ?? [])
+    .filter((r) => new Date(r.started_at).getTime() >= jobsRangeCutoff)
+    .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+
+  // Absteigend nach Zeitpunkt (am weitesten in der Zukunft zuerst), damit
+  // die gesamte Tabelle (geplante + bereits gelaufene Jobs) als EINE
+  // durchgaengige Reihenfolge von neu/zukuenftig nach alt gelesen werden
+  // kann -- direkt oberhalb von jobsInRange (das mit dem juengsten
+  // vergangenen Lauf beginnt) steht so der zeitnaechste geplante Job.
+  const upcomingJobsSorted = [...(upcomingJobs ?? [])].sort(
+    (a, b) => new Date(b.next_run_at).getTime() - new Date(a.next_run_at).getTime(),
+  );
 
   const recentSnapshots: (BackupRunSnapshot & { started_at: string })[] = (runs ?? [])
     .flatMap((r) => r.snapshots.filter((s) => s.success).map((s) => ({ ...s, started_at: r.started_at })))
@@ -307,7 +332,70 @@ export function DashboardPage() {
         </Grid.Col>
 
         <Grid.Col span={{ base: 12, md: 6 }}>
-          <DashboardJobsTimeline runs={runs ?? []} upcomingJobs={upcomingJobs ?? []} />
+          <Paper p="md" h="100%">
+            <Group justify="space-between" mb="sm" align="flex-end">
+              <Title order={5}>Jobs</Title>
+              <Text size="xs" c="dimmed">
+                Letzte und kommende 24 Stunden
+              </Text>
+            </Group>
+            <Table.ScrollContainer minWidth={500}>
+              <Table striped highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Job</Table.Th>
+                    <Table.Th>Scope</Table.Th>
+                    <Table.Th>Ziele</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Zeitpunkt</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {upcomingJobsSorted.map((job) => (
+                    <Table.Tr key={`upcoming-${job.resource_group_id}-${job.policy_id}-${job.next_run_at}`}>
+                      <Table.Td>
+                        {job.policy_name} <Text span c="dimmed" size="sm">({job.resource_group_name})</Text>
+                      </Table.Td>
+                      <Table.Td>-</Table.Td>
+                      <Table.Td>-</Table.Td>
+                      <Table.Td>
+                        <Badge color="indigo" variant="light">
+                          Geplant
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>{new Date(job.next_run_at).toLocaleString("de-DE")}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                  {jobsInRange.length === 0 && (upcomingJobs?.length ?? 0) === 0 ? (
+                    <Table.Tr>
+                      <Table.Td colSpan={5}>
+                        <Text size="sm" c="dimmed">
+                          Keine Job-Laeufe in diesem Zeitraum und keine geplanten Jobs.
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ) : (
+                    jobsInRange.map((run) => (
+                      <Table.Tr key={run.id}>
+                        <Table.Td>{run.job_name}</Table.Td>
+                        <Table.Td>{run.scope}</Table.Td>
+                        <Table.Td>{run.targets.join(", ")}</Table.Td>
+                        <Table.Td>
+                          <Badge color={STATUS_COLOR[run.status]} variant="light">
+                            {run.status}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>{new Date(run.started_at).toLocaleString("de-DE")}</Table.Td>
+                      </Table.Tr>
+                    ))
+                  )}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+            <Anchor component={Link} to="/jobs?tab=runs" size="sm" mt="sm" style={{ display: "inline-block" }}>
+              Alle Job-Laeufe anzeigen
+            </Anchor>
+          </Paper>
         </Grid.Col>
       </Grid>
 
