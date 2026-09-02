@@ -188,6 +188,18 @@ export function useUpcomingJobs(hours = 24) {
   });
 }
 
+// Fester Kalendertag-Bereich statt "ab jetzt vorausschauend" -- fuer die
+// Backup-Kalenderansicht (Backup > Kalender), die auch in vergangene oder
+// weiter entfernte Monate blaettern koennen muss. startDate/endDate im
+// Format "YYYY-MM-DD".
+export function useJobsCalendar(startDate: string, endDate: string) {
+  return useQuery({
+    queryKey: ["upcoming-jobs", "range", startDate, endDate],
+    queryFn: async () =>
+      (await apiClient.get<UpcomingJob[]>("/jobs/upcoming", { params: { start_date: startDate, end_date: endDate } })).data,
+  });
+}
+
 export function useBackupsForObject(
   scope: BackupScope,
   name: string | undefined,

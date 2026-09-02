@@ -14,6 +14,7 @@ import {
   useResourceGroups,
   useSchedules,
 } from "@/api/hooks";
+import { BackupCalendarTab } from "@/components/BackupCalendarTab";
 import { LogViewer } from "@/components/LogViewer";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
@@ -47,7 +48,10 @@ const SCHEDULE_TYPE_LABEL: Record<string, string> = {
 export function JobsPage() {
   const [params, setParams] = useSearchParams();
   const tabParam = params.get("tab");
-  const activeTab = tabParam === "runs" || tabParam === "protection-groups" || tabParam === "schedules" ? tabParam : "policies";
+  const activeTab =
+    tabParam === "runs" || tabParam === "protection-groups" || tabParam === "schedules" || tabParam === "calendar"
+      ? tabParam
+      : "policies";
 
   const { data: policies } = usePolicies();
   const { data: runs } = useJobRuns();
@@ -198,6 +202,7 @@ export function JobsPage() {
           <Tabs.Tab value="policies">Policies</Tabs.Tab>
           <Tabs.Tab value="protection-groups">Protection Groups</Tabs.Tab>
           <Tabs.Tab value="schedules">Zeitpläne</Tabs.Tab>
+          <Tabs.Tab value="calendar">Kalender</Tabs.Tab>
           <Tabs.Tab value="runs">Job-Verlauf</Tabs.Tab>
         </Tabs.List>
 
@@ -435,6 +440,10 @@ export function JobsPage() {
               </Text>
             )}
           </Paper>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="calendar" pt="md">
+          <BackupCalendarTab />
         </Tabs.Panel>
 
         <Tabs.Panel value="runs" pt="md">

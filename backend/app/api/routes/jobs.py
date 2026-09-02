@@ -27,7 +27,7 @@ abzubrechen -- Best-Effort pro VM, analog zum Rest dieser Funktion."""
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from ntpath import basename as win_basename
 from zoneinfo import ZoneInfo
 
@@ -119,29 +119,48 @@ def _occurrences_within(schedule: Schedule, start_local: datetime, end_local: da
 @router.get("/upcoming", response_model=list[UpcomingJobRead])
 def list_upcoming_jobs(
     hours: int = Query(default=24, ge=1, le=24 * 31),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.BACKUP_VIEW)),
 ) -> list[UpcomingJobRead]:
     """Alle faelligen geplanten Backup-Laeufe ueber alle Resource-Group-
-    Policy-Verknuepfungen hinweg innerhalb der naechsten `hours` Stunden,
-    chronologisch sortiert -- Grundlage fuer die Dashboard-Vorschau ('Jobs',
-    siehe DashboardPage.tsx). Der Zeitplan haengt an der Verknuepfung
-    zwischen Resource Group und Policy, nicht an der Resource Group oder
-    der Policy allein (siehe app.models.resource_group.ResourceGroupPolicyLink)
-    -- dieselbe Resource Group kann so an mehrere Policies mit
-    unterschiedlicher Kadenz haengen (z.B. ein CSV stuendlich UND
-    woechentlich). Eine Verknuepfung mit z.B. einem HOURLY-Zeitplan
-    erscheint mit jedem einzelnen Vorkommen im Fenster. Nutzt dieselbe
-    Zeitzonen-/Zeitplan-Logik wie run_scheduled_backups
-    (app.core.scheduler._schedule_is_due), nur vorausschauend ueber ein
-    ganzes Fenster statt nur fuer die aktuelle Minute."""
+    Policy-Verknuepfungen hinweg, chronologisch sortiert -- Grundlage fuer
+    die Dashboard-Vorschau ('Jobs', siehe DashboardPage.tsx) UND die
+    Backup-Kalenderansicht (Backup > Kalender, siehe CalendarTab.tsx).
+    Der Zeitplan haengt an der Verknuepfung zwischen Resource Group und
+    Policy, nicht an der Resource Group oder der Policy allein (siehe
+    app.models.resource_group.ResourceGroupPolicyLink) -- dieselbe Resource
+    Group kann so an mehrere Policies mit unterschiedlicher Kadenz haengen
+    (z.B. ein CSV stuendlich UND woechentlich). Eine Verknuepfung mit z.B.
+    einem HOURLY-Zeitplan erscheint mit jedem einzelnen Vorkommen im
+    Fenster. Nutzt dieselbe Zeitzonen-/Zeitplan-Logik wie
+    run_scheduled_backups (app.core.scheduler._schedule_is_due), nur
+    vorausschauend ueber ein ganzes Fenster statt nur fuer die aktuelle
+    Minute.
+
+    Zwei Abfrage-Modi: `hours` (Default, ab jetzt vorausschauend -- fuer die
+    Dashboard-Vorschau) ODER `start_date`+`end_date` (fester Kalendertag-
+    Bereich, unabhaengig von "jetzt" -- fuer die Monatsansicht des Kalenders,
+    die auch in die Vergangenheit oder mehrere Monate voraus blaettern
+    koennen muss). Sind beide Datums-Parameter gesetzt, haben sie Vorrang
+    vor `hours`."""
     settings = get_settings()
     try:
         tz = ZoneInfo(settings.schedule_timezone)
     except Exception:
         tz = timezone.utc
-    now_local = datetime.now(tz)
-    end_local = now_local + timedelta(hours=hours)
+
+    if start_date is not None and end_date is not None:
+        # Startpunkt einen Tick vor Mitternacht des Start-Tages, da
+        # _occurrences_within das Intervall exklusiv am Anfang behandelt
+        # (start_local, end_local] -- sonst wuerde ein Vorkommen exakt um
+        # 00:00 Uhr des ersten Tages verloren gehen.
+        now_local = datetime.combine(start_date - timedelta(days=1), time.max, tzinfo=tz)
+        end_local = datetime.combine(end_date, time.max, tzinfo=tz)
+    else:
+        now_local = datetime.now(tz)
+        end_local = now_local + timedelta(hours=hours)
 
     links = db.query(ResourceGroupPolicyLink).filter(ResourceGroupPolicyLink.schedule_id.isnot(None)).all()
     upcoming: list[UpcomingJobRead] = []
