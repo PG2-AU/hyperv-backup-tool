@@ -898,7 +898,16 @@ def start_scheduler() -> BackgroundScheduler:
     try:
         _log(
             startup_db,
-            f"gestartet (Health-Check alle {hc_interval}min, "
+            # "Scheduler-Prozess gestartet" statt nur "gestartet" -- neben
+            # den einzelnen "Task gestartet: X"-Zeilen pro Hintergrundjob
+            # (siehe run_health_checks etc.) las sich das sonst wie ein
+            # weiterer Task-Start, ist aber eine EINMALIGE Zusammenfassung
+            # beim Hochfahren des Prozesses (jeder Deploy-Neustart), die
+            # ALLE konfigurierten Intervalle auflistet -- nicht nur den
+            # Health-Check (Nutzer-Rueckfrage: "sollte hier nicht nur
+            # Health-Check erscheinen?" -- nein, das war schon immer
+            # beabsichtigt, nur die Formulierung war missverstaendlich).
+            f"Scheduler-Prozess gestartet (Konfiguration: Health-Check alle {hc_interval}min, "
             f"Discovery alle {discovery_interval}min, "
             f"Snapshot-Abgleich taeglich um {snapshot_hour:02d}:00 UTC, "
             f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
