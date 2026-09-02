@@ -840,6 +840,18 @@ export function useRecheckAlerts() {
   });
 }
 
+// Quittiert den virtuellen "Backup fehlgeschlagen"-Alarm eines einzelnen
+// Laufs (siehe Backend alerts.py) -- fuer eine selten laufende oder
+// inzwischen deaktivierte/geloeschte Policy, deren Alarm sich sonst nie
+// durch einen spaeteren erfolgreichen Lauf von selbst aufloesen wuerde.
+export function useDismissBackupFailedAlert() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (runId: string) => (await apiClient.post(`/alerts/backup-runs/${runId}/dismiss`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+  });
+}
+
 export function useSchedulerConfig() {
   return useQuery({
     queryKey: ["scheduler-config"],

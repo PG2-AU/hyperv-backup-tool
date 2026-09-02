@@ -58,6 +58,14 @@ class BackupRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # Der "Backup fehlgeschlagen"-Alarm zu diesem Lauf (siehe
+    # app.api.routes.alerts.list_alerts) ist rein virtuell aus dem
+    # BackupRun-Verlauf abgeleitet -- loest sich von selbst nur auf, wenn ein
+    # SPAETERER Lauf derselben Policy erfolgreich war. Bei einer selten
+    # laufenden Policy oder einer inzwischen deaktivierten/geloeschten
+    # Policy kann das nie eintreten -- der Alarm bliebe sonst fuer immer
+    # aktiv (Nutzer-Meldung). Manuelles Quittieren setzt dieses Feld.
+    alert_dismissed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     snapshots = relationship("BackupRunSnapshot", back_populates="run", cascade="all, delete-orphan")
     vm_configs = relationship("BackupRunVmConfig", back_populates="run", cascade="all, delete-orphan")

@@ -3,9 +3,13 @@ import { ActionIcon, Badge, Button, Group, Paper, SegmentedControl, Table, Text,
 import { IconExternalLink, IconRefresh } from "@tabler/icons-react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { useAlerts } from "@/api/hooks";
+import { notifications } from "@mantine/notifications";
+
+import { useAlerts, useDismissBackupFailedAlert } from "@/api/hooks";
 import { SearchInput } from "@/components/SearchInput";
 import type { Alert, AlertType } from "@/api/types";
+import { confirmAction } from "@/utils/confirm";
+import { apiErrorMessage } from "@/utils/errors";
 import { matchesAllColumns } from "@/utils/search";
 
 const TYPE_LABEL: Record<AlertType, string> = {
@@ -74,14 +78,42 @@ function AlertAction({ alert }: { alert: Alert }) {
   }
   if (alert.alert_type === "backup_failed") {
     return (
-      <Tooltip label="Zum Job-Verlauf">
-        <ActionIcon component={Link} to="/jobs?tab=runs" variant="subtle">
-          <IconExternalLink size={16} />
-        </ActionIcon>
-      </Tooltip>
+      <Group gap="xs" wrap="nowrap">
+        <Tooltip label="Zum Job-Verlauf">
+          <ActionIcon component={Link} to="/jobs?tab=runs" variant="subtle">
+            <IconExternalLink size={16} />
+          </ActionIcon>
+        </Tooltip>
+        {alert.run_id && <DismissBackupFailedButton runId={alert.run_id} />}
+      </Group>
     );
   }
   return null;
+}
+
+function DismissBackupFailedButton({ runId }: { runId: string }) {
+  const dismissAlert = useDismissBackupFailedAlert();
+
+  function handleDismiss() {
+    confirmAction({
+      title: "Alarm quittieren",
+      message: "Diesen 'Backup fehlgeschlagen'-Alarm als erledigt markieren? Der fehlgeschlagene Lauf selbst bleibt im Job-Verlauf sichtbar.",
+      confirmLabel: "Quittieren",
+      color: "blue",
+      onConfirm: () =>
+        dismissAlert.mutate(runId, {
+          onSuccess: () => notifications.show({ title: "Alarm quittiert", message: "", color: "green" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Alarm konnte nicht quittiert werden."), color: "red" }),
+        }),
+    });
+  }
+
+  return (
+    <Button size="xs" variant="light" onClick={handleDismiss} loading={dismissAlert.isPending}>
+      Quittieren
+    </Button>
+  );
 }
 
 export function AlertsPage() {

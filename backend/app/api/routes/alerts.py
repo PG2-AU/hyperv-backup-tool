@@ -8,7 +8,7 @@ dupliziert gespeichert, siehe app.models.alert)."""
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
@@ -52,7 +52,10 @@ def list_alerts(db: Session = Depends(get_db), user=Depends(require_permission(P
 
     # Fehlgeschlagene Backup-Laeufe: virtuell aus BackupRun abgeleitet
     # (siehe app.models.alert-Docstring) -- 'aufgeloest', sobald ein
-    # SPAETERER Lauf derselben Policy erfolgreich war.
+    # SPAETERER Lauf derselben Policy erfolgreich war ODER manuell quittiert
+    # wurde (BackupRun.alert_dismissed_at) -- ohne Quittieren-Option bliebe
+    # der Alarm bei einer selten laufenden oder inzwischen deaktivierten
+    # Policy sonst fuer immer aktiv (Nutzer-Meldung).
     runs_by_policy: dict[str, list[BackupRun]] = defaultdict(list)
     for run in db.query(BackupRun).order_by(BackupRun.started_at).all():
         if run.policy_id:
@@ -63,15 +66,16 @@ def list_alerts(db: Session = Depends(get_db), user=Depends(require_permission(P
             if run.status not in (JobStatus.FAILED, JobStatus.CLEANED_UP_AFTER_FAILURE):
                 continue
             resolved_run = next((r for r in policy_runs[i + 1 :] if r.status == JobStatus.SUCCEEDED), None)
+            resolved_at = resolved_run.started_at if resolved_run else run.alert_dismissed_at
             results.append(
                 AlertRead(
                     id=f"backup-{run.id}",
                     alert_type="backup_failed",
                     object_name=run.policy_name,
                     message=run.error_message or "Backup-Lauf fehlgeschlagen",
-                    status="resolved" if resolved_run else "active",
+                    status="resolved" if resolved_at else "active",
                     triggered_at=run.started_at,
-                    resolved_at=resolved_run.started_at if resolved_run else None,
+                    resolved_at=resolved_at,
                     run_id=run.id,
                 )
             )
@@ -131,3 +135,19 @@ def recheck_alerts(db: Session = Depends(get_db), user=Depends(require_permissio
         except Exception:
             pass
     run_alert_check()
+
+
+@router.post("/backup-runs/{run_id}/dismiss", status_code=status.HTTP_204_NO_CONTENT)
+def dismiss_backup_failed_alert(
+    run_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> None:
+    """Quittiert den virtuellen 'Backup fehlgeschlagen'-Alarm zu einem
+    einzelnen Lauf (siehe list_alerts oben) -- fuer den Fall, dass die
+    zugehoerige Policy selten laeuft, deaktiviert oder geloescht wurde und
+    der Alarm sich sonst nie von selbst durch einen spaeteren erfolgreichen
+    Lauf aufloesen wuerde."""
+    run = db.get(BackupRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup-Lauf nicht gefunden")
+    run.alert_dismissed_at = datetime.now(timezone.utc)
+    db.commit()
