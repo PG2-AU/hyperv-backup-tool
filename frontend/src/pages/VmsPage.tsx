@@ -28,6 +28,17 @@ import { formatBytes } from "@/utils/format";
 import { useRunPolicy } from "@/utils/runPolicy";
 import { matchesAllColumns } from "@/utils/search";
 
+// CsvRead hat (anders als VmRead.id) keine eigene stabile Zeilen-ID -- der
+// Name allein ist NICHT eindeutig, sobald zwei Hyper-V-Cluster ein CSV mit
+// identischem Namen haben (in der Praxis haeufig, z.B. beide "CSV01").
+// cluster_id+Name ist dagegen stabil (bleibt ueber Discovery-Laeufe hinweg
+// gleich, anders als eine rohe Zeilen-ID, die bei jeder Discovery neu
+// vergeben wird) -- dieselbe Ueberlegung wie beim Backend-Fix fuer
+// ResourceGroup.members (siehe app.models.resource_group).
+function csvIdentity(csv: Csv): string {
+  return `${csv.cluster_id ?? ""}::${csv.name}`;
+}
+
 const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
 
 function ResourceGroupCell({ groups, policies }: { groups: string[]; policies: string[] }) {
@@ -150,7 +161,7 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
       <Stack gap="sm">
         {vhds.map((vhd, i) => {
           const csvName = vhd.csv_path.split(/[\\/]/).pop();
-          const csv = csvs?.find((c) => c.name === csvName);
+          const csv = csvs?.find((c) => c.name === csvName && c.cluster_id === vm.cluster_id);
           return (
             <Box key={i} style={{ overflowX: "auto" }}>
               <Group gap={6} wrap="nowrap">
@@ -209,7 +220,8 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
 }
 
 function CsvChainHeader({ csv, vms, onClose }: { csv: Csv; vms: Vm[] | undefined; onClose: () => void }) {
-  const vmsOnCsv = vms?.filter((vm) => vm.csv_paths.some((p) => p.split(/[\\/]/).pop() === csv.name)) ?? [];
+  const vmsOnCsv =
+    vms?.filter((vm) => vm.cluster_id === csv.cluster_id && vm.csv_paths.some((p) => p.split(/[\\/]/).pop() === csv.name)) ?? [];
 
   return (
     <Paper withBorder p="md">
@@ -300,7 +312,7 @@ export function VmsPage() {
 
   function toggleSelectedCsv(csv: Csv) {
     setSelectedVm(null);
-    setSelectedCsv((prev) => (prev?.name === csv.name ? null : csv));
+    setSelectedCsv((prev) => (prev && csvIdentity(prev) === csvIdentity(csv) ? null : csv));
   }
 
   function policiesOf(names: string[], ids: string[]): PolicySummary[] {
@@ -436,11 +448,11 @@ export function VmsPage() {
                     : null;
                 return (
                   <Table.Tr
-                    key={csv.name}
+                    key={csvIdentity(csv)}
                     onClick={() => toggleSelectedCsv(csv)}
                     style={{
                       cursor: "pointer",
-                      backgroundColor: selectedCsv?.name === csv.name ? "var(--mantine-color-blue-light)" : undefined,
+                      backgroundColor: selectedCsv && csvIdentity(selectedCsv) === csvIdentity(csv) ? "var(--mantine-color-blue-light)" : undefined,
                     }}
                   >
                     <Table.Td>{csv.name}</Table.Td>
