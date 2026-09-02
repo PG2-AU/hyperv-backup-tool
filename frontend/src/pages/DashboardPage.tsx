@@ -1,4 +1,4 @@
-import { Anchor, Badge, Grid, Group, Paper, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
+import { Anchor, Badge, Grid, Group, Paper, ScrollArea, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -31,6 +31,15 @@ const STATUS_COLOR: Record<string, string> = {
   cleaning_up: "yellow",
   cleaned_up_after_failure: "orange",
 };
+
+// Jobs-Tabelle: bis zu 15 Zeilen ohne Scrollen sichtbar, danach vertikal
+// scrollbar (Kopfzeile bleibt beim Scrollen sichtbar, siehe sticky-Style
+// unten) -- reine Schaetzwerte fuer die Standard-Zeilenhoehe, da die
+// tatsaechliche Hoehe von der unter Settings > Anzeige waehlbaren
+// Content-Schriftgroesse mit abhaengt.
+const JOBS_TABLE_VISIBLE_ROWS = 15;
+const ROW_HEIGHT_PX = 44;
+const HEADER_HEIGHT_PX = 44;
 
 const HEALTH_COLOR: Record<string, string> = {
   healthy: "green",
@@ -339,9 +348,10 @@ export function DashboardPage() {
                 Letzte und kommende 24 Stunden
               </Text>
             </Group>
+            <ScrollArea.Autosize mah={JOBS_TABLE_VISIBLE_ROWS * ROW_HEIGHT_PX + HEADER_HEIGHT_PX} type="auto">
             <Table.ScrollContainer minWidth={500}>
               <Table striped highlightOnHover>
-                <Table.Thead>
+                <Table.Thead style={{ position: "sticky", top: 0, zIndex: 1, backgroundColor: "var(--mantine-color-body)" }}>
                   <Table.Tr>
                     <Table.Th>Job</Table.Th>
                     <Table.Th>Scope</Table.Th>
@@ -392,6 +402,7 @@ export function DashboardPage() {
                 </Table.Tbody>
               </Table>
             </Table.ScrollContainer>
+            </ScrollArea.Autosize>
             <Anchor component={Link} to="/jobs?tab=runs" size="sm" mt="sm" style={{ display: "inline-block" }}>
               Alle Job-Laeufe anzeigen
             </Anchor>
