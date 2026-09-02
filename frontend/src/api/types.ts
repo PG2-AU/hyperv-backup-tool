@@ -803,6 +803,7 @@ export interface VmWithBackups {
   host?: string | null;
   state?: string | null;
   cluster?: string | null;
+  cluster_id?: string | null;
   backup_count: number;
   exists_in_inventory: boolean;
 }

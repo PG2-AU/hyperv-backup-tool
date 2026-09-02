@@ -188,10 +188,16 @@ export function useUpcomingJobs(hours = 24) {
   });
 }
 
-export function useBackupsForObject(scope: BackupScope, name: string | undefined, enabled: boolean) {
+export function useBackupsForObject(
+  scope: BackupScope,
+  name: string | undefined,
+  clusterId: string | undefined | null,
+  enabled: boolean,
+) {
   return useQuery({
-    queryKey: ["backups", scope, name],
-    queryFn: async () => (await apiClient.get<BackupSnapshot[]>("/jobs/backups", { params: { scope, name } })).data,
+    queryKey: ["backups", scope, name, clusterId],
+    queryFn: async () =>
+      (await apiClient.get<BackupSnapshot[]>("/jobs/backups", { params: { scope, name, cluster_id: clusterId } })).data,
     enabled: enabled && !!name,
   });
 }

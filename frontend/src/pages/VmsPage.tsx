@@ -293,16 +293,18 @@ export function VmsPage() {
   const { data: csvs } = useCsvs();
   const [selectedVm, setSelectedVm] = useState<Vm | null>(null);
   const [selectedCsv, setSelectedCsv] = useState<Csv | null>(null);
-  const [backupsTarget, setBackupsTarget] = useState<{ scope: BackupScope; name: string } | null>(null);
-  const [restoreWizardTarget, setRestoreWizardTarget] = useState<{ vmName: string; snapshotId: string } | null>(null);
+  const [backupsTarget, setBackupsTarget] = useState<{ scope: BackupScope; name: string; clusterId: string | null } | null>(null);
+  const [restoreWizardTarget, setRestoreWizardTarget] = useState<{ vmName: string; snapshotId: string; clusterId: string | null } | null>(
+    null,
+  );
   const [vmSearch, setVmSearch] = useState("");
   const filteredVms = (vms ?? []).filter((vm) => matchesAllColumns(vm, vmSearch));
   const [csvSearch, setCsvSearch] = useState("");
   const filteredCsvs = (csvs ?? []).filter((csv) => matchesAllColumns(csv, csvSearch));
   const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
 
-  function showBackups(scope: BackupScope, name: string) {
-    setBackupsTarget({ scope, name });
+  function showBackups(scope: BackupScope, name: string, clusterId: string | null | undefined) {
+    setBackupsTarget({ scope, name, clusterId: clusterId ?? null });
   }
 
   function toggleSelectedVm(vm: Vm) {
@@ -398,7 +400,7 @@ export function VmsPage() {
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Backups anzeigen">
-                        <ActionIcon variant="light" onClick={() => showBackups("vm", vm.name)}>
+                        <ActionIcon variant="light" onClick={() => showBackups("vm", vm.name, vm.cluster_id)}>
                           <IconHistory size={16} />
                         </ActionIcon>
                       </Tooltip>
@@ -502,7 +504,7 @@ export function VmsPage() {
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Backups anzeigen">
-                          <ActionIcon variant="light" onClick={() => showBackups("csv", csv.name)}>
+                          <ActionIcon variant="light" onClick={() => showBackups("csv", csv.name, csv.cluster_id)}>
                             <IconHistory size={16} />
                           </ActionIcon>
                         </Tooltip>
@@ -527,10 +529,11 @@ export function VmsPage() {
         onClose={() => setBackupsTarget(null)}
         scope={backupsTarget?.scope ?? "vm"}
         name={backupsTarget?.name}
+        clusterId={backupsTarget?.clusterId}
         onOpenRestoreWizard={
           backupsTarget?.scope === "vm"
             ? (snapshotId) => {
-                setRestoreWizardTarget({ vmName: backupsTarget.name, snapshotId });
+                setRestoreWizardTarget({ vmName: backupsTarget.name, snapshotId, clusterId: backupsTarget.clusterId });
                 setBackupsTarget(null);
               }
             : undefined
@@ -543,9 +546,19 @@ export function VmsPage() {
         vm={
           restoreWizardTarget
             ? (() => {
-                const vm = (vms ?? []).find((v) => v.name === restoreWizardTarget.vmName);
+                const vm = (vms ?? []).find(
+                  (v) => v.name === restoreWizardTarget.vmName && v.cluster_id === restoreWizardTarget.clusterId,
+                );
                 return vm
-                  ? { name: vm.name, host: vm.host, state: vm.state, cluster: vm.cluster, backup_count: 0, exists_in_inventory: true }
+                  ? {
+                      name: vm.name,
+                      host: vm.host,
+                      state: vm.state,
+                      cluster: vm.cluster,
+                      cluster_id: vm.cluster_id,
+                      backup_count: 0,
+                      exists_in_inventory: true,
+                    }
                   : null;
               })()
             : null

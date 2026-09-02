@@ -458,24 +458,44 @@ def _netapp_service_for(cluster: NetAppCluster) -> NetAppOntapService:
     )
 
 
-def _resolve_volume_keys_for_object(db: Session, scope: BackupScope, name: str) -> list[tuple[str, str, str]]:
+def _resolve_volume_keys_for_object(
+    db: Session, scope: BackupScope, name: str, cluster_id: str | None = None
+) -> list[tuple[str, str, str]]:
     """Loest eine einzelne VM oder ein einzelnes CSV (aktueller Discovery-
     Stand) zu den NetApp-Volumes auf, auf denen ihre Daten liegen -- fuer die
     'vorhandene Backups anzeigen'-Funktion im Inventory, unabhaengig von
     Resource Groups/Policies.
 
-    Nimmt (anders als _resolve_targets) bewusst weiterhin nur einen reinen
-    Namen ohne Cluster-Kontext entgegen -- der Aufrufer (GET /jobs/backups)
-    kennt historisch nur Scope+Name. Bei einer Namens-Kollision zwischen
-    zwei Clustern kann diese Funktion daher weiterhin das falsche CSV/die
-    falsche VM treffen (bekannte, bewusst nicht in diesem Umfang behobene
-    Einschraenkung -- siehe Backlog: betrifft nur die READ-ONLY 'vorhandene
-    Backups anzeigen'-Ansicht, nicht die tatsaechliche Backup-Ausfuehrung,
-    die ueber _resolve_targets bereits cluster-sicher ist)."""
+    `cluster_id` (der Hyper-V-Cluster der VM/des CSVs) macht die Aufloesung
+    cluster-sicher, analog zu _resolve_targets -- OHNE das kann bei zwei
+    Clustern mit gleichnamigem CSV (z.B. beide "CSV01", live beobachtet) das
+    falsche CSV getroffen werden: eine reine Namens-Aufloesung liefert dann
+    z.B. das Volume von Cluster B fuer eine VM, die tatsaechlich auf Cluster
+    A liegt -- vorhandene, korrekt aufgezeichnete Snapshots dieser VM
+    verschwinden dadurch aus der Liste (falsches Volume gefiltert), waehrend
+    zufaellig noch passende, aber eigentlich fremde Snapshots auftauchen
+    (live als echter Bug gefunden: 'RestoreTestVM_PG2' zeigte das Volume
+    eines ANDEREN Clusters). Ohne cluster_id (Alt-Aufrufer) bleibt die
+    bisherige mehrdeutige Bestfall-Aufloesung als Fallback bestehen."""
     csv_by_key, luns_by_serial, _ = _csv_index(db)
-    csv_by_any_name: dict[str, HyperVCsv] = {name_: csv for (_, name_), csv in csv_by_key.items()}
 
-    csv_names: set[str] = set()
+    keys: set[tuple[str, str, str]] = set()
+    if cluster_id is not None:
+        vm_csvs, _ = _vhd_maps(db)
+        csv_names = {name} if scope == BackupScope.CSV else vm_csvs.get((cluster_id, name), set())
+        for csv_name in csv_names:
+            csv = csv_by_key.get((cluster_id, csv_name))
+            if csv is None:
+                continue
+            key = _csv_volume_key(csv, luns_by_serial)
+            if key is not None:
+                keys.add(key)
+        return list(keys)
+
+    # Fallback ohne Cluster-Kontext (Alt-Aufrufer) -- mehrdeutig bei
+    # gleichnamigen CSVs/VMs ueber mehrere Cluster hinweg, siehe Docstring.
+    csv_by_any_name: dict[str, HyperVCsv] = {name_: csv for (_, name_), csv in csv_by_key.items()}
+    csv_names = set()
     if scope == BackupScope.VM:
         vm_csvs, _ = _vhd_maps(db)
         for (_, vm_name), names in vm_csvs.items():
@@ -483,8 +503,6 @@ def _resolve_volume_keys_for_object(db: Session, scope: BackupScope, name: str) 
                 csv_names |= names
     elif scope == BackupScope.CSV:
         csv_names = {name}
-
-    keys: set[tuple[str, str, str]] = set()
     for csv_name in csv_names:
         csv = csv_by_any_name.get(csv_name)
         if csv is None:
@@ -497,13 +515,19 @@ def _resolve_volume_keys_for_object(db: Session, scope: BackupScope, name: str) 
 
 @router.get("/backups", response_model=list[BackupSnapshotRead])
 def list_backups_for_object(
-    scope: BackupScope, name: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW)),
+    scope: BackupScope,
+    name: str,
+    cluster_id: str | None = None,
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.BACKUP_VIEW)),
 ) -> list[BackupSnapshotRead]:
     """Vorhandene (erfolgreiche) Snapshots, die eine bestimmte VM oder ein
     bestimmtes CSV abdecken -- unabhaengig davon, ueber welche Policy sie
     entstanden sind. Wird vom Inventory (Rechtsklick -> Backups anzeigen)
-    verwendet."""
-    keys = set(_resolve_volume_keys_for_object(db, scope, name))
+    verwendet. `cluster_id` optional fuer Abwaertskompatibilitaet, sollte
+    aber von jedem aktuellen Aufrufer mitgegeben werden (siehe
+    _resolve_volume_keys_for_object)."""
+    keys = set(_resolve_volume_keys_for_object(db, scope, name, cluster_id))
     if not keys:
         return []
 

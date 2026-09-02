@@ -12,13 +12,18 @@ interface BackupsModalProps {
   onClose: () => void;
   scope: BackupScope;
   name: string | undefined;
+  // Hyper-V-Cluster der VM/des CSVs -- macht die Aufloesung cluster-sicher
+  // (siehe Backend _resolve_volume_keys_for_object). Ohne das kann bei
+  // zwei Clustern mit gleichnamigem CSV/derselben VM das falsche Volume
+  // getroffen werden (live als Bug beobachtet).
+  clusterId: string | undefined | null;
   // Nur fuer scope "vm" relevant -- oeffnet den Restore-Wizard mit diesem
   // Snapshot bereits vorausgewaehlt (siehe RestoreWizardModal.initialSnapshotId).
   onOpenRestoreWizard?: (snapshotId: string) => void;
 }
 
-export function BackupsModal({ opened, onClose, scope, name, onOpenRestoreWizard }: BackupsModalProps) {
-  const { data: backups, isLoading } = useBackupsForObject(scope, name, opened);
+export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRestoreWizard }: BackupsModalProps) {
+  const { data: backups, isLoading } = useBackupsForObject(scope, name, clusterId, opened);
   const deleteSnapshot = useDeleteBackupSnapshot(scope, name);
   const detachVm = useDetachVmFromBackupSnapshot(scope, name);
 

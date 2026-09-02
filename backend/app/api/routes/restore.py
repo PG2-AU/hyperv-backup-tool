@@ -76,6 +76,11 @@ class VmWithBackupsRead(BaseModel):
     host: str | None = None
     state: str | None = None
     cluster: str | None = None
+    # Stabile HyperVCluster.id (anders als `cluster`, der Anzeigename) --
+    # noetig, um "vorhandene Backups anzeigen" cluster-sicher aufzuloesen,
+    # wenn zwei Cluster eine VM mit demselben Namen haben (siehe
+    # app.api.routes.jobs._resolve_volume_keys_for_object).
+    cluster_id: str | None = None
     backup_count: int
     exists_in_inventory: bool = True
 
@@ -207,7 +212,7 @@ def list_vms_with_backups(
     result = [
         VmWithBackupsRead(
             name=vm.name, host=vm.host_name, state=vm.state,
-            cluster=cluster_names.get(vm.cluster_id), backup_count=counts.get(vm.name, 0),
+            cluster=cluster_names.get(vm.cluster_id), cluster_id=vm.cluster_id, backup_count=counts.get(vm.name, 0),
             exists_in_inventory=True,
         )
         for vm in vms
@@ -228,6 +233,7 @@ def list_vms_with_backups(
                 VmWithBackupsRead(
                     name=vm_name, host=cfg.host_name if cfg else None, state=None,
                     cluster=cluster_names.get(cfg.hyperv_cluster_id) if cfg else None,
+                    cluster_id=cfg.hyperv_cluster_id if cfg else None,
                     backup_count=counts.get(vm_name, 0), exists_in_inventory=False,
                 )
             )

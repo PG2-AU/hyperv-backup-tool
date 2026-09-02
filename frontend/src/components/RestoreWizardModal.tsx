@@ -144,7 +144,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
   // aber auch auf Schritt "VHDX & Modus" gebraucht, um selectedSnapshot
   // aufzuloesen.
   const { data: backups, isLoading: backupsLoading } = useBackupsForObject(
-    "vm", vm?.name, opened && (active === 0 || !!initialSnapshotId),
+    "vm", vm?.name, vm?.cluster_id, opened && (active === 0 || !!initialSnapshotId),
   );
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
