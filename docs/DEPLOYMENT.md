@@ -194,19 +194,37 @@ Zertifikat als zusätzlich vertrauenswürdig hinterlegt (pywinrm
 Bei einer internen CA reicht es, einmalig nur den CA-ROOT zu exportieren
 — das deckt dann automatisch ALLE damit ausgestellten Knoten-Zertifikate
 ab, statt jeden Knoten einzeln zu pflegen. Bei selbstsignierten
-Zertifikaten (beide Varianten oben) muss dagegen **jeder Knoten** sein
-eigenes (öffentliches!) Zertifikat exportieren:
+Zertifikaten muss dagegen **jeder Knoten** sein eigenes (öffentliches!)
+Zertifikat exportieren.
+
+**Stolperstein bei `certreq`:** `$cerPath` (die beim `certreq -new`-Aufruf
+oben angegebene Ausgabedatei) **nicht** direkt für `certutil -encode`
+verwenden — live beobachtet, dass diese Datei statt des fertigen
+Zertifikats eine unfertige Zertifikatsanforderung (CSR) enthielt, obwohl
+das Zertifikat selbst korrekt im Speicher erzeugt und am Listener
+gebunden wurde. `certutil -encode` darauf angewendet erzeugt eine
+strukturell gültig aussehende, aber für OpenSSL unlesbare PEM-Datei
+(`SSLError: [X509] PEM lib`), und zwar erst beim nächsten
+Verbindungsversuch sichtbar, nicht beim Export selbst. Immer stattdessen
+frisch aus dem tatsächlich installierten Zertifikatsobjekt exportieren —
+unabhängig davon, ob es per `certreq` oder `New-SelfSignedCertificate`
+erzeugt wurde (`$cert` kommt aus dem `Get-ChildItem`-Lookup weiter oben):
 
 ```powershell
-# Mit certreq erzeugtes Zertifikat: $cerPath ist bereits eine DER-Datei,
-# direkt zu .pem konvertieren (Dateiname pro Knoten unterschiedlich waehlen):
-certutil -encode $cerPath C:\temp\winrm-host111.pem
+Export-Certificate -Cert $cert -FilePath C:\temp\winrm-host111.cer
+certutil -encode C:\temp\winrm-host111.cer C:\temp\winrm-host111.pem
 
-# Mit New-SelfSignedCertificate erzeugtes Zertifikat: erst exportieren,
-# dann konvertieren:
-Export-Certificate -Cert $cert -FilePath C:\temp\winrm-host.cer
-certutil -encode C:\temp\winrm-host.cer C:\temp\winrm-host.pem
+# Vor dem Uebertragen IMMER lokal verifizieren, dass die Datei ein
+# echtes Zertifikat mit der erwarteten SAN enthaelt -- haette beide
+# oben beschriebenen Fehlerbilder (DNS- statt IP-Typ, kaputte PEM aus
+# certreq) sofort hier erkannt, statt erst beim fehlgeschlagenen
+# Verbindungsversuch:
+certutil -dump C:\temp\winrm-host111.cer | Select-String "10.93.70"
 ```
+
+Erwartete Ausgabe: `IP Address=10.93.70.111` (eigene Adresse) und
+`IP Address=10.93.70.110` (CNO-Adresse) — als `IP Address=`, nicht als
+reiner Text im DNS-Feld.
 
 .pem-Datei(en) per RDP-Dateitransfer o.ae. auf den WSL2-Host übertragen.
 
