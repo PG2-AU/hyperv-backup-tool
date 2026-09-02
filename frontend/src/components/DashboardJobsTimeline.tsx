@@ -23,23 +23,17 @@ function statusColor(status: BackupJobRun["status"]): string {
   return "blue"; // running/pending/cleaning_up -- noch kein abschliessendes Ergebnis, wie ein geplanter Job
 }
 
-function startOfDay(d: Date): number {
-  const r = new Date(d);
-  r.setHours(0, 0, 0, 0);
-  return r.getTime();
-}
-
-/** Zeigt IMMER den aktuellen Kalendertag (00:00-24:00 lokal), nicht ein
- * gleitendes Fenster um "jetzt" -- Vergangenheit dieses Tages zeigt die
- * tatsaechlichen Job-Laeufe (gruen/rot), Zukunft dieses Tages die laut
- * Zeitplan noch anstehenden Vorkommen (blau). Ein Vorkommen, das laut Plan
- * schon haette laufen sollen (next_run_at <= jetzt), wird nicht zusaetzlich
- * als "geplant" angezeigt -- fuer diesen Zeitpunkt zaehlt der tatsaechliche
- * Lauf (falls vorhanden). */
-export function DashboardJobsTimeline({ runs, scheduledToday }: { runs: BackupJobRun[]; scheduledToday: UpcomingJob[] }) {
+/** Gleitendes Fenster von -24h bis +24h um "jetzt" (nicht der feste
+ * Kalendertag -- das ist die Kalender-Tagesansicht, siehe
+ * BackupCalendarTab.tsx): Vergangenheit zeigt die tatsaechlichen
+ * Job-Laeufe (gruen/rot), Zukunft die laut Zeitplan noch anstehenden
+ * Vorkommen (blau). Ein Vorkommen, das laut Plan schon haette laufen
+ * sollen, wird nicht zusaetzlich als "geplant" angezeigt -- fuer diesen
+ * Zeitpunkt zaehlt der tatsaechliche Lauf (falls vorhanden). */
+export function DashboardJobsTimeline({ runs, upcomingJobs }: { runs: BackupJobRun[]; upcomingJobs: UpcomingJob[] }) {
   const now = Date.now();
-  const windowStart = useMemo(() => startOfDay(new Date()), []);
-  const windowEnd = windowStart + 24 * 60 * 60 * 1000;
+  const windowStart = now - 24 * 60 * 60 * 1000;
+  const windowEnd = now + 24 * 60 * 60 * 1000;
 
   const entries = useMemo(() => {
     const result: TimelineEntry[] = [];
@@ -68,7 +62,7 @@ export function DashboardJobsTimeline({ runs, scheduledToday }: { runs: BackupJo
       });
     }
 
-    for (const job of scheduledToday) {
+    for (const job of upcomingJobs) {
       const startMs = new Date(job.next_run_at).getTime();
       if (startMs <= now) continue; // fuer die Vergangenheit zaehlt der tatsaechliche Lauf, siehe oben
       result.push({
@@ -83,7 +77,7 @@ export function DashboardJobsTimeline({ runs, scheduledToday }: { runs: BackupJo
     }
 
     return result;
-  }, [runs, scheduledToday, windowStart, windowEnd, now]);
+  }, [runs, upcomingJobs, windowStart, windowEnd, now]);
 
   return (
     <Paper p="md" h="100%">

@@ -14,10 +14,10 @@ import {
   useCsvs,
   useHyperVClusters,
   useJobRuns,
-  useJobsCalendar,
   useNetAppClusters,
   useSnapMirrorRelationships,
   useSvms,
+  useUpcomingJobs,
   useVms,
   useVolumes,
 } from "@/api/hooks";
@@ -90,8 +90,7 @@ export function DashboardPage() {
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
   const { data: runs } = useJobRuns();
-  const todayStr = new Date().toLocaleDateString("sv-SE"); // ergibt YYYY-MM-DD in lokaler Zeit
-  const { data: scheduledToday } = useJobsCalendar(todayStr, todayStr);
+  const { data: upcomingJobs } = useUpcomingJobs(24);
   const { data: hyperVClusters } = useHyperVClusters();
   const { data: netAppClusters } = useNetAppClusters();
   const { data: svms } = useSvms();
@@ -308,7 +307,7 @@ export function DashboardPage() {
         </Grid.Col>
 
         <Grid.Col span={{ base: 12, md: 6 }}>
-          <DashboardJobsTimeline runs={runs ?? []} scheduledToday={scheduledToday ?? []} />
+          <DashboardJobsTimeline runs={runs ?? []} upcomingJobs={upcomingJobs ?? []} />
         </Grid.Col>
       </Grid>
 
