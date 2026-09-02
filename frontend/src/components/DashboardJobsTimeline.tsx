@@ -54,13 +54,15 @@ export function DashboardJobsTimeline({ runs, scheduledToday }: { runs: BackupJo
       // Policy kennt keine einzelne Gruppe, faellt dann auf den Policy-
       // Namen zurueck.
       const groupOrPolicyName = run.resource_group_name ?? run.job_name;
+      const statusText = STATUS_LABEL[run.status] ?? run.status;
       result.push({
         key: `run-${run.id}`,
-        label: `${new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} - ${groupOrPolicyName}`,
+        label: groupOrPolicyName,
+        sublabel: run.resource_group_name ? `${run.job_name} · ${statusText}` : statusText,
         color: statusColor(run.status),
         startMs,
         endMs,
-        tooltip: `${run.job_name}${run.resource_group_name ? ` / ${run.resource_group_name}` : ""} — ${STATUS_LABEL[run.status] ?? run.status}\n${new Date(run.started_at).toLocaleString("de-DE")}${
+        tooltip: `${run.job_name}${run.resource_group_name ? ` / ${run.resource_group_name}` : ""} — ${statusText}\n${new Date(run.started_at).toLocaleString("de-DE")}${
           run.finished_at ? ` – ${new Date(run.finished_at).toLocaleString("de-DE")}` : " (läuft)"
         }${run.targets.length ? `\nZiele: ${run.targets.join(", ")}` : ""}`,
       });
@@ -71,7 +73,8 @@ export function DashboardJobsTimeline({ runs, scheduledToday }: { runs: BackupJo
       if (startMs <= now) continue; // fuer die Vergangenheit zaehlt der tatsaechliche Lauf, siehe oben
       result.push({
         key: `upcoming-${job.resource_group_id}-${job.policy_id}-${job.next_run_at}`,
-        label: `${new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} - ${job.resource_group_name}`,
+        label: job.resource_group_name,
+        sublabel: `${job.policy_name} · geplant`,
         color: "blue",
         startMs,
         endMs: startMs + POINT_MARKER_MS,

@@ -207,7 +207,8 @@ function DayTimeline({ day, jobs, onClose }: { day: Date; jobs: UpcomingJob[]; o
         const timeLabel = new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
         return {
           key: `${job.resource_group_id}-${job.policy_id}-${job.next_run_at}`,
-          label: `${timeLabel} - ${job.resource_group_name}`,
+          label: job.resource_group_name,
+          sublabel: job.policy_name,
           color: groupColor(job.resource_group_id),
           startMs,
           endMs: startMs + POINT_MARKER_MS,
