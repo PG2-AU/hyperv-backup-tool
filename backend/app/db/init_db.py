@@ -2,6 +2,7 @@
 initialen lokalen Admin-Benutzer an (Passwort ueber ENV/.env steuerbar)."""
 
 import os
+from collections import defaultdict
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -11,10 +12,77 @@ from app.core.rbac import DEFAULT_ROLES
 from app.core.security import hash_password
 from app.db.base import Base
 from app.db.session import engine
+from app.models.backup_policy import BackupScope
+from app.models.hyperv_discovery import HyperVCsv, HyperVVm
+from app.models.resource_group import ResourceGroup, make_member_key
 from app.models.role import Role, RoleAssignment
 from app.models.scheduler_config import SchedulerConfig
 from app.models.snapmirror_label import DEFAULT_SNAPMIRROR_LABELS, SnapMirrorLabel
 from app.models.user import User, UserSource
+
+
+def _cleanup_orphaned_hyperv_discovery_rows(engine) -> None:
+    """Loescht HyperVVm/-Vhd/-Csv-Zeilen, deren cluster_id auf keinen mehr
+    existierenden HyperVCluster zeigt. Die Modelle sind zwar mit
+    ForeignKey(..., ondelete="CASCADE") deklariert, SQLite erzwingt das aber
+    nur bei PRAGMA foreign_keys=ON pro Verbindung -- das setzt diese App
+    nirgends, die CASCADE-Angabe war also bisher wirkungslos. Ohne diesen
+    Cleanup blieben beim Loeschen eines Hyper-V-Clusters dessen VMs/CSVs als
+    Stale-Entries stehen (live beobachtet: fuehrte beim erneuten Hinzufuegen
+    desselben Clusters zu doppelten VM-Eintraegen im Inventory). Laeuft bei
+    JEDEM Start (nicht nur einmalig) -- idempotent, raeumt so auch zukuenftig
+    liegen gebliebene Reste aus alten DB-Staenden vor dieser Fix-Version auf."""
+    with engine.connect() as conn:
+        existing_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(hyperv_clusters)"))]
+        if not existing_cols:
+            return  # Tabellen existieren noch nicht -- frischer Erststart
+        for table in ("hyperv_vhds", "hyperv_vms", "hyperv_csvs"):
+            conn.execute(text(f"DELETE FROM {table} WHERE cluster_id NOT IN (SELECT id FROM hyperv_clusters)"))
+        conn.commit()
+
+
+def _migrate_resource_group_members(db: Session) -> None:
+    """Migriert ResourceGroup.members von reinen VM-/CSV-Namen (alt,
+    clusteruebergreifend mehrdeutig -- Backlog: 'Gleiche CSV-Namen von
+    unterschiedlichen Clustern werden nicht korrekt erkannt') zu
+    cluster-qualifizierten Schluesseln (siehe
+    app.models.resource_group.make_member_key). Ein bereits migrierter
+    Eintrag (enthaelt '::') bleibt unveraendert; ein Name, der aktuell zu
+    KEINEM oder zu MEHREREN Clustern passt, bleibt ebenfalls als reiner
+    Name stehen (kann nicht sicher aufgeloest werden, ohne zu raten) --
+    matcht dann weiter ueber den Legacy-Fallback in resolve_member_key/
+    _member_matches, statt die Gruppenmitgliedschaft stillschweigend zu
+    verlieren. Laeuft bei jedem Start; bereits migrierte Eintraege werden
+    dabei uebersprungen, also gefahrlos wiederholbar."""
+    groups = db.query(ResourceGroup).all()
+    if not groups:
+        return
+
+    vm_clusters_by_name: dict[str, set[str]] = defaultdict(set)
+    for vm in db.query(HyperVVm).all():
+        vm_clusters_by_name[vm.name].add(vm.cluster_id)
+    csv_clusters_by_name: dict[str, set[str]] = defaultdict(set)
+    for csv in db.query(HyperVCsv).all():
+        csv_clusters_by_name[csv.name].add(csv.cluster_id)
+
+    dirty = False
+    for group in groups:
+        lookup = vm_clusters_by_name if group.scope == BackupScope.VM else csv_clusters_by_name
+        new_members = []
+        for member in group.members:
+            if "::" in member:
+                new_members.append(member)
+                continue
+            candidates = lookup.get(member, set())
+            if len(candidates) == 1:
+                new_members.append(make_member_key(next(iter(candidates)), member))
+            else:
+                new_members.append(member)
+        if new_members != group.members:
+            group.members = new_members
+            dirty = True
+    if dirty:
+        db.commit()
 
 
 def _migrate_legacy_backup_policies_start(engine) -> None:
@@ -127,6 +195,9 @@ def init_db(db: Session) -> None:
     with engine.connect() as conn:
         conn.execute(text("UPDATE backup_policies SET email_alert_on_failure = 0 WHERE email_alert_on_failure IS NULL"))
         conn.commit()
+
+    _cleanup_orphaned_hyperv_discovery_rows(engine)
+    _migrate_resource_group_members(db)
 
     for role_name, permissions in DEFAULT_ROLES.items():
         existing = db.query(Role).filter(Role.name == role_name).first()

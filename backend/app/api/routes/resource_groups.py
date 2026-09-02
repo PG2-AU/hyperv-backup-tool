@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.core.rbac import Permission
 from app.db.session import get_db
+from collections import defaultdict
+
 from app.models.backup_policy import BackupPolicy, BackupScope
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd
 from app.models.netapp_discovery import NetAppSnapMirrorRelationship
-from app.models.resource_group import ResourceGroup
+from app.models.resource_group import ResourceGroup, parse_member_key
 from app.schemas.resource_group import ResourceGroupRead, ResourceGroupWrite
 
 router = APIRouter(prefix="/api/resource-groups", tags=["resource-groups"])
@@ -118,34 +120,51 @@ def check_snapmirror(
     for group in payload.groups:
         if not group.members:
             continue
-        # csv_name -> Menge der urspruenglich ausgewaehlten Namen (VM oder
-        # CSV), die tatsaechlich ueber dieses CSV auf dem Volume liegen --
-        # bei scope=vm wird das ueber die VHD-Zuordnung aufgeloest, damit
-        # eine VM nicht faelschlich allen Volumes der gesamten Gruppe
-        # zugerechnet wird, nur weil eine ANDERE VM der Gruppe dort liegt.
-        csv_to_names: dict[str, set[str]] = {}
+        # (cluster_id, csv_name) -> Menge der urspruenglich ausgewaehlten
+        # Namen (VM oder CSV), die tatsaechlich ueber dieses CSV auf dem
+        # Volume liegen -- bei scope=vm wird das ueber die VHD-Zuordnung
+        # aufgeloest, damit eine VM nicht faelschlich allen Volumes der
+        # gesamten Gruppe zugerechnet wird, nur weil eine ANDERE VM der
+        # Gruppe dort liegt. Cluster-qualifiziert (siehe
+        # app.models.resource_group), damit ein CSV/eine VM mit identischem
+        # Namen auf einem ANDEREN Cluster nicht faelschlich mit hineingezogen
+        # wird -- ein noch nicht migrierter/mehrdeutiger Alt-Eintrag
+        # (cluster_id is None) wird bewusst uebersprungen statt zu raten.
+        csv_to_names: dict[tuple[str, str], set[str]] = {}
         if group.scope == BackupScope.CSV:
-            for name in group.members:
-                csv_to_names.setdefault(name, set()).add(name)
+            for member in group.members:
+                cluster_id, name = parse_member_key(member)
+                if cluster_id is None:
+                    continue
+                csv_to_names.setdefault((cluster_id, name), set()).add(name)
         else:
-            rows = (
-                db.query(HyperVVhd.vm_name, HyperVVhd.csv_name)
-                .filter(HyperVVhd.vm_name.in_(group.members))
-                .distinct()
-                .all()
-            )
-            for row in rows:
-                if row.csv_name:
-                    csv_to_names.setdefault(row.csv_name, set()).add(row.vm_name)
+            names_by_cluster: dict[str, set[str]] = defaultdict(set)
+            for member in group.members:
+                cluster_id, vm_name = parse_member_key(member)
+                if cluster_id is not None:
+                    names_by_cluster[cluster_id].add(vm_name)
+            for cluster_id, vm_names in names_by_cluster.items():
+                rows = (
+                    db.query(HyperVVhd.vm_name, HyperVVhd.csv_name)
+                    .filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_name.in_(vm_names))
+                    .distinct()
+                    .all()
+                )
+                for row in rows:
+                    if row.csv_name:
+                        csv_to_names.setdefault((cluster_id, row.csv_name), set()).add(row.vm_name)
 
         if not csv_to_names:
             continue
-        csvs = db.query(HyperVCsv).filter(HyperVCsv.name.in_(csv_to_names.keys())).all()
+        cluster_ids = {key[0] for key in csv_to_names}
+        csvs = db.query(HyperVCsv).filter(HyperVCsv.cluster_id.in_(cluster_ids)).all()
         for csv in csvs:
-            if not csv.netapp_svm_name or not csv.netapp_volume_name:
+            key = (csv.cluster_id, csv.name)
+            names = csv_to_names.get(key)
+            if names is None or not csv.netapp_svm_name or not csv.netapp_volume_name:
                 continue
-            key = (csv.netapp_svm_name, csv.netapp_volume_name)
-            volume_members.setdefault(key, set()).update(csv_to_names.get(csv.name, set()))
+            vol_key = (csv.netapp_svm_name, csv.netapp_volume_name)
+            volume_members.setdefault(vol_key, set()).update(names)
 
     if not volume_members:
         return []

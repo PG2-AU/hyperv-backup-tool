@@ -14,6 +14,7 @@ import { PolicyFormModal } from "@/components/PolicyFormModal";
 import { SnapMirrorCheckPanel } from "@/components/SnapMirrorCheckPanel";
 import type { BackupScope, ResourceGroup } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
+import { makeMemberKey } from "@/utils/resourceGroupMember";
 
 const SCOPE_OPTIONS: { value: BackupScope; label: string }[] = [
   { value: "vm", label: "Virtuelle Maschinen" },
@@ -57,7 +58,22 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
     }
   }, [opened, group]);
 
-  const memberOptions = scope === "vm" ? (vms?.map((v) => v.name) ?? []) : (csvs?.map((c) => c.name) ?? []);
+  // Cluster-qualifizierter Wert (siehe makeMemberKey), damit z.B. zwei
+  // Cluster mit je einem CSV "CSV01" in der Auswahl unterscheidbar bleiben
+  // und die Zuordnung nicht ueber den Namen mit dem falschen Cluster
+  // kollidiert. Label zeigt den Cluster-Namen mit an, sobald mehr als ein
+  // Cluster im Spiel ist bzw. immer, wenn bekannt (schadet nicht).
+  const memberOptions =
+    scope === "vm"
+      ? (vms ?? [])
+          .filter((v) => v.cluster_id)
+          .map((v) => ({ value: makeMemberKey(v.cluster_id!, v.name), label: v.cluster ? `${v.name} (${v.cluster})` : v.name }))
+      : (csvs ?? [])
+          .filter((c) => c.cluster_id)
+          .map((c) => ({
+            value: makeMemberKey(c.cluster_id!, c.name),
+            label: c.hyperv_cluster_name ? `${c.name} (${c.hyperv_cluster_name})` : c.name,
+          }));
 
   function handleScopeChange(value: string | null) {
     if (!value) return;

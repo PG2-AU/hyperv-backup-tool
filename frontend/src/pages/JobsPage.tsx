@@ -23,6 +23,7 @@ import type { BackupJobRun, BackupPolicy, JobStatus, ResourceGroup, Schedule } f
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatRetention, formatSchedule } from "@/utils/format";
+import { memberDisplayName } from "@/utils/resourceGroupMember";
 import { useRunPolicy } from "@/utils/runPolicy";
 
 const STATUS_COLOR: Record<JobStatus, string> = {
@@ -296,7 +297,7 @@ export function JobsPage() {
                         {group.members.length}
                       </Badge>
                     </Table.Td>
-                    <Table.Td>{group.members.length ? group.members.join(", ") : "-"}</Table.Td>
+                    <Table.Td>{group.members.length ? group.members.map(memberDisplayName).join(", ") : "-"}</Table.Td>
                     <Table.Td>
                       {group.policies.length ? (
                         <Group gap={4}>

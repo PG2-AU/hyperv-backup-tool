@@ -30,7 +30,7 @@ from app.models.backup_policy import BackupPolicy, BackupScope
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_discovery import NetAppLun, NetAppVolume
-from app.models.resource_group import ResourceGroup
+from app.models.resource_group import ResourceGroup, make_member_key
 from app.schemas.vm import CsvRead, NetworkAdapterRead, VhdInfo, VmRead
 
 router = APIRouter(prefix="/api/vms", tags=["vms"])
@@ -40,13 +40,26 @@ def _csv_names_for_vm(vm: VmRead) -> set[str]:
     return {win_basename(p.rstrip("\\/")) for p in vm.csv_paths}
 
 
+def _member_matches(members: list[str], cluster_id: str | None, name: str) -> bool:
+    """Prueft, ob ein Objekt (VM oder CSV, ueber seine cluster_id + Name)
+    Mitglied einer Resource Group ist. Bevorzugt den cluster-qualifizierten
+    Schluessel (siehe app.models.resource_group), faellt fuer noch nicht
+    migrierte Alt-Eintraege auf den reinen Namen zurueck -- fuer die reine
+    Anzeige (Badge/Filter im Inventory) ist das unkritisch, selbst wenn ein
+    Alt-Eintrag inzwischen mehrdeutig waere (die tatsaechliche Backup-
+    Ausfuehrung in _resolve_targets ist strikt und rät dort NICHT)."""
+    if cluster_id and make_member_key(cluster_id, name) in members:
+        return True
+    return name in members
+
+
 def _matching_policies(groups: list[ResourceGroup]) -> list[BackupPolicy]:
     by_id = {p.id: p for g in groups for p in g.policies}
     return sorted(by_id.values(), key=lambda p: p.name)
 
 
 def _annotate_csv(csv: CsvRead, groups: list[ResourceGroup]) -> CsvRead:
-    matching = [g for g in groups if g.scope == BackupScope.CSV and csv.name in g.members]
+    matching = [g for g in groups if g.scope == BackupScope.CSV and _member_matches(g.members, csv.cluster_id, csv.name)]
     group_names = sorted({g.name for g in matching})
     policies = _matching_policies(matching)
     return csv.model_copy(
@@ -60,10 +73,13 @@ def _annotate_csv(csv: CsvRead, groups: list[ResourceGroup]) -> CsvRead:
 
 
 def _annotate_vm(vm: VmRead, groups: list[ResourceGroup]) -> VmRead:
-    direct = [g for g in groups if g.scope == BackupScope.VM and vm.name in g.members]
+    direct = [g for g in groups if g.scope == BackupScope.VM and _member_matches(g.members, vm.cluster_id, vm.name)]
 
     csv_names = _csv_names_for_vm(vm)
-    indirect = [g for g in groups if g.scope == BackupScope.CSV and csv_names & set(g.members)]
+    indirect = [
+        g for g in groups
+        if g.scope == BackupScope.CSV and any(_member_matches(g.members, vm.cluster_id, csv_name) for csv_name in csv_names)
+    ]
 
     matching = direct + indirect
     group_names = sorted({g.name for g in matching})
@@ -100,6 +116,7 @@ def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Perm
             state=vm.state or "",
             host=vm.host_name or "",
             cluster=cluster_names.get(vm.cluster_id),
+            cluster_id=vm.cluster_id,
             csv_paths=csv_paths,
             vhdx_size_bytes=sum(v.size_bytes or 0 for v in vhds),
             vhdx_used_bytes=sum(v.used_bytes or 0 for v in vhds),
@@ -145,6 +162,7 @@ def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Per
             owner_node=csv.owner_node or "",
             state=csv.state or "",
             hyperv_cluster_name=cluster_names.get(csv.cluster_id),
+            cluster_id=csv.cluster_id,
             volume_path=csv.path or "",
             capacity_bytes=csv.capacity_bytes,
             used_bytes=csv.used_bytes,

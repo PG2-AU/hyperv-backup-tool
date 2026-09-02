@@ -28,6 +28,10 @@ class VmRead(BaseModel):
     state: str
     host: str
     cluster: str | None = None
+    # Stabile HyperVCluster.id (anders als `cluster`, der Anzeigename) --
+    # noetig, um eine VM cluster-eindeutig zu identifizieren, wenn zwei
+    # Cluster eine VM mit demselben Namen haben (siehe app.models.resource_group).
+    cluster_id: str | None = None
     csv_paths: list[str] = []
     vhdx_size_bytes: int | None = None
     vhdx_used_bytes: int | None = None
@@ -51,6 +55,9 @@ class CsvRead(BaseModel):
     owner_node: str
     state: str
     hyperv_cluster_name: str | None = None
+    # Stabile HyperVCluster.id (anders als hyperv_cluster_name, der
+    # Anzeigename) -- siehe VmRead.cluster_id.
+    cluster_id: str | None = None
     volume_path: str
     capacity_bytes: int | None = None
     used_bytes: int | None = None

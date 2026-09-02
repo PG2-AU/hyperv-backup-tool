@@ -131,6 +131,17 @@ def delete_cluster(
     cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_MANAGE)),
 ) -> None:
     cluster = _get_cluster_or_404(db, cluster_id)
+    # HyperVVm/-Vhd/-Csv sind zwar mit ForeignKey(..., ondelete="CASCADE")
+    # deklariert, aber SQLite erzwingt das nur, wenn PRAGMA foreign_keys=ON
+    # pro Verbindung gesetzt wird -- das passiert in dieser App nirgends,
+    # die CASCADE-Angabe im Modell ist also reine Dokumentation ohne
+    # Wirkung. Ohne diesen expliziten Cleanup blieben discoverte VMs/CSVs
+    # des geloeschten Clusters als Stale-Entries stehen (live beobachtet:
+    # fuehrte bei erneutem Hinzufuegen desselben Clusters zu doppelten
+    # VM-Eintraegen im Inventory, siehe Backlog).
+    db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster_id).delete()
+    db.query(HyperVVm).filter(HyperVVm.cluster_id == cluster_id).delete()
+    db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).delete()
     db.delete(cluster)
     db.commit()
 

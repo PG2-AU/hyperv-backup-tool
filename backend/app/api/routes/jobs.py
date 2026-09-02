@@ -46,6 +46,7 @@ from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
+from app.models.resource_group import parse_member_key, resolve_member_key
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_run import RestoreStepStatus
 from app.models.schedule import Schedule, ScheduleType
@@ -303,8 +304,14 @@ class _VolumeTarget:
     vm_names: set[str] = field(default_factory=set)
 
 
-def _csv_index(db: Session) -> tuple[dict[str, HyperVCsv], dict[str, NetAppLun], dict[str, str]]:
-    """csv_by_name, luns_by_serial, cluster_names_by_id.
+def _csv_index(db: Session) -> tuple[dict[tuple[str, str], HyperVCsv], dict[str, NetAppLun], dict[str, str]]:
+    """csv_by_key, luns_by_serial, cluster_names_by_id.
+
+    csv_by_key ist ueber (HyperVCluster-ID, CSV-Name) statt nur den Namen
+    indiziert -- zwei verschiedene Hyper-V-Cluster koennen (und tun das in
+    der Praxis oft) ein CSV mit identischem Namen haben (z.B. beide
+    "CSV01"), ein reiner Namens-Index wuerde dann eines der beiden CSVs
+    stillschweigend verdecken (live beobachtet, siehe Backlog).
 
     luns_by_serial ist bewusst ueber die (stabile) Disk-Seriennummer indiziert
     und NICHT ueber die bei der Hyper-V-Discovery gespeicherte
@@ -314,21 +321,22 @@ def _csv_index(db: Session) -> tuple[dict[str, HyperVCsv], dict[str, NetAppLun],
     netapp_lun_id sofort veraltet und jede Backup-Ausfuehrung wuerde
     faelschlich "LUN nicht gefunden" melden. Die Seriennummer bleibt dagegen
     ueber Rediscoveries hinweg stabil (echte Hardware-Eigenschaft der LUN)."""
-    csv_by_name = {c.name: c for c in db.query(HyperVCsv).all()}
+    csv_by_key = {(c.cluster_id, c.name): c for c in db.query(HyperVCsv).all()}
     luns_by_serial = {lun.serial_number: lun for lun in db.query(NetAppLun).all() if lun.serial_number}
     cluster_names_by_id = {c.id: c.ontap_cluster_name or c.name for c in db.query(NetAppCluster).all()}
-    return csv_by_name, luns_by_serial, cluster_names_by_id
+    return csv_by_key, luns_by_serial, cluster_names_by_id
 
 
-def _vhd_maps(db: Session) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
-    """VM-Name -> Menge der CSV-Namen, auf denen seine VHDs liegen, und
-    umgekehrt CSV-Name -> Menge der VM-Namen darauf."""
-    vm_csvs: dict[str, set[str]] = defaultdict(set)
-    csv_vms: dict[str, set[str]] = defaultdict(set)
+def _vhd_maps(db: Session) -> tuple[dict[tuple[str, str], set[str]], dict[tuple[str, str], set[str]]]:
+    """(Cluster-ID, VM-Name) -> Menge der CSV-Namen, auf denen seine VHDs
+    liegen, und umgekehrt (Cluster-ID, CSV-Name) -> Menge der VM-Namen
+    darauf -- cluster-qualifiziert aus demselben Grund wie _csv_index."""
+    vm_csvs: dict[tuple[str, str], set[str]] = defaultdict(set)
+    csv_vms: dict[tuple[str, str], set[str]] = defaultdict(set)
     for vhd in db.query(HyperVVhd).all():
         if vhd.vm_name and vhd.csv_name:
-            vm_csvs[vhd.vm_name].add(vhd.csv_name)
-            csv_vms[vhd.csv_name].add(vhd.vm_name)
+            vm_csvs[(vhd.cluster_id, vhd.vm_name)].add(vhd.csv_name)
+            csv_vms[(vhd.cluster_id, vhd.csv_name)].add(vhd.vm_name)
     return vm_csvs, csv_vms
 
 
@@ -353,11 +361,11 @@ def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTar
     warnings: list[str] = []
     targets: dict[tuple[str, str, str], _VolumeTarget] = {}
 
-    csv_by_name, luns_by_serial, cluster_names_by_id = _csv_index(db)
+    csv_by_key, luns_by_serial, cluster_names_by_id = _csv_index(db)
     vm_csvs, csv_vms = _vhd_maps(db)
 
-    def _add(csv_name: str, vm_names: set[str]) -> None:
-        csv = csv_by_name.get(csv_name)
+    def _add(cluster_id: str, csv_name: str, vm_names: set[str]) -> None:
+        csv = csv_by_key.get((cluster_id, csv_name))
         if csv is None:
             warnings.append(f"CSV '{csv_name}' nicht gefunden (Hyper-V-Discovery pruefen)")
             return
@@ -387,18 +395,31 @@ def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTar
             target.lun_names.add(lun.name)
         target.vm_names |= vm_names
 
+    # Cluster-qualifiziert aufgeloest (siehe app.models.resource_group) --
+    # ein noch nicht migrierter/mehrdeutiger Alt-Eintrag (Name ohne
+    # Cluster-Zuordnung, z.B. weil er unter zwei Clustern gleich heisst)
+    # wird bewusst als Warnung gemeldet statt geraten, um die urspruengliche
+    # Namens-Kollision nicht im Fallback zu wiederholen.
     for group in policy.resource_groups:
         if group.scope == BackupScope.VM:
-            for vm_name in group.members:
-                csvs = vm_csvs.get(vm_name)
-                if not csvs:
-                    warnings.append(f"VM '{vm_name}': keine CSV/VHD-Zuordnung gefunden (Hyper-V-Discovery pruefen)")
+            for member in group.members:
+                resolved = resolve_member_key(member, set(vm_csvs.keys()))
+                if resolved is None:
+                    vm_name = parse_member_key(member)[1]
+                    warnings.append(f"VM '{vm_name}': keine CSV/VHD-Zuordnung gefunden oder mehrdeutig (Hyper-V-Discovery pruefen)")
                     continue
-                for csv_name in csvs:
-                    _add(csv_name, {vm_name})
+                cluster_id, vm_name = resolved
+                for csv_name in vm_csvs[resolved]:
+                    _add(cluster_id, csv_name, {vm_name})
         elif group.scope == BackupScope.CSV:
-            for csv_name in group.members:
-                _add(csv_name, csv_vms.get(csv_name, set()))
+            for member in group.members:
+                resolved = resolve_member_key(member, set(csv_by_key.keys()))
+                if resolved is None:
+                    csv_name = parse_member_key(member)[1]
+                    warnings.append(f"CSV '{csv_name}' nicht gefunden oder mehrdeutig (Hyper-V-Discovery pruefen)")
+                    continue
+                cluster_id, csv_name = resolved
+                _add(cluster_id, csv_name, csv_vms.get(resolved, set()))
         else:
             warnings.append(f"Resource Group '{group.name}': Scope '{group.scope}' wird fuer Backup-Jobs nicht unterstuetzt")
 
@@ -422,19 +443,31 @@ def _resolve_volume_keys_for_object(db: Session, scope: BackupScope, name: str) 
     """Loest eine einzelne VM oder ein einzelnes CSV (aktueller Discovery-
     Stand) zu den NetApp-Volumes auf, auf denen ihre Daten liegen -- fuer die
     'vorhandene Backups anzeigen'-Funktion im Inventory, unabhaengig von
-    Resource Groups/Policies."""
-    csv_by_name, luns_by_serial, _ = _csv_index(db)
+    Resource Groups/Policies.
+
+    Nimmt (anders als _resolve_targets) bewusst weiterhin nur einen reinen
+    Namen ohne Cluster-Kontext entgegen -- der Aufrufer (GET /jobs/backups)
+    kennt historisch nur Scope+Name. Bei einer Namens-Kollision zwischen
+    zwei Clustern kann diese Funktion daher weiterhin das falsche CSV/die
+    falsche VM treffen (bekannte, bewusst nicht in diesem Umfang behobene
+    Einschraenkung -- siehe Backlog: betrifft nur die READ-ONLY 'vorhandene
+    Backups anzeigen'-Ansicht, nicht die tatsaechliche Backup-Ausfuehrung,
+    die ueber _resolve_targets bereits cluster-sicher ist)."""
+    csv_by_key, luns_by_serial, _ = _csv_index(db)
+    csv_by_any_name: dict[str, HyperVCsv] = {name_: csv for (_, name_), csv in csv_by_key.items()}
 
     csv_names: set[str] = set()
     if scope == BackupScope.VM:
         vm_csvs, _ = _vhd_maps(db)
-        csv_names = vm_csvs.get(name, set())
+        for (_, vm_name), names in vm_csvs.items():
+            if vm_name == name:
+                csv_names |= names
     elif scope == BackupScope.CSV:
         csv_names = {name}
 
     keys: set[tuple[str, str, str]] = set()
     for csv_name in csv_names:
-        csv = csv_by_name.get(csv_name)
+        csv = csv_by_any_name.get(csv_name)
         if csv is None:
             continue
         key = _csv_volume_key(csv, luns_by_serial)

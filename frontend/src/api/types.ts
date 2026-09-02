@@ -19,6 +19,7 @@ export interface Vm {
   state: string;
   host: string;
   cluster?: string | null;
+  cluster_id?: string | null;
   csv_paths: string[];
   vhdx_size_bytes?: number | null;
   vhdx_used_bytes?: number | null;
@@ -42,6 +43,7 @@ export interface Csv {
   owner_node: string;
   state: string;
   hyperv_cluster_name?: string | null;
+  cluster_id?: string | null;
   volume_path: string;
   capacity_bytes?: number | null;
   used_bytes?: number | null;
