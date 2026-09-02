@@ -70,6 +70,10 @@ class BackupRun(Base):
     snapshots = relationship("BackupRunSnapshot", back_populates="run", cascade="all, delete-orphan")
     vm_configs = relationship("BackupRunVmConfig", back_populates="run", cascade="all, delete-orphan")
     steps = relationship("BackupRunStep", back_populates="run", cascade="all, delete-orphan", order_by="BackupRunStep.created_at")
+    # Nur befuellt, wenn resource_group_id gesetzt ist (siehe oben) --
+    # fuer die Anzeige des Protection-Group-Namens in den Zeitstrahl-
+    # Ansichten (Dashboard/Backup > Kalender).
+    resource_group = relationship("ResourceGroup")
 
 
 class BackupRunSnapshot(Base):

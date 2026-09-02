@@ -689,6 +689,11 @@ export interface BackupJobRun {
   id: string;
   job_id?: string | null;
   job_name: string;
+  // Nur bei einem geplanten Lauf gesetzt -- ein manuelles "Jetzt ausfuehren"
+  // auf der ganzen Policy (potenziell mehrere Resource Groups) laesst das
+  // leer, dann faellt die Anzeige auf job_name (Policy-Name) zurueck.
+  resource_group_id?: string | null;
+  resource_group_name?: string | null;
   status: JobStatus;
   started_at: string;
   finished_at?: string | null;

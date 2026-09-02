@@ -11,15 +11,16 @@ const MONTH_LABELS = [
   "Januar", "Februar", "März", "April", "Mai", "Juni",
   "Juli", "August", "September", "Oktober", "November", "Dezember",
 ];
-// Feste Farbpalette, deterministisch per Policy-ID zugeordnet (siehe
-// policyColor) -- verbindet visuell dieselbe Policy zwischen Monatszellen
-// und Tagesansicht, ohne eine globale Farbzuordnung verwalten zu muessen.
-const POLICY_COLORS = ["blue", "teal", "grape", "orange", "cyan", "pink", "lime", "indigo"];
+// Feste Farbpalette, deterministisch per Resource-Group-ID zugeordnet
+// (siehe groupColor) -- verbindet visuell dieselbe Protection Group
+// zwischen Monatszellen und Tagesansicht, ohne eine globale Farbzuordnung
+// verwalten zu muessen.
+const GROUP_COLORS = ["blue", "teal", "grape", "orange", "cyan", "pink", "lime", "indigo"];
 
-function policyColor(policyId: string): string {
+function groupColor(resourceGroupId: string): string {
   let hash = 0;
-  for (let i = 0; i < policyId.length; i++) hash = (hash * 31 + policyId.charCodeAt(i)) >>> 0;
-  return POLICY_COLORS[hash % POLICY_COLORS.length];
+  for (let i = 0; i < resourceGroupId.length; i++) hash = (hash * 31 + resourceGroupId.charCodeAt(i)) >>> 0;
+  return GROUP_COLORS[hash % GROUP_COLORS.length];
 }
 
 function dayKey(d: Date): string {
@@ -130,7 +131,7 @@ export function BackupCalendarTab() {
         {gridDays.map((day) => {
           const inMonth = day.getMonth() === viewDate.getMonth();
           const dayJobs = jobsByDay.get(dayKey(day)) ?? [];
-          const distinctPolicies = [...new Map(dayJobs.map((j) => [j.policy_id, j])).values()];
+          const distinctGroups = [...new Map(dayJobs.map((j) => [j.resource_group_id, j])).values()];
           const isSelected = selectedDay && isSameDay(day, selectedDay);
           return (
             <Paper
@@ -157,14 +158,14 @@ export function BackupCalendarTab() {
                 )}
               </Group>
               <Stack gap={2}>
-                {distinctPolicies.slice(0, 3).map((j) => (
-                  <Badge key={j.policy_id} size="xs" variant="light" color={policyColor(j.policy_id)} styles={{ root: { textTransform: "none" } }}>
-                    {j.policy_name}
+                {distinctGroups.slice(0, 3).map((j) => (
+                  <Badge key={j.resource_group_id} size="xs" variant="light" color={groupColor(j.resource_group_id)} styles={{ root: { textTransform: "none" } }}>
+                    {j.resource_group_name}
                   </Badge>
                 ))}
-                {distinctPolicies.length > 3 && (
+                {distinctGroups.length > 3 && (
                   <Text size="xs" c="dimmed">
-                    +{distinctPolicies.length - 3} weitere
+                    +{distinctGroups.length - 3} weitere
                   </Text>
                 )}
               </Stack>
@@ -206,8 +207,8 @@ function DayTimeline({ day, jobs, onClose }: { day: Date; jobs: UpcomingJob[]; o
         const timeLabel = new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
         return {
           key: `${job.resource_group_id}-${job.policy_id}-${job.next_run_at}`,
-          label: `${timeLabel} ${job.policy_name}`,
-          color: policyColor(job.policy_id),
+          label: `${timeLabel} - ${job.resource_group_name}`,
+          color: groupColor(job.resource_group_id),
           startMs,
           endMs: startMs + POINT_MARKER_MS,
           tooltip: `${timeLabel} — ${job.policy_name} / ${job.resource_group_name}`,

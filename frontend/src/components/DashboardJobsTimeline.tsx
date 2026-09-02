@@ -49,13 +49,18 @@ export function DashboardJobsTimeline({ runs, scheduledToday }: { runs: BackupJo
       if (startMs < windowStart || startMs >= windowEnd) continue;
       const rawEndMs = run.finished_at ? new Date(run.finished_at).getTime() : Math.min(now, startMs + MIN_BAR_MS);
       const endMs = Math.max(rawEndMs, startMs + MIN_BAR_MS);
+      // Protection-Group-Name, falls bekannt (nur bei einem geplanten Lauf
+      // gesetzt) -- ein manueller "Jetzt ausfuehren"-Lauf auf der ganzen
+      // Policy kennt keine einzelne Gruppe, faellt dann auf den Policy-
+      // Namen zurueck.
+      const groupOrPolicyName = run.resource_group_name ?? run.job_name;
       result.push({
         key: `run-${run.id}`,
-        label: `${new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} ${run.job_name}`,
+        label: `${new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} - ${groupOrPolicyName}`,
         color: statusColor(run.status),
         startMs,
         endMs,
-        tooltip: `${run.job_name} — ${STATUS_LABEL[run.status] ?? run.status}\n${new Date(run.started_at).toLocaleString("de-DE")}${
+        tooltip: `${run.job_name}${run.resource_group_name ? ` / ${run.resource_group_name}` : ""} — ${STATUS_LABEL[run.status] ?? run.status}\n${new Date(run.started_at).toLocaleString("de-DE")}${
           run.finished_at ? ` – ${new Date(run.finished_at).toLocaleString("de-DE")}` : " (läuft)"
         }${run.targets.length ? `\nZiele: ${run.targets.join(", ")}` : ""}`,
       });
@@ -66,7 +71,7 @@ export function DashboardJobsTimeline({ runs, scheduledToday }: { runs: BackupJo
       if (startMs <= now) continue; // fuer die Vergangenheit zaehlt der tatsaechliche Lauf, siehe oben
       result.push({
         key: `upcoming-${job.resource_group_id}-${job.policy_id}-${job.next_run_at}`,
-        label: `${new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} ${job.policy_name}`,
+        label: `${new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} - ${job.resource_group_name}`,
         color: "blue",
         startMs,
         endMs: startMs + POINT_MARKER_MS,

@@ -156,6 +156,13 @@ class BackupJobRun(BaseModel):
     id: str
     job_id: str | None = None
     job_name: str
+    # Nur bei einem geplanten Lauf gesetzt (siehe BackupRun.resource_group_id)
+    # -- ein manuelles "Jetzt ausfuehren" auf der ganzen Policy (potenziell
+    # mehrere Resource Groups zusammen) laesst das leer. Fuer die Anzeige in
+    # den Zeitstrahl-Ansichten (Dashboard/Backup > Kalender): dort faellt
+    # die Beschriftung in diesem Fall auf job_name (Policy-Name) zurueck.
+    resource_group_id: str | None = None
+    resource_group_name: str | None = None
     status: JobStatus
     started_at: datetime
     finished_at: datetime | None = None
