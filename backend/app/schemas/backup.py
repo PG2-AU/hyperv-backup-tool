@@ -4,7 +4,6 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.models.backup_policy import BackupScope, ConsistencyType, RetentionType
 from app.models.backup_run import JobStatus
-from app.schemas.schedule import ScheduleRead
 from app.schemas.snapmirror_label import SnapMirrorLabelRead
 
 
@@ -12,7 +11,6 @@ class BackupPolicyWrite(BaseModel):
     """Gemeinsames Payload-Schema fuer Anlegen und Bearbeiten einer Backup-Policy."""
 
     name: str
-    schedule_id: str | None = None
     app_consistent: bool = False
     snapmirror_update: bool = False
     snapmirror_label_id: str | None = None
@@ -41,8 +39,6 @@ class BackupPolicyRead(BaseModel):
 
     id: str
     name: str
-    schedule_id: str | None = None
-    schedule: ScheduleRead | None = None
     consistency: ConsistencyType
     snapmirror_update: bool
     snapmirror_label_id: str | None = None
@@ -58,9 +54,13 @@ class BackupPolicyRead(BaseModel):
 
 
 class UpcomingJobRead(BaseModel):
-    """Naechster faelliger Lauf einer geplanten Policy -- fuer die
-    Dashboard-Vorschau ('Jobs'), siehe list_upcoming_jobs in jobs.py."""
+    """Naechster faelliger Lauf einer geplanten Resource Group (der Zeitplan
+    haengt an der ResourceGroup, nicht mehr an der Policy, siehe
+    app.models.resource_group) fuer eine ihrer verknuepften Policies -- fuer
+    die Dashboard-Vorschau ('Jobs'), siehe list_upcoming_jobs in jobs.py."""
 
+    resource_group_id: str
+    resource_group_name: str
     policy_id: str
     policy_name: str
     schedule_name: str

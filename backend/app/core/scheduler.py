@@ -41,6 +41,7 @@ from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
 from app.models.hyperv_discovery import HyperVCsv
 from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
+from app.models.resource_group import ResourceGroup
 from app.models.restore_run import RestoreRun, RestoreStatus
 from app.models.schedule import Schedule, ScheduleType
 from app.models.scheduler_config import SchedulerConfig
@@ -641,21 +642,34 @@ def _schedule_is_due(schedule: Schedule, now_local: datetime) -> bool:
 
 
 def run_scheduled_backups() -> None:
-    """Fuehrt faellige Backup-Policies automatisch aus -- bislang gab es
-    dafuer ueberhaupt keinen Trigger, Zeitplaene (Schedule) waren rein
-    dekorativ und jeder Lauf musste manuell ueber 'Jetzt ausfuehren'
-    angestossen werden. Laeuft minuetlich (siehe start_scheduler); die in
-    Backup > Zeitplaene hinterlegten Uhrzeiten werden in der konfigurierten
-    lokalen Zeitzone interpretiert (HVNB_SCHEDULE_TIMEZONE, Default
-    Europe/Vienna), NICHT UTC -- der Container selbst laeuft komplett in
-    UTC, ein Admin, der '08:30' eintraegt, meint aber die eigene Ortszeit.
-    Ruft trigger_job_run() direkt auf (dieselbe Funktion, die der manuelle
-    'Jetzt ausfuehren'-Button verwendet), statt die Ausfuehrungslogik zu
-    duplizieren -- dieser Aufruf blockiert bis der komplette Lauf (inkl.
-    etwaiger Checkpoints) fertig ist, was fuer den eigenen Thread des
-    BackgroundScheduler unproblematisch ist. max_instances=1 (siehe
-    start_scheduler) verhindert, dass ein noch laufender Lauf durch die
-    naechste Minute ueberlappend erneut angestossen wird."""
+    """Fuehrt faellige Backup-Laeufe automatisch aus -- bislang gab es dafuer
+    ueberhaupt keinen Trigger, Zeitplaene (Schedule) waren rein dekorativ und
+    jeder Lauf musste manuell ueber 'Jetzt ausfuehren' angestossen werden.
+    Laeuft minuetlich (siehe start_scheduler); die in Backup > Zeitplaene
+    hinterlegten Uhrzeiten werden in der konfigurierten lokalen Zeitzone
+    interpretiert (HVNB_SCHEDULE_TIMEZONE, Default Europe/Vienna), NICHT UTC
+    -- der Container selbst laeuft komplett in UTC, ein Admin, der '08:30'
+    eintraegt, meint aber die eigene Ortszeit.
+
+    Der Zeitplan haengt an der Resource Group, nicht an der Policy (siehe
+    app.models.resource_group) -- Nutzer-Ueberlegung: bei vielen Resource
+    Groups (z.B. eine pro CSV, empfohlene Praxis), die sich dieselbe Policy
+    teilen, wuerden sonst ALLE gleichzeitig gesichert (ein Policy-Zeitplan
+    haette frueher alle verknuepften Resource Groups in einem gemeinsamen
+    Lauf ausgeloest) -- Snapshot-/VSS-Lastspitze. Iteriert daher ueber
+    faellige Resource Groups, loest pro verknuepfter aktiver Policy einen
+    eigenen, auf genau diese Resource Group beschraenkten Lauf aus (siehe
+    resource_group_ids-Parameter von _start_job_run) -- unterschiedlich
+    geplante Resource Groups derselben Policy laufen dadurch zeitversetzt
+    statt zwangslaeufig gebuendelt.
+
+    Ruft _start_job_run()/_execute_job_run() direkt auf (dieselben
+    Funktionen, die der manuelle 'Jetzt ausfuehren'-Button verwendet), statt
+    die Ausfuehrungslogik zu duplizieren -- dieser Aufruf blockiert bis der
+    komplette Lauf (inkl. etwaiger Checkpoints) fertig ist, was fuer den
+    eigenen Thread des BackgroundScheduler unproblematisch ist. max_instances=1
+    (siehe start_scheduler) verhindert, dass ein noch laufender Lauf durch
+    die naechste Minute ueberlappend erneut angestossen wird."""
     db = SessionLocal()
     try:
         settings = get_settings()
@@ -666,23 +680,35 @@ def run_scheduled_backups() -> None:
             tz = timezone.utc
         now_local = datetime.now(tz)
 
-        policies = db.query(BackupPolicy).filter(BackupPolicy.enabled.is_(True), BackupPolicy.schedule_id.isnot(None)).all()
-        for policy in policies:
-            schedule = db.get(Schedule, policy.schedule_id)
+        groups = db.query(ResourceGroup).filter(ResourceGroup.schedule_id.isnot(None)).all()
+        for group in groups:
+            schedule = db.get(Schedule, group.schedule_id)
             if schedule is None or not _schedule_is_due(schedule, now_local):
                 continue
-            try:
-                # _execute_job_run laeuft hier bewusst synchron (nicht als
-                # Hintergrund-Task wie beim manuellen "Jetzt ausfuehren", siehe
-                # trigger_job_run in jobs.py) -- run_scheduled_backups selbst
-                # laeuft ja bereits im eigenen APScheduler-Hintergrund-Thread,
-                # und max_instances=1 auf diesem Job (siehe start_scheduler)
-                # verhindert ueberlappende Ausfuehrungen.
-                run, warnings = _start_job_run(policy, db)
-                _execute_job_run(run.id, warnings)
-                _log(db, f"Geplanter Backup-Lauf gestartet: Policy '{policy.name}' (Zeitplan '{schedule.name}')")
-            except Exception as exc:
-                _log(db, f"Geplanter Backup-Lauf fuer Policy '{policy.name}' fehlgeschlagen: {exc}", level="ERROR")
+            active_policies = [p for p in group.policies if p.enabled]
+            if not active_policies:
+                continue
+            for policy in active_policies:
+                try:
+                    # _execute_job_run laeuft hier bewusst synchron (nicht als
+                    # Hintergrund-Task wie beim manuellen "Jetzt ausfuehren", siehe
+                    # trigger_job_run in jobs.py) -- run_scheduled_backups selbst
+                    # laeuft ja bereits im eigenen APScheduler-Hintergrund-Thread,
+                    # und max_instances=1 auf diesem Job (siehe start_scheduler)
+                    # verhindert ueberlappende Ausfuehrungen.
+                    run, warnings = _start_job_run(policy, db, resource_group_ids={group.id})
+                    _execute_job_run(run.id, warnings)
+                    _log(
+                        db,
+                        f"Geplanter Backup-Lauf gestartet: Resource Group '{group.name}' / Policy '{policy.name}' "
+                        f"(Zeitplan '{schedule.name}')",
+                    )
+                except Exception as exc:
+                    _log(
+                        db,
+                        f"Geplanter Backup-Lauf fuer Resource Group '{group.name}' / Policy '{policy.name}' fehlgeschlagen: {exc}",
+                        level="ERROR",
+                    )
     finally:
         db.close()
 

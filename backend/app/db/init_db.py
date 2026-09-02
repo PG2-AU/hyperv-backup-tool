@@ -18,7 +18,65 @@ from app.models.resource_group import ResourceGroup, make_member_key
 from app.models.role import Role, RoleAssignment
 from app.models.scheduler_config import SchedulerConfig
 from app.models.snapmirror_label import DEFAULT_SNAPMIRROR_LABELS, SnapMirrorLabel
+from app.models.system_log import SystemLogEvent
 from app.models.user import User, UserSource
+
+
+def _migrate_resource_group_schedules(db: Session) -> None:
+    """Migriert den Zeitplan von BackupPolicy (alt) zu ResourceGroup (neu,
+    siehe app.models.resource_group) -- Nutzer-Ueberlegung: bei vielen
+    Resource Groups, die sich dieselbe Policy teilen, sollen sie zeitversetzt
+    statt zwangslaeufig gleichzeitig gesichert werden koennen. Die alte
+    BackupPolicy.schedule_id-Spalte existiert physisch ggf. noch in der DB
+    (vom Modell nicht mehr gemappt), wird hier nur noch per Rohzugriff
+    gelesen. Fuer jede Resource Group ohne eigenen Zeitplan: hat GENAU EINE
+    ihrer verknuepften Policies einen Zeitplan, wird er uebernommen (deckt
+    den ueberwiegenden Fall ab: eine Policy pro Resource Group). Sind es
+    MEHRERE unterschiedliche Zeitplaene (Resource Group war an mehrere
+    unterschiedlich geplante Policies gehaengt -- z.B. Silver_Hourly UND
+    Silver_Weekly auf derselben Gruppe), wird bewusst NICHT geraten, welcher
+    gemeint ist -- stattdessen bleibt die Resource Group ungeplant (nur
+    manuell ausfuehrbar) und ein System-Log-Eintrag weist auf die noetige
+    manuelle Nacharbeit hin."""
+    cols = [row[1] for row in db.execute(text("PRAGMA table_info(resource_groups)"))]
+    if "schedule_id" not in cols:
+        return
+    policy_schedule = {
+        row[0]: row[1] for row in db.execute(text("SELECT id, schedule_id FROM backup_policies WHERE schedule_id IS NOT NULL"))
+    }
+    if not policy_schedule:
+        return
+
+    schedules_by_group: dict[str, set[str]] = defaultdict(set)
+    for group_id, policy_id in db.execute(text("SELECT resource_group_id, policy_id FROM resource_group_policies")):
+        sched = policy_schedule.get(policy_id)
+        if sched:
+            schedules_by_group[group_id].add(sched)
+
+    groups = db.query(ResourceGroup).filter(ResourceGroup.schedule_id.is_(None)).all()
+    dirty = False
+    for group in groups:
+        candidates = schedules_by_group.get(group.id)
+        if not candidates:
+            continue
+        if len(candidates) == 1:
+            group.schedule_id = next(iter(candidates))
+            dirty = True
+        else:
+            db.add(
+                SystemLogEvent(
+                    level="WARNING",
+                    source="init_db",
+                    message=(
+                        f"Protection Group '{group.name}' war an mehrere Policies mit unterschiedlichen Zeitplaenen "
+                        "verknuepft -- Zeitplan konnte nicht automatisch migriert werden, bitte manuell in der "
+                        "Protection Group setzen."
+                    ),
+                )
+            )
+            dirty = True
+    if dirty:
+        db.commit()
 
 
 def _cleanup_orphaned_hyperv_discovery_rows(engine) -> None:
@@ -158,6 +216,8 @@ def init_db(db: Session) -> None:
         {"target_vm_name": "VARCHAR(255)", "disconnect_network": "BOOLEAN", "destination_csv_name": "VARCHAR(255)"},
     )
     _add_missing_columns(engine, "backup_policies", {"email_alert_on_failure": "BOOLEAN"})
+    _add_missing_columns(engine, "resource_groups", {"schedule_id": "VARCHAR(36)"})
+    _add_missing_columns(engine, "backup_runs", {"resource_group_id": "VARCHAR(36)"})
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     _add_missing_columns(
         engine, "alert_config",
@@ -198,6 +258,7 @@ def init_db(db: Session) -> None:
 
     _cleanup_orphaned_hyperv_discovery_rows(engine)
     _migrate_resource_group_members(db)
+    _migrate_resource_group_schedules(db)
 
     for role_name, permissions in DEFAULT_ROLES.items():
         existing = db.query(Role).filter(Role.name == role_name).first()

@@ -244,7 +244,6 @@ export function useTriggerJobRun() {
 
 export interface BackupPolicyWritePayload {
   name: string;
-  schedule_id?: string | null;
   app_consistent: boolean;
   snapmirror_update: boolean;
   snapmirror_label_id?: string | null;
@@ -376,6 +375,7 @@ export interface ResourceGroupWritePayload {
   scope: BackupScope;
   members: string[];
   policy_ids: string[];
+  schedule_id?: string | null;
 }
 
 export function useCreateResourceGroup() {

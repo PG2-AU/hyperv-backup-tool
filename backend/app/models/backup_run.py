@@ -40,6 +40,17 @@ class BackupRun(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     policy_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("backup_policies.id", ondelete="SET NULL"), nullable=True)
     policy_name: Mapped[str] = mapped_column(String(255))
+    # Nur bei einem geplanten Lauf gesetzt (siehe run_scheduled_backups in
+    # scheduler.py): welche EINE Resource Group faellig war und diesen Lauf
+    # ausgeloest hat -- ein manuelles "Jetzt ausfuehren" auf der ganzen
+    # Policy (alle verknuepften Resource Groups zusammen) laesst das Feld
+    # leer. Ermoeglicht, den "laeuft bereits"-Schutz pro Resource Group statt
+    # pro ganzer Policy zu pruefen (siehe _start_job_run) -- zwei
+    # verschiedene, zeitversetzt geplante Resource Groups derselben Policy
+    # sollen sich nicht gegenseitig blockieren.
+    resource_group_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("resource_groups.id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.PENDING)
     consistency: Mapped[str] = mapped_column(String(50))
     scope: Mapped[BackupScope | None] = mapped_column(Enum(BackupScope), nullable=True)

@@ -351,8 +351,10 @@ export function DashboardPage() {
                 </Table.Thead>
                 <Table.Tbody>
                   {upcomingJobsSorted.map((job) => (
-                    <Table.Tr key={`upcoming-${job.policy_id}-${job.next_run_at}`}>
-                      <Table.Td>{job.policy_name}</Table.Td>
+                    <Table.Tr key={`upcoming-${job.resource_group_id}-${job.policy_id}-${job.next_run_at}`}>
+                      <Table.Td>
+                        {job.policy_name} <Text span c="dimmed" size="sm">({job.resource_group_name})</Text>
+                      </Table.Td>
                       <Table.Td>-</Table.Td>
                       <Table.Td>-</Table.Td>
                       <Table.Td>

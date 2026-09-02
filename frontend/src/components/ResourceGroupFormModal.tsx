@@ -7,14 +7,17 @@ import {
   useCreateResourceGroup,
   useCsvs,
   usePolicies,
+  useSchedules,
   useUpdateResourceGroup,
   useVms,
   type ResourceGroupWritePayload,
 } from "@/api/hooks";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
+import { ScheduleFormModal } from "@/components/ScheduleFormModal";
 import { SnapMirrorCheckPanel } from "@/components/SnapMirrorCheckPanel";
 import type { BackupScope, ResourceGroup } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
+import { formatSchedule } from "@/utils/format";
 import { makeMemberKey } from "@/utils/resourceGroupMember";
 
 const SCOPE_OPTIONS: { value: BackupScope; label: string }[] = [
@@ -23,6 +26,7 @@ const SCOPE_OPTIONS: { value: BackupScope; label: string }[] = [
 ];
 
 const NEW_POLICY_VALUE = "__new_policy__";
+const NEW_SCHEDULE_VALUE = "__new_schedule__";
 
 interface ResourceGroupFormModalProps {
   opened: boolean;
@@ -41,13 +45,16 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
   const { data: policies } = usePolicies();
+  const { data: schedules } = useSchedules();
   const isEdit = !!group;
 
   const [name, setName] = useState("");
   const [scope, setScope] = useState<BackupScope>("vm");
   const [members, setMembers] = useState<string[]>([]);
   const [policyIds, setPolicyIds] = useState<string[]>([]);
+  const [scheduleId, setScheduleId] = useState<string | null>(null);
   const [policyModalOpen, setPolicyModalOpen] = useState(false);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
 
   useEffect(() => {
     if (!opened) return;
@@ -61,11 +68,13 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
       setScope(source.scope);
       setMembers(source.members);
       setPolicyIds(source.policies.map((p) => p.id));
+      setScheduleId(source.schedule_id ?? null);
     } else {
       setName("");
       setScope("vm");
       setMembers([]);
       setPolicyIds([]);
+      setScheduleId(null);
     }
   }, [opened, group, duplicateFrom]);
 
@@ -119,7 +128,7 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
   }
 
   function handleSubmit() {
-    const payload: ResourceGroupWritePayload = { name, scope, members, policy_ids: policyIds };
+    const payload: ResourceGroupWritePayload = { name, scope, members, policy_ids: policyIds, schedule_id: scheduleId };
     const mutation = isEdit ? updateGroup.mutateAsync({ id: group!.id, payload }) : createGroup.mutateAsync(payload);
 
     mutation
@@ -179,6 +188,19 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
             searchable
           />
 
+          <Select
+            label="Zeitplan"
+            description="Legt fest, wann diese Protection Group automatisch gesichert wird -- unabhaengig vom Zeitplan anderer Protection Groups derselben Policy (so lassen sich mehrere CSVs/VMs zeitversetzt statt gleichzeitig sichern)"
+            placeholder="Kein Zeitplan (nur manuell)"
+            data={[
+              { value: NEW_SCHEDULE_VALUE, label: "+ Neuen Zeitplan erstellen..." },
+              ...(schedules?.map((s) => ({ value: s.id, label: `${s.name} (${formatSchedule(s)})` })) ?? []),
+            ]}
+            value={scheduleId}
+            onChange={(v) => (v === NEW_SCHEDULE_VALUE ? setScheduleModalOpen(true) : setScheduleId(v))}
+            clearable
+          />
+
           <SnapMirrorCheckPanel
             enabled={(policies ?? []).some((p) => policyIds.includes(p.id) && p.snapmirror_update)}
             groups={[{ scope, members }]}
@@ -200,6 +222,7 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
         onClose={() => setPolicyModalOpen(false)}
         onSaved={(saved) => setPolicyIds((prev) => [...prev, saved.id])}
       />
+      <ScheduleFormModal opened={scheduleModalOpen} onClose={() => setScheduleModalOpen(false)} onSaved={(s) => setScheduleId(s.id)} />
     </>
   );
 }

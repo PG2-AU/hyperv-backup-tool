@@ -57,7 +57,17 @@ class ResourceGroup(Base):
     """Buendelt VMs oder CSVs (nie gemischt, siehe `scope`) zu einer benannten
     Gruppe (z.B. 'Bronze'), die mit einer oder mehreren Backup-Policies
     verknuepft wird. Die Kombination aus Resource Group + Policy ergibt die
-    tatsaechliche Backup-Definition (was wird wann/wie gesichert)."""
+    tatsaechliche Backup-Definition (was wird wann/wie gesichert).
+
+    Der Zeitplan haengt bewusst HIER (nicht mehr an BackupPolicy, siehe
+    Migration in init_db.py) -- Nutzer-Ueberlegung: bei vielen CSVs, die
+    dieselbe Policy (z.B. 'Silver') teilen, wuerden sonst ALLE gleichzeitig
+    gesichert (ein Policy-Zeitplan loest alle verknuepften Resource Groups in
+    einem gemeinsamen Lauf aus) -- Snapshot-/VSS-Lastspitze auf NetApp/Hyper-
+    V. Mit dem Zeitplan an der Resource Group (kombiniert mit der Empfehlung,
+    pro CSV-Scope-Gruppe nur ein CSV zu pflegen) laesst sich das gezielt
+    entzerren, ohne die Policy-Wiederverwendung (Retention/Konsistenz/
+    SnapMirror-Regeln) aufzugeben."""
 
     __tablename__ = "resource_groups"
 
@@ -65,6 +75,8 @@ class ResourceGroup(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True)
     scope: Mapped[BackupScope] = mapped_column(Enum(BackupScope))
     members: Mapped[list[str]] = mapped_column(JSON, default=list)
+    schedule_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("schedules.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     policies = relationship("BackupPolicy", secondary=resource_group_policies, back_populates="resource_groups")
+    schedule = relationship("Schedule")

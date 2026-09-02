@@ -46,7 +46,7 @@ from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
-from app.models.resource_group import parse_member_key, resolve_member_key
+from app.models.resource_group import ResourceGroup, parse_member_key, resolve_member_key
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_run import RestoreStepStatus
 from app.models.schedule import Schedule, ScheduleType
@@ -69,8 +69,6 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 def _validate_references(payload: BackupPolicyWrite, db: Session) -> None:
-    if payload.schedule_id is not None and db.get(Schedule, payload.schedule_id) is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Zeitplan nicht gefunden")
     if payload.snapmirror_label_id is not None and db.get(SnapMirrorLabel, payload.snapmirror_label_id) is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SnapMirror-Label nicht gefunden")
 
@@ -124,11 +122,14 @@ def list_upcoming_jobs(
     db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.BACKUP_VIEW)),
 ) -> list[UpcomingJobRead]:
-    """Alle faelligen geplanten Backup-Laeufe ueber alle Policies hinweg
-    innerhalb der naechsten `hours` Stunden, chronologisch sortiert --
+    """Alle faelligen geplanten Backup-Laeufe ueber alle Resource Groups
+    hinweg innerhalb der naechsten `hours` Stunden, chronologisch sortiert --
     Grundlage fuer die Dashboard-Vorschau ('Jobs', siehe DashboardPage.tsx).
-    Policyuebergreifend: eine Policy mit z.B. einem HOURLY-Zeitplan
-    erscheint mit jedem einzelnen Vorkommen im Fenster, nicht nur einmal.
+    Der Zeitplan haengt an der Resource Group, nicht mehr an der Policy
+    (siehe app.models.resource_group) -- eine Resource Group mit z.B. einem
+    HOURLY-Zeitplan erscheint mit jedem einzelnen Vorkommen im Fenster, pro
+    verknuepfter aktiver Policy einmal (mehrere Policies auf derselben
+    Resource Group loesen beim Feuern des gemeinsamen Zeitplans alle aus).
     Nutzt dieselbe Zeitzonen-/Zeitplan-Logik wie run_scheduled_backups
     (app.core.scheduler._schedule_is_due), nur vorausschauend ueber ein
     ganzes Fenster statt nur fuer die aktuelle Minute."""
@@ -140,26 +141,29 @@ def list_upcoming_jobs(
     now_local = datetime.now(tz)
     end_local = now_local + timedelta(hours=hours)
 
-    policies = (
-        db.query(BackupPolicy)
-        .filter(BackupPolicy.enabled.is_(True), BackupPolicy.schedule_id.isnot(None))
-        .all()
-    )
+    groups = db.query(ResourceGroup).filter(ResourceGroup.schedule_id.isnot(None)).all()
     upcoming: list[UpcomingJobRead] = []
-    for policy in policies:
-        schedule = db.get(Schedule, policy.schedule_id)
+    for group in groups:
+        schedule = db.get(Schedule, group.schedule_id)
         if schedule is None or not schedule.times:
             continue
-        for occurrence in _occurrences_within(schedule, now_local, end_local):
-            upcoming.append(
-                UpcomingJobRead(
-                    policy_id=policy.id,
-                    policy_name=policy.name,
-                    schedule_name=schedule.name,
-                    consistency=policy.consistency,
-                    next_run_at=occurrence.astimezone(timezone.utc),
+        active_policies = [p for p in group.policies if p.enabled]
+        if not active_policies:
+            continue
+        occurrences = _occurrences_within(schedule, now_local, end_local)
+        for policy in active_policies:
+            for occurrence in occurrences:
+                upcoming.append(
+                    UpcomingJobRead(
+                        resource_group_id=group.id,
+                        resource_group_name=group.name,
+                        policy_id=policy.id,
+                        policy_name=policy.name,
+                        schedule_name=schedule.name,
+                        consistency=policy.consistency,
+                        next_run_at=occurrence.astimezone(timezone.utc),
+                    )
                 )
-            )
     upcoming.sort(key=lambda u: u.next_run_at)
     return upcoming
 
@@ -177,7 +181,6 @@ def create_job(
 
     policy = BackupPolicy(
         name=payload.name,
-        schedule_id=payload.schedule_id,
         consistency=ConsistencyType.APPLICATION_CONSISTENT if payload.app_consistent else ConsistencyType.CRASH_CONSISTENT,
         snapmirror_update=payload.snapmirror_update,
         snapmirror_label_id=payload.snapmirror_label_id,
@@ -211,7 +214,6 @@ def update_job(
     _validate_references(payload, db)
 
     policy.name = payload.name
-    policy.schedule_id = payload.schedule_id
     policy.consistency = ConsistencyType.APPLICATION_CONSISTENT if payload.app_consistent else ConsistencyType.CRASH_CONSISTENT
     policy.snapmirror_update = payload.snapmirror_update
     policy.snapmirror_label_id = payload.snapmirror_label_id
@@ -352,12 +354,25 @@ def _csv_volume_key(csv: HyperVCsv, luns_by_serial: dict[str, NetAppLun]) -> tup
     return (lun.cluster_id, lun.svm_name or "", lun.volume_name)
 
 
-def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTarget], list[str]]:
+def _resolve_targets(
+    db: Session, policy: BackupPolicy, resource_group_ids: set[str] | None = None
+) -> tuple[list[_VolumeTarget], list[str]]:
     """Loest die Resource Groups einer Policy zu den betroffenen NetApp-Volumes
     auf. Mehrere VMs/CSVs auf demselben Volume werden zu einem gemeinsamen
     Ziel zusammengefasst (ein Snapshot deckt sie alle ab). Gibt zusaetzlich
     Warnungen fuer Mitglieder zurueck, die sich keinem NetApp-Volume zuordnen
-    liessen (z.B. weil die Discovery noch nicht gelaufen ist)."""
+    liessen (z.B. weil die Discovery noch nicht gelaufen ist).
+
+    `resource_group_ids`, falls angegeben, beschraenkt die Aufloesung auf nur
+    diese Resource Group(s) der Policy -- genutzt vom geplanten Lauf
+    (run_scheduled_backups), der pro faelliger Resource Group einzeln
+    auslöst (siehe ResourceGroup.schedule_id), statt wie beim manuellen
+    "Jetzt ausfuehren" alle verknuepften Resource Groups auf einmal."""
+    resource_groups = (
+        [g for g in policy.resource_groups if g.id in resource_group_ids]
+        if resource_group_ids is not None
+        else policy.resource_groups
+    )
     warnings: list[str] = []
     targets: dict[tuple[str, str, str], _VolumeTarget] = {}
 
@@ -400,7 +415,7 @@ def _resolve_targets(db: Session, policy: BackupPolicy) -> tuple[list[_VolumeTar
     # Cluster-Zuordnung, z.B. weil er unter zwei Clustern gleich heisst)
     # wird bewusst als Warnung gemeldet statt geraten, um die urspruengliche
     # Namens-Kollision nicht im Fallback zu wiederholen.
-    for group in policy.resource_groups:
+    for group in resource_groups:
         if group.scope == BackupScope.VM:
             for member in group.members:
                 resolved = resolve_member_key(member, set(vm_csvs.keys()))
@@ -629,7 +644,9 @@ class _NoTargetsError(RuntimeError):
     pass
 
 
-def _start_job_run(policy: BackupPolicy, db: Session) -> tuple[BackupRun, list[str]]:
+def _start_job_run(
+    policy: BackupPolicy, db: Session, resource_group_ids: set[str] | None = None
+) -> tuple[BackupRun, list[str]]:
     """Schneller, rein lokaler Teil eines Backup-Laufs: Ziele aufloesen, Lauf-
     Zeile + VM-Konfiguration anlegen. Bewusst OHNE WinRM-/NetApp-Aufrufe,
     damit dieser Teil synchron im Request bleiben kann -- die eigentliche,
@@ -639,11 +656,26 @@ def _start_job_run(policy: BackupPolicy, db: Session) -> tuple[BackupRun, list[s
     Fortschritt live gepollt werden kann (RunningJobsIndicator.tsx) statt den
     ganzen Request lang zu blockieren. Frueher lief das alles synchron in
     einem einzigen Request -- ein laufender Job war dadurch fuer die eigene
-    Session unsichtbar, bis er komplett fertig war."""
-    if db.query(BackupRun).filter(BackupRun.policy_id == policy.id, BackupRun.status == JobStatus.RUNNING).first() is not None:
+    Session unsichtbar, bis er komplett fertig war.
+
+    `resource_group_ids`: siehe _resolve_targets -- wird vom geplanten Lauf
+    (eine Resource Group, ihr eigener Zeitplan) gesetzt, bleibt bei einem
+    manuellen "Jetzt ausfuehren" auf der ganzen Policy None. Der "laeuft
+    bereits"-Schutz ist dann ebenfalls auf genau diese Resource Group
+    beschraenkt (per BackupRun.resource_group_id), statt die ganze Policy zu
+    blockieren -- zwei unterschiedlich geplante Resource Groups derselben
+    Policy duerfen gleichzeitig laufen."""
+    single_group_id = next(iter(resource_group_ids)) if resource_group_ids and len(resource_group_ids) == 1 else None
+    already_running_query = db.query(BackupRun).filter(BackupRun.policy_id == policy.id, BackupRun.status == JobStatus.RUNNING)
+    already_running_query = (
+        already_running_query.filter(BackupRun.resource_group_id == single_group_id)
+        if single_group_id is not None
+        else already_running_query
+    )
+    if already_running_query.first() is not None:
         raise _JobAlreadyRunningError(f"Policy '{policy.name}' hat bereits einen laufenden Job.")
 
-    targets, warnings = _resolve_targets(db, policy)
+    targets, warnings = _resolve_targets(db, policy, resource_group_ids)
     if not targets:
         detail = "Keine gueltigen Backup-Ziele gefunden."
         if warnings:
@@ -652,14 +684,18 @@ def _start_job_run(policy: BackupPolicy, db: Session) -> tuple[BackupRun, list[s
             detail += " Der Policy ist keine Resource Group mit Zielen zugeordnet."
         raise _NoTargetsError(detail)
 
+    resolved_groups = (
+        [g for g in policy.resource_groups if g.id in resource_group_ids] if resource_group_ids is not None else policy.resource_groups
+    )
     now = datetime.now(timezone.utc)
     all_targets = sorted({vm for t in targets for vm in t.vm_names} | {csv for t in targets for csv in t.csv_names})
     run = BackupRun(
         policy_id=policy.id,
         policy_name=policy.name,
+        resource_group_id=single_group_id,
         status=JobStatus.RUNNING,
         consistency=policy.consistency.value,
-        scope=policy.resource_groups[0].scope if policy.resource_groups else None,
+        scope=resolved_groups[0].scope if resolved_groups else None,
         targets=all_targets,
         started_at=now,
     )

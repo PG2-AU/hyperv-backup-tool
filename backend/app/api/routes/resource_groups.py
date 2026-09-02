@@ -16,6 +16,7 @@ from app.models.backup_policy import BackupPolicy, BackupScope
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd
 from app.models.netapp_discovery import NetAppSnapMirrorRelationship
 from app.models.resource_group import ResourceGroup, parse_member_key
+from app.models.schedule import Schedule
 from app.schemas.resource_group import ResourceGroupRead, ResourceGroupWrite
 
 router = APIRouter(prefix="/api/resource-groups", tags=["resource-groups"])
@@ -30,6 +31,11 @@ def _resolve_policies(policy_ids: list[str], db: Session) -> list[BackupPolicy]:
     if missing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Policy(s) nicht gefunden: {', '.join(missing)}")
     return policies
+
+
+def _validate_schedule(schedule_id: str | None, db: Session) -> None:
+    if schedule_id is not None and db.get(Schedule, schedule_id) is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Zeitplan nicht gefunden")
 
 
 @router.get("", response_model=list[ResourceGroupRead])
@@ -47,11 +53,13 @@ def create_resource_group(
 ) -> ResourceGroup:
     if db.query(ResourceGroup).filter(ResourceGroup.name == payload.name).first() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Eine Protection Group mit diesem Namen existiert bereits")
+    _validate_schedule(payload.schedule_id, db)
 
     group = ResourceGroup(
         name=payload.name,
         scope=payload.scope,
         members=payload.members,
+        schedule_id=payload.schedule_id,
         policies=_resolve_policies(payload.policy_ids, db),
     )
     db.add(group)
@@ -74,10 +82,12 @@ def update_resource_group(
     duplicate = db.query(ResourceGroup).filter(ResourceGroup.name == payload.name, ResourceGroup.id != group_id).first()
     if duplicate is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Eine Protection Group mit diesem Namen existiert bereits")
+    _validate_schedule(payload.schedule_id, db)
 
     group.name = payload.name
     group.scope = payload.scope
     group.members = payload.members
+    group.schedule_id = payload.schedule_id
     group.policies = _resolve_policies(payload.policy_ids, db)
     db.commit()
     db.refresh(group)

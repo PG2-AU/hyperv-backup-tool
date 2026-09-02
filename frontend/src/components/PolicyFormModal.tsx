@@ -1,23 +1,19 @@
 import { useEffect, useState } from "react";
-import { Button, Group, Modal, NumberInput, Select, Stack, Switch, TextInput } from "@mantine/core";
+import { Button, Group, Modal, NumberInput, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 
 import {
   useCreatePolicy,
   useResourceGroups,
-  useSchedules,
   useSnapMirrorLabels,
   useUpdatePolicy,
   type BackupPolicyWritePayload,
 } from "@/api/hooks";
-import { ScheduleFormModal } from "@/components/ScheduleFormModal";
 import { SnapMirrorCheckPanel } from "@/components/SnapMirrorCheckPanel";
 import { SnapMirrorLabelFormModal } from "@/components/SnapMirrorLabelFormModal";
 import type { BackupPolicy, RetentionType } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
-import { formatSchedule } from "@/utils/format";
 
-const NEW_SCHEDULE_VALUE = "__new_schedule__";
 const NEW_LABEL_VALUE = "__new_label__";
 
 interface PolicyFormModalProps {
@@ -35,7 +31,6 @@ interface PolicyFormModalProps {
 export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSaved }: PolicyFormModalProps) {
   const createPolicy = useCreatePolicy();
   const updatePolicy = useUpdatePolicy();
-  const { data: schedules } = useSchedules();
   const { data: labels } = useSnapMirrorLabels();
   const { data: resourceGroups } = useResourceGroups();
   const isEdit = !!policy;
@@ -47,7 +42,6 @@ export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSave
   const linkedGroups = isEdit ? (resourceGroups ?? []).filter((g) => g.policies.some((p) => p.id === policy!.id)) : [];
 
   const [name, setName] = useState("");
-  const [scheduleId, setScheduleId] = useState<string | null>(null);
   const [appConsistent, setAppConsistent] = useState(true);
   const [snapmirrorUpdate, setSnapmirrorUpdate] = useState(true);
   const [labelId, setLabelId] = useState<string | null>(null);
@@ -57,7 +51,6 @@ export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSave
   const [lockingDays, setLockingDays] = useState<number | string>(30);
   const [emailAlertOnFailure, setEmailAlertOnFailure] = useState(false);
 
-  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [labelModalOpen, setLabelModalOpen] = useState(false);
 
   useEffect(() => {
@@ -69,7 +62,6 @@ export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSave
       // Name-Konflikt beim Speichern, macht aber weiterhin deutlich, dass
       // ein neuer, eigener Name gewaehlt werden sollte.
       setName(policy ? source.name : `${source.name} (Kopie)`);
-      setScheduleId(source.schedule_id ?? null);
       setAppConsistent(source.consistency === "ApplicationConsistent");
       setSnapmirrorUpdate(source.snapmirror_update);
       setLabelId(source.snapmirror_label_id ?? null);
@@ -80,7 +72,6 @@ export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSave
       setEmailAlertOnFailure(source.email_alert_on_failure);
     } else {
       setName("");
-      setScheduleId(null);
       setAppConsistent(true);
       setSnapmirrorUpdate(true);
       setLabelId(null);
@@ -95,7 +86,6 @@ export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSave
   function handleSubmit() {
     const payload: BackupPolicyWritePayload = {
       name,
-      schedule_id: scheduleId,
       app_consistent: appConsistent,
       snapmirror_update: snapmirrorUpdate,
       snapmirror_label_id: snapmirrorUpdate ? labelId : null,
@@ -132,17 +122,10 @@ export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSave
         <Stack>
           <TextInput label="Policy-Name" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
 
-          <Select
-            label="Zeitplan"
-            placeholder="Kein Zeitplan (nur manuell)"
-            data={[
-              { value: NEW_SCHEDULE_VALUE, label: "+ Neuen Zeitplan erstellen..." },
-              ...(schedules?.map((s) => ({ value: s.id, label: `${s.name} (${formatSchedule(s)})` })) ?? []),
-            ]}
-            value={scheduleId}
-            onChange={(v) => (v === NEW_SCHEDULE_VALUE ? setScheduleModalOpen(true) : setScheduleId(v))}
-            clearable
-          />
+          <Text size="xs" c="dimmed">
+            Der Zeitplan wird bei der Protection Group festgelegt (nicht hier) — so lassen sich mehrere Protection
+            Groups mit derselben Policy zeitversetzt statt gleichzeitig sichern.
+          </Text>
 
           <Switch
             label="Applikationskonsistent (VSS-Checkpoint)"
@@ -211,7 +194,6 @@ export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSave
         </Stack>
       </Modal>
 
-      <ScheduleFormModal opened={scheduleModalOpen} onClose={() => setScheduleModalOpen(false)} onSaved={(s) => setScheduleId(s.id)} />
       <SnapMirrorLabelFormModal opened={labelModalOpen} onClose={() => setLabelModalOpen(false)} onSaved={(l) => setLabelId(l.id)} />
     </>
   );

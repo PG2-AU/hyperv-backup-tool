@@ -204,7 +204,6 @@ export function JobsPage() {
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Name</Table.Th>
-                  <Table.Th>Zeitplan</Table.Th>
                   <Table.Th>App-konsistent</Table.Th>
                   <Table.Th>SnapMirror</Table.Th>
                   <Table.Th>Retention</Table.Th>
@@ -217,7 +216,6 @@ export function JobsPage() {
                 {policies?.map((policy) => (
                   <Table.Tr key={policy.id}>
                     <Table.Td>{policy.name}</Table.Td>
-                    <Table.Td>{formatSchedule(policy.schedule)}</Table.Td>
                     <Table.Td>
                       <Badge color={policy.consistency === "ApplicationConsistent" ? "green" : "gray"} variant="light">
                         {policy.consistency === "ApplicationConsistent" ? "Ja" : "Nein"}
@@ -303,6 +301,7 @@ export function JobsPage() {
                   <Table.Th>Anzahl</Table.Th>
                   <Table.Th>Objekte</Table.Th>
                   <Table.Th>Verknüpfte Policies</Table.Th>
+                  <Table.Th>Zeitplan</Table.Th>
                   <Table.Th>Aktionen</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -336,6 +335,7 @@ export function JobsPage() {
                         </Text>
                       )}
                     </Table.Td>
+                    <Table.Td>{formatSchedule(group.schedule)}</Table.Td>
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">
                         <Tooltip label="Jetzt ausführen">

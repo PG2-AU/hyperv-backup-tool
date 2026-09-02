@@ -494,8 +494,6 @@ export type RetentionType = "days" | "count";
 export interface BackupPolicy {
   id: string;
   name: string;
-  schedule_id?: string | null;
-  schedule?: Schedule | null;
   consistency: ConsistencyType;
   snapmirror_update: boolean;
   snapmirror_label_id?: string | null;
@@ -613,6 +611,11 @@ export interface ResourceGroup {
   scope: BackupScope;
   members: string[];
   policies: PolicySummary[];
+  // Zeitplan haengt an der Resource Group, nicht mehr an der Policy --
+  // ermoeglicht, mehrere Gruppen mit derselben Policy zeitversetzt statt
+  // gleichzeitig zu sichern (siehe Backend app.models.resource_group).
+  schedule_id?: string | null;
+  schedule?: Schedule | null;
   created_at: string;
 }
 
@@ -665,6 +668,8 @@ export interface BackupSnapshotDestination {
 }
 
 export interface UpcomingJob {
+  resource_group_id: string;
+  resource_group_name: string;
   policy_id: string;
   policy_name: string;
   schedule_name: string;
