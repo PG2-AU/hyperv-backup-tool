@@ -90,7 +90,7 @@ export function DayJobStrip({
   }, [runs, scheduled, windowStart, windowEnd, now]);
 
   return (
-    <Paper p="md" withBorder={!!onClose} mt={onClose ? "md" : undefined}>
+    <Paper p="md" mt={onClose ? "md" : undefined}>
       <Group justify="space-between" mb="sm" align="flex-end">
         <Title order={5}>{title}</Title>
         <Group gap="md">
