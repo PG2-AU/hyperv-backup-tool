@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, Group, Modal, MultiSelect, Select, Stack, TextInput } from "@mantine/core";
+import { Alert, Button, Group, Modal, MultiSelect, Select, Stack, TextInput } from "@mantine/core";
+import { IconInfoCircle } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
 
 import {
@@ -61,19 +62,36 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
   // Cluster-qualifizierter Wert (siehe makeMemberKey), damit z.B. zwei
   // Cluster mit je einem CSV "CSV01" in der Auswahl unterscheidbar bleiben
   // und die Zuordnung nicht ueber den Namen mit dem falschen Cluster
-  // kollidiert. Label zeigt den Cluster-Namen mit an, sobald mehr als ein
-  // Cluster im Spiel ist bzw. immer, wenn bekannt (schadet nicht).
+  // kollidiert. Der Cluster-Name wird im Label aber nur dann ergaenzt, wenn
+  // der Name tatsaechlich mehrdeutig ist (mehrere Cluster mit demselben
+  // VM-/CSV-Namen) -- im Normalfall (eindeutiger Name) bleibt die Liste so
+  // aufgeraeumt wie zuvor.
+  function countByName<T extends { name: string }>(items: T[]): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const item of items) counts.set(item.name, (counts.get(item.name) ?? 0) + 1);
+    return counts;
+  }
+
   const memberOptions =
     scope === "vm"
-      ? (vms ?? [])
-          .filter((v) => v.cluster_id)
-          .map((v) => ({ value: makeMemberKey(v.cluster_id!, v.name), label: v.cluster ? `${v.name} (${v.cluster})` : v.name }))
-      : (csvs ?? [])
-          .filter((c) => c.cluster_id)
-          .map((c) => ({
-            value: makeMemberKey(c.cluster_id!, c.name),
-            label: c.hyperv_cluster_name ? `${c.name} (${c.hyperv_cluster_name})` : c.name,
-          }));
+      ? (() => {
+          const nameCounts = countByName(vms ?? []);
+          return (vms ?? [])
+            .filter((v) => v.cluster_id)
+            .map((v) => ({
+              value: makeMemberKey(v.cluster_id!, v.name),
+              label: (nameCounts.get(v.name) ?? 0) > 1 && v.cluster ? `${v.name} (${v.cluster})` : v.name,
+            }));
+        })()
+      : (() => {
+          const nameCounts = countByName(csvs ?? []);
+          return (csvs ?? [])
+            .filter((c) => c.cluster_id)
+            .map((c) => ({
+              value: makeMemberKey(c.cluster_id!, c.name),
+              label: (nameCounts.get(c.name) ?? 0) > 1 && c.hyperv_cluster_name ? `${c.name} (${c.hyperv_cluster_name})` : c.name,
+            }));
+        })();
 
   function handleScopeChange(value: string | null) {
     if (!value) return;
@@ -117,6 +135,13 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
           <TextInput label="Name" placeholder="z.B. Bronze" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
 
           <Select label="Typ" data={SCOPE_OPTIONS} value={scope} onChange={handleScopeChange} allowDeselect={false} disabled={isEdit} />
+
+          {scope === "csv" && (
+            <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
+              Empfohlen: nur ein CSV pro Protection Group. Mehrere CSVs in derselben Gruppe lassen sich zwar sichern,
+              erschweren aber eine spätere gezielte Wiederherstellung genau dieses einen CSVs.
+            </Alert>
+          )}
 
           <MultiSelect
             label={scope === "vm" ? "Virtuelle Maschinen" : "Cluster Shared Volumes"}
