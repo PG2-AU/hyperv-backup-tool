@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { Group, Paper, Text, Title } from "@mantine/core";
+import { ActionIcon, Group, Paper, Text, Title } from "@mantine/core";
+import { IconX } from "@tabler/icons-react";
 
 import { JobTimelineTrack, type TimelineEntry } from "@/components/JobTimelineTrack";
 import type { BackupJobRun, UpcomingJob } from "@/api/types";
@@ -19,16 +20,36 @@ function startOfDay(d: Date): number {
   return r.getTime();
 }
 
-/** Kompakter Tages-Zeitstrahl (00:00-24:00 heute, ohne Liste darunter --
- * siehe JobTimelineTrack showList=false) fuer einen schnellen Ueberblick
- * direkt unter der Cluster-/NetApp-Uebersicht: nur farbige Marker,
- * Vergangenheit des Tages nach tatsaechlichem Ergebnis (gruen/rot),
- * Zukunft als geplant (blau). Details ausschliesslich per Hover -- siehe
- * die ausfuehrlichere Jobs-Tabelle weiter unten fuer die vollstaendige,
- * immer lesbare Liste. */
-export function DashboardDayStrip({ runs, scheduledToday }: { runs: BackupJobRun[]; scheduledToday: UpcomingJob[] }) {
+/** Kompakter Tages-Zeitstrahl (00:00-24:00, ohne Liste darunter -- siehe
+ * JobTimelineTrack showList=false) fuer einen schnellen Ueberblick: nur
+ * farbige Marker, tatsaechliche Laeufe des Tages nach Ergebnis (gruen/rot),
+ * noch ausstehende geplante Vorkommen (Zeitpunkt in der Zukunft) blau.
+ * Details ausschliesslich per Hover. Gemeinsam genutzt vom Dashboard
+ * (`day` weggelassen -- default heute, kein `onClose`) und der Backup-
+ * Kalenderansicht (Tagesauswahl im Monatskalender, `day`+`onClose` gesetzt)
+ * -- eine Komponente statt zwei fast identischer Implementierungen, damit
+ * beide Ansichten garantiert gleich aussehen und sich bleiben. */
+export function DayJobStrip({
+  day,
+  runs,
+  scheduled,
+  title = "Backup-Zeitstrahl",
+  onClose,
+}: {
+  /** Tag, dessen 00:00-24:00-Fenster angezeigt wird -- Default: heute
+   * (Dashboard-Nutzung). Fuer Vergangenheits-/Zukunftstage (Kalender)
+   * zeigt sich automatisch nur die jeweils sinnvolle Haelfte: an
+   * vergangenen Tagen bleiben keine "geplanten" Vorkommen mehr (die
+   * Zukunfts-Filterung unten greift schon), an zukuenftigen Tagen gibt es
+   * noch keine tatsaechlichen Laeufe. */
+  day?: Date;
+  runs: BackupJobRun[];
+  scheduled: UpcomingJob[];
+  title?: string;
+  onClose?: () => void;
+}) {
   const now = Date.now();
-  const windowStart = useMemo(() => startOfDay(new Date()), []);
+  const windowStart = useMemo(() => startOfDay(day ?? new Date()), [day]);
   const windowEnd = windowStart + 24 * 60 * 60 * 1000;
 
   const entries = useMemo(() => {
@@ -52,7 +73,7 @@ export function DashboardDayStrip({ runs, scheduledToday }: { runs: BackupJobRun
       });
     }
 
-    for (const job of scheduledToday) {
+    for (const job of scheduled) {
       const startMs = new Date(job.next_run_at).getTime();
       if (startMs <= now) continue; // fuer die Vergangenheit zaehlt der tatsaechliche Lauf, siehe oben
       result.push({
@@ -66,16 +87,21 @@ export function DashboardDayStrip({ runs, scheduledToday }: { runs: BackupJobRun
     }
 
     return result;
-  }, [runs, scheduledToday, windowStart, windowEnd, now]);
+  }, [runs, scheduled, windowStart, windowEnd, now]);
 
   return (
-    <Paper p="md">
+    <Paper p="md" withBorder={!!onClose} mt={onClose ? "md" : undefined}>
       <Group justify="space-between" mb="sm" align="flex-end">
-        <Title order={5}>Backup-Zeitstrahl</Title>
+        <Title order={5}>{title}</Title>
         <Group gap="md">
           <ColorLegendDot color="green" label="Erfolgreich" />
           <ColorLegendDot color="red" label="Fehlgeschlagen" />
           <ColorLegendDot color="blue" label="Geplant" />
+          {onClose && (
+            <ActionIcon variant="subtle" size="sm" onClick={onClose} aria-label="Schliessen">
+              <IconX size={14} />
+            </ActionIcon>
+          )}
         </Group>
       </Group>
       <JobTimelineTrack windowStart={windowStart} windowEnd={windowEnd} entries={entries} showNowMarker tickStepHours={2} showList={false} />

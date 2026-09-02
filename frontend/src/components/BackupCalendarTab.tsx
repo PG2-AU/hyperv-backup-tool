@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { ActionIcon, Badge, Box, Button, Group, Paper, Stack, Text } from "@mantine/core";
-import { IconChevronLeft, IconChevronRight, IconX } from "@tabler/icons-react";
+import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 
-import { useJobsCalendar } from "@/api/hooks";
-import { JobTimelineTrack, type TimelineEntry } from "@/components/JobTimelineTrack";
+import { useJobRuns, useJobsCalendar } from "@/api/hooks";
+import { DayJobStrip } from "@/components/DayJobStrip";
 import type { UpcomingJob } from "@/api/types";
 
 const WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
@@ -65,6 +65,11 @@ export function BackupCalendarTab() {
   }, [gridStart, gridEnd]);
 
   const { data: jobs, isFetching } = useJobsCalendar(toDateParam(gridStart), toDateParam(gridEnd));
+  // Tatsaechliche Laeufe fuer den Zeitstrahl der Tagesansicht (siehe
+  // DayJobStrip) -- die Monatszelle selbst nutzt weiterhin nur die
+  // geplanten Vorkommen (jobs/jobsByDay), das Grundraster war schon vor
+  // dem Dashboard-Abgleich rein "geplant"-basiert und bleibt das bewusst so.
+  const { data: allRuns } = useJobRuns();
 
   const jobsByDay = useMemo(() => {
     const map = new Map<string, UpcomingJob[]>();
@@ -175,66 +180,13 @@ export function BackupCalendarTab() {
       </Box>
 
       {selectedDay && (
-        <DayTimeline
+        <DayJobStrip
           day={selectedDay}
-          jobs={jobsByDay.get(dayKey(selectedDay)) ?? []}
+          runs={allRuns ?? []}
+          scheduled={jobsByDay.get(dayKey(selectedDay)) ?? []}
+          title={selectedDay.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}
           onClose={() => setSelectedDay(null)}
         />
-      )}
-    </Paper>
-  );
-}
-
-// Nominale Breite eines Vorkommens auf dem Zeitstrahl -- ein geplantes
-// Vorkommen hat keine echte Dauer (es ist ein Zeitpunkt, kein Lauf mit
-// Start/Ende), dieser Wert bestimmt nur, ab welchem zeitlichen Abstand
-// zwei Vorkommen in eine zusaetzliche Zeile ausweichen statt sich zu
-// ueberlappen (siehe JobTimelineTrack).
-const POINT_MARKER_MS = 30 * 60 * 1000;
-
-function DayTimeline({ day, jobs, onClose }: { day: Date; jobs: UpcomingJob[]; onClose: () => void }) {
-  const windowStart = useMemo(() => {
-    const d = new Date(day);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
-  }, [day]);
-  const windowEnd = windowStart + 24 * 60 * 60 * 1000;
-
-  const entries: TimelineEntry[] = useMemo(
-    () =>
-      jobs.map((job) => {
-        const startMs = new Date(job.next_run_at).getTime();
-        const timeLabel = new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-        return {
-          key: `${job.resource_group_id}-${job.policy_id}-${job.next_run_at}`,
-          label: job.resource_group_name,
-          sublabel: job.policy_name,
-          color: groupColor(job.resource_group_id),
-          startMs,
-          endMs: startMs + POINT_MARKER_MS,
-          tooltip: `${timeLabel} — ${job.policy_name} / ${job.resource_group_name}`,
-        };
-      }),
-    [jobs],
-  );
-
-  return (
-    <Paper withBorder p="md" mt="md">
-      <Group justify="space-between" mb="sm">
-        <Text fw={600}>
-          {day.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}
-        </Text>
-        <ActionIcon variant="subtle" size="sm" onClick={onClose}>
-          <IconX size={14} />
-        </ActionIcon>
-      </Group>
-
-      {jobs.length === 0 ? (
-        <Text size="sm" c="dimmed">
-          Keine geplanten Backup-Läufe an diesem Tag.
-        </Text>
-      ) : (
-        <JobTimelineTrack windowStart={windowStart} windowEnd={windowEnd} entries={entries} showNowMarker tickStepHours={2} />
       )}
     </Paper>
   );

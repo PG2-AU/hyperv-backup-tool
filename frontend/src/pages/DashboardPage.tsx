@@ -22,7 +22,7 @@ import {
   useVms,
   useVolumes,
 } from "@/api/hooks";
-import { DashboardDayStrip } from "@/components/DashboardDayStrip";
+import { DayJobStrip } from "@/components/DayJobStrip";
 import type { BackupJobRun, BackupRunSnapshot } from "@/api/types";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -298,7 +298,7 @@ export function DashboardPage() {
 
       <Grid>
         <Grid.Col span={12}>
-          <DashboardDayStrip runs={runs ?? []} scheduledToday={todayJobs ?? []} />
+          <DayJobStrip runs={runs ?? []} scheduled={todayJobs ?? []} />
         </Grid.Col>
       </Grid>
 
