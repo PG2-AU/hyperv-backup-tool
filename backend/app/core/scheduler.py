@@ -81,6 +81,7 @@ def _touch(db: Session, field_name: str) -> None:
 def run_health_checks() -> None:
     db = SessionLocal()
     try:
+        _log(db, "Task gestartet: Health-Check")
         for cluster in db.query(HyperVCluster).all():
             try:
                 _refresh_hyperv_status(db, cluster)
@@ -99,6 +100,7 @@ def run_health_checks() -> None:
 def run_discovery() -> None:
     db = SessionLocal()
     try:
+        _log(db, "Task gestartet: Discovery")
         for cluster in db.query(HyperVCluster).all():
             try:
                 _run_hyperv_discovery(db, cluster)
@@ -125,6 +127,7 @@ def run_snapshot_reconciliation() -> None:
     filtert)."""
     db = SessionLocal()
     try:
+        _log(db, "Task gestartet: Snapshot-Abgleich")
         rows = (
             db.query(BackupRunSnapshot)
             .filter(BackupRunSnapshot.success.is_(True), BackupRunSnapshot.volume_uuid.isnot(None))
@@ -249,6 +252,7 @@ def run_retention_cleanup() -> None:
     erneut, sobald die Sperre ausgelaufen ist."""
     db = SessionLocal()
     try:
+        _log(db, "Task gestartet: Retention-Cleanup")
         clusters = {c.id: c for c in db.query(NetAppCluster).all()}
         now = datetime.now(timezone.utc)
 
@@ -408,6 +412,7 @@ def run_alert_check() -> None:
     Teil dieses Checks, siehe app.models.alert."""
     db = SessionLocal()
     try:
+        _log(db, "Task gestartet: Warnungs-Check")
         config = db.query(AlertConfig).first()
         vol_threshold = config.volume_threshold_percent if config else 90
         lun_threshold = config.lun_threshold_percent if config else 90
@@ -558,6 +563,7 @@ def run_file_restore_expiry() -> None:
     Abbauen von LUN-Klon/iSCSI/Mount gepflegt werden muss."""
     db = SessionLocal()
     try:
+        _log(db, "Task gestartet: Datei-Restore-Sicherheitsnetz")
         settings = get_settings()
         cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.file_restore_max_age_hours)
         expired = (
@@ -589,6 +595,7 @@ def run_daily_email_summary() -> None:
     ein fix bei start_scheduler registrierter CronTrigger)."""
     db = SessionLocal()
     try:
+        _log(db, "Task gestartet: E-Mail-Tageszusammenfassung")
         config = db.query(EmailConfig).first()
         if config is None or not config.enabled or not config.daily_summary_enabled:
             return
