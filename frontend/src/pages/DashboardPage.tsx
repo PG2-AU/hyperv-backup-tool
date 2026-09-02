@@ -14,10 +14,10 @@ import {
   useCsvs,
   useHyperVClusters,
   useJobRuns,
+  useJobsCalendar,
   useNetAppClusters,
   useSnapMirrorRelationships,
   useSvms,
-  useUpcomingJobs,
   useVms,
   useVolumes,
 } from "@/api/hooks";
@@ -90,7 +90,8 @@ export function DashboardPage() {
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
   const { data: runs } = useJobRuns();
-  const { data: upcomingJobs } = useUpcomingJobs(24);
+  const todayStr = new Date().toLocaleDateString("sv-SE"); // ergibt YYYY-MM-DD in lokaler Zeit
+  const { data: scheduledToday } = useJobsCalendar(todayStr, todayStr);
   const { data: hyperVClusters } = useHyperVClusters();
   const { data: netAppClusters } = useNetAppClusters();
   const { data: svms } = useSvms();
@@ -143,13 +144,6 @@ export function DashboardPage() {
     }
   }
 
-  // Fest auf 24h -- deckungsgleich mit dem Blick nach vorne (useUpcomingJobs(24)
-  // weiter unten), damit die Tabelle insgesamt "letzte und kommende 24
-  // Stunden" zeigt, ohne wählbaren Zeitraum (vormals 24h/7-Tage-Umschalter).
-  const jobsRangeCutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const jobsInRange = (runs ?? [])
-    .filter((r) => new Date(r.started_at).getTime() >= jobsRangeCutoff)
-    .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
 
   const recentSnapshots: (BackupRunSnapshot & { started_at: string })[] = (runs ?? [])
     .flatMap((r) => r.snapshots.filter((s) => s.success).map((s) => ({ ...s, started_at: r.started_at })))
@@ -314,7 +308,7 @@ export function DashboardPage() {
         </Grid.Col>
 
         <Grid.Col span={{ base: 12, md: 6 }}>
-          <DashboardJobsTimeline runs={jobsInRange} upcomingJobs={upcomingJobs ?? []} />
+          <DashboardJobsTimeline runs={runs ?? []} scheduledToday={scheduledToday ?? []} />
         </Grid.Col>
       </Grid>
 

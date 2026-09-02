@@ -52,6 +52,7 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Policies", path: "/jobs?tab=policies" },
       { label: "Protection Groups", path: "/jobs?tab=protection-groups", searchContext: "resource-groups" },
       { label: "Zeitpläne", path: "/jobs?tab=schedules" },
+      { label: "Kalender", path: "/jobs?tab=calendar" },
       { label: "Job-Verlauf", path: "/jobs?tab=runs" },
     ],
   },

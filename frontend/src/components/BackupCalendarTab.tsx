@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { ActionIcon, Badge, Box, Button, Group, Paper, ScrollArea, Stack, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Box, Button, Group, Paper, Stack, Text } from "@mantine/core";
 import { IconChevronLeft, IconChevronRight, IconX } from "@tabler/icons-react";
 
 import { useJobsCalendar } from "@/api/hooks";
+import { JobTimelineTrack, type TimelineEntry } from "@/components/JobTimelineTrack";
 import type { UpcomingJob } from "@/api/types";
 
 const WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
@@ -183,47 +184,37 @@ export function BackupCalendarTab() {
   );
 }
 
-const TIMELINE_HOUR_HEIGHT = 40;
-const TIMELINE_HEIGHT = 24 * TIMELINE_HOUR_HEIGHT;
-// Rein visuelle Kollisionsvermeidung -- Vorkommen haben keine echte Dauer
-// (es ist ein geplanter Zeitpunkt, kein Lauf mit Start/Ende), dieser Wert
-// bestimmt nur, ab welchem zeitlichen Abstand zwei Eintraege nebeneinander
-// statt uebereinander gezeichnet werden.
-const COLLISION_WINDOW_MINUTES = 20;
-
-interface LanedJob {
-  job: UpcomingJob;
-  minutesOfDay: number;
-  lane: number;
-}
-
-function assignLanes(jobs: UpcomingJob[]): { laned: LanedJob[]; laneCount: number } {
-  const withMinutes = jobs
-    .map((job) => {
-      const d = new Date(job.next_run_at);
-      return { job, minutesOfDay: d.getHours() * 60 + d.getMinutes() };
-    })
-    .sort((a, b) => a.minutesOfDay - b.minutesOfDay);
-
-  const laneEnds: number[] = [];
-  const laned: LanedJob[] = [];
-  for (const entry of withMinutes) {
-    let lane = laneEnds.findIndex((end) => end <= entry.minutesOfDay);
-    if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(0);
-    }
-    laneEnds[lane] = entry.minutesOfDay + COLLISION_WINDOW_MINUTES;
-    laned.push({ ...entry, lane });
-  }
-  return { laned, laneCount: Math.max(1, laneEnds.length) };
-}
+// Nominale Breite eines Vorkommens auf dem Zeitstrahl -- ein geplantes
+// Vorkommen hat keine echte Dauer (es ist ein Zeitpunkt, kein Lauf mit
+// Start/Ende), dieser Wert bestimmt nur, ab welchem zeitlichen Abstand
+// zwei Vorkommen in eine zusaetzliche Zeile ausweichen statt sich zu
+// ueberlappen (siehe JobTimelineTrack).
+const POINT_MARKER_MS = 30 * 60 * 1000;
 
 function DayTimeline({ day, jobs, onClose }: { day: Date; jobs: UpcomingJob[]; onClose: () => void }) {
-  const { laned, laneCount } = useMemo(() => assignLanes(jobs), [jobs]);
-  const isToday = isSameDay(day, new Date());
-  const now = new Date();
-  const nowOffset = (now.getHours() * 60 + now.getMinutes()) / (24 * 60) * TIMELINE_HEIGHT;
+  const windowStart = useMemo(() => {
+    const d = new Date(day);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }, [day]);
+  const windowEnd = windowStart + 24 * 60 * 60 * 1000;
+
+  const entries: TimelineEntry[] = useMemo(
+    () =>
+      jobs.map((job) => {
+        const startMs = new Date(job.next_run_at).getTime();
+        const timeLabel = new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+        return {
+          key: `${job.resource_group_id}-${job.policy_id}-${job.next_run_at}`,
+          label: `${timeLabel} ${job.policy_name}`,
+          color: policyColor(job.policy_id),
+          startMs,
+          endMs: startMs + POINT_MARKER_MS,
+          tooltip: `${timeLabel} — ${job.policy_name} / ${job.resource_group_name}`,
+        };
+      }),
+    [jobs],
+  );
 
   return (
     <Paper withBorder p="md" mt="md">
@@ -241,75 +232,7 @@ function DayTimeline({ day, jobs, onClose }: { day: Date; jobs: UpcomingJob[]; o
           Keine geplanten Backup-Läufe an diesem Tag.
         </Text>
       ) : (
-        <ScrollArea h={Math.min(TIMELINE_HEIGHT + 20, 600)} type="auto">
-          <Box style={{ position: "relative", height: TIMELINE_HEIGHT, marginLeft: 56 }}>
-            {Array.from({ length: 24 }, (_, hour) => (
-              <Box
-                key={hour}
-                style={{
-                  position: "absolute",
-                  top: hour * TIMELINE_HOUR_HEIGHT,
-                  left: 0,
-                  right: 0,
-                  borderTop: "1px solid var(--mantine-color-default-border)",
-                }}
-              >
-                <Text
-                  size="xs"
-                  c="dimmed"
-                  style={{ position: "absolute", left: -56, top: -8, width: 48, textAlign: "right" }}
-                >
-                  {String(hour).padStart(2, "0")}:00
-                </Text>
-              </Box>
-            ))}
-
-            {isToday && (
-              <Box
-                style={{
-                  position: "absolute",
-                  top: nowOffset,
-                  left: 0,
-                  right: 0,
-                  borderTop: "2px solid var(--mantine-color-red-6)",
-                  zIndex: 2,
-                }}
-              />
-            )}
-
-            {laned.map(({ job, minutesOfDay, lane }) => {
-              const top = (minutesOfDay / (24 * 60)) * TIMELINE_HEIGHT;
-              const laneWidthPct = 100 / laneCount;
-              const timeLabel = new Date(job.next_run_at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-              return (
-                <Tooltip
-                  key={`${job.resource_group_id}-${job.policy_id}-${job.next_run_at}`}
-                  label={`${timeLabel} — ${job.policy_name} / ${job.resource_group_name}`}
-                >
-                  <Paper
-                    withBorder
-                    p={4}
-                    style={{
-                      position: "absolute",
-                      top,
-                      left: `${lane * laneWidthPct}%`,
-                      width: `calc(${laneWidthPct}% - 4px)`,
-                      zIndex: 1,
-                      cursor: "default",
-                    }}
-                  >
-                    <Badge size="xs" variant="filled" color={policyColor(job.policy_id)} fullWidth styles={{ label: { overflow: "hidden", textOverflow: "ellipsis" } }}>
-                      {timeLabel} {job.policy_name}
-                    </Badge>
-                    <Text size="xs" c="dimmed" truncate>
-                      {job.resource_group_name}
-                    </Text>
-                  </Paper>
-                </Tooltip>
-              );
-            })}
-          </Box>
-        </ScrollArea>
+        <JobTimelineTrack windowStart={windowStart} windowEnd={windowEnd} entries={entries} showNowMarker tickStepHours={2} />
       )}
     </Paper>
   );
