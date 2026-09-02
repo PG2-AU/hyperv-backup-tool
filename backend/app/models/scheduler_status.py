@@ -23,6 +23,13 @@ class SchedulerStatus(Base):
     last_snapshot_reconciliation_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_retention_cleanup_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_file_restore_expiry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Ende des zuletzt ausgewerteten Zeitfensters von run_scheduled_backups
+    # (app.core.scheduler) -- NICHT nur ein Anzeige-Zeitstempel wie die
+    # anderen Felder hier, sondern die Grundlage fuer den Nachhol-Mechanismus:
+    # ein Tick prueft (letzter Check, jetzt] statt nur die exakt aktuelle
+    # Minute, damit ein durch einen laenger laufenden vorherigen Lauf
+    # uebersprungener Tick keinen faelligen Zeitplan endgueltig verschluckt.
+    last_scheduled_backup_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # ISO-Datum ("YYYY-MM-DD", lokale Zeitzone HVNB_SCHEDULE_TIMEZONE) des
     # zuletzt verschickten Tages-E-Mail-Summarys -- verhindert Doppelversand,
     # da run_daily_email_summary alle 15 Minuten prueft, ob die konfigurierte

@@ -188,7 +188,12 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "backup_run_vm_configs", {"hyperv_cluster_id": "VARCHAR(36)"})
     _add_missing_columns(
         engine, "scheduler_status",
-        {"last_retention_cleanup_at": "DATETIME", "last_file_restore_expiry_at": "DATETIME", "last_email_summary_sent_date": "VARCHAR(10)"},
+        {
+            "last_retention_cleanup_at": "DATETIME",
+            "last_file_restore_expiry_at": "DATETIME",
+            "last_email_summary_sent_date": "VARCHAR(10)",
+            "last_scheduled_backup_check_at": "DATETIME",
+        },
     )
     _add_missing_columns(engine, "file_restore_runs", {"clone_volume_uuid": "VARCHAR(36)"})
     _add_missing_columns(

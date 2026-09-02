@@ -81,12 +81,14 @@ def list_jobs(db: Session = Depends(get_db), user=Depends(require_permission(Per
 def _occurrences_within(schedule: Schedule, start_local: datetime, end_local: datetime) -> list[datetime]:
     """Alle Vorkommen eines Zeitplans im Intervall (start_local, end_local],
     in derselben lokalen Zeitzone -- fuer die Dashboard-Vorschau der
-    naechsten Laeufe (list_upcoming_jobs). Ein HOURLY-Zeitplan kann dabei
-    mehrfach im selben Fenster vorkommen (z.B. 6x/Tag), WEEKLY/MONTHLY
-    typischerweise hoechstens einmal. Iteriert Tag fuer Tag ueber die Spanne
-    (plus einen Tag Puffer), prueft pro Kandidatentag dieselbe Wochentag-/
-    Monatstag-Bedingung wie _schedule_is_due in app.core.scheduler, dann
-    jede konfigurierte Uhrzeit dieses Tages der Reihe nach."""
+    naechsten Laeufe (list_upcoming_jobs) UND fuer den Nachhol-Mechanismus in
+    app.core.scheduler.run_scheduled_backups (dort start_local = letzter
+    erfolgreicher Check, end_local = jetzt, statt eines vorausschauenden
+    Fensters). Ein HOURLY-Zeitplan kann dabei mehrfach im selben Fenster
+    vorkommen (z.B. 6x/Tag), WEEKLY/MONTHLY typischerweise hoechstens einmal.
+    Iteriert Tag fuer Tag ueber die Spanne (plus einen Tag Puffer), prueft
+    pro Kandidatentag die Wochentag-/Monatstag-Bedingung, dann jede
+    konfigurierte Uhrzeit dieses Tages der Reihe nach."""
     times_sorted = sorted(schedule.times)
     occurrences: list[datetime] = []
     day_span = (end_local.date() - start_local.date()).days + 1
@@ -134,10 +136,9 @@ def list_upcoming_jobs(
     Group kann so an mehrere Policies mit unterschiedlicher Kadenz haengen
     (z.B. ein CSV stuendlich UND woechentlich). Eine Verknuepfung mit z.B.
     einem HOURLY-Zeitplan erscheint mit jedem einzelnen Vorkommen im
-    Fenster. Nutzt dieselbe Zeitzonen-/Zeitplan-Logik wie
-    run_scheduled_backups (app.core.scheduler._schedule_is_due), nur
-    vorausschauend ueber ein ganzes Fenster statt nur fuer die aktuelle
-    Minute.
+    Fenster. Nutzt dieselbe _occurrences_within()-Logik wie
+    run_scheduled_backups (app.core.scheduler), nur vorausschauend ueber ein
+    ganzes Fenster statt rueckblickend seit dem letzten Check.
 
     Zwei Abfrage-Modi: `hours` (Default, ab jetzt vorausschauend -- fuer die
     Dashboard-Vorschau) ODER `start_date`+`end_date` (fester Kalendertag-

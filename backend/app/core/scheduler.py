@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.api.routes.file_restore import _cleanup_file_restore_run
 from app.api.routes.hyperv_clusters import _refresh_status as _refresh_hyperv_status
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
-from app.api.routes.jobs import _execute_job_run, _start_job_run
+from app.api.routes.jobs import _execute_job_run, _occurrences_within, _start_job_run
 from app.api.routes.netapp_clusters import _discover_and_persist as _run_netapp_discovery
 from app.api.routes.netapp_clusters import _refresh_status as _refresh_netapp_status
 from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
@@ -43,7 +43,6 @@ from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink
 from app.models.restore_run import RestoreRun, RestoreStatus
-from app.models.schedule import Schedule, ScheduleType
 from app.models.scheduler_config import SchedulerConfig
 from app.models.scheduler_status import SchedulerStatus
 from app.models.system_log import SystemLogEvent
@@ -626,19 +625,15 @@ def run_daily_email_summary() -> None:
         db.close()
 
 
-def _schedule_is_due(schedule: Schedule, now_local: datetime) -> bool:
-    """Prueft, ob ein Schedule genau zur aktuellen (lokalen) Minute faellig
-    ist. 'times' enthaelt "HH:MM"-Strings (bei HOURLY mehrere, sonst genau
-    einen, siehe Schedule-Modell) -- ein reiner String-Vergleich reicht
-    daher fuer alle vier Typen, WEEKLY/MONTHLY brauchen zusaetzlich den
-    Wochentag/Tag-Abgleich."""
-    if now_local.strftime("%H:%M") not in schedule.times:
-        return False
-    if schedule.schedule_type == ScheduleType.WEEKLY:
-        return schedule.weekday is not None and now_local.weekday() == schedule.weekday
-    if schedule.schedule_type == ScheduleType.MONTHLY:
-        return schedule.day_of_month is not None and now_local.day == schedule.day_of_month
-    return True
+# Obergrenze fuer den Nachhol-Mechanismus in run_scheduled_backups: eine
+# groessere Luecke seit dem letzten Check (z.B. Container-Neustart/Deploy,
+# oder der Prozess war laenger nicht lauffaehig) soll NICHT dazu fuehren,
+# dass alle in der Zwischenzeit theoretisch faelligen Vorkommen auf einen
+# Schlag nachgeholt werden -- das waere bei einer laengeren Downtime ein
+# unkontrollierter Ausfuehrungs-Burst. Nur echte kurze Ueberlappungen
+# (vorheriger Lauf hat wenige Minuten laenger als die eine Tick-Minute
+# gebraucht) sollen abgedeckt werden.
+SCHEDULE_CATCH_UP_MAX_MINUTES = 15
 
 
 def run_scheduled_backups() -> None:
@@ -673,7 +668,29 @@ def run_scheduled_backups() -> None:
     komplette Lauf (inkl. etwaiger Checkpoints) fertig ist, was fuer den
     eigenen Thread des BackgroundScheduler unproblematisch ist. max_instances=1
     (siehe start_scheduler) verhindert, dass ein noch laufender Lauf durch
-    die naechste Minute ueberlappend erneut angestossen wird."""
+    die naechste Minute ueberlappend erneut angestossen wird.
+
+    WICHTIG (2026-09-02, echter Bug, live gefunden): frueher wurde pro Tick
+    nur geprueft, ob ein Zeitplan GENAU zur aktuellen Minute faellig ist
+    (strftime("%H:%M") in schedule.times). Ein einzelner geplanter Lauf
+    dauert in der Praxis oft ueber 60 Sekunden (Snapshot/VSS/SnapMirror-
+    Trigger) -- lief er in die naechste Minute hinein, wurde dieser Tick von
+    APScheduler wegen max_instances=1 komplett uebersprungen ('skipped:
+    maximum number of running instances reached'). Faellt in genau diese
+    uebersprungene Minute zufaellig ein ANDERER Zeitplan (z.B. zwei
+    Verknuepfungen nur 1-10 Minuten auseinander, wie vom Nutzer bereits
+    manuell gestaffelt), wurde dessen Lauf dadurch nicht verspaetet, sondern
+    ENDGUELTIG NIE gestartet -- ohne jede Fehlermeldung in der GUI. Bei
+    aktuell wenigen, gut gestaffelten Zeitplaenen ist das noch nicht
+    aufgetreten (Live-Pruefung: 0 aktuell haengende Laeufe, die einzigen drei
+    'skipped'-Log-Zeilen waren jeweils genau die auf einen faelligen Lauf
+    folgende Minute, in der kein zweiter Zeitplan lag), waere aber bei mehr
+    Schedules (Nutzer-Szenario: 30 CSVs / 15 Zeitplaene) ein reales Risiko.
+    Fix: statt der exakten aktuellen Minute wird das gesamte Intervall seit
+    dem letzten erfolgreichen Check ausgewertet (SchedulerStatus.
+    last_scheduled_backup_check_at, via _occurrences_within() -- dieselbe
+    Funktion, die auch list_upcoming_jobs() fuer die Kalender-/Dashboard-
+    Vorschau nutzt), begrenzt auf SCHEDULE_CATCH_UP_MAX_MINUTES nach hinten."""
     db = SessionLocal()
     try:
         settings = get_settings()
@@ -684,35 +701,68 @@ def run_scheduled_backups() -> None:
             tz = timezone.utc
         now_local = datetime.now(tz)
 
+        status_row = db.query(SchedulerStatus).first()
+        if status_row is None:
+            status_row = SchedulerStatus()
+            db.add(status_row)
+            db.flush()
+
+        last_check_utc = status_row.last_scheduled_backup_check_at
+        if last_check_utc is None:
+            # Erster Lauf nach diesem Deploy (Spalte noch leer) -- nur die
+            # aktuelle Minute pruefen statt rueckwirkend seit Ewigkeit
+            # nachzuholen.
+            last_check_local = now_local - timedelta(minutes=1)
+        else:
+            last_check_local = last_check_utc.astimezone(tz)
+            max_lookback = now_local - timedelta(minutes=SCHEDULE_CATCH_UP_MAX_MINUTES)
+            if last_check_local < max_lookback:
+                _log(
+                    db,
+                    f"Geplante Backup-Pruefung war {now_local - last_check_local} nicht gelaufen (z.B. Neustart/Deploy) "
+                    f"-- hole nur die letzten {SCHEDULE_CATCH_UP_MAX_MINUTES} Minuten nach, nicht die gesamte Luecke.",
+                    level="WARNING",
+                )
+                last_check_local = max_lookback
+
         links = db.query(ResourceGroupPolicyLink).filter(ResourceGroupPolicyLink.schedule_id.isnot(None)).all()
+        occurrences_by_schedule: dict[str, list[datetime]] = {}
         for link in links:
             schedule = link.schedule
             policy = link.policy
             group = link.resource_group
-            if schedule is None or policy is None or group is None:
+            if schedule is None or policy is None or group is None or not schedule.times:
                 continue
-            if not policy.enabled or not _schedule_is_due(schedule, now_local):
+            if not policy.enabled:
                 continue
-            try:
-                # _execute_job_run laeuft hier bewusst synchron (nicht als
-                # Hintergrund-Task wie beim manuellen "Jetzt ausfuehren", siehe
-                # trigger_job_run in jobs.py) -- run_scheduled_backups selbst
-                # laeuft ja bereits im eigenen APScheduler-Hintergrund-Thread,
-                # und max_instances=1 auf diesem Job (siehe start_scheduler)
-                # verhindert ueberlappende Ausfuehrungen.
-                run, warnings = _start_job_run(policy, db, resource_group_ids={group.id})
-                _execute_job_run(run.id, warnings)
-                _log(
-                    db,
-                    f"Geplanter Backup-Lauf gestartet: Resource Group '{group.name}' / Policy '{policy.name}' "
-                    f"(Zeitplan '{schedule.name}')",
-                )
-            except Exception as exc:
-                _log(
-                    db,
-                    f"Geplanter Backup-Lauf fuer Resource Group '{group.name}' / Policy '{policy.name}' fehlgeschlagen: {exc}",
-                    level="ERROR",
-                )
+            if schedule.id not in occurrences_by_schedule:
+                occurrences_by_schedule[schedule.id] = _occurrences_within(schedule, last_check_local, now_local)
+            for occurrence in occurrences_by_schedule[schedule.id]:
+                try:
+                    # _execute_job_run laeuft hier bewusst synchron (nicht als
+                    # Hintergrund-Task wie beim manuellen "Jetzt ausfuehren",
+                    # siehe trigger_job_run in jobs.py) -- run_scheduled_backups
+                    # selbst laeuft ja bereits im eigenen APScheduler-
+                    # Hintergrund-Thread, und max_instances=1 auf diesem Job
+                    # (siehe start_scheduler) verhindert echte Ueberlappungen;
+                    # der Nachhol-Mechanismus oben faengt dafuer verpasste
+                    # Minuten ab.
+                    run, warnings = _start_job_run(policy, db, resource_group_ids={group.id})
+                    _execute_job_run(run.id, warnings)
+                    _log(
+                        db,
+                        f"Geplanter Backup-Lauf gestartet: Resource Group '{group.name}' / Policy '{policy.name}' "
+                        f"(Zeitplan '{schedule.name}', faellig {occurrence.strftime('%Y-%m-%d %H:%M')})",
+                    )
+                except Exception as exc:
+                    _log(
+                        db,
+                        f"Geplanter Backup-Lauf fuer Resource Group '{group.name}' / Policy '{policy.name}' fehlgeschlagen: {exc}",
+                        level="ERROR",
+                    )
+
+        status_row.last_scheduled_backup_check_at = datetime.now(timezone.utc)
+        db.commit()
     finally:
         db.close()
 
