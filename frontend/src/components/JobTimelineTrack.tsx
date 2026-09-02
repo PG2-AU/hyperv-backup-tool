@@ -54,6 +54,7 @@ export function JobTimelineTrack({
   showNowMarker = false,
   tickStepHours,
   listMaxHeight = 240,
+  showList = true,
 }: {
   windowStart: number;
   windowEnd: number;
@@ -61,6 +62,10 @@ export function JobTimelineTrack({
   showNowMarker?: boolean;
   tickStepHours?: number;
   listMaxHeight?: number;
+  /** false = nur der Marker-Zeitstrahl, ohne die Liste darunter -- fuer
+   * Stellen, an denen bewusst nur eine kompakte Dichte-Uebersicht mit
+   * Hover-Details gewuenscht ist (siehe Dashboard-Tageszeitstrahl). */
+  showList?: boolean;
 }) {
   const totalMs = windowEnd - windowStart;
   const hourMs = 60 * 60 * 1000;
@@ -137,7 +142,7 @@ export function JobTimelineTrack({
         </Box>
       </Box>
 
-      {sortedEntries.length === 0 ? (
+      {showList && (sortedEntries.length === 0 ? (
         <Text size="sm" c="dimmed">
           Keine Job-Läufe in diesem Zeitraum.
         </Text>
@@ -162,7 +167,7 @@ export function JobTimelineTrack({
             ))}
           </Stack>
         </ScrollArea.Autosize>
-      )}
+      ))}
     </Stack>
   );
 }

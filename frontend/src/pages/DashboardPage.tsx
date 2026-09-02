@@ -1,4 +1,5 @@
-import { Anchor, Badge, Grid, Group, Paper, ScrollArea, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
+import { useState } from "react";
+import { Anchor, Badge, Grid, Group, Paper, ScrollArea, SegmentedControl, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -14,13 +15,14 @@ import {
   useCsvs,
   useHyperVClusters,
   useJobRuns,
+  useJobsCalendar,
   useNetAppClusters,
   useSnapMirrorRelationships,
   useSvms,
-  useUpcomingJobs,
   useVms,
   useVolumes,
 } from "@/api/hooks";
+import { DashboardDayStrip } from "@/components/DashboardDayStrip";
 import type { BackupJobRun, BackupRunSnapshot } from "@/api/types";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -32,12 +34,15 @@ const STATUS_COLOR: Record<string, string> = {
   cleaned_up_after_failure: "orange",
 };
 
-// Jobs-Tabelle: bis zu 15 Zeilen ohne Scrollen sichtbar, danach vertikal
+// Jobs-Tabelle: bis zu 8 Zeilen ohne Scrollen sichtbar, danach vertikal
 // scrollbar (Kopfzeile bleibt beim Scrollen sichtbar, siehe sticky-Style
 // unten) -- reine Schaetzwerte fuer die Standard-Zeilenhoehe, da die
 // tatsaechliche Hoehe von der unter Settings > Anzeige waehlbaren
-// Content-Schriftgroesse mit abhaengt.
-const JOBS_TABLE_VISIBLE_ROWS = 15;
+// Content-Schriftgroesse mit abhaengt. Bewusst niedriger als frueher (15),
+// da geplante Jobs nicht mehr Teil dieser Tabelle sind (siehe
+// DashboardDayStrip weiter oben) und das Fenster insgesamt kompakter sein
+// soll.
+const JOBS_TABLE_VISIBLE_ROWS = 8;
 const ROW_HEIGHT_PX = 44;
 const HEADER_HEIGHT_PX = 44;
 
@@ -104,10 +109,16 @@ function StatCard({
 }
 
 export function DashboardPage() {
+  const [jobsRangeDays, setJobsRangeDays] = useState("1");
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
   const { data: runs } = useJobRuns();
-  const { data: upcomingJobs } = useUpcomingJobs(24);
+  // Lokales Datum (nicht toISOString(), das UTC ist und rund um Mitternacht
+  // auf den falschen Kalendertag zeigen wuerde) -- deckungsgleich mit der
+  // dayKey()-Logik in BackupCalendarTab.
+  const now0 = new Date();
+  const todayStr = `${now0.getFullYear()}-${String(now0.getMonth() + 1).padStart(2, "0")}-${String(now0.getDate()).padStart(2, "0")}`;
+  const { data: todayJobs } = useJobsCalendar(todayStr, todayStr);
   const { data: hyperVClusters } = useHyperVClusters();
   const { data: netAppClusters } = useNetAppClusters();
   const { data: svms } = useSvms();
@@ -161,22 +172,14 @@ export function DashboardPage() {
   }
 
 
-  // Fest auf 24h -- deckungsgleich mit dem Blick nach vorne (useUpcomingJobs(24)
-  // weiter unten), damit die Tabelle insgesamt "letzte und kommende 24
-  // Stunden" zeigt, ohne wählbaren Zeitraum (vormals 24h/7-Tage-Umschalter).
-  const jobsRangeCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  // Jobs-Tabelle zeigt ausschliesslich VERGANGENE Laeufe -- geplante Jobs
+  // stehen stattdessen im kompakten Tages-Zeitstrahl weiter oben
+  // (DashboardDayStrip). Zeitraum ist ueber jobsRangeDays waehlbar (1/2/3
+  // Tage zurueck).
+  const jobsRangeCutoff = Date.now() - Number(jobsRangeDays) * 24 * 60 * 60 * 1000;
   const jobsInRange = (runs ?? [])
     .filter((r) => new Date(r.started_at).getTime() >= jobsRangeCutoff)
     .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
-
-  // Absteigend nach Zeitpunkt (am weitesten in der Zukunft zuerst), damit
-  // die gesamte Tabelle (geplante + bereits gelaufene Jobs) als EINE
-  // durchgaengige Reihenfolge von neu/zukuenftig nach alt gelesen werden
-  // kann -- direkt oberhalb von jobsInRange (das mit dem juengsten
-  // vergangenen Lauf beginnt) steht so der zeitnaechste geplante Job.
-  const upcomingJobsSorted = [...(upcomingJobs ?? [])].sort(
-    (a, b) => new Date(b.next_run_at).getTime() - new Date(a.next_run_at).getTime(),
-  );
 
   const recentSnapshots: (BackupRunSnapshot & { started_at: string })[] = (runs ?? [])
     .flatMap((r) => r.snapshots.filter((s) => s.success).map((s) => ({ ...s, started_at: r.started_at })))
@@ -294,6 +297,12 @@ export function DashboardPage() {
       </Grid>
 
       <Grid>
+        <Grid.Col span={12}>
+          <DashboardDayStrip runs={runs ?? []} scheduledToday={todayJobs ?? []} />
+        </Grid.Col>
+      </Grid>
+
+      <Grid>
         <Grid.Col span={{ base: 12, md: 6 }}>
           <Paper p="md" h="100%">
             <Title order={5} mb="sm">
@@ -344,9 +353,16 @@ export function DashboardPage() {
           <Paper p="md" h="100%">
             <Group justify="space-between" mb="sm" align="flex-end">
               <Title order={5}>Jobs</Title>
-              <Text size="xs" c="dimmed">
-                Letzte und kommende 24 Stunden
-              </Text>
+              <SegmentedControl
+                size="xs"
+                value={jobsRangeDays}
+                onChange={setJobsRangeDays}
+                data={[
+                  { label: "1 Tag", value: "1" },
+                  { label: "2 Tage", value: "2" },
+                  { label: "3 Tage", value: "3" },
+                ]}
+              />
             </Group>
             <ScrollArea.Autosize mah={JOBS_TABLE_VISIBLE_ROWS * ROW_HEIGHT_PX + HEADER_HEIGHT_PX} type="auto">
             <Table.ScrollContainer minWidth={500}>
@@ -361,26 +377,11 @@ export function DashboardPage() {
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {upcomingJobsSorted.map((job) => (
-                    <Table.Tr key={`upcoming-${job.resource_group_id}-${job.policy_id}-${job.next_run_at}`}>
-                      <Table.Td>
-                        {job.policy_name} <Text span c="dimmed" size="sm">({job.resource_group_name})</Text>
-                      </Table.Td>
-                      <Table.Td>-</Table.Td>
-                      <Table.Td>-</Table.Td>
-                      <Table.Td>
-                        <Badge color="indigo" variant="light">
-                          Geplant
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>{new Date(job.next_run_at).toLocaleString("de-DE")}</Table.Td>
-                    </Table.Tr>
-                  ))}
-                  {jobsInRange.length === 0 && (upcomingJobs?.length ?? 0) === 0 ? (
+                  {jobsInRange.length === 0 ? (
                     <Table.Tr>
                       <Table.Td colSpan={5}>
                         <Text size="sm" c="dimmed">
-                          Keine Job-Laeufe in diesem Zeitraum und keine geplanten Jobs.
+                          Keine Job-Laeufe in diesem Zeitraum.
                         </Text>
                       </Table.Td>
                     </Table.Tr>
