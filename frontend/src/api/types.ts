@@ -98,6 +98,7 @@ export interface HyperVCluster {
   last_checked_at?: string | null;
   last_check_error?: string | null;
   created_at: string;
+  unreachable_nodes: { name: string; address?: string | null; error?: string | null }[];
 }
 
 export interface HyperVClusterCreate {
@@ -515,6 +516,7 @@ export type AlertType =
   | "netapp_cluster_unhealthy"
   | "snapmirror_unhealthy"
   | "snapmirror_lag_exceeded"
+  | "hyperv_node_unreachable"
   | "backup_failed";
 
 export interface Alert {

@@ -637,12 +637,37 @@ export function SettingsPage() {
                       <Table.Td>{c.username}</Table.Td>
                       <Table.Td>{c.hyperv_cluster_name ?? "-"}</Table.Td>
                       <Table.Td>
-                        <Tooltip label={c.last_check_error ?? ""} disabled={!c.last_check_error}>
-                          <Badge color={HYPERV_HEALTH_COLOR[c.health]} variant="light">
-                            {HYPERV_HEALTH_LABEL[c.health]}
-                            {c.node_count > 0 ? ` (${c.healthy_node_count}/${c.node_count} Knoten)` : ""}
-                          </Badge>
-                        </Tooltip>
+                        <Group gap={6} wrap="nowrap">
+                          <Tooltip label={c.last_check_error ?? ""} disabled={!c.last_check_error}>
+                            <Badge color={HYPERV_HEALTH_COLOR[c.health]} variant="light">
+                              {HYPERV_HEALTH_LABEL[c.health]}
+                              {c.node_count > 0 ? ` (${c.healthy_node_count}/${c.node_count} Knoten)` : ""}
+                            </Badge>
+                          </Tooltip>
+                          {c.unreachable_nodes.length > 0 && (
+                            <Tooltip
+                              multiline
+                              w={320}
+                              label={
+                                <Stack gap={2}>
+                                  <Text size="xs" fw={600}>
+                                    Cluster-Mitglied, aber per WinRM nicht direkt erreichbar (fehlende Einrichtung? siehe
+                                    Deployment-Doku):
+                                  </Text>
+                                  {c.unreachable_nodes.map((n) => (
+                                    <Text key={n.name} size="xs">
+                                      {n.name}{n.address ? ` (${n.address})` : ""}: {n.error ?? "nicht erreichbar"}
+                                    </Text>
+                                  ))}
+                                </Stack>
+                              }
+                            >
+                              <Badge color="red" variant="filled">
+                                {c.unreachable_nodes.length} Knoten nicht erreichbar
+                              </Badge>
+                            </Tooltip>
+                          )}
+                        </Group>
                       </Table.Td>
                       <Table.Td>{c.last_checked_at ? new Date(c.last_checked_at).toLocaleString("de-DE") : "nie"}</Table.Td>
                       <Table.Td>

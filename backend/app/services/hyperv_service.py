@@ -90,6 +90,14 @@ class HyperVClusterNodeSummary:
 
 
 @dataclass
+class HyperVNodeReachability:
+    name: str
+    address: str | None
+    reachable: bool
+    error: str | None = None
+
+
+@dataclass
 class HyperVClusterSummary:
     cluster_name: str
     node_count: int
@@ -218,6 +226,52 @@ class HyperVService:
             healthy_node_count=healthy_count,
             nodes=nodes,
         )
+
+    def check_node_reachability(
+        self, cno_session: winrm.Session, username: str, password: str
+    ) -> list[HyperVNodeReachability]:
+        """Fuer jeden per Get-ClusterNode gemeldeten Knoten ein DIREKTER
+        WinRM-Verbindungstest (eigene Session zur Knoten-Management-IP,
+        nicht zum CNO) -- deckt genau das ab, was Get-ClusterNode NICHT
+        prueft: Cluster-Mitgliedschaft heisst nicht automatisch, dass die
+        App den Knoten auch per WinRM erreichen kann. Haeufigster Ausloeser
+        in der Praxis: ein neu zum Cluster hinzugefuegter Knoten, auf dem
+        WinRM/Zertifikat (siehe DEPLOYMENT.md Abschnitt 1) noch nicht wie
+        auf den bestehenden Knoten eingerichtet wurde -- faellt sonst erst
+        auf, wenn eine VM-Operation (Checkpoint/Start/Stop) oder ein
+        Failover genau diesen Knoten trifft. Nutzt dieselben Zugangsdaten
+        wie der Cluster selbst (WinRM-Konfiguration wird ueblicherweise
+        identisch auf allen Knoten eingerichtet)."""
+        result = self._run_ps(cno_session, "Get-ClusterNode | Select-Object -ExpandProperty Name")
+        if not result.success:
+            raise HyperVConnectionError(result.error or "Get-ClusterNode fehlgeschlagen")
+        node_names = [n.strip() for n in result.output.splitlines() if n.strip()]
+        node_ips = self._node_management_ips(cno_session)
+
+        results: list[HyperVNodeReachability] = []
+        for name in node_names:
+            address = node_ips.get(name.lower())
+            if address is None:
+                results.append(
+                    HyperVNodeReachability(
+                        name=name, address=None, reachable=False,
+                        error="Management-IP ueber Get-ClusterNetworkInterface nicht ermittelbar",
+                    )
+                )
+                continue
+            try:
+                node_service = HyperVService(self._settings, address, use_https=self._use_https)
+                node_session = node_service._session(username, password, read_timeout_sec=10, operation_timeout_sec=8)
+                probe = node_service._run_ps(node_session, "$env:COMPUTERNAME")
+                if probe.success:
+                    results.append(HyperVNodeReachability(name=name, address=address, reachable=True))
+                else:
+                    results.append(
+                        HyperVNodeReachability(name=name, address=address, reachable=False, error=probe.error or "Befehl fehlgeschlagen")
+                    )
+            except Exception as exc:  # WinRM-Transportfehler (Timeout, DNS, TLS, Auth) sind keine einheitliche Exception-Klasse
+                results.append(HyperVNodeReachability(name=name, address=address, reachable=False, error=str(exc)))
+        return results
 
     def list_vms(self, session: winrm.Session) -> list[VirtualMachineInfo]:
         # Get-VM liefert nur die auf DIESEM Host lokalen VMs -- fuer eine

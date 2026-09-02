@@ -1,4 +1,5 @@
 import enum
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -39,3 +40,28 @@ class HyperVCluster(Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_check_error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # JSON-Liste [{"name", "address", "error"}] der Knoten, die laut
+    # Get-ClusterNode zum Cluster gehoeren, aber von der App aus NICHT
+    # direkt per WinRM erreichbar sind (siehe HyperVService.
+    # check_node_reachability) -- deckt den Fall ab, dass ein neu zum
+    # Cluster hinzugefuegter Knoten die WinRM-Einrichtung (Listener/
+    # Zertifikat, siehe DEPLOYMENT.md Abschnitt 1) noch nicht wie die
+    # bestehenden Knoten erhalten hat. Get-ClusterNode allein meldet nur
+    # Cluster-Mitgliedschaft, nicht direkte Erreichbarkeit von aussen.
+    # Roh als JSON gespeichert (nicht als eigene Tabelle, da rein
+    # informativ/kurzlebig), ueber die unreachable_nodes-Property unten
+    # geparst -- Spaltenname bewusst anders als die Property, damit
+    # Pydantic (from_attributes) ueber die Property die geparste Liste
+    # statt des rohen JSON-Strings liest.
+    unreachable_nodes_json: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+
+    @property
+    def unreachable_nodes(self) -> list[dict]:
+        if not self.unreachable_nodes_json:
+            return []
+        try:
+            data = json.loads(self.unreachable_nodes_json)
+        except json.JSONDecodeError:
+            return []
+        return data if isinstance(data, list) else []

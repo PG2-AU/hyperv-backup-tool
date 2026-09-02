@@ -18,6 +18,12 @@ class HyperVClusterCreate(BaseModel):
     use_https: bool = True
 
 
+class HyperVUnreachableNode(BaseModel):
+    name: str
+    address: str | None = None
+    error: str | None = None
+
+
 class HyperVClusterRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -33,3 +39,6 @@ class HyperVClusterRead(BaseModel):
     last_checked_at: datetime | None = None
     last_check_error: str | None = None
     created_at: datetime
+    # Cluster-Mitglieder (Get-ClusterNode), die von der App aus NICHT direkt
+    # per WinRM erreichbar sind -- siehe HyperVCluster.unreachable_nodes.
+    unreachable_nodes: list[HyperVUnreachableNode] = []

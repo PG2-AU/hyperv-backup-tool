@@ -19,6 +19,7 @@ const TYPE_LABEL: Record<AlertType, string> = {
   netapp_cluster_unhealthy: "NetApp-Cluster",
   snapmirror_unhealthy: "SnapMirror",
   snapmirror_lag_exceeded: "SnapMirror-Lag",
+  hyperv_node_unreachable: "Hyper-V-Knoten",
   backup_failed: "Backup fehlgeschlagen",
 };
 
@@ -29,6 +30,7 @@ const TYPE_COLOR: Record<AlertType, string> = {
   netapp_cluster_unhealthy: "red",
   snapmirror_unhealthy: "grape",
   snapmirror_lag_exceeded: "grape",
+  hyperv_node_unreachable: "red",
   backup_failed: "red",
 };
 
@@ -50,6 +52,15 @@ function AlertAction({ alert }: { alert: Alert }) {
     );
   }
   if (alert.alert_type === "hyperv_cluster_unhealthy") {
+    return (
+      <Tooltip label="Zu Hyper-V-Hosts">
+        <ActionIcon component={Link} to="/settings?tab=hyperv" variant="subtle">
+          <IconExternalLink size={16} />
+        </ActionIcon>
+      </Tooltip>
+    );
+  }
+  if (alert.alert_type === "hyperv_node_unreachable") {
     return (
       <Tooltip label="Zu Hyper-V-Hosts">
         <ActionIcon component={Link} to="/settings?tab=hyperv" variant="subtle">

@@ -472,6 +472,19 @@ def run_alert_check() -> None:
                     hyperv_cluster_id=cluster.id, message=f"Cluster-Status: {cluster.health.value}",
                 )
 
+        for cluster in db.query(HyperVCluster).all():
+            for node in cluster.unreachable_nodes:
+                node_name = node.get("name") or "?"
+                key = f"{cluster.id}:{node_name}"
+                seen_keys.add((AlertType.HYPERV_NODE_UNREACHABLE, key))
+                if (AlertType.HYPERV_NODE_UNREACHABLE, key) not in active_by_key:
+                    error = node.get("error") or "nicht erreichbar"
+                    _trigger(
+                        AlertType.HYPERV_NODE_UNREACHABLE, key, object_name=f"{node_name} ({cluster.name})",
+                        hyperv_cluster_id=cluster.id,
+                        message=f"Knoten per WinRM nicht erreichbar: {error}",
+                    )
+
         for cluster in db.query(NetAppCluster).all():
             if cluster.health == NetAppClusterHealth.HEALTHY:
                 continue

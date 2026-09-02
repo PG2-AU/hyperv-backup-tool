@@ -28,6 +28,7 @@ class AlertType(str, enum.Enum):
     NETAPP_CLUSTER_UNHEALTHY = "netapp_cluster_unhealthy"
     SNAPMIRROR_UNHEALTHY = "snapmirror_unhealthy"
     SNAPMIRROR_LAG_EXCEEDED = "snapmirror_lag_exceeded"
+    HYPERV_NODE_UNREACHABLE = "hyperv_node_unreachable"
 
 
 class AlertScope(str, enum.Enum):

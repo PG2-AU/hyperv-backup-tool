@@ -5,6 +5,7 @@ Registriert wird der Cluster (Cluster Name Object / Management-IP), nicht die
 einzelnen Knoten -- vgl. NetApp-Cluster-Verwaltung in netapp_clusters.py.
 """
 
+import json
 import re
 from datetime import datetime, timezone
 
@@ -57,11 +58,31 @@ def _apply_summary(cluster: HyperVCluster, summary) -> None:
     cluster.last_check_error = None
 
 
+def _refresh_node_reachability(cluster: HyperVCluster, service: HyperVService, username: str, password: str) -> None:
+    """Ergaenzt cluster.unreachable_nodes_json um das Ergebnis eines
+    direkten Erreichbarkeits-Checks pro Cluster-Knoten (siehe
+    HyperVService.check_node_reachability) -- rein additiv zur eigentlichen
+    Cluster-Health oben: ein Fehler hier (z.B. Get-ClusterNode selbst
+    schlaegt fehl) laesst den Health-Check/die Cluster-Anlage NICHT
+    scheitern, sondern belaesst nur den zuletzt bekannten Node-Status."""
+    try:
+        cno_session = service.connect(username, password, read_timeout_sec=15, operation_timeout_sec=10)
+        node_results = service.check_node_reachability(cno_session, username, password)
+        unreachable = [
+            {"name": r.name, "address": r.address, "error": r.error} for r in node_results if not r.reachable
+        ]
+        cluster.unreachable_nodes_json = json.dumps(unreachable) if unreachable else None
+    except Exception:
+        pass
+
+
 def _refresh_status(db: Session, cluster: HyperVCluster) -> HyperVCluster:
     service = _service_for(cluster)
     try:
-        summary = service.get_cluster_summary(cluster.username, decrypt_secret(cluster.encrypted_password))
+        password = decrypt_secret(cluster.encrypted_password)
+        summary = service.get_cluster_summary(cluster.username, password)
         _apply_summary(cluster, summary)
+        _refresh_node_reachability(cluster, service, cluster.username, password)
     except HyperVConnectionError as exc:
         cluster.health = HyperVClusterHealth.UNREACHABLE
         cluster.last_check_error = str(exc)
@@ -112,6 +133,7 @@ def create_cluster(
         last_checked_at=datetime.now(timezone.utc),
     )
     _apply_summary(cluster, summary)
+    _refresh_node_reachability(cluster, probe, payload.username, payload.password)
     db.add(cluster)
     db.commit()
     db.refresh(cluster)
