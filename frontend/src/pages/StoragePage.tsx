@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
+  Alert,
   Badge,
   Button,
   Group,
@@ -20,6 +21,7 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
+  IconAlertTriangle,
   IconCertificate,
   IconEdit,
   IconLink,
@@ -43,8 +45,11 @@ import {
   useLuns,
   useMetroClusterStatus,
   useNetAppClusters,
+  useNetAppSchedules,
   usePlatforms,
+  useSnapmirrorPolicies,
   useSnapMirrorRelationships,
+  useStorageAccess,
   useSvmPeers,
   useSvms,
   useVerifyNetAppCluster,
@@ -55,16 +60,19 @@ import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { IgroupFormModal } from "@/components/IgroupFormModal";
 import { LunEditModal } from "@/components/LunEditModal";
 import { LunFormModal } from "@/components/LunFormModal";
+import { NetAppScheduleFormModal } from "@/components/NetAppScheduleFormModal";
 import { ProcessModal } from "@/components/ProcessModal";
 import type { ProcessPlan } from "@/components/ProcessModal";
 import { SearchInput } from "@/components/SearchInput";
+import { SnapMirrorPolicyEditModal } from "@/components/SnapMirrorPolicyEditModal";
+import { SnapMirrorPolicyFormModal } from "@/components/SnapMirrorPolicyFormModal";
 import { SnapmirrorEditModal } from "@/components/SnapmirrorEditModal";
 import { SnapmirrorFormModal } from "@/components/SnapmirrorFormModal";
 import { CapacityBarCard, DistributionCard, StatCard, StatRibbon, groupCount } from "@/components/StatRibbon";
 import { SvmPeerFormModal } from "@/components/SvmPeerFormModal";
 import { VolumeEditModal } from "@/components/VolumeEditModal";
 import { VolumeFormModal } from "@/components/VolumeFormModal";
-import type { NetAppCluster, NetAppClusterPeer, NetAppLun, NetAppVolume, SnapMirrorRelationship } from "@/api/types";
+import type { NetAppCluster, NetAppClusterPeer, NetAppLun, NetAppSnapMirrorPolicy, NetAppVolume, SnapMirrorRelationship } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, formatLagTime } from "@/utils/format";
@@ -73,6 +81,9 @@ import {
   buildLunCreationSteps,
   buildLunDeleteSteps,
   buildLunEditSteps,
+  buildPolicyCreationSteps,
+  buildPolicyEditSteps,
+  buildScheduleCreationSteps,
   buildSnapmirrorCreationSteps,
   buildSnapmirrorEditSteps,
   buildVolumeCreationSteps,
@@ -86,6 +97,21 @@ const HEALTH_LABEL: Record<string, string> = {
   degraded: "Eingeschränkt",
   unreachable: "Nicht erreichbar",
   unknown: "Unbekannt",
+};
+
+// ONTAP-REST kennt auf Policy-Ebene nur type=async/sync/continuous; die
+// feinere Kategorie, die die ONTAP-CLI als "Type" zeigt (vault,
+// mirror-vault, async-mirror, sync-mirror, strict-sync-mirror), liefert
+// das Backend bereits abgeleitet im Feld display_type -- hier nur noch
+// die Anzeigebeschriftung.
+const SNAPMIRROR_POLICY_TYPE_LABEL: Record<string, string> = {
+  vault: "Vault",
+  mirror_vault: "Mirror-Vault",
+  async_mirror: "Async-Mirror",
+  sync_mirror: "Sync-Mirror",
+  strict_sync_mirror: "Strict-Sync-Mirror",
+  automated_failover_sync: "Automated-FailOver-Sync",
+  continuous: "Continuous",
 };
 
 function AddClusterModal({ opened, onClose, onCreated }: { opened: boolean; onClose: () => void; onCreated: (cluster: NetAppCluster) => void }) {
@@ -207,7 +233,7 @@ function ClusterPeerDetailHeader({ peer, onClose }: { peer: NetAppClusterPeer; o
   );
 }
 
-function ClusterTab() {
+function ClusterTab({ locked }: { locked: boolean }) {
   const { data: clusters } = useNetAppClusters();
   const verifyCluster = useVerifyNetAppCluster();
   const enrollCert = useEnrollNetAppClusterCertificate();
@@ -343,24 +369,24 @@ function ClusterTab() {
                 <Table.Td>
                   <Group gap="xs" wrap="nowrap">
                     <Tooltip label="Verbindung erneut prüfen">
-                      <ActionIcon variant="light" onClick={() => handleVerify(cluster)}>
+                      <ActionIcon variant="light" disabled={locked} onClick={() => handleVerify(cluster)}>
                         <IconRefresh size={16} />
                       </ActionIcon>
                     </Tooltip>
                     <Tooltip label="Discovery erneut ausführen">
-                      <ActionIcon variant="light" onClick={() => runDiscovery(cluster)}>
+                      <ActionIcon variant="light" disabled={locked} onClick={() => runDiscovery(cluster)}>
                         <IconRadar2 size={16} />
                       </ActionIcon>
                     </Tooltip>
                     {cluster.auth_method === "password" && (
                       <Tooltip label="Auf Zertifikat umstellen">
-                        <ActionIcon variant="light" onClick={() => handleEnrollCertificate(cluster)}>
+                        <ActionIcon variant="light" disabled={locked} onClick={() => handleEnrollCertificate(cluster)}>
                           <IconCertificate size={16} />
                         </ActionIcon>
                       </Tooltip>
                     )}
                     <Tooltip label="Entfernen">
-                      <ActionIcon variant="light" color="red" onClick={() => handleDelete(cluster)}>
+                      <ActionIcon variant="light" color="red" disabled={locked} onClick={() => handleDelete(cluster)}>
                         <IconTrash size={16} />
                       </ActionIcon>
                     </Tooltip>
@@ -410,6 +436,20 @@ export function StoragePage() {
   const { data: aggregates } = useAggregates();
   const { data: mcc } = useMetroClusterStatus();
   const { data: clusters } = useNetAppClusters();
+  const { data: netappPolicies } = useSnapmirrorPolicies();
+  const { data: netappSchedules } = useNetAppSchedules();
+  // Globaler Sicherheits-Schalter (Settings > Storage) -- siehe
+  // require_storage_unlocked in netapp_clusters.py fuer die serverseitige
+  // Durchsetzung, hier nur das Ausgrauen der Buttons. actions_enabled
+  // fehlt (undefined) waehrend des ersten Ladens -- bewusst NICHT gesperrt
+  // in diesem kurzen Zwischenzustand, erst eine explizite false-Antwort
+  // sperrt.
+  const { data: storageAccess } = useStorageAccess();
+  const locked = storageAccess?.actions_enabled === false;
+  const [policyFormOpen, setPolicyFormOpen] = useState(false);
+  const [policyEditOpen, setPolicyEditOpen] = useState(false);
+  const [editingPolicy, setEditingPolicy] = useState<NetAppSnapMirrorPolicy | null>(null);
+  const [netappScheduleFormOpen, setNetappScheduleFormOpen] = useState(false);
   const [extraVolCols, setExtraVolCols] = useState<string[]>([]);
   const [svmSearch, setSvmSearch] = useState("");
   const [volumeSearch, setVolumeSearch] = useState("");
@@ -571,6 +611,14 @@ export function StoragePage() {
     <Stack>
       <Title order={3}>Storage</Title>
 
+      {locked && (
+        <Alert color="orange" icon={<IconAlertTriangle size={18} />} title="Storage-Aktionen gesperrt">
+          Ändernde Aktionen sind aktuell global deaktiviert (Settings &gt; Storage) -- Ansicht bleibt möglich, alle
+          Buttons zum Anlegen/Ändern/Löschen sind ausgegraut. Ausnahme: einen neuen NetApp-Cluster hinzufügen bleibt
+          weiterhin möglich.
+        </Alert>
+      )}
+
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "clusters" })}>
         <Tabs.List>
           <Tabs.Tab value="clusters">Cluster</Tabs.Tab>
@@ -583,11 +631,13 @@ export function StoragePage() {
           <Tabs.Tab value="cluster-peers">Cluster Peer</Tabs.Tab>
           <Tabs.Tab value="svm-peers">SVM Peer</Tabs.Tab>
           <Tabs.Tab value="snapmirror">SnapMirror-Beziehungen</Tabs.Tab>
+          <Tabs.Tab value="snapmirror-policies">SnapMirror-Policies</Tabs.Tab>
+          <Tabs.Tab value="schedules">Schedules</Tabs.Tab>
           <Tabs.Tab value="metrocluster">MetroCluster</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="clusters" pt="md">
-          <ClusterTab />
+          <ClusterTab locked={locked} />
         </Tabs.Panel>
 
         <Tabs.Panel value="svms" pt="md">
@@ -650,7 +700,7 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={volumeSearch} onChange={setVolumeSearch} />
-            <Button leftSection={<IconPlus size={16} />} onClick={() => setVolumeFormOpen(true)}>
+            <Button leftSection={<IconPlus size={16} />} disabled={locked} onClick={() => setVolumeFormOpen(true)}>
               Volume anlegen
             </Button>
           </Group>
@@ -755,6 +805,7 @@ export function StoragePage() {
                       <Tooltip label="Bearbeiten">
                         <ActionIcon
                           variant="light"
+                          disabled={locked}
                           onClick={() => {
                             setSelectedVolume(vol);
                             setVolumeEditOpen(true);
@@ -764,12 +815,12 @@ export function StoragePage() {
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="SnapMirror-Replikation erstellen">
-                        <ActionIcon variant="light" onClick={() => openSnapmirrorForVolume(vol)}>
+                        <ActionIcon variant="light" disabled={locked} onClick={() => openSnapmirrorForVolume(vol)}>
                           <IconLink size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Löschen">
-                        <ActionIcon variant="light" color="red" onClick={() => handleDeleteVolume(vol)}>
+                        <ActionIcon variant="light" color="red" disabled={locked} onClick={() => handleDeleteVolume(vol)}>
                           <IconTrash size={16} />
                         </ActionIcon>
                       </Tooltip>
@@ -802,7 +853,7 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={lunSearch} onChange={setLunSearch} />
-            <Button leftSection={<IconPlus size={16} />} onClick={() => setLunFormOpen(true)}>
+            <Button leftSection={<IconPlus size={16} />} disabled={locked} onClick={() => setLunFormOpen(true)}>
               LUN anlegen
             </Button>
           </Group>
@@ -840,6 +891,7 @@ export function StoragePage() {
                       <Tooltip label="Bearbeiten">
                         <ActionIcon
                           variant="light"
+                          disabled={locked}
                           onClick={() => {
                             setSelectedLun(lun);
                             setLunEditOpen(true);
@@ -849,7 +901,7 @@ export function StoragePage() {
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Löschen">
-                        <ActionIcon variant="light" color="red" onClick={() => handleDeleteLun(lun)}>
+                        <ActionIcon variant="light" color="red" disabled={locked} onClick={() => handleDeleteLun(lun)}>
                           <IconTrash size={16} />
                         </ActionIcon>
                       </Tooltip>
@@ -882,7 +934,7 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={igroupSearch} onChange={setIgroupSearch} />
-            <Button leftSection={<IconPlus size={16} />} onClick={() => setIgroupFormOpen(true)}>
+            <Button leftSection={<IconPlus size={16} />} disabled={locked} onClick={() => setIgroupFormOpen(true)}>
               IGroup anlegen
             </Button>
           </Group>
@@ -931,7 +983,7 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={clusterPeerSearch} onChange={setClusterPeerSearch} />
-            <Button leftSection={<IconLink size={16} />} onClick={() => setClusterPeerFormOpen(true)}>
+            <Button leftSection={<IconLink size={16} />} disabled={locked} onClick={() => setClusterPeerFormOpen(true)}>
               Cluster Peer erstellen
             </Button>
           </Group>
@@ -988,7 +1040,7 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={svmPeerSearch} onChange={setSvmPeerSearch} />
-            <Button leftSection={<IconLink size={16} />} onClick={() => setSvmPeerFormOpen(true)}>
+            <Button leftSection={<IconLink size={16} />} disabled={locked} onClick={() => setSvmPeerFormOpen(true)}>
               SVM Peer erstellen
             </Button>
           </Group>
@@ -1048,6 +1100,7 @@ export function StoragePage() {
             <SearchInput value={snapmirrorSearch} onChange={setSnapmirrorSearch} />
             <Button
               leftSection={<IconLink size={16} />}
+              disabled={locked}
               onClick={() => {
                 setSnapmirrorInitialSource(null);
                 setSnapmirrorFormOpen(true);
@@ -1117,6 +1170,7 @@ export function StoragePage() {
                       <Tooltip label="Bearbeiten">
                         <ActionIcon
                           variant="light"
+                          disabled={locked}
                           onClick={() => {
                             setSelectedRelationship(rel);
                             setSnapmirrorEditOpen(true);
@@ -1126,7 +1180,7 @@ export function StoragePage() {
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="SnapMirror-Update erzwingen">
-                        <ActionIcon variant="light" onClick={() => triggerUpdate(rel)}>
+                        <ActionIcon variant="light" disabled={locked} onClick={() => triggerUpdate(rel)}>
                           <IconRefresh size={16} />
                         </ActionIcon>
                       </Tooltip>
@@ -1271,6 +1325,136 @@ export function StoragePage() {
             </Text>
           )}
           </Paper>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="snapmirror-policies" pt="md">
+          <Paper p="md">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>SnapMirror-Policies</Title>
+              <Button leftSection={<IconPlus size={16} />} disabled={locked} onClick={() => setPolicyFormOpen(true)}>
+                Policy anlegen
+              </Button>
+            </Group>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Cluster</Table.Th>
+                  <Table.Th>SVM</Table.Th>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Typ</Table.Th>
+                  <Table.Th>Regeln</Table.Th>
+                  <Table.Th>Aktionen</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {netappPolicies?.map((p) => (
+                  <Table.Tr key={p.id}>
+                    <Table.Td>{p.cluster_name}</Table.Td>
+                    <Table.Td>{p.svm_name ?? "-"}</Table.Td>
+                    <Table.Td>{p.name}</Table.Td>
+                    <Table.Td>
+                      <Badge variant="light" color="blue">
+                        {p.display_type ? (SNAPMIRROR_POLICY_TYPE_LABEL[p.display_type] ?? p.display_type) : (p.type ?? "-")}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      {p.rules.length ? p.rules.map((r) => `${r.label}: ${r.count}`).join(", ") : "-"}
+                    </Table.Td>
+                    <Table.Td>
+                      <ActionIcon
+                        variant="light"
+                        disabled={locked}
+                        onClick={() => {
+                          setEditingPolicy(p);
+                          setPolicyEditOpen(true);
+                        }}
+                      >
+                        <IconEdit size={16} />
+                      </ActionIcon>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            {netappPolicies?.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Noch keine SnapMirror-Policies erkannt. Führe eine Discovery unter Cluster aus.
+              </Text>
+            )}
+          </Paper>
+
+          <SnapMirrorPolicyFormModal
+            opened={policyFormOpen}
+            onClose={() => setPolicyFormOpen(false)}
+            clusters={clusters}
+            svms={svms}
+            onSubmitPlan={(plan) => {
+              setPolicyFormOpen(false);
+              setProcess({ title: "SnapMirror-Policy anlegen", steps: buildPolicyCreationSteps(plan) });
+            }}
+          />
+          <SnapMirrorPolicyEditModal
+            opened={policyEditOpen}
+            onClose={() => setPolicyEditOpen(false)}
+            policy={editingPolicy}
+            onSubmitPlan={(plan) => {
+              setPolicyEditOpen(false);
+              setProcess({ title: "SnapMirror-Policy bearbeiten", steps: buildPolicyEditSteps(plan) });
+            }}
+          />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="schedules" pt="md">
+          <Paper p="md">
+            <Group justify="space-between" mb="sm">
+              <Title order={5}>Schedules</Title>
+              <Button leftSection={<IconPlus size={16} />} disabled={locked} onClick={() => setNetappScheduleFormOpen(true)}>
+                Schedule anlegen
+              </Button>
+            </Group>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Cluster</Table.Th>
+                  <Table.Th>SVM</Table.Th>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Minuten</Table.Th>
+                  <Table.Th>Stunden</Table.Th>
+                  <Table.Th>Wochentage</Table.Th>
+                  <Table.Th>Tage</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {netappSchedules?.map((s) => (
+                  <Table.Tr key={s.id}>
+                    <Table.Td>{s.cluster_name}</Table.Td>
+                    <Table.Td>{s.svm_name ?? "cluster-weit"}</Table.Td>
+                    <Table.Td>{s.name}</Table.Td>
+                    <Table.Td>{s.minutes.join(", ") || "-"}</Table.Td>
+                    <Table.Td>{s.hours.join(", ") || "jede"}</Table.Td>
+                    <Table.Td>{s.weekdays.join(", ") || "jeder"}</Table.Td>
+                    <Table.Td>{s.days.join(", ") || "jeder"}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            {netappSchedules?.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Noch keine Schedules erkannt. Führe eine Discovery unter Cluster aus.
+              </Text>
+            )}
+          </Paper>
+
+          <NetAppScheduleFormModal
+            opened={netappScheduleFormOpen}
+            onClose={() => setNetappScheduleFormOpen(false)}
+            clusters={clusters}
+            svms={svms}
+            onSubmitPlan={(plan) => {
+              setNetappScheduleFormOpen(false);
+              setProcess({ title: "Schedule anlegen", steps: buildScheduleCreationSteps(plan) });
+            }}
+          />
         </Tabs.Panel>
 
         <Tabs.Panel value="metrocluster" pt="md">

@@ -94,6 +94,12 @@ export function RunningJobsIndicator() {
               <Group justify="space-between" wrap="nowrap" gap="xs">
                 <Text size="sm" truncate>
                   {run.job_name}
+                  {run.resource_group_name && (
+                    <Text span c="dimmed" size="xs">
+                      {" "}
+                      ({run.resource_group_name})
+                    </Text>
+                  )}
                 </Text>
                 <Badge color="blue" variant="light">
                   {formatElapsed(run.started_at)}
