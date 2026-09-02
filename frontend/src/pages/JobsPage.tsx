@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ActionIcon, Badge, Button, Drawer, Group, Paper, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconEdit, IconPlayerPlay, IconPlus, IconStack2, IconTerminal2, IconTrash } from "@tabler/icons-react";
+import { IconCopy, IconEdit, IconPlayerPlay, IconPlus, IconStack2, IconTerminal2, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -58,6 +58,7 @@ export function JobsPage() {
   const [logTitle, setLogTitle] = useState<string | undefined>(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<BackupPolicy | null>(null);
+  const [duplicateFromPolicy, setDuplicateFromPolicy] = useState<BackupPolicy | null>(null);
   const [snapshotsOpened, { open: openSnapshots, close: closeSnapshots }] = useDisclosure(false);
   const [selectedRun, setSelectedRun] = useState<BackupJobRun | null>(null);
 
@@ -65,6 +66,7 @@ export function JobsPage() {
   const deleteGroup = useDeleteResourceGroup();
   const [groupFormOpen, setGroupFormOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ResourceGroup | null>(null);
+  const [duplicateFromGroup, setDuplicateFromGroup] = useState<ResourceGroup | null>(null);
 
   const { data: schedules } = useSchedules();
   const deleteSchedule = useDeleteSchedule();
@@ -110,11 +112,19 @@ export function JobsPage() {
 
   function openCreate() {
     setEditingPolicy(null);
+    setDuplicateFromPolicy(null);
     setFormOpen(true);
   }
 
   function openEdit(policy: BackupPolicy) {
+    setDuplicateFromPolicy(null);
     setEditingPolicy(policy);
+    setFormOpen(true);
+  }
+
+  function openDuplicatePolicy(policy: BackupPolicy) {
+    setEditingPolicy(null);
+    setDuplicateFromPolicy(policy);
     setFormOpen(true);
   }
 
@@ -140,11 +150,19 @@ export function JobsPage() {
 
   function openCreateGroup() {
     setEditingGroup(null);
+    setDuplicateFromGroup(null);
     setGroupFormOpen(true);
   }
 
   function openEditGroup(group: ResourceGroup) {
+    setDuplicateFromGroup(null);
     setEditingGroup(group);
+    setGroupFormOpen(true);
+  }
+
+  function openDuplicateGroup(group: ResourceGroup) {
+    setEditingGroup(null);
+    setDuplicateFromGroup(group);
     setGroupFormOpen(true);
   }
 
@@ -245,6 +263,11 @@ export function JobsPage() {
                             <IconEdit size={16} />
                           </ActionIcon>
                         </Tooltip>
+                        <Tooltip label="Duplizieren">
+                          <ActionIcon variant="light" onClick={() => openDuplicatePolicy(policy)}>
+                            <IconCopy size={16} />
+                          </ActionIcon>
+                        </Tooltip>
                         <Tooltip label="Log anzeigen">
                           <ActionIcon variant="light" onClick={() => showLog(policy.id, policy.name)}>
                             <IconTerminal2 size={16} />
@@ -323,6 +346,11 @@ export function JobsPage() {
                         <Tooltip label="Bearbeiten">
                           <ActionIcon variant="light" onClick={() => openEditGroup(group)}>
                             <IconEdit size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Duplizieren">
+                          <ActionIcon variant="light" onClick={() => openDuplicateGroup(group)}>
+                            <IconCopy size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Löschen">
@@ -497,8 +525,13 @@ export function JobsPage() {
         </Stack>
       </Drawer>
 
-      <PolicyFormModal opened={formOpen} onClose={() => setFormOpen(false)} policy={editingPolicy} />
-      <ResourceGroupFormModal opened={groupFormOpen} onClose={() => setGroupFormOpen(false)} group={editingGroup} />
+      <PolicyFormModal opened={formOpen} onClose={() => setFormOpen(false)} policy={editingPolicy} duplicateFrom={duplicateFromPolicy} />
+      <ResourceGroupFormModal
+        opened={groupFormOpen}
+        onClose={() => setGroupFormOpen(false)}
+        group={editingGroup}
+        duplicateFrom={duplicateFromGroup}
+      />
       <ScheduleFormModal opened={scheduleModalOpen} onClose={() => setScheduleModalOpen(false)} schedule={editingSchedule} />
       <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={runPolicy} />
     </Stack>

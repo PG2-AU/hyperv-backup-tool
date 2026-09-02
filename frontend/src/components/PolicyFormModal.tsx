@@ -24,10 +24,15 @@ interface PolicyFormModalProps {
   opened: boolean;
   onClose: () => void;
   policy?: BackupPolicy | null;
+  /** Vorbelegung fuer "Duplizieren": oeffnet den Anlegen-Dialog (nicht
+   * Bearbeiten -- isEdit bleibt false, Speichern legt eine neue Policy an)
+   * mit den Werten dieser bestehenden Policy vorausgefuellt. Wird ignoriert,
+   * wenn `policy` gesetzt ist (echtes Bearbeiten hat Vorrang). */
+  duplicateFrom?: BackupPolicy | null;
   onSaved?: (policy: BackupPolicy) => void;
 }
 
-export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyFormModalProps) {
+export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSaved }: PolicyFormModalProps) {
   const createPolicy = useCreatePolicy();
   const updatePolicy = useUpdatePolicy();
   const { data: schedules } = useSchedules();
@@ -57,17 +62,22 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
 
   useEffect(() => {
     if (!opened) return;
-    if (policy) {
-      setName(policy.name);
-      setScheduleId(policy.schedule_id ?? null);
-      setAppConsistent(policy.consistency === "ApplicationConsistent");
-      setSnapmirrorUpdate(policy.snapmirror_update);
-      setLabelId(policy.snapmirror_label_id ?? null);
-      setRetentionType(policy.retention_type);
-      setRetentionValue(policy.retention_value);
-      setLockingEnabled(policy.snapshot_locking_enabled);
-      setLockingDays(policy.snapshot_locking_days ?? 30);
-      setEmailAlertOnFailure(policy.email_alert_on_failure);
+    const source = policy ?? duplicateFrom;
+    if (source) {
+      // Beim Duplizieren (policy nicht gesetzt, nur duplicateFrom) den Namen
+      // mit einem Zusatz vorbelegen -- verhindert einen sofortigen
+      // Name-Konflikt beim Speichern, macht aber weiterhin deutlich, dass
+      // ein neuer, eigener Name gewaehlt werden sollte.
+      setName(policy ? source.name : `${source.name} (Kopie)`);
+      setScheduleId(source.schedule_id ?? null);
+      setAppConsistent(source.consistency === "ApplicationConsistent");
+      setSnapmirrorUpdate(source.snapmirror_update);
+      setLabelId(source.snapmirror_label_id ?? null);
+      setRetentionType(source.retention_type);
+      setRetentionValue(source.retention_value);
+      setLockingEnabled(source.snapshot_locking_enabled);
+      setLockingDays(source.snapshot_locking_days ?? 30);
+      setEmailAlertOnFailure(source.email_alert_on_failure);
     } else {
       setName("");
       setScheduleId(null);
@@ -80,7 +90,7 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
       setLockingDays(30);
       setEmailAlertOnFailure(false);
     }
-  }, [opened, policy]);
+  }, [opened, policy, duplicateFrom]);
 
   function handleSubmit() {
     const payload: BackupPolicyWritePayload = {
@@ -113,7 +123,12 @@ export function PolicyFormModal({ opened, onClose, policy, onSaved }: PolicyForm
 
   return (
     <>
-      <Modal opened={opened} onClose={onClose} title={isEdit ? "Backup-Policy bearbeiten" : "Neue Backup-Policy erstellen"} size="lg">
+      <Modal
+        opened={opened}
+        onClose={onClose}
+        title={isEdit ? "Backup-Policy bearbeiten" : duplicateFrom ? "Backup-Policy duplizieren" : "Neue Backup-Policy erstellen"}
+        size="lg"
+      >
         <Stack>
           <TextInput label="Policy-Name" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
 

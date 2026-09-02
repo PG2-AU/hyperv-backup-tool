@@ -28,9 +28,14 @@ interface ResourceGroupFormModalProps {
   opened: boolean;
   onClose: () => void;
   group?: ResourceGroup | null;
+  /** Vorbelegung fuer "Duplizieren": oeffnet den Anlegen-Dialog (nicht
+   * Bearbeiten -- isEdit bleibt false, Speichern legt eine neue Gruppe an)
+   * mit den Werten dieser bestehenden Gruppe vorausgefuellt. Wird ignoriert,
+   * wenn `group` gesetzt ist (echtes Bearbeiten hat Vorrang). */
+  duplicateFrom?: ResourceGroup | null;
 }
 
-export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroupFormModalProps) {
+export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }: ResourceGroupFormModalProps) {
   const createGroup = useCreateResourceGroup();
   const updateGroup = useUpdateResourceGroup();
   const { data: vms } = useVms();
@@ -46,18 +51,23 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
 
   useEffect(() => {
     if (!opened) return;
-    if (group) {
-      setName(group.name);
-      setScope(group.scope);
-      setMembers(group.members);
-      setPolicyIds(group.policies.map((p) => p.id));
+    const source = group ?? duplicateFrom;
+    if (source) {
+      // Beim Duplizieren (group nicht gesetzt, nur duplicateFrom) den Namen
+      // mit einem Zusatz vorbelegen -- verhindert einen sofortigen
+      // Name-Konflikt beim Speichern, macht aber weiterhin deutlich, dass
+      // ein neuer, eigener Name gewaehlt werden sollte.
+      setName(group ? source.name : `${source.name} (Kopie)`);
+      setScope(source.scope);
+      setMembers(source.members);
+      setPolicyIds(source.policies.map((p) => p.id));
     } else {
       setName("");
       setScope("vm");
       setMembers([]);
       setPolicyIds([]);
     }
-  }, [opened, group]);
+  }, [opened, group, duplicateFrom]);
 
   // Cluster-qualifizierter Wert (siehe makeMemberKey), damit z.B. zwei
   // Cluster mit je einem CSV "CSV01" in der Auswahl unterscheidbar bleiben
@@ -130,7 +140,12 @@ export function ResourceGroupFormModal({ opened, onClose, group }: ResourceGroup
 
   return (
     <>
-      <Modal opened={opened} onClose={onClose} title={isEdit ? "Protection Group bearbeiten" : "Protection Group anlegen"} size="lg">
+      <Modal
+        opened={opened}
+        onClose={onClose}
+        title={isEdit ? "Protection Group bearbeiten" : duplicateFrom ? "Protection Group duplizieren" : "Protection Group anlegen"}
+        size="lg"
+      >
         <Stack>
           <TextInput label="Name" placeholder="z.B. Bronze" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
 
