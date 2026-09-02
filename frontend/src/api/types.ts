@@ -605,17 +605,25 @@ export interface PolicySummary {
   name: string;
 }
 
+export interface ResourceGroupPolicyLink {
+  policy_id: string;
+  policy_name: string;
+  schedule_id?: string | null;
+  schedule?: Schedule | null;
+}
+
 export interface ResourceGroup {
   id: string;
   name: string;
   scope: BackupScope;
   members: string[];
   policies: PolicySummary[];
-  // Zeitplan haengt an der Resource Group, nicht mehr an der Policy --
-  // ermoeglicht, mehrere Gruppen mit derselben Policy zeitversetzt statt
-  // gleichzeitig zu sichern (siehe Backend app.models.resource_group).
-  schedule_id?: string | null;
-  schedule?: Schedule | null;
+  // Zeitplan haengt an der Verknuepfung Resource-Group<->Policy, nicht an
+  // der Resource Group oder der Policy allein -- ermoeglicht sowohl
+  // zeitversetzte Gruppen mit derselben Policy als auch dieselbe Gruppe mit
+  // mehreren, unterschiedlich geplanten Policies (siehe Backend
+  // app.models.resource_group.ResourceGroupPolicyLink).
+  policy_links: ResourceGroupPolicyLink[];
   created_at: string;
 }
 

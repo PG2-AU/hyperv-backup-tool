@@ -370,12 +370,16 @@ export function useResourceGroups() {
   });
 }
 
+export interface ResourceGroupPolicyLinkWritePayload {
+  policy_id: string;
+  schedule_id?: string | null;
+}
+
 export interface ResourceGroupWritePayload {
   name: string;
   scope: BackupScope;
   members: string[];
-  policy_ids: string[];
-  schedule_id?: string | null;
+  policy_links: ResourceGroupPolicyLinkWritePayload[];
 }
 
 export function useCreateResourceGroup() {

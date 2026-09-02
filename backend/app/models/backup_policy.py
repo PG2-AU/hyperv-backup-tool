@@ -60,4 +60,6 @@ class BackupPolicy(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     snapmirror_label = relationship("SnapMirrorLabel")
-    resource_groups = relationship("ResourceGroup", secondary="resource_group_policies", back_populates="policies")
+    # viewonly: das Schreiben der Verknuepfung (inkl. ihres Zeitplans) laeuft
+    # ueber ResourceGroup.policy_links (siehe app.models.resource_group).
+    resource_groups = relationship("ResourceGroup", secondary="resource_group_policies", viewonly=True)

@@ -28,10 +28,15 @@ interface ScheduleFormModalProps {
   opened: boolean;
   onClose: () => void;
   schedule?: Schedule | null;
+  /** Vorbelegung fuer "Duplizieren": oeffnet den Anlegen-Dialog (nicht
+   * Bearbeiten -- isEdit bleibt false, Speichern legt einen neuen Zeitplan
+   * an) mit den Werten dieses bestehenden Zeitplans vorausgefuellt. Wird
+   * ignoriert, wenn `schedule` gesetzt ist (echtes Bearbeiten hat Vorrang). */
+  duplicateFrom?: Schedule | null;
   onSaved?: (schedule: Schedule) => void;
 }
 
-export function ScheduleFormModal({ opened, onClose, schedule, onSaved }: ScheduleFormModalProps) {
+export function ScheduleFormModal({ opened, onClose, schedule, duplicateFrom, onSaved }: ScheduleFormModalProps) {
   const createSchedule = useCreateSchedule();
   const updateSchedule = useUpdateSchedule();
   const isEdit = !!schedule;
@@ -44,12 +49,17 @@ export function ScheduleFormModal({ opened, onClose, schedule, onSaved }: Schedu
 
   useEffect(() => {
     if (!opened) return;
-    if (schedule) {
-      setName(schedule.name);
-      setType(schedule.schedule_type);
-      setTimes(schedule.times.length ? schedule.times : ["02:00"]);
-      setWeekday(schedule.weekday != null ? String(schedule.weekday) : "0");
-      setDayOfMonth(schedule.day_of_month ?? 1);
+    const source = schedule ?? duplicateFrom;
+    if (source) {
+      // Beim Duplizieren (schedule nicht gesetzt, nur duplicateFrom) den
+      // Namen mit einem Zusatz vorbelegen -- verhindert einen sofortigen
+      // Name-Konflikt beim Speichern, macht aber weiterhin deutlich, dass
+      // ein neuer, eigener Name gewaehlt werden sollte.
+      setName(schedule ? source.name : `${source.name} (Kopie)`);
+      setType(source.schedule_type);
+      setTimes(source.times.length ? source.times : ["02:00"]);
+      setWeekday(source.weekday != null ? String(source.weekday) : "0");
+      setDayOfMonth(source.day_of_month ?? 1);
     } else {
       setName("");
       setType("daily");
@@ -57,7 +67,7 @@ export function ScheduleFormModal({ opened, onClose, schedule, onSaved }: Schedu
       setWeekday("0");
       setDayOfMonth(1);
     }
-  }, [opened, schedule]);
+  }, [opened, schedule, duplicateFrom]);
 
   function updateTime(index: number, value: string) {
     setTimes((prev) => prev.map((t, i) => (i === index ? value : t)));
@@ -98,7 +108,11 @@ export function ScheduleFormModal({ opened, onClose, schedule, onSaved }: Schedu
   const isPending = createSchedule.isPending || updateSchedule.isPending;
 
   return (
-    <Modal opened={opened} onClose={onClose} title={isEdit ? "Zeitplan bearbeiten" : "Zeitplan erstellen"}>
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title={isEdit ? "Zeitplan bearbeiten" : duplicateFrom ? "Zeitplan duplizieren" : "Zeitplan erstellen"}
+    >
       <Stack>
         <TextInput label="Name" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
         <Select label="Typ" data={TYPE_OPTIONS} value={type} onChange={(v) => v && setType(v as ScheduleType)} allowDeselect={false} />

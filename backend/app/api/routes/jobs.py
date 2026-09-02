@@ -46,7 +46,7 @@ from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
-from app.models.resource_group import ResourceGroup, parse_member_key, resolve_member_key
+from app.models.resource_group import ResourceGroupPolicyLink, parse_member_key, resolve_member_key
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_run import RestoreStepStatus
 from app.models.schedule import Schedule, ScheduleType
@@ -122,15 +122,17 @@ def list_upcoming_jobs(
     db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.BACKUP_VIEW)),
 ) -> list[UpcomingJobRead]:
-    """Alle faelligen geplanten Backup-Laeufe ueber alle Resource Groups
-    hinweg innerhalb der naechsten `hours` Stunden, chronologisch sortiert --
-    Grundlage fuer die Dashboard-Vorschau ('Jobs', siehe DashboardPage.tsx).
-    Der Zeitplan haengt an der Resource Group, nicht mehr an der Policy
-    (siehe app.models.resource_group) -- eine Resource Group mit z.B. einem
-    HOURLY-Zeitplan erscheint mit jedem einzelnen Vorkommen im Fenster, pro
-    verknuepfter aktiver Policy einmal (mehrere Policies auf derselben
-    Resource Group loesen beim Feuern des gemeinsamen Zeitplans alle aus).
-    Nutzt dieselbe Zeitzonen-/Zeitplan-Logik wie run_scheduled_backups
+    """Alle faelligen geplanten Backup-Laeufe ueber alle Resource-Group-
+    Policy-Verknuepfungen hinweg innerhalb der naechsten `hours` Stunden,
+    chronologisch sortiert -- Grundlage fuer die Dashboard-Vorschau ('Jobs',
+    siehe DashboardPage.tsx). Der Zeitplan haengt an der Verknuepfung
+    zwischen Resource Group und Policy, nicht an der Resource Group oder
+    der Policy allein (siehe app.models.resource_group.ResourceGroupPolicyLink)
+    -- dieselbe Resource Group kann so an mehrere Policies mit
+    unterschiedlicher Kadenz haengen (z.B. ein CSV stuendlich UND
+    woechentlich). Eine Verknuepfung mit z.B. einem HOURLY-Zeitplan
+    erscheint mit jedem einzelnen Vorkommen im Fenster. Nutzt dieselbe
+    Zeitzonen-/Zeitplan-Logik wie run_scheduled_backups
     (app.core.scheduler._schedule_is_due), nur vorausschauend ueber ein
     ganzes Fenster statt nur fuer die aktuelle Minute."""
     settings = get_settings()
@@ -141,29 +143,29 @@ def list_upcoming_jobs(
     now_local = datetime.now(tz)
     end_local = now_local + timedelta(hours=hours)
 
-    groups = db.query(ResourceGroup).filter(ResourceGroup.schedule_id.isnot(None)).all()
+    links = db.query(ResourceGroupPolicyLink).filter(ResourceGroupPolicyLink.schedule_id.isnot(None)).all()
     upcoming: list[UpcomingJobRead] = []
-    for group in groups:
-        schedule = db.get(Schedule, group.schedule_id)
+    occurrences_by_schedule: dict[str, list[datetime]] = {}
+    for link in links:
+        if link.policy is None or not link.policy.enabled or link.resource_group is None:
+            continue
+        schedule = link.schedule
         if schedule is None or not schedule.times:
             continue
-        active_policies = [p for p in group.policies if p.enabled]
-        if not active_policies:
-            continue
-        occurrences = _occurrences_within(schedule, now_local, end_local)
-        for policy in active_policies:
-            for occurrence in occurrences:
-                upcoming.append(
-                    UpcomingJobRead(
-                        resource_group_id=group.id,
-                        resource_group_name=group.name,
-                        policy_id=policy.id,
-                        policy_name=policy.name,
-                        schedule_name=schedule.name,
-                        consistency=policy.consistency,
-                        next_run_at=occurrence.astimezone(timezone.utc),
-                    )
+        if schedule.id not in occurrences_by_schedule:
+            occurrences_by_schedule[schedule.id] = _occurrences_within(schedule, now_local, end_local)
+        for occurrence in occurrences_by_schedule[schedule.id]:
+            upcoming.append(
+                UpcomingJobRead(
+                    resource_group_id=link.resource_group_id,
+                    resource_group_name=link.resource_group.name,
+                    policy_id=link.policy_id,
+                    policy_name=link.policy.name,
+                    schedule_name=schedule.name,
+                    consistency=link.policy.consistency,
+                    next_run_at=occurrence.astimezone(timezone.utc),
                 )
+            )
     upcoming.sort(key=lambda u: u.next_run_at)
     return upcoming
 
@@ -365,9 +367,11 @@ def _resolve_targets(
 
     `resource_group_ids`, falls angegeben, beschraenkt die Aufloesung auf nur
     diese Resource Group(s) der Policy -- genutzt vom geplanten Lauf
-    (run_scheduled_backups), der pro faelliger Resource Group einzeln
-    auslöst (siehe ResourceGroup.schedule_id), statt wie beim manuellen
-    "Jetzt ausfuehren" alle verknuepften Resource Groups auf einmal."""
+    (run_scheduled_backups), der pro faelliger Resource-Group-Policy-
+    Verknuepfung einzeln ausloest (siehe
+    app.models.resource_group.ResourceGroupPolicyLink), statt wie beim
+    manuellen "Jetzt ausfuehren" alle verknuepften Resource Groups auf
+    einmal."""
     resource_groups = (
         [g for g in policy.resource_groups if g.id in resource_group_ids]
         if resource_group_ids is not None

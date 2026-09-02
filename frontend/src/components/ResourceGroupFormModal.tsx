@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Group, Modal, MultiSelect, Select, Stack, TextInput } from "@mantine/core";
+import { Alert, Button, Group, Modal, MultiSelect, Select, Stack, Stepper, Text, TextInput } from "@mantine/core";
 import { IconInfoCircle } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
 
@@ -28,6 +28,11 @@ const SCOPE_OPTIONS: { value: BackupScope; label: string }[] = [
 const NEW_POLICY_VALUE = "__new_policy__";
 const NEW_SCHEDULE_VALUE = "__new_schedule__";
 
+interface PolicyLinkState {
+  policy_id: string;
+  schedule_id: string | null;
+}
+
 interface ResourceGroupFormModalProps {
   opened: boolean;
   onClose: () => void;
@@ -48,16 +53,26 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
   const { data: schedules } = useSchedules();
   const isEdit = !!group;
 
+  const [active, setActive] = useState(0);
   const [name, setName] = useState("");
   const [scope, setScope] = useState<BackupScope>("vm");
   const [members, setMembers] = useState<string[]>([]);
-  const [policyIds, setPolicyIds] = useState<string[]>([]);
-  const [scheduleId, setScheduleId] = useState<string | null>(null);
+  // Der Zeitplan haengt an der einzelnen Policy-Verknuepfung, nicht an der
+  // Protection Group als Ganzes -- dieselbe Gruppe kann so z.B. an eine
+  // stuendliche UND eine woechentliche Policy gehaengt sein, je mit eigenem
+  // Zeitplan, statt fuer jede Kadenz eine eigene Gruppe anlegen zu muessen
+  // (siehe Backend app.models.resource_group.ResourceGroupPolicyLink).
+  const [policyLinks, setPolicyLinks] = useState<PolicyLinkState[]>([]);
   const [policyModalOpen, setPolicyModalOpen] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  // Welche Verknuepfung gerade "+ Neuen Zeitplan erstellen..." ausgeloest
+  // hat -- der neu angelegte Zeitplan wird nach dem Speichern genau dieser
+  // Verknuepfung zugewiesen, nicht irgendeiner/der letzten.
+  const [scheduleTargetPolicyId, setScheduleTargetPolicyId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!opened) return;
+    setActive(0);
     const source = group ?? duplicateFrom;
     if (source) {
       // Beim Duplizieren (group nicht gesetzt, nur duplicateFrom) den Namen
@@ -67,14 +82,12 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
       setName(group ? source.name : `${source.name} (Kopie)`);
       setScope(source.scope);
       setMembers(source.members);
-      setPolicyIds(source.policies.map((p) => p.id));
-      setScheduleId(source.schedule_id ?? null);
+      setPolicyLinks(source.policy_links.map((l) => ({ policy_id: l.policy_id, schedule_id: l.schedule_id ?? null })));
     } else {
       setName("");
       setScope("vm");
       setMembers([]);
-      setPolicyIds([]);
-      setScheduleId(null);
+      setPolicyLinks([]);
     }
   }, [opened, group, duplicateFrom]);
 
@@ -119,16 +132,24 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
   }
 
   function handlePolicyIdsChange(values: string[]) {
+    const selectedIds = values.filter((v) => v !== NEW_POLICY_VALUE);
+    // Bestehende Zeitplan-Zuordnung je Policy beibehalten, nur neu
+    // dazugekommene/entfernte Policies anpassen.
+    setPolicyLinks((prev) => {
+      const scheduleByPolicy = new Map(prev.map((l) => [l.policy_id, l.schedule_id]));
+      return selectedIds.map((id) => ({ policy_id: id, schedule_id: scheduleByPolicy.get(id) ?? null }));
+    });
     if (values.includes(NEW_POLICY_VALUE)) {
-      setPolicyIds(values.filter((v) => v !== NEW_POLICY_VALUE));
       setPolicyModalOpen(true);
-      return;
     }
-    setPolicyIds(values);
+  }
+
+  function setLinkSchedule(policyId: string, scheduleId: string | null) {
+    setPolicyLinks((prev) => prev.map((l) => (l.policy_id === policyId ? { ...l, schedule_id: scheduleId } : l)));
   }
 
   function handleSubmit() {
-    const payload: ResourceGroupWritePayload = { name, scope, members, policy_ids: policyIds, schedule_id: scheduleId };
+    const payload: ResourceGroupWritePayload = { name, scope, members, policy_links: policyLinks };
     const mutation = isEdit ? updateGroup.mutateAsync({ id: group!.id, payload }) : createGroup.mutateAsync(payload);
 
     mutation
@@ -146,6 +167,7 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
   }
 
   const isPending = createGroup.isPending || updateGroup.isPending;
+  const policyIds = policyLinks.map((l) => l.policy_id);
 
   return (
     <>
@@ -155,74 +177,122 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
         title={isEdit ? "Protection Group bearbeiten" : duplicateFrom ? "Protection Group duplizieren" : "Protection Group anlegen"}
         size="lg"
       >
-        <Stack>
-          <TextInput label="Name" placeholder="z.B. Bronze" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
+        <Stepper active={active} onStepClick={setActive} size="sm">
+          <Stepper.Step label="Objekte & Policies" description="Was wird wie gesichert">
+            <Stack mt="md">
+              <TextInput label="Name" placeholder="z.B. Bronze" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
 
-          <Select label="Typ" data={SCOPE_OPTIONS} value={scope} onChange={handleScopeChange} allowDeselect={false} disabled={isEdit} />
+              <Select label="Typ" data={SCOPE_OPTIONS} value={scope} onChange={handleScopeChange} allowDeselect={false} disabled={isEdit} />
 
-          {scope === "csv" && (
-            <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
-              Empfohlen: nur ein CSV pro Protection Group. Mehrere CSVs in derselben Gruppe lassen sich zwar sichern,
-              erschweren aber eine spätere gezielte Wiederherstellung genau dieses einen CSVs.
-            </Alert>
-          )}
+              {scope === "csv" && (
+                <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
+                  Empfohlen: nur ein CSV pro Protection Group. Mehrere CSVs in derselben Gruppe lassen sich zwar
+                  sichern, erschweren aber eine spätere gezielte Wiederherstellung genau dieses einen CSVs.
+                </Alert>
+              )}
 
-          <MultiSelect
-            label={scope === "vm" ? "Virtuelle Maschinen" : "Cluster Shared Volumes"}
-            placeholder="Objekte auswaehlen"
-            data={memberOptions}
-            value={members}
-            onChange={setMembers}
-            searchable
-          />
+              <MultiSelect
+                label={scope === "vm" ? "Virtuelle Maschinen" : "Cluster Shared Volumes"}
+                placeholder="Objekte auswaehlen"
+                data={memberOptions}
+                value={members}
+                onChange={setMembers}
+                searchable
+              />
 
-          <MultiSelect
-            label="Verknuepfte Backup-Policies"
-            placeholder="Policies auswaehlen"
-            data={[
-              { value: NEW_POLICY_VALUE, label: "+ Neue Policy erstellen..." },
-              ...(policies?.map((p) => ({ value: p.id, label: p.name })) ?? []),
-            ]}
-            value={policyIds}
-            onChange={handlePolicyIdsChange}
-            searchable
-          />
+              <MultiSelect
+                label="Verknuepfte Backup-Policies"
+                placeholder="Policies auswaehlen"
+                data={[
+                  { value: NEW_POLICY_VALUE, label: "+ Neue Policy erstellen..." },
+                  ...(policies?.map((p) => ({ value: p.id, label: p.name })) ?? []),
+                ]}
+                value={policyIds}
+                onChange={handlePolicyIdsChange}
+                searchable
+              />
 
-          <Select
-            label="Zeitplan"
-            description="Legt fest, wann diese Protection Group automatisch gesichert wird -- unabhaengig vom Zeitplan anderer Protection Groups derselben Policy (so lassen sich mehrere CSVs/VMs zeitversetzt statt gleichzeitig sichern)"
-            placeholder="Kein Zeitplan (nur manuell)"
-            data={[
-              { value: NEW_SCHEDULE_VALUE, label: "+ Neuen Zeitplan erstellen..." },
-              ...(schedules?.map((s) => ({ value: s.id, label: `${s.name} (${formatSchedule(s)})` })) ?? []),
-            ]}
-            value={scheduleId}
-            onChange={(v) => (v === NEW_SCHEDULE_VALUE ? setScheduleModalOpen(true) : setScheduleId(v))}
-            clearable
-          />
+              <SnapMirrorCheckPanel
+                enabled={(policies ?? []).some((p) => policyIds.includes(p.id) && p.snapmirror_update)}
+                groups={[{ scope, members }]}
+              />
 
-          <SnapMirrorCheckPanel
-            enabled={(policies ?? []).some((p) => policyIds.includes(p.id) && p.snapmirror_update)}
-            groups={[{ scope, members }]}
-          />
+              <Group justify="flex-end" mt="sm">
+                <Button variant="default" onClick={onClose}>
+                  Abbrechen
+                </Button>
+                <Button onClick={() => setActive(1)} disabled={!name}>
+                  Weiter
+                </Button>
+              </Group>
+            </Stack>
+          </Stepper.Step>
 
-          <Group justify="flex-end" mt="sm">
-            <Button variant="default" onClick={onClose}>
-              Abbrechen
-            </Button>
-            <Button onClick={handleSubmit} loading={isPending} disabled={!name}>
-              {isEdit ? "Speichern" : "Anlegen"}
-            </Button>
-          </Group>
-        </Stack>
+          <Stepper.Step label="Zeitplan" description="Pro Policy">
+            <Stack mt="md">
+              <Text size="sm" c="dimmed">
+                Jede verknüpfte Policy bekommt ihren eigenen Zeitplan — so lässt sich z.B. dieselbe Protection Group
+                stündlich UND wöchentlich sichern (über zwei Policies), oder mehrere Protection Groups mit derselben
+                Policy zeitversetzt statt gleichzeitig.
+              </Text>
+
+              {policyLinks.length === 0 && (
+                <Text size="sm" c="dimmed">
+                  Keine Policy verknüpft — auf der vorherigen Seite mindestens eine auswählen, um einen Zeitplan
+                  festzulegen. Ohne Policy-Verknüpfung wird diese Protection Group von keinem Backup erfasst.
+                </Text>
+              )}
+
+              {policyLinks.map((link) => {
+                const policy = policies?.find((p) => p.id === link.policy_id);
+                return (
+                  <Select
+                    key={link.policy_id}
+                    label={policy?.name ?? link.policy_id}
+                    placeholder="Kein Zeitplan (nur manuell)"
+                    data={[
+                      { value: NEW_SCHEDULE_VALUE, label: "+ Neuen Zeitplan erstellen..." },
+                      ...(schedules?.map((s) => ({ value: s.id, label: `${s.name} (${formatSchedule(s)})` })) ?? []),
+                    ]}
+                    value={link.schedule_id}
+                    onChange={(v) => {
+                      if (v === NEW_SCHEDULE_VALUE) {
+                        setScheduleTargetPolicyId(link.policy_id);
+                        setScheduleModalOpen(true);
+                        return;
+                      }
+                      setLinkSchedule(link.policy_id, v);
+                    }}
+                    clearable
+                  />
+                );
+              })}
+
+              <Group justify="flex-end" mt="sm">
+                <Button variant="default" onClick={() => setActive(0)}>
+                  Zurück
+                </Button>
+                <Button onClick={handleSubmit} loading={isPending} disabled={!name}>
+                  {isEdit ? "Speichern" : "Anlegen"}
+                </Button>
+              </Group>
+            </Stack>
+          </Stepper.Step>
+        </Stepper>
       </Modal>
 
       <PolicyFormModal
         opened={policyModalOpen}
         onClose={() => setPolicyModalOpen(false)}
-        onSaved={(saved) => setPolicyIds((prev) => [...prev, saved.id])}
+        onSaved={(saved) => setPolicyLinks((prev) => [...prev, { policy_id: saved.id, schedule_id: null }])}
       />
-      <ScheduleFormModal opened={scheduleModalOpen} onClose={() => setScheduleModalOpen(false)} onSaved={(s) => setScheduleId(s.id)} />
+      <ScheduleFormModal
+        opened={scheduleModalOpen}
+        onClose={() => setScheduleModalOpen(false)}
+        onSaved={(s) => {
+          if (scheduleTargetPolicyId) setLinkSchedule(scheduleTargetPolicyId, s.id);
+        }}
+      />
     </>
   );
 }

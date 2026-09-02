@@ -72,14 +72,23 @@ export function JobsPage() {
   const deleteSchedule = useDeleteSchedule();
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
+  const [duplicateFromSchedule, setDuplicateFromSchedule] = useState<Schedule | null>(null);
 
   function openCreateSchedule() {
     setEditingSchedule(null);
+    setDuplicateFromSchedule(null);
     setScheduleModalOpen(true);
   }
 
   function openEditSchedule(schedule: Schedule) {
+    setDuplicateFromSchedule(null);
     setEditingSchedule(schedule);
+    setScheduleModalOpen(true);
+  }
+
+  function openDuplicateSchedule(schedule: Schedule) {
+    setEditingSchedule(null);
+    setDuplicateFromSchedule(schedule);
     setScheduleModalOpen(true);
   }
 
@@ -300,8 +309,7 @@ export function JobsPage() {
                   <Table.Th>Typ</Table.Th>
                   <Table.Th>Anzahl</Table.Th>
                   <Table.Th>Objekte</Table.Th>
-                  <Table.Th>Verknüpfte Policies</Table.Th>
-                  <Table.Th>Zeitplan</Table.Th>
+                  <Table.Th>Verknüpfte Policies (Zeitplan)</Table.Th>
                   <Table.Th>Aktionen</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -321,11 +329,11 @@ export function JobsPage() {
                     </Table.Td>
                     <Table.Td>{group.members.length ? group.members.map(memberDisplayName).join(", ") : "-"}</Table.Td>
                     <Table.Td>
-                      {group.policies.length ? (
+                      {group.policy_links.length ? (
                         <Group gap={4}>
-                          {group.policies.map((p) => (
-                            <Badge key={p.id} color="indigo" variant="light">
-                              {p.name}
+                          {group.policy_links.map((link) => (
+                            <Badge key={link.policy_id} color="indigo" variant="light">
+                              {link.policy_name} ({formatSchedule(link.schedule)})
                             </Badge>
                           ))}
                         </Group>
@@ -335,7 +343,6 @@ export function JobsPage() {
                         </Text>
                       )}
                     </Table.Td>
-                    <Table.Td>{formatSchedule(group.schedule)}</Table.Td>
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">
                         <Tooltip label="Jetzt ausführen">
@@ -404,6 +411,11 @@ export function JobsPage() {
                         <Tooltip label="Bearbeiten">
                           <ActionIcon variant="light" onClick={() => openEditSchedule(s)}>
                             <IconEdit size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Duplizieren">
+                          <ActionIcon variant="light" onClick={() => openDuplicateSchedule(s)}>
+                            <IconCopy size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Löschen">
@@ -532,7 +544,12 @@ export function JobsPage() {
         group={editingGroup}
         duplicateFrom={duplicateFromGroup}
       />
-      <ScheduleFormModal opened={scheduleModalOpen} onClose={() => setScheduleModalOpen(false)} schedule={editingSchedule} />
+      <ScheduleFormModal
+        opened={scheduleModalOpen}
+        onClose={() => setScheduleModalOpen(false)}
+        schedule={editingSchedule}
+        duplicateFrom={duplicateFromSchedule}
+      />
       <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={runPolicy} />
     </Stack>
   );

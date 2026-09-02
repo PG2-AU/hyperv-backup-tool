@@ -1,19 +1,39 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Enum, ForeignKey, JSON, String, Table
+from sqlalchemy import Enum, ForeignKey, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.types import DateTime
 from app.models.backup_policy import BackupScope
 
-resource_group_policies = Table(
-    "resource_group_policies",
-    Base.metadata,
-    Column("resource_group_id", String(36), ForeignKey("resource_groups.id"), primary_key=True),
-    Column("policy_id", String(36), ForeignKey("backup_policies.id"), primary_key=True),
-)
+
+class ResourceGroupPolicyLink(Base):
+    """Verknuepfung einer Resource Group mit einer Policy -- ersetzt eine
+    fruehere reine Zuordnungstabelle (siehe init_db.py-Migration). Traegt
+    jetzt zusaetzlich einen eigenen Zeitplan: Nutzer-Ueberlegung, dass eine
+    Resource Group an mehrere Policies mit unterschiedlicher Kadenz gehaengt
+    sein kann (z.B. dasselbe CSV stuendlich UND woechentlich sichern, ueber
+    zwei verschiedene Policies mit je eigener Retention) -- ein einzelner
+    Zeitplan pro Resource Group (fruehere Version) haette diesen Fall nicht
+    abgebildet, ohne fuer jede Kadenz eine eigene Resource Group anzulegen.
+    Der Zeitplan haengt daher an GENAU DIESER Verknuepfung, nicht an der
+    Resource Group oder der Policy allein."""
+
+    __tablename__ = "resource_group_policies"
+
+    resource_group_id: Mapped[str] = mapped_column(String(36), ForeignKey("resource_groups.id"), primary_key=True)
+    policy_id: Mapped[str] = mapped_column(String(36), ForeignKey("backup_policies.id"), primary_key=True)
+    schedule_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("schedules.id"), nullable=True)
+
+    resource_group = relationship("ResourceGroup", back_populates="policy_links")
+    policy = relationship("BackupPolicy")
+    schedule = relationship("Schedule")
+
+    @property
+    def policy_name(self) -> str | None:
+        return self.policy.name if self.policy else None
 
 
 _MEMBER_SEP = "::"
@@ -59,15 +79,16 @@ class ResourceGroup(Base):
     verknuepft wird. Die Kombination aus Resource Group + Policy ergibt die
     tatsaechliche Backup-Definition (was wird wann/wie gesichert).
 
-    Der Zeitplan haengt bewusst HIER (nicht mehr an BackupPolicy, siehe
-    Migration in init_db.py) -- Nutzer-Ueberlegung: bei vielen CSVs, die
-    dieselbe Policy (z.B. 'Silver') teilen, wuerden sonst ALLE gleichzeitig
-    gesichert (ein Policy-Zeitplan loest alle verknuepften Resource Groups in
-    einem gemeinsamen Lauf aus) -- Snapshot-/VSS-Lastspitze auf NetApp/Hyper-
-    V. Mit dem Zeitplan an der Resource Group (kombiniert mit der Empfehlung,
-    pro CSV-Scope-Gruppe nur ein CSV zu pflegen) laesst sich das gezielt
-    entzerren, ohne die Policy-Wiederverwendung (Retention/Konsistenz/
-    SnapMirror-Regeln) aufzugeben."""
+    Der Zeitplan haengt an der jeweiligen Verknuepfung (siehe
+    ResourceGroupPolicyLink), NICHT an der Resource Group selbst und NICHT
+    an der Policy -- Nutzer-Ueberlegung: bei vielen CSVs, die dieselbe Policy
+    (z.B. 'Silver') teilen, wuerden sonst ALLE gleichzeitig gesichert (ein
+    gemeinsamer Zeitplan loest alle verknuepften Resource Groups in einem
+    Lauf aus) -- Snapshot-/VSS-Lastspitze auf NetApp/Hyper-V. Ausserdem kann
+    dieselbe Resource Group an mehrere Policies mit unterschiedlicher Kadenz
+    haengen (z.B. ein CSV stuendlich UND woechentlich, je eigene Policy) --
+    ein Zeitplan pro Verknuepfung statt pro Resource Group bildet das direkt
+    ab, ohne fuer jede Kadenz eine eigene Resource Group anzulegen."""
 
     __tablename__ = "resource_groups"
 
@@ -75,8 +96,10 @@ class ResourceGroup(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True)
     scope: Mapped[BackupScope] = mapped_column(Enum(BackupScope))
     members: Mapped[list[str]] = mapped_column(JSON, default=list)
-    schedule_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("schedules.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-    policies = relationship("BackupPolicy", secondary=resource_group_policies, back_populates="resource_groups")
-    schedule = relationship("Schedule")
+    # Fuer den einfachen Lesezugriff (welche Policies sind verknuepft) --
+    # viewonly, da das Schreiben ueber policy_links laeuft (traegt den
+    # Zeitplan pro Verknuepfung mit).
+    policies = relationship("BackupPolicy", secondary=ResourceGroupPolicyLink.__table__, viewonly=True)
+    policy_links = relationship("ResourceGroupPolicyLink", back_populates="resource_group", cascade="all, delete-orphan")
