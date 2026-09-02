@@ -897,3 +897,7 @@ export interface RestoreInfraConfig {
   igroup_name: string;
   initiator_iqn: string;
 }
+
+export interface StorageAccess {
+  actions_enabled: boolean;
+}

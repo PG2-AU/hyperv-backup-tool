@@ -46,9 +46,6 @@ import { apiErrorMessage } from "@/utils/errors";
 import { buildHyperVClusterCreationSteps } from "@/utils/hypervSteps";
 import { LOG_FONT_SIZE_OPTIONS, useDisplayStore, type ContentFontSize } from "@/store/displayStore";
 
-  continuous: "Continuous",
-};
-
 const HYPERV_HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
 const HYPERV_HEALTH_LABEL: Record<string, string> = {
   healthy: "Healthy",

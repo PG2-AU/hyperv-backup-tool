@@ -851,6 +851,9 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             db.commit()
             return
 
+        with _StepCtx(db, run.id, "run-started", "Backup gestartet", step_model=BackupRunStep) as ctx:
+            ctx.row.message = f"Ziele: {', '.join(run.targets)}" if run.targets else "(keine Ziele)"
+
         # BUG (2026-09-02, live gemeldet und gefunden): frueher wurde hier IMMER
         # die ganze Policy aufgeloest, ohne die von _start_job_run bereits
         # ermittelte Resource-Group-Einschraenkung zu uebernehmen. Fuer eine
@@ -1027,6 +1030,20 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         run.status = JobStatus.FAILED if errors else JobStatus.SUCCEEDED
         run.error_message = "; ".join(errors) if errors else None
         db.commit()
+        # Direkt konstruiert statt ueber _StepCtx -- dessen __exit__ fuellt
+        # eine leere Nachricht sonst automatisch mit 'OK', was hier bei
+        # Erfolg ('Backup erfolgreich beendet -- OK') unnoetig doppelt
+        # waere. label traegt den Status, message (nur bei Fehlern) die
+        # Ursache -- logs.py haengt sie dann als 'label: message' an.
+        db.add(
+            BackupRunStep(
+                run_id=run.id, step="run-finished",
+                label="Backup erfolgreich beendet" if run.status != JobStatus.FAILED else "Backup mit Fehlern beendet",
+                message=run.error_message if run.status == JobStatus.FAILED else None,
+                status=RestoreStepStatus.SUCCESS if run.status != JobStatus.FAILED else RestoreStepStatus.ERROR,
+            )
+        )
+        db.commit()
         if run.status == JobStatus.FAILED:
             notify_backup_failure(db, run.policy_name, run.id, run.error_message, run.targets, policy.email_alert_on_failure)
     except Exception as exc:
@@ -1035,6 +1052,12 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             run.status = JobStatus.FAILED
             run.error_message = str(exc)[:2000]
             run.finished_at = datetime.now(timezone.utc)
+            db.add(
+                BackupRunStep(
+                    run_id=run.id, step="run-finished", label="Backup mit Fehlern beendet",
+                    message=run.error_message, status=RestoreStepStatus.ERROR,
+                )
+            )
             db.commit()
             notify_backup_failure(db, run.policy_name, run.id, run.error_message, run.targets, bool(policy and policy.email_alert_on_failure))
     finally:

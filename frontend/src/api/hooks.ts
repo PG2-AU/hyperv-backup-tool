@@ -57,6 +57,7 @@ import type {
   AlertConfigWritePayload,
   SchedulerConfig,
   SchedulerConfigWritePayload,
+  StorageAccess,
   SvmPeerCreate,
   UpcomingJob,
   Vm,
@@ -883,5 +884,24 @@ export function useUpdateSchedulerConfig() {
     mutationFn: async (payload: SchedulerConfigWritePayload) =>
       (await apiClient.put<SchedulerConfig>("/scheduler-config", payload)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scheduler-config"] }),
+  });
+}
+
+// Globaler Sicherheits-Schalter fuer alle Storage-Aktionen (Settings >
+// Storage) -- siehe app.models.storage_access.StorageAccessConfig. Lesbar
+// mit STORAGE_VIEW (jeder, der die Storage-Seite sieht, braucht den Wert
+// um Aktions-Buttons auszugrauen), aenderbar nur mit SETTINGS_MANAGE.
+export function useStorageAccess() {
+  return useQuery({
+    queryKey: ["storage-access"],
+    queryFn: async () => (await apiClient.get<StorageAccess>("/storage-access")).data,
+  });
+}
+
+export function useUpdateStorageAccess() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: StorageAccess) => (await apiClient.put<StorageAccess>("/storage-access", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["storage-access"] }),
   });
 }

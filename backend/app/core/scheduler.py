@@ -790,13 +790,20 @@ def run_scheduled_backups() -> None:
                     # (siehe start_scheduler) verhindert echte Ueberlappungen;
                     # der Nachhol-Mechanismus oben faengt dafuer verpasste
                     # Minuten ab.
-                    run, warnings = _start_job_run(policy, db, resource_group_ids={group.id})
-                    _execute_job_run(run.id, warnings)
+                    # BUG (2026-09-02, per Screenshot gemeldet): dieses Log
+                    # stand bisher NACH _execute_job_run() -- als "gestartet"
+                    # betitelt, aber tatsaechlich erst geloggt, nachdem der
+                    # komplette Lauf (Checkpoints/Snapshot/SnapMirror) schon
+                    # fertig war. Im chronologisch sortierten System Log
+                    # erschien es dadurch als LETZTER statt erster Eintrag
+                    # des Laufs. Jetzt VOR dem eigentlichen Start geloggt.
                     _log(
                         db,
                         f"Geplanter Backup-Lauf gestartet: Resource Group '{group.name}' / Policy '{policy.name}' "
                         f"(Zeitplan '{schedule.name}', faellig {occurrence.strftime('%Y-%m-%d %H:%M')})",
                     )
+                    run, warnings = _start_job_run(policy, db, resource_group_ids={group.id})
+                    _execute_job_run(run.id, warnings)
                 except Exception as exc:
                     _log(
                         db,
