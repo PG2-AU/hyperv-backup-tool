@@ -10,6 +10,7 @@ import {
   PasswordInput,
   Select,
   Stack,
+  Switch,
   Table,
   Tabs,
   Text,
@@ -26,11 +27,9 @@ import {
   useDeleteSnapMirrorLabel,
   useDiscoverHyperVCluster,
   useHyperVClusters,
-  useNetAppClusters,
-  useNetAppSchedules,
-  useSnapmirrorPolicies,
   useSnapMirrorLabels,
-  useSvms,
+  useStorageAccess,
+  useUpdateStorageAccess,
   useVerifyHyperVCluster,
 } from "@/api/hooks";
 import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useUsers, type UserRead } from "@/api/hooks.settings";
@@ -39,30 +38,14 @@ import { AlertSettingsTab } from "@/components/AlertSettingsTab";
 import { EmailSettingsTab } from "@/components/EmailSettingsTab";
 import { SchedulerConfigTab } from "@/components/SchedulerConfigTab";
 import { HyperVClusterFormModal } from "@/components/HyperVClusterFormModal";
-import { NetAppScheduleFormModal } from "@/components/NetAppScheduleFormModal";
 import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
 import { SnapMirrorLabelFormModal } from "@/components/SnapMirrorLabelFormModal";
-import { SnapMirrorPolicyEditModal } from "@/components/SnapMirrorPolicyEditModal";
-import { SnapMirrorPolicyFormModal } from "@/components/SnapMirrorPolicyFormModal";
-import type { HyperVCluster, NetAppSnapMirrorPolicy, SnapMirrorLabel } from "@/api/types";
+import type { HyperVCluster, SnapMirrorLabel } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { buildHyperVClusterCreationSteps } from "@/utils/hypervSteps";
-import { buildPolicyCreationSteps, buildPolicyEditSteps, buildScheduleCreationSteps } from "@/utils/netappSteps";
 import { LOG_FONT_SIZE_OPTIONS, useDisplayStore, type ContentFontSize } from "@/store/displayStore";
 
-// ONTAP-REST kennt auf Policy-Ebene nur type=async/sync/continuous; die
-// feinere Kategorie, die die ONTAP-CLI als "Type" zeigt (vault,
-// mirror-vault, async-mirror, sync-mirror, strict-sync-mirror), liefert
-// das Backend bereits abgeleitet im Feld display_type -- hier nur noch
-// die Anzeigebeschriftung.
-const SNAPMIRROR_POLICY_TYPE_LABEL: Record<string, string> = {
-  vault: "Vault",
-  mirror_vault: "Mirror-Vault",
-  async_mirror: "Async-Mirror",
-  sync_mirror: "Sync-Mirror",
-  strict_sync_mirror: "Strict-Sync-Mirror",
-  automated_failover_sync: "Automated-FailOver-Sync",
   continuous: "Continuous",
 };
 
@@ -290,15 +273,9 @@ export function SettingsPage() {
     });
   }
 
-  const { data: netappClusters } = useNetAppClusters();
-  const { data: netappSvms } = useSvms();
-  const { data: netappPolicies } = useSnapmirrorPolicies();
-  const { data: netappSchedules } = useNetAppSchedules();
-  const [policyFormOpen, setPolicyFormOpen] = useState(false);
-  const [policyEditOpen, setPolicyEditOpen] = useState(false);
-  const [editingPolicy, setEditingPolicy] = useState<NetAppSnapMirrorPolicy | null>(null);
-  const [netappScheduleFormOpen, setNetappScheduleFormOpen] = useState(false);
   const [process, setProcess] = useState<ProcessPlan | null>(null);
+  const { data: storageAccess } = useStorageAccess();
+  const updateStorageAccess = useUpdateStorageAccess();
 
   return (
     <Stack>
@@ -308,10 +285,9 @@ export function SettingsPage() {
         <Tabs.List>
           <Tabs.Tab value="users">Benutzer & Rollen</Tabs.Tab>
           <Tabs.Tab value="snapmirror-labels">SnapMirror-Labels</Tabs.Tab>
-          <Tabs.Tab value="netapp-snapmirror-policies">SnapMirror-Policies</Tabs.Tab>
-          <Tabs.Tab value="netapp-schedules">Schedules</Tabs.Tab>
           <Tabs.Tab value="ad">Active Directory</Tabs.Tab>
           <Tabs.Tab value="hyperv">Hyper-V-Hosts</Tabs.Tab>
+          <Tabs.Tab value="storage">Storage</Tabs.Tab>
           <Tabs.Tab value="email">E-Mail</Tabs.Tab>
           <Tabs.Tab value="scheduler">Hintergrundjobs</Tabs.Tab>
           <Tabs.Tab value="alerts">Alarms</Tabs.Tab>
@@ -451,133 +427,41 @@ export function SettingsPage() {
           <SnapMirrorLabelFormModal opened={labelModalOpen} onClose={() => setLabelModalOpen(false)} label={editingLabel} />
         </Tabs.Panel>
 
-        <Tabs.Panel value="netapp-snapmirror-policies" pt="md">
-          <Paper p="md">
-            <Group justify="space-between" mb="sm">
-              <Title order={5}>SnapMirror-Policies</Title>
-              <Button leftSection={<IconPlus size={16} />} onClick={() => setPolicyFormOpen(true)}>
-                Policy anlegen
-              </Button>
-            </Group>
-            <Table striped highlightOnHover>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Cluster</Table.Th>
-                  <Table.Th>SVM</Table.Th>
-                  <Table.Th>Name</Table.Th>
-                  <Table.Th>Typ</Table.Th>
-                  <Table.Th>Regeln</Table.Th>
-                  <Table.Th>Aktionen</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {netappPolicies?.map((p) => (
-                  <Table.Tr key={p.id}>
-                    <Table.Td>{p.cluster_name}</Table.Td>
-                    <Table.Td>{p.svm_name ?? "-"}</Table.Td>
-                    <Table.Td>{p.name}</Table.Td>
-                    <Table.Td>
-                      <Badge variant="light" color="blue">
-                        {p.display_type ? (SNAPMIRROR_POLICY_TYPE_LABEL[p.display_type] ?? p.display_type) : (p.type ?? "-")}
-                      </Badge>
-                    </Table.Td>
-                    <Table.Td>
-                      {p.rules.length ? p.rules.map((r) => `${r.label}: ${r.count}`).join(", ") : "-"}
-                    </Table.Td>
-                    <Table.Td>
-                      <ActionIcon
-                        variant="light"
-                        onClick={() => {
-                          setEditingPolicy(p);
-                          setPolicyEditOpen(true);
-                        }}
-                      >
-                        <IconEdit size={16} />
-                      </ActionIcon>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-            {netappPolicies?.length === 0 && (
-              <Text c="dimmed" size="sm" ta="center" py="md">
-                Noch keine SnapMirror-Policies erkannt. Führe eine Discovery unter Storage &gt; Cluster aus.
-              </Text>
-            )}
+        <Tabs.Panel value="storage" pt="md">
+          <Paper p="md" maw={620}>
+            <Title order={5} mb="xs">
+              Storage-Aktionen
+            </Title>
+            <Text size="sm" c="dimmed" mb="md">
+              Steuert global, ob aendernde Aktionen unter Storage (Volume/LUN/IGroup/SnapMirror/Cluster-Peer/SVM-Peer/
+              SnapMirror-Policy/-Schedule anlegen/aendern/loeschen, Cluster verifizieren/discovern/Zertifikat umstellen/
+              entfernen) ueberhaupt moeglich sind -- unabhaengig von den Berechtigungen des einzelnen Benutzers.
+              Ist der Schalter deaktiviert, sind alle diese Aktionen in der GUI ausgegraut UND werden vom Server
+              abgelehnt (kein reiner Anzeige-Schutz). Einzige Ausnahme: einen neuen NetApp-Cluster hinzufuegen bleibt
+              immer moeglich, damit die initiale Anbindung nicht blockiert wird. Gedacht fuer den Fall, dass das Tool
+              nicht nur von Storage-Admins bedient wird.
+            </Text>
+            <Switch
+              label="Storage-Aktionen erlauben"
+              checked={storageAccess?.actions_enabled ?? true}
+              onChange={(e) =>
+                updateStorageAccess.mutate(
+                  { actions_enabled: e.currentTarget.checked },
+                  {
+                    onSuccess: (c) =>
+                      notifications.show({
+                        title: c.actions_enabled ? "Storage-Aktionen erlaubt" : "Storage-Aktionen gesperrt",
+                        message: "",
+                        color: c.actions_enabled ? "green" : "orange",
+                      }),
+                    onError: (err) =>
+                      notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Konnte nicht gespeichert werden."), color: "red" }),
+                  },
+                )
+              }
+              disabled={updateStorageAccess.isPending}
+            />
           </Paper>
-
-          <SnapMirrorPolicyFormModal
-            opened={policyFormOpen}
-            onClose={() => setPolicyFormOpen(false)}
-            clusters={netappClusters}
-            svms={netappSvms}
-            onSubmitPlan={(plan) => {
-              setPolicyFormOpen(false);
-              setProcess({ title: "SnapMirror-Policy anlegen", steps: buildPolicyCreationSteps(plan) });
-            }}
-          />
-          <SnapMirrorPolicyEditModal
-            opened={policyEditOpen}
-            onClose={() => setPolicyEditOpen(false)}
-            policy={editingPolicy}
-            onSubmitPlan={(plan) => {
-              setPolicyEditOpen(false);
-              setProcess({ title: "SnapMirror-Policy bearbeiten", steps: buildPolicyEditSteps(plan) });
-            }}
-          />
-        </Tabs.Panel>
-
-        <Tabs.Panel value="netapp-schedules" pt="md">
-          <Paper p="md">
-            <Group justify="space-between" mb="sm">
-              <Title order={5}>Schedules</Title>
-              <Button leftSection={<IconPlus size={16} />} onClick={() => setNetappScheduleFormOpen(true)}>
-                Schedule anlegen
-              </Button>
-            </Group>
-            <Table striped highlightOnHover>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Cluster</Table.Th>
-                  <Table.Th>SVM</Table.Th>
-                  <Table.Th>Name</Table.Th>
-                  <Table.Th>Minuten</Table.Th>
-                  <Table.Th>Stunden</Table.Th>
-                  <Table.Th>Wochentage</Table.Th>
-                  <Table.Th>Tage</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {netappSchedules?.map((s) => (
-                  <Table.Tr key={s.id}>
-                    <Table.Td>{s.cluster_name}</Table.Td>
-                    <Table.Td>{s.svm_name ?? "cluster-weit"}</Table.Td>
-                    <Table.Td>{s.name}</Table.Td>
-                    <Table.Td>{s.minutes.join(", ") || "-"}</Table.Td>
-                    <Table.Td>{s.hours.join(", ") || "jede"}</Table.Td>
-                    <Table.Td>{s.weekdays.join(", ") || "jeder"}</Table.Td>
-                    <Table.Td>{s.days.join(", ") || "jeder"}</Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-            {netappSchedules?.length === 0 && (
-              <Text c="dimmed" size="sm" ta="center" py="md">
-                Noch keine Schedules erkannt. Führe eine Discovery unter Storage &gt; Cluster aus.
-              </Text>
-            )}
-          </Paper>
-
-          <NetAppScheduleFormModal
-            opened={netappScheduleFormOpen}
-            onClose={() => setNetappScheduleFormOpen(false)}
-            clusters={netappClusters}
-            svms={netappSvms}
-            onSubmitPlan={(plan) => {
-              setNetappScheduleFormOpen(false);
-              setProcess({ title: "Schedule anlegen", steps: buildScheduleCreationSteps(plan) });
-            }}
-          />
         </Tabs.Panel>
 
         <Tabs.Panel value="ad" pt="md">

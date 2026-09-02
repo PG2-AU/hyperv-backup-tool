@@ -56,9 +56,30 @@ from app.schemas.netapp_write import (
     VolumeCreate,
     VolumeUpdate,
 )
+from app.models.storage_access import StorageAccessConfig
+from app.models.user import User
 from app.services.netapp_service import DiscoveryData, NetAppConnectionError, NetAppOntapService
 
 router = APIRouter(prefix="/api/netapp/clusters", tags=["netapp-clusters"])
+
+
+def require_storage_unlocked(
+    user: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
+    db: Session = Depends(get_db),
+) -> User:
+    """Globaler Sicherheits-Schalter (Settings > Storage, siehe
+    app.models.storage_access.StorageAccessConfig) OBEN AUF der normalen
+    STORAGE_MANAGE-Berechtigung -- eine Aktion braucht beides. Bewusst NICHT
+    auf create_cluster (NetApp-Cluster hinzufuegen) angewendet: ein Storage-
+    Admin soll trotz gesperrter Storage-Aktionen die initiale Anbindung
+    eines neuen Clusters vornehmen koennen (Nutzer-Vorgabe)."""
+    config = db.query(StorageAccessConfig).first()
+    if config is not None and not config.actions_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Storage-Aktionen sind aktuell gesperrt (Settings > Storage).",
+        )
+    return user
 
 
 def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData, step_success: dict[str, bool]) -> None:
@@ -269,6 +290,9 @@ def list_clusters(db: Session = Depends(get_db), user=Depends(require_permission
 def create_cluster(
     payload: NetAppClusterCreate,
     db: Session = Depends(get_db),
+    # Bewusst OHNE require_storage_unlocked (siehe dort) -- das Anlegen
+    # eines neuen NetApp-Clusters bleibt auch bei gesperrten Storage-
+    # Aktionen moeglich (Nutzer-Vorgabe).
     user=Depends(require_permission(Permission.STORAGE_MANAGE)),
 ) -> NetAppCluster:
     if db.query(NetAppCluster).filter(NetAppCluster.name == payload.name).first() is not None:
@@ -305,7 +329,7 @@ def create_cluster(
 
 @router.post("/{cluster_id}/verify", response_model=NetAppClusterRead)
 def verify_cluster(
-    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_storage_unlocked),
 ) -> NetAppCluster:
     cluster = _get_cluster_or_404(db, cluster_id)
     return _refresh_status(db, cluster)
@@ -313,7 +337,7 @@ def verify_cluster(
 
 @router.post("/{cluster_id}/enroll-certificate", response_model=NetAppClusterRead)
 def enroll_certificate(
-    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_storage_unlocked),
 ) -> NetAppCluster:
     cluster = _get_cluster_or_404(db, cluster_id)
     if not cluster.encrypted_password:
@@ -358,7 +382,7 @@ def enroll_certificate(
 
 @router.post("/{cluster_id}/discover", response_model=list[DiscoveryStepRead])
 def discover_cluster(
-    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_storage_unlocked),
 ):
     cluster = _get_cluster_or_404(db, cluster_id)
     return _discover_and_persist(db, cluster)
@@ -366,7 +390,7 @@ def discover_cluster(
 
 @router.delete("/{cluster_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_cluster(
-    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_storage_unlocked),
 ) -> None:
     cluster = _get_cluster_or_404(db, cluster_id)
     db.delete(cluster)
@@ -376,7 +400,7 @@ def delete_cluster(
 @router.post("/{cluster_id}/igroups", status_code=status.HTTP_201_CREATED)
 def create_igroup(
     cluster_id: str, payload: IgroupCreate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     """Legt nur die Initiator-Gruppe an -- loest KEINE Discovery aus. Aufrufer
     (Standalone-Formular oder der mehrstufige LUN-Anlegen-Workflow) entscheiden
@@ -395,7 +419,7 @@ def create_igroup(
 @router.post("/{cluster_id}/volumes", status_code=status.HTTP_201_CREATED)
 def create_volume(
     cluster_id: str, payload: VolumeCreate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -412,7 +436,7 @@ def create_volume(
 @router.patch("/{cluster_id}/volumes/{volume_uuid}")
 def update_volume(
     cluster_id: str, volume_uuid: str, payload: VolumeUpdate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -426,7 +450,7 @@ def update_volume(
 @router.delete("/{cluster_id}/volumes/{volume_uuid}")
 def delete_volume(
     cluster_id: str, volume_uuid: str, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -440,7 +464,7 @@ def delete_volume(
 @router.post("/{cluster_id}/luns", status_code=status.HTTP_201_CREATED)
 def create_lun(
     cluster_id: str, payload: LunCreate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     """Legt nur die LUN in einem (bereits existierenden) Volume an. Das
     Anlegen eines neuen Volumes ist ein eigener Schritt (POST .../volumes),
@@ -461,7 +485,7 @@ def create_lun(
 @router.patch("/{cluster_id}/luns/{lun_uuid}")
 def update_lun(
     cluster_id: str, lun_uuid: str, payload: LunUpdate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -475,7 +499,7 @@ def update_lun(
 @router.delete("/{cluster_id}/luns/{lun_uuid}")
 def delete_lun(
     cluster_id: str, lun_uuid: str, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -489,7 +513,7 @@ def delete_lun(
 @router.post("/{cluster_id}/lun-maps", status_code=status.HTTP_201_CREATED)
 def create_lun_map(
     cluster_id: str, payload: LunMapCreate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -503,7 +527,7 @@ def create_lun_map(
 @router.delete("/{cluster_id}/lun-maps/{lun_uuid}")
 def delete_lun_map(
     cluster_id: str, lun_uuid: str, igroup_name: str, svm_name: str, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -517,7 +541,7 @@ def delete_lun_map(
 @router.post("/{cluster_id}/snapmirror-policies", status_code=status.HTTP_201_CREATED)
 def create_snapmirror_policy(
     cluster_id: str, payload: SnapmirrorPolicyCreate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -533,7 +557,7 @@ def create_snapmirror_policy(
 @router.patch("/{cluster_id}/snapmirror-policies/{policy_uuid}")
 def update_snapmirror_policy(
     cluster_id: str, policy_uuid: str, payload: SnapmirrorPolicyUpdate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -547,7 +571,7 @@ def update_snapmirror_policy(
 @router.post("/{cluster_id}/schedules", status_code=status.HTTP_201_CREATED)
 def create_schedule(
     cluster_id: str, payload: ScheduleCreate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -561,7 +585,7 @@ def create_schedule(
 @router.post("/{cluster_id}/snapmirror-relationships", status_code=status.HTTP_201_CREATED)
 def create_snapmirror_relationship(
     cluster_id: str, payload: SnapmirrorRelationshipCreate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     """SnapMirror-Beziehungen werden immer von der Zielseite aus angelegt
     (cluster_id = Ziel-Cluster). Liegt die Quelle auf einem anderen
@@ -587,7 +611,7 @@ def create_snapmirror_relationship(
 @router.patch("/{cluster_id}/snapmirror-relationships/{relationship_uuid}")
 def update_snapmirror_relationship(
     cluster_id: str, relationship_uuid: str, payload: SnapmirrorRelationshipUpdate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -601,7 +625,7 @@ def update_snapmirror_relationship(
 @router.post("/{cluster_id}/snapmirror-relationships/{relationship_uuid}/initialize", status_code=status.HTTP_202_ACCEPTED)
 def initialize_snapmirror_relationship(
     cluster_id: str, relationship_uuid: str, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
@@ -615,7 +639,7 @@ def initialize_snapmirror_relationship(
 @router.post("/{cluster_id}/cluster-peers", status_code=status.HTTP_201_CREATED)
 def create_cluster_peer(
     cluster_id: str, payload: ClusterPeerCreate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     """Peert diesen Cluster mit einem anderen bereits registrierten Cluster.
     Beide Seiten muessen in unserer App registriert sein, da fuer den
@@ -641,7 +665,7 @@ def create_cluster_peer(
 @router.post("/{cluster_id}/svm-peers", status_code=status.HTTP_201_CREATED)
 def create_svm_peer(
     cluster_id: str, payload: SvmPeerCreate, db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    user=Depends(require_storage_unlocked),
 ) -> dict:
     """Erstellt eine SVM-Peer-Beziehung zwischen einer SVM auf diesem Cluster
     und einer SVM auf einem bereits (Cluster-)gepeerten, in unserer App

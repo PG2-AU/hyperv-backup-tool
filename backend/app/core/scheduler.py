@@ -412,7 +412,14 @@ def run_alert_check() -> None:
     Teil dieses Checks, siehe app.models.alert."""
     db = SessionLocal()
     try:
-        _log(db, "Task gestartet: Warnungs-Check")
+        # Bewusst KEIN "Task gestartet"-Log hier (anders als Health-Check/
+        # Discovery/Snapshot-Abgleich/Retention-Cleanup): laeuft alle 15min,
+        # ist aber in der ganz ueberwiegenden Mehrzahl der Laeufe ein reiner
+        # No-Op (nichts ueber-/unterschritten) -- 96 Log-Zeilen/Tag ohne
+        # Mehrwert. _trigger() unten sowie die Aufloesungs-Schleife loggen
+        # bereits gezielt, wann tatsaechlich ein Alarm ausgeloest/aufgeloest
+        # wird (Nutzer-Rueckmeldung, siehe dieselbe Begruendung bei
+        # run_daily_email_summary/run_file_restore_expiry weiter unten).
         config = db.query(AlertConfig).first()
         vol_threshold = config.volume_threshold_percent if config else 90
         lun_threshold = config.lun_threshold_percent if config else 90
@@ -560,10 +567,21 @@ def run_file_restore_expiry() -> None:
     24h-Sicherheitsnetz soll also zeitnah greifen, nicht erst am naechsten
     Tag. Nutzt denselben Cleanup-Ablauf wie der manuelle Endpunkt
     (_cleanup_file_restore_run), damit kein zweiter Code-Pfad fuers
-    Abbauen von LUN-Klon/iSCSI/Mount gepflegt werden muss."""
+    Abbauen von LUN-Klon/iSCSI/Mount gepflegt werden muss.
+
+    WICHTIG: die 24h gelten PRO SESSION ab deren eigenem started_at (siehe
+    FileRestoreRun.expires_at, in der GUI als 'Automatisches Aufräumen' je
+    Zeile sichtbar) -- NICHT ab dem Start dieses Tasks. Der stuendliche
+    Poll ist nur die Umsetzung dieses per-Session-Zeitpunkts (kein
+    eigener Timer-Thread pro Session, der einen Container-Neustart nicht
+    ueberleben wuerde) -- eine Session, die z.B. um 14:23 geoeffnet wurde,
+    wird beim naechsten Tick nach 14:23+24h aufgeraeumt, also mit bis zu
+    ~1h Verzug gegenueber der exakten Minute, nicht 24h ab Task-Start.
+    Bewusst KEIN 'Task gestartet'-Log hier (Nutzer-Rueckmeldung): stuendlich,
+    aber praktisch immer ein No-Op -- die tatsaechliche Aufraeum-Aktion
+    wird unten bereits gezielt geloggt."""
     db = SessionLocal()
     try:
-        _log(db, "Task gestartet: Datei-Restore-Sicherheitsnetz")
         settings = get_settings()
         cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.file_restore_max_age_hours)
         expired = (
@@ -592,10 +610,14 @@ def run_daily_email_summary() -> None:
     prueft selbst, ob die konfigurierte Stunde erreicht UND heute noch
     keine Zusammenfassung verschickt wurde -- dadurch wirkt eine spaeter in
     der GUI geaenderte Uhrzeit sofort, ohne Container-Neustart (anders als
-    ein fix bei start_scheduler registrierter CronTrigger)."""
+    ein fix bei start_scheduler registrierter CronTrigger).
+
+    Bewusst KEIN 'Task gestartet'-Log hier (Nutzer-Rueckmeldung: alle 15min
+    sichtbar, obwohl der Versand nur einmal taeglich um die konfigurierte
+    Stunde stattfindet, war verwirrend) -- der tatsaechliche Versand wird
+    unten stattdessen gezielt geloggt."""
     db = SessionLocal()
     try:
-        _log(db, "Task gestartet: E-Mail-Tageszusammenfassung")
         config = db.query(EmailConfig).first()
         if config is None or not config.enabled or not config.daily_summary_enabled:
             return
@@ -635,6 +657,7 @@ def run_daily_email_summary() -> None:
 
         stats = DailySummaryStats(today_label, rows, failures)
         send_daily_summary(db, config, stats)
+        _log(db, f"E-Mail-Tageszusammenfassung fuer {today_label} versendet")
 
         if status_row is None:
             status_row = SchedulerStatus()

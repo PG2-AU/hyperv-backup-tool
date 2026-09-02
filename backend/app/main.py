@@ -21,6 +21,7 @@ from app.api.routes import (
     settings as settings_routes,
     snapmirror_labels,
     storage,
+    storage_access,
     users,
     vms,
 )
@@ -75,6 +76,7 @@ app.include_router(file_restore.router)
 app.include_router(email_config.router)
 app.include_router(scheduler_config.router)
 app.include_router(alerts.router)
+app.include_router(storage_access.router)
 
 
 @app.get("/api/health")
