@@ -83,6 +83,56 @@ def _cleanup_orphaned_hyperv_discovery_rows(engine) -> None:
         conn.commit()
 
 
+def _reap_orphaned_in_progress_runs(engine) -> None:
+    """Markiert Backup-/Restore-/VM-Neuerstellungs-/Datei-Restore-Laeufe, die
+    beim letzten Herunterfahren noch als 'laeuft' in der DB standen, als
+    fehlgeschlagen. Ein frisch gestarteter Prozess kann per Definition
+    keinen echten laufenden Job aus einer VORHERIGEN Prozess-Instanz mehr
+    haben -- jede zu diesem Zeitpunkt noch 'laufende' Zeile ist verwaist
+    (Absturz oder, haeufiger, ein Deploy-Neustart mitten in der
+    Ausfuehrung). Laeuft bei JEDEM Start, idempotent.
+
+    Live gefunden (2026-09-02, per Nutzer-Screenshot aufgedeckt): ein
+    Deploy-Neustart waehrend eines geplanten Backup-Laufs (Resource Group
+    Silver_CSV02 / Policy Silver_Hourly) liess dessen BackupRun-Zeile fuer
+    immer auf 'running' stehen. Das ist nicht nur eine falsche Anzeige im
+    Job-Verlauf, sondern blockiert auch aktiv kuenftige Laeufe -- der
+    'laeuft bereits'-Schutz (_start_job_run in jobs.py, analog bei Restore/
+    VM-Neuerstellung/Datei-Restore) haette genau diese Resource Group sonst
+    DAUERHAFT gesperrt, bis jemand die Zeile manuell korrigiert. Zusaetzlich
+    fuehrte derselbe Neustart dazu, dass der naechste Scheduler-Tick (siehe
+    run_scheduled_backups) einen ANDEREN, im selben unterbrochenen Tick
+    bereits erfolgreich abgeschlossenen Lauf (Silver_CSV01 / Silver_Daily)
+    ein zweites Mal ausloeste -- der Nachhol-Fenster-Checkpoint wird erst
+    NACH Abarbeitung ALLER in einem Tick faelligen Verknuepfungen commitet,
+    ein Abbruch mitten drin verlor daher den kompletten Fortschritt dieses
+    Ticks. Siehe dazu den Checkpoint-Vorverlegungs-Fix in
+    app.core.scheduler.run_scheduled_backups -- beide Symptome sind
+    zwei Seiten desselben Grundproblems: kein Aufraeumen verwaister
+    'laufend'-Zeilen beim Start."""
+    message = "Abgebrochen durch Neustart der Anwendung (z.B. Deploy) waehrend der Ausfuehrung"
+    with engine.connect() as conn:
+        existing_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(backup_runs)"))]
+        if not existing_cols:
+            return  # Tabellen existieren noch nicht -- frischer Erststart
+        conn.execute(
+            text(
+                "UPDATE backup_runs SET status = 'FAILED', error_message = :msg, finished_at = CURRENT_TIMESTAMP "
+                "WHERE status IN ('PENDING', 'RUNNING', 'CLEANING_UP')"
+            ),
+            {"msg": message},
+        )
+        # RestoreRun/VmRecreateRun/FileRestoreRun nutzen (anders als
+        # BackupRun) eine String-Spalte statt SQLAlchemy Enum(...) -- dort
+        # steht der rohe .value-String ('running'), nicht der Enum-NAME.
+        for table in ("restore_runs", "vm_recreate_runs", "file_restore_runs"):
+            conn.execute(
+                text(f"UPDATE {table} SET status = 'failed', error_message = :msg, finished_at = CURRENT_TIMESTAMP WHERE status = 'running'"),
+                {"msg": message},
+            )
+        conn.commit()
+
+
 def _migrate_resource_group_members(db: Session) -> None:
     """Migriert ResourceGroup.members von reinen VM-/CSV-Namen (alt,
     clusteruebergreifend mehrdeutig -- Backlog: 'Gleiche CSV-Namen von
@@ -248,6 +298,7 @@ def init_db(db: Session) -> None:
         conn.commit()
 
     _cleanup_orphaned_hyperv_discovery_rows(engine)
+    _reap_orphaned_in_progress_runs(engine)
     _migrate_resource_group_members(db)
     _migrate_resource_group_policy_link_schedules(db)
 

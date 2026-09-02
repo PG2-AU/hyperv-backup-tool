@@ -770,6 +770,11 @@ def run_scheduled_backups() -> None:
 
         links = db.query(ResourceGroupPolicyLink).filter(ResourceGroupPolicyLink.schedule_id.isnot(None)).all()
         occurrences_by_schedule: dict[str, list[datetime]] = {}
+        # Phase 1: NUR ermitteln, was in diesem Tick faellig ist -- noch
+        # NICHTS ausfuehren. Siehe Begruendung unten, warum das strikt vor
+        # jeder Ausfuehrung abgeschlossen und der Checkpoint committet sein
+        # muss.
+        due: list[tuple] = []
         for link in links:
             schedule = link.schedule
             policy = link.policy
@@ -781,38 +786,54 @@ def run_scheduled_backups() -> None:
             if schedule.id not in occurrences_by_schedule:
                 occurrences_by_schedule[schedule.id] = _occurrences_within(schedule, last_check_local, now_local)
             for occurrence in occurrences_by_schedule[schedule.id]:
-                try:
-                    # _execute_job_run laeuft hier bewusst synchron (nicht als
-                    # Hintergrund-Task wie beim manuellen "Jetzt ausfuehren",
-                    # siehe trigger_job_run in jobs.py) -- run_scheduled_backups
-                    # selbst laeuft ja bereits im eigenen APScheduler-
-                    # Hintergrund-Thread, und max_instances=1 auf diesem Job
-                    # (siehe start_scheduler) verhindert echte Ueberlappungen;
-                    # der Nachhol-Mechanismus oben faengt dafuer verpasste
-                    # Minuten ab.
-                    # BUG (2026-09-02, per Screenshot gemeldet): dieses Log
-                    # stand bisher NACH _execute_job_run() -- als "gestartet"
-                    # betitelt, aber tatsaechlich erst geloggt, nachdem der
-                    # komplette Lauf (Checkpoints/Snapshot/SnapMirror) schon
-                    # fertig war. Im chronologisch sortierten System Log
-                    # erschien es dadurch als LETZTER statt erster Eintrag
-                    # des Laufs. Jetzt VOR dem eigentlichen Start geloggt.
-                    _log(
-                        db,
-                        f"Geplanter Backup-Lauf gestartet: Resource Group '{group.name}' / Policy '{policy.name}' "
-                        f"(Zeitplan '{schedule.name}', faellig {occurrence.strftime('%Y-%m-%d %H:%M')})",
-                    )
-                    run, warnings = _start_job_run(policy, db, resource_group_ids={group.id})
-                    _execute_job_run(run.id, warnings)
-                except Exception as exc:
-                    _log(
-                        db,
-                        f"Geplanter Backup-Lauf fuer Resource Group '{group.name}' / Policy '{policy.name}' fehlgeschlagen: {exc}",
-                        level="ERROR",
-                    )
+                due.append((link, schedule, policy, group, occurrence))
 
+        # BUG (2026-09-02, per Nutzer-Screenshot aufgedeckt): der Checkpoint
+        # wurde bisher erst NACH Ausfuehrung ALLER in diesem Tick faelligen
+        # Verknuepfungen committet. Wurde der Prozess mitten in der
+        # Ausfuehrung beendet (z.B. Deploy-Neustart), ging der GESAMTE
+        # Fortschritt dieses Ticks verloren -- beim naechsten Start begann
+        # das Nachhol-Fenster wieder VOR dem ersten faelligen Vorkommen
+        # dieses Ticks. Fuer eine bereits erfolgreich abgeschlossene
+        # Verknuepfung bedeutete das einen ECHTEN DOPPELTEN Lauf (live
+        # beobachtet: Policy 'Silver_Daily'/Resource Group 'Silver_CSV01'
+        # lief zweimal im Abstand von 2 Minuten); fuer eine gerade
+        # unterbrochene Verknuepfung blieb die zugehoerige BackupRun-Zeile
+        # zusaetzlich fuer immer auf 'running' stehen (siehe separater Fix
+        # _reap_orphaned_in_progress_runs in init_db.py) und haette den
+        # "laeuft bereits"-Schutz sonst dauerhaft blockiert.
+        # Fix: den Checkpoint JETZT committen -- VOR jeder Ausfuehrung.
+        # Ein Absturz waehrend der Ausfuehrung fuehrt dadurch bestenfalls
+        # dazu, dass GENAU diese eine Ausfuehrung fehlschlaegt/haengen
+        # bleibt (separat abgefangen), aber NIE zu einer erneuten
+        # Ausfuehrung bereits committeter Vorkommen.
         status_row.last_scheduled_backup_check_at = datetime.now(timezone.utc)
         db.commit()
+
+        # Phase 2: jetzt erst ausfuehren.
+        for link, schedule, policy, group, occurrence in due:
+            try:
+                # _execute_job_run laeuft hier bewusst synchron (nicht als
+                # Hintergrund-Task wie beim manuellen "Jetzt ausfuehren",
+                # siehe trigger_job_run in jobs.py) -- run_scheduled_backups
+                # selbst laeuft ja bereits im eigenen APScheduler-
+                # Hintergrund-Thread, und max_instances=1 auf diesem Job
+                # (siehe start_scheduler) verhindert echte Ueberlappungen;
+                # der Nachhol-Mechanismus oben faengt dafuer verpasste
+                # Minuten ab.
+                _log(
+                    db,
+                    f"Geplanter Backup-Lauf gestartet: Resource Group '{group.name}' / Policy '{policy.name}' "
+                    f"(Zeitplan '{schedule.name}', faellig {occurrence.strftime('%Y-%m-%d %H:%M')})",
+                )
+                run, warnings = _start_job_run(policy, db, resource_group_ids={group.id})
+                _execute_job_run(run.id, warnings)
+            except Exception as exc:
+                _log(
+                    db,
+                    f"Geplanter Backup-Lauf fuer Resource Group '{group.name}' / Policy '{policy.name}' fehlgeschlagen: {exc}",
+                    level="ERROR",
+                )
     finally:
         db.close()
 
