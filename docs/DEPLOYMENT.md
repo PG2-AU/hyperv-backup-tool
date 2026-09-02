@@ -69,21 +69,105 @@ Cluster Name Object (CNO) besitzt, kann wechseln), als Administrator:
 # WinRM-Dienst aktivieren (meist bereits per Default aktiv)
 Enable-PSRemoting -Force
 
-# HTTPS-Listener einrichten -- braucht ein Zertifikat im Speicher
-# LocalMachine\My, dessen Subject/SAN auf den Hostnamen lautet, mit dem
-# der Node spaeter in der GUI angesprochen wird. Ein Failover-Clustering
-# nutzt dort bereits automatisch erzeugte Zertifikate (z.B. "CN=<GUID>.TLS"
-# oder "CN=CLIUSR") -- die sind NICHT geeignet, das sind interne
-# Cluster-Kommunikations-/Dienstkonto-Zertifikate, kein Hostname-Zertifikat.
 Get-ChildItem -Path Cert:\LocalMachine\My
+```
 
-# Eigenes Zertifikat besorgen -- entweder von der internen PKI ausgestellt
-# (Subject/SAN = Hostname des Knotens, empfohlen, siehe Kasten unten) oder
-# fuer Tests selbstsigniert:
+Ein Failover-Cluster legt dort bereits automatisch erzeugte Zertifikate an
+(z.B. `CN=<GUID>.TLS` oder `CN=CLIUSR`) — die sind **nicht** geeignet, das
+sind interne Cluster-Kommunikations-/Dienstkonto-Zertifikate, keine
+Host-Zertifikate für einen WinRM-Listener.
+
+**Wichtig bei einem Failover-Cluster:** Wird der Cluster in der GUI über
+die Adresse des **Cluster Name Object (CNO)** angesprochen (empfohlen,
+statt eines einzelnen physischen Knotens — sonst fällt die Verwaltung
+beim Ausfall/Failover dieses einen Knotens komplett aus), landet jede
+WinRM-Verbindung bei genau dem Knoten, der die Cluster-Group gerade
+besitzt — je nach Failover-Status kann das **jeder** der Knoten sein. Das
+Zertifikat **jedes einzelnen** Knotens muss deshalb zusätzlich zur eigenen
+Identität auch die CNO-Adresse als Subject Alternative Name (SAN)
+enthalten, sonst schlägt die Verbindung fehl, sobald die Cluster-Group auf
+einen anderen Knoten wechselt. Beispiel: CNO `10.93.70.110`, Knoten
+`10.93.70.111`/`10.93.70.112` — **beide** Knoten-Zertifikate brauchen
+`.110` zusätzlich zur eigenen Adresse als SAN.
+
+**Stolperstein bei Verbindung per IP-Adresse:**
+`New-SelfSignedCertificate -DnsName <ip-literal>` schreibt eine IP-Adresse
+als **DNS-Typ**-SAN-Eintrag (`DNS:10.93.70.110`), nicht als
+**IP-Address-Typ**-Eintrag. Die von dieser App verwendete TLS-Validierung
+(Python/OpenSSL) akzeptiert für eine Verbindung per IP-Adresse aber
+ausschließlich echte `IP Address:`-Einträge — ein optisch identischer
+`DNS:`-Eintrag genügt **nicht** und führt zu
+`SSLCertVerificationError: IP address mismatch`, obwohl die IP scheinbar
+korrekt im Zertifikat steht (live verifiziert). Wird der Cluster in der
+GUI stattdessen per **Hostname** angesprochen, tritt das Problem nicht auf
+— dann genügt `New-SelfSignedCertificate -DnsName $hostname,
+$cnoHostname`. Bei Verbindung per IP-Adresse (z.B. weil für den CNO kein
+DNS-Eintrag existiert) muss stattdessen `certreq` mit einer `.inf`-Datei
+verwendet werden, die echte `ipaddress=`-SAN-Einträge erzeugt:
+
+```powershell
+# Auf JEDEM Knoten einzeln ausfuehren, jeweils mit der eigenen $ownIp:
 $hostname = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
-$cert = New-SelfSignedCertificate -DnsName $hostname -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)
-$cert.Thumbprint
+$ownIp    = "10.93.70.111"   # auf dem jeweils anderen Knoten: 10.93.70.112 usw.
+$cnoIp    = "10.93.70.110"   # IP/Hostname des Cluster Name Object
 
+New-Item -ItemType Directory -Path C:\temp -Force | Out-Null
+$infPath = "C:\temp\winrm-cert.inf"
+$cerPath = "C:\temp\winrm-cert.cer"
+
+@"
+[Version]
+Signature="`$Windows NT`$"
+
+[NewRequest]
+Subject = "CN=$hostname"
+KeySpec = 1
+KeyLength = 2048
+Exportable = TRUE
+MachineKeySet = TRUE
+SMIME = FALSE
+PrivateKeyArchive = FALSE
+UserProtected = FALSE
+UseExistingKeySet = FALSE
+ProviderName = "Microsoft RSA SChannel Cryptographic Provider"
+ProviderType = 12
+RequestType = Cert
+KeyUsage = 0xa0
+ValidityPeriod = Years
+ValidityPeriodUnits = 5
+
+[Extensions]
+2.5.29.17 = "{text}"
+_continue_ = "dns=$hostname&"
+_continue_ = "ipaddress=$ownIp&"
+_continue_ = "ipaddress=$cnoIp&"
+
+[EnhancedKeyUsageExtension]
+OID=1.3.6.1.5.5.7.3.1
+"@ | Set-Content -Path $infPath -Encoding ASCII
+
+certreq -new $infPath $cerPath
+$cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq "CN=$hostname" } |
+    Sort-Object NotBefore -Descending | Select-Object -First 1
+$cert.Thumbprint
+```
+
+(Kein Failover-Cluster, oder Verbindung per Hostname statt IP: einfacher
+via `$cert = New-SelfSignedCertificate -DnsName $hostname, $cnoHostname
+-CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)`
+— dann direkt mit dem Listener-Schritt unten weitermachen.)
+
+Von der internen PKI ausgestellte Zertifikate sind gegenüber beiden
+selbstsignierten Varianten vorzuziehen (siehe Kasten weiter unten) —
+solange auch sie sowohl die eigene Knoten-Identität als auch die
+CNO-Adresse als SAN tragen.
+
+**Listener einrichten** — falls bereits einer existiert (z.B. von einem
+vorherigen Versuch mit falschem Zertifikat), erst entfernen:
+
+```powershell
+Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match "Transport=HTTPS" } |
+    Remove-Item -Recurse -Force
 New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * `
     -CertificateThumbprint $cert.Thumbprint -Force
 
@@ -107,20 +191,24 @@ schlägt sonst trotz korrekt eingerichtetem Listener fehl. Lösung:
 Zertifikat als zusätzlich vertrauenswürdig hinterlegt (pywinrm
 `ca_trust_path`, additiv zum normalen System-Truststore).
 
-```powershell
-# Auf dem Hyper-V-Host: das (oeffentliche!) Zertifikat erst als .cer
-# exportieren -- bei einer internen CA stattdessen nur den CA-ROOT
-# einmalig exportieren, das deckt dann automatisch ALLE damit
-# ausgestellten Knoten-Zertifikate ab, statt jeden Knoten einzeln zu
-# pflegen. $cert ist das oben mit New-SelfSignedCertificate erzeugte
-# Zertifikats-Objekt (bzw. das von der internen PKI erhaltene).
-New-Item -ItemType Directory -Path C:\temp -Force | Out-Null
-Export-Certificate -Cert $cert -FilePath C:\temp\winrm-host.cer
+Bei einer internen CA reicht es, einmalig nur den CA-ROOT zu exportieren
+— das deckt dann automatisch ALLE damit ausgestellten Knoten-Zertifikate
+ab, statt jeden Knoten einzeln zu pflegen. Bei selbstsignierten
+Zertifikaten (beide Varianten oben) muss dagegen **jeder Knoten** sein
+eigenes (öffentliches!) Zertifikat exportieren:
 
-# .cer (DER-binaer) zu .pem (Base64) konvertieren:
-certutil -encode C:\temp\winrm-host.cer C:\temp\winrm-ca.pem
-# .pem-Datei per RDP-Dateitransfer o.ae. auf den WSL2-Host uebertragen.
+```powershell
+# Mit certreq erzeugtes Zertifikat: $cerPath ist bereits eine DER-Datei,
+# direkt zu .pem konvertieren (Dateiname pro Knoten unterschiedlich waehlen):
+certutil -encode $cerPath C:\temp\winrm-host111.pem
+
+# Mit New-SelfSignedCertificate erzeugtes Zertifikat: erst exportieren,
+# dann konvertieren:
+Export-Certificate -Cert $cert -FilePath C:\temp\winrm-host.cer
+certutil -encode C:\temp\winrm-host.cer C:\temp\winrm-host.pem
 ```
+
+.pem-Datei(en) per RDP-Dateitransfer o.ae. auf den WSL2-Host übertragen.
 
 `/etc/hvnb/certs` im Container ist bereits ein **persistentes benanntes
 Volume** (`hvnb-certs`, dort liegt auch schon das TLS-Zertifikat der GUI)
@@ -170,6 +258,20 @@ podman cp ~/winrm-ca-bundle.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem
 
 Mit einer internen CA reicht dagegen der eine, einmalig exportierte
 CA-Root für alle Knoten — kein Zusammenführen nötig.
+
+**Verifizieren, dass die CNO-Adresse jetzt als echter IP-Address-SAN-Typ
+ausgeliefert wird** (nicht als `DNS:`-Eintrag, siehe Stolperstein oben) —
+von der WSL2-Distribution aus, gegen die CNO-Adresse selbst:
+
+```bash
+openssl s_client -connect 10.93.70.110:5986 -showcerts </dev/null 2>/dev/null | \
+    openssl x509 -noout -text | grep -A2 "Subject Alternative Name"
+```
+
+Erwartete Ausgabe enthält `IP Address:10.93.70.110` — erscheint
+stattdessen `DNS:10.93.70.110`, wurde das Zertifikat auf dem gerade
+antwortenden Knoten noch mit `New-SelfSignedCertificate -DnsName
+<ip-literal>` statt der `certreq`-Methode oben erzeugt.
 
 Zusätzlich:
 
