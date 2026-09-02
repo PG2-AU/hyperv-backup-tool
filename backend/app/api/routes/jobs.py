@@ -851,7 +851,27 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             db.commit()
             return
 
-        targets, _ = _resolve_targets(db, policy)
+        # BUG (2026-09-02, live gemeldet und gefunden): frueher wurde hier IMMER
+        # die ganze Policy aufgeloest, ohne die von _start_job_run bereits
+        # ermittelte Resource-Group-Einschraenkung zu uebernehmen. Fuer eine
+        # Policy, die an mehrere Resource Groups mit unterschiedlichem
+        # Zeitplan haengt (siehe ResourceGroupPolicyLink -- genau der Zweck
+        # der Zeitplan-pro-Verknuepfung-Funktion), sicherte dadurch JEDER
+        # geplante Lauf IMMER ALLE verknuepften Resource Groups, unabhaengig
+        # davon, welche Verknuepfung tatsaechlich faellig war. Live beobachtet:
+        # Policy 'Silver_Hourly' haengt an 'Silver_CSV01' (Zeitplan xx:00) UND
+        # 'Silver_CSV02' (Zeitplan xx:10) -- CSV01 wurde dadurch zusaetzlich
+        # zu den eigenen xx:00-Laeufen auch bei jedem xx:10-Lauf von CSV02
+        # unnoetig mitgesichert (und umgekehrt), sichtbar an ueberzaehligen
+        # Snapshot-Zeitpunkten in "vorhandene Backups" fuer VMs auf CSV01.
+        # Fix: dieselbe Einschraenkung wie bei _start_job_run anwenden --
+        # run.resource_group_id ist bei einem geplanten Lauf (siehe
+        # run_scheduled_backups: resource_group_ids={group.id}, stets genau
+        # eine Gruppe) gesetzt, bei einem manuellen "Jetzt ausfuehren" auf der
+        # ganzen Policy dagegen None -- reproduziert exakt dieselbe
+        # Grundlage, mit der der Lauf urspruenglich gestartet wurde.
+        resource_group_ids = {run.resource_group_id} if run.resource_group_id else None
+        targets, _ = _resolve_targets(db, policy, resource_group_ids)
         clusters_by_id = {c.id: c for c in db.query(NetAppCluster).all()}
         volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
         snapshot_suffix = run.started_at.strftime("%Y%m%d%H%M%S")
