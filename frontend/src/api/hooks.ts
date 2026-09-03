@@ -256,12 +256,24 @@ export function useJobRun(id: string | undefined, poll: boolean) {
 export function useTriggerJobRun() {
   const queryClient = useQueryClient();
   return useMutation({
-    // resourceGroupId (optional): beschraenkt den Lauf auf genau diese
-    // Resource Group statt (Default) alle mit der Policy verknuepften --
-    // genutzt vom "Jetzt nachholen"-Button beim backup_missed-Alarm
-    // (siehe AlertsPage.tsx).
-    mutationFn: async ({ jobId, resourceGroupId }: { jobId: string; resourceGroupId?: string }) =>
-      (await apiClient.post<BackupJobRun>(`/jobs/${jobId}/run`, null, { params: { resource_group_id: resourceGroupId } })).data,
+    // resourceGroupId (optional, einzeln ODER als Liste): beschraenkt den
+    // Lauf auf genau diese Resource Group(s) statt (Default, weggelassen)
+    // alle mit der Policy verknuepften. Einzeln genutzt vom "Jetzt
+    // nachholen"-Button beim backup_missed-Alarm (siehe AlertsPage.tsx),
+    // als Liste vom Auswahldialog bei "Jetzt ausfuehren" auf einer Policy
+    // mit mehreren verknuepften Protection Groups (siehe
+    // ResourceGroupPickerModal/runPolicy.ts). paramsSerializer indexes:null
+    // sendet ein Array als wiederholte gleichnamige Query-Parameter
+    // (?resource_group_id=a&resource_group_id=b) statt Axios' Default mit
+    // eckigen Klammern ([]) -- FastAPIs list[str]-Query-Param erkennt nur
+    // die wiederholte Form, keine Klammern.
+    mutationFn: async ({ jobId, resourceGroupId }: { jobId: string; resourceGroupId?: string | string[] }) =>
+      (
+        await apiClient.post<BackupJobRun>(`/jobs/${jobId}/run`, null, {
+          params: { resource_group_id: resourceGroupId },
+          paramsSerializer: { indexes: null },
+        })
+      ).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["job-runs"] }),
   });
 }

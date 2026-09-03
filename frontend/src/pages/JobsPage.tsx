@@ -13,12 +13,14 @@ import {
   usePolicies,
   useResourceGroups,
   useSchedules,
+  useTriggerJobRun,
 } from "@/api/hooks";
 import { BackupCalendarTab } from "@/components/BackupCalendarTab";
 import { LogViewer } from "@/components/LogViewer";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { ResourceGroupFormModal } from "@/components/ResourceGroupFormModal";
+import { ResourceGroupPickerModal } from "@/components/ResourceGroupPickerModal";
 import { ScheduleFormModal } from "@/components/ScheduleFormModal";
 import type { BackupJobRun, BackupPolicy, JobStatus, ResourceGroup, Schedule } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
@@ -56,6 +58,8 @@ export function JobsPage() {
   const { data: policies } = usePolicies();
   const { data: runs } = useJobRuns();
   const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
+  const triggerRun = useTriggerJobRun();
+  const [groupPickerPolicy, setGroupPickerPolicy] = useState<BackupPolicy | null>(null);
   const deletePolicy = useDeletePolicy();
   const [logsOpened, { open: openLogs, close: closeLogs }] = useDisclosure(false);
   const [logContext, setLogContext] = useState<string | undefined>(undefined);
@@ -110,8 +114,38 @@ export function JobsPage() {
     });
   }
 
+  // Verknuepfte Protection Groups dieser Policy -- aus der bereits
+  // geladenen Gruppenliste abgeleitet (jede Gruppe traegt ihre
+  // verknuepften Policies), statt eines eigenen Backend-Aufrufs.
+  function linkedGroupsOf(policy: BackupPolicy): ResourceGroup[] {
+    return (groups ?? []).filter((g) => g.policies.some((p) => p.id === policy.id));
+  }
+
   function runNow(policy: BackupPolicy) {
+    const linkedGroups = linkedGroupsOf(policy);
+    if (linkedGroups.length > 1) {
+      setGroupPickerPolicy(policy);
+      return;
+    }
     runPolicy(policy);
+  }
+
+  function runNowForGroups(policy: BackupPolicy, groupIds: string[]) {
+    triggerRun.mutate(
+      { jobId: policy.id, resourceGroupId: groupIds },
+      {
+        onSuccess: () => {
+          setGroupPickerPolicy(null);
+          notifications.show({
+            title: "Job gestartet",
+            message: `${policy.name} läuft für ${groupIds.length} Protection Group(s) – Fortschritt siehe Kopfzeile.`,
+            color: "blue",
+          });
+        },
+        onError: (err) =>
+          notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Job konnte nicht gestartet werden."), color: "red" }),
+      },
+    );
   }
 
   function runGroupNow(group: ResourceGroup) {
@@ -572,6 +606,14 @@ export function JobsPage() {
         duplicateFrom={duplicateFromSchedule}
       />
       <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={runPolicy} />
+      <ResourceGroupPickerModal
+        opened={!!groupPickerPolicy}
+        onClose={() => setGroupPickerPolicy(null)}
+        policyName={groupPickerPolicy?.name ?? ""}
+        groups={groupPickerPolicy ? linkedGroupsOf(groupPickerPolicy) : []}
+        onConfirm={(groupIds) => groupPickerPolicy && runNowForGroups(groupPickerPolicy, groupIds)}
+        loading={triggerRun.isPending}
+      />
     </Stack>
   );
 }
