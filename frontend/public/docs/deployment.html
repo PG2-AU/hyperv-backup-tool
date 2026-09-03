@@ -703,6 +703,46 @@ eine Konto einzigartiges Passwort, regelmäßig rotiert.</li>
 vorgesehenen Hosts als Administrator eingetragen ist (<code>net localgroup Administratoren</code> auf jedem Knoten) und in keiner der drei genannten
 Domain-/Enterprise-/Schema-Admin-Gruppen steckt (<code>Get-ADUser svc-hvnb-backup -Properties MemberOf</code>).</li>
 </ol>
+<h3>Firewall auf die IP des Backup-Hosts einschränken (empfohlen)</h3>
+<p>Die oben angelegte Firewall-Regel erlaubt WinRM-HTTPS (5986) bislang von
+<strong>jeder</strong> erreichbaren Adresse aus — dabei braucht diese Verbindung
+niemals mehr als ein einziger Host: der Windows Server, auf dem der
+Container läuft. Eine einzige zusätzliche Zeile pro Knoten schließt diese
+Lücke, ohne die App in irgendeiner Weise einzuschränken:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code># Auf JEDEM Hyper-V-Knoten (und dem Restore-Proxy-Host) ausfuehren --
+# &lt;Backup-Host-IP&gt; durch die tatsaechliche IP-Adresse des Windows Servers
+# ersetzen, auf dem der Container laeuft (nicht die interne WSL2-Guest-IP
+# -- siehe Hinweis unten). Mehrere erlaubte Adressen durch Komma trennen.
+Set-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -RemoteAddress &lt;Backup-Host-IP&gt;</code></pre>
+</div>
+<div class="callout">
+<span class="callout-label">Welche IP-Adresse gehört hier hin</span>
+<p>die IP-Adresse des Windows
+Servers selbst (dieselbe, die z. B. für die GUI unter Abschnitt 8 als
+<code>&lt;Server-IP&gt;</code> verwendet wird) — <strong>nicht</strong> die interne, nur
+WSL2-intern gültige und bei jedem Neustart wechselnde Guest-IP. Für
+ausgehende Verbindungen aus WSL2 heraus (wie hier: der Container baut
+die WinRM-Verbindung zum Hyper-V-Host auf) übersetzt Windows die
+Quelladresse ohnehin auf die physische Server-IP, bevor der Datenverkehr
+das Netzwerk verlässt — unabhängig davon, ob NAT- oder Mirrored-Modus
+aktiv ist (Abschnitt 8). Die Server-IP ist stabil; nur sie eignet sich
+hier als dauerhafte Einschränkung.</p>
+</div>
+<p><strong>Verifizieren:</strong></p>
+<ul>
+<li>Vom Windows Server aus (bzw. aus der WSL2-Distribution heraus, siehe
+Testbefehl weiter unten): Verbindung funktioniert unverändert.</li>
+<li>Von einem beliebigen anderen Host im Netz: <code>Test-NetConnection -ComputerName &lt;Hyper-V-Host-IP&gt; -Port 5986</code> liefert jetzt
+<code>TcpTestSucceeded : False</code> (Firewall blockiert, statt vorher <code>True</code>).</li>
+</ul>
+<p><strong>Bei einem Failover-Cluster</strong> muss dieselbe Einschränkung auf <strong>jedem</strong>
+Knoten einzeln gesetzt werden, nicht nur auf dem gerade aktiven — welcher
+Knoten eine über die CNO-Adresse aufgebaute Verbindung tatsächlich
+bedient, kann jederzeit wechseln (siehe Kasten weiter oben). Die interne
+Cluster-Kommunikation zwischen den Knoten (Heartbeat, CSV, Failover) läuft
+über eigene Ports/Regeln und ist von dieser Einschränkung nicht betroffen.</p>
 <p><strong>Verbindung isoliert testen</strong>, bevor der Cluster in der GUI hinzugefügt
 wird — zuerst lokal auf dem Hyper-V-Host selbst:</p>
 <div class="code-block">
