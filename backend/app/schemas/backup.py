@@ -169,6 +169,11 @@ class BackupJobRun(BaseModel):
     scope: BackupScope | None = None
     targets: list[str]
     error_message: str | None = None
+    # Gesetzt sobald POST /jobs/runs/{id}/cancel aufgerufen wurde, auch
+    # WAEHREND der Lauf noch status=running zeigt -- Frontend kann so
+    # "Abbruch angefordert..." anzeigen, bevor der Lauf tatsaechlich stoppt
+    # (kooperativ zwischen den Schritten, siehe _execute_job_run).
+    cancel_requested_at: datetime | None = None
     snapshots: list[BackupRunSnapshotRead] = []
     # Nur befuellt vom Einzel-Lauf-Endpunkt (GET /jobs/runs/{id}), NICHT von
     # der Liste (GET /jobs/runs) -- sonst waechst deren Antwort mit jedem

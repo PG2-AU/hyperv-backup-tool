@@ -287,6 +287,31 @@ def get_job_run(
     return _to_run_read(run, include_steps=True)
 
 
+@router.post("/runs/{run_id}/cancel", response_model=BackupJobRun)
+def cancel_job_run(
+    run_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_RUN)),
+) -> BackupJobRun:
+    """Fordert den Abbruch eines laufenden Backup-Laufs an -- setzt nur
+    cancel_requested_at, der Status bleibt vorerst 'running' ('Abbruch
+    angefordert' im Frontend). _execute_job_run prueft das Feld kooperativ
+    zwischen den Schritten (siehe _cancel_requested) und stoppt VOR dem
+    naechsten Schritt; ein bereits laufender einzelner WinRM-/NetApp-Aufruf
+    kann nicht sofort unterbrochen werden (Python-Threads lassen sich nicht
+    sicher von aussen abbrechen), laeuft aber wegen eigener Timeouts
+    ohnehin in maximal ~10-50s aus. Bereits erstellte Hyper-V-Checkpoints
+    werden in jedem Fall entfernt, unabhaengig vom Abbruch."""
+    run = db.get(BackupRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lauf nicht gefunden")
+    if run.status != JobStatus.RUNNING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Lauf ist nicht aktiv (Status: {run.status.value})")
+    if run.cancel_requested_at is None:
+        run.cancel_requested_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(run)
+    return _to_run_read(run)
+
+
 def _to_run_read(run: BackupRun, include_steps: bool = False) -> BackupJobRun:
     return BackupJobRun(
         id=run.id,
@@ -300,6 +325,7 @@ def _to_run_read(run: BackupRun, include_steps: bool = False) -> BackupJobRun:
         scope=run.scope,
         targets=run.targets or [],
         error_message=run.error_message,
+        cancel_requested_at=run.cancel_requested_at,
         snapshots=list(run.snapshots),
         steps=[
             # s.status ist zur Laufzeit bereits ein reiner str (die Spalte ist
@@ -827,6 +853,24 @@ def _start_job_run(
     return run, warnings
 
 
+def _cancel_requested(db: Session, run_id: str) -> bool:
+    """Fragt frisch aus der DB ab (nicht das ggf. laenger im Speicher
+    gehaltene BackupRun-ORM-Objekt, das Aenderungen aus einer ANDEREN
+    Session/einem anderen Request sonst nicht sehen wuerde), ob fuer diesen
+    Lauf ein Abbruch angefordert wurde (siehe POST /jobs/runs/{id}/cancel).
+    Wird zwischen den einzelnen Schritten von _execute_job_run aufgerufen
+    (je VM-Checkpoint, je Volume-Snapshot) -- ein bereits laufender
+    einzelner WinRM-/NetApp-Aufruf kann dadurch NICHT unterbrochen werden
+    (Python kann einen Thread nicht sicher von aussen abbrechen), der Lauf
+    stoppt bestenfalls vor dem naechsten Schritt. Da jeder einzelne Aufruf
+    ohnehin durch eigene Timeouts begrenzt ist (WinRM-Sessions ~10-50s,
+    NetApp-SDK-HostConnection default 45s Read-Timeout), ist das der
+    realistische Rahmen -- ein 'echter' harter Abbruch mitten in einem
+    Aufruf ist mit dieser Architektur (synchrone Blocking-Calls in einem
+    Thread) nicht sicher moeglich, ohne den Prozess zu riskieren."""
+    return db.query(BackupRun.cancel_requested_at).filter(BackupRun.id == run_id).scalar() is not None
+
+
 def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
     """Fuehrt den eigentlichen, potenziell langwierigen Teil eines Backup-
     Laufs aus (Checkpoints, Snapshots, SnapMirror-Update, Checkpoint-
@@ -894,6 +938,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         hyperv_vms_by_name = {v.name: v for v in db.query(HyperVVm).filter(HyperVVm.name.in_(vm_names_in_run)).all()}
 
         errors: list[str] = list(initial_warnings)
+        was_cancelled = False
 
         # Applikationskonsistenz: pro betroffener VM VORHER einen Hyper-V-
         # Production-Checkpoint erzeugen (VSS-Quiesce) -- die dabei eingefrorene
@@ -910,6 +955,9 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             settings = get_settings()
             hyperv_clusters_by_id = {c.id: c for c in db.query(HyperVCluster).all()}
             for vm_name in vm_names_in_run:
+                if _cancel_requested(db, run.id):
+                    was_cancelled = True
+                    break
                 hv_vm = hyperv_vms_by_name.get(vm_name)
                 hv_cluster = hyperv_clusters_by_id.get(hv_vm.cluster_id) if hv_vm else None
                 if hv_vm is None or hv_cluster is None:
@@ -935,6 +983,11 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                     errors.append(f"VM '{vm_name}': Checkpoint konnte nicht erstellt werden ({exc}) -- Backup laeuft crash-konsistent weiter")
 
         for target in targets:
+            if was_cancelled:
+                break
+            if _cancel_requested(db, run.id):
+                was_cancelled = True
+                break
             row = BackupRunSnapshot(
                 run_id=run.id,
                 netapp_cluster_id=target.netapp_cluster_id,
@@ -1027,23 +1080,28 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                 errors.append(f"VM '{vm_name}': Checkpoint-Entfernung fehlgeschlagen: {exc}")
 
         run.finished_at = datetime.now(timezone.utc)
-        run.status = JobStatus.FAILED if errors else JobStatus.SUCCEEDED
-        run.error_message = "; ".join(errors) if errors else None
+        if was_cancelled:
+            run.status = JobStatus.CANCELLED
+            run.error_message = "; ".join(["Manuell abgebrochen", *errors]) if errors else "Manuell abgebrochen"
+        else:
+            run.status = JobStatus.FAILED if errors else JobStatus.SUCCEEDED
+            run.error_message = "; ".join(errors) if errors else None
         db.commit()
         # Direkt konstruiert statt ueber _StepCtx -- dessen __exit__ fuellt
         # eine leere Nachricht sonst automatisch mit 'OK', was hier bei
         # Erfolg ('Backup erfolgreich beendet -- OK') unnoetig doppelt
-        # waere. label traegt den Status, message (nur bei Fehlern) die
-        # Ursache -- logs.py haengt sie dann als 'label: message' an.
-        db.add(
-            BackupRunStep(
-                run_id=run.id, step="run-finished",
-                label="Backup erfolgreich beendet" if run.status != JobStatus.FAILED else "Backup mit Fehlern beendet",
-                message=run.error_message if run.status == JobStatus.FAILED else None,
-                status=RestoreStepStatus.SUCCESS if run.status != JobStatus.FAILED else RestoreStepStatus.ERROR,
-            )
-        )
+        # waere. label traegt den Status, message (nur bei Fehlern/Abbruch)
+        # die Ursache -- logs.py haengt sie dann als 'label: message' an.
+        if run.status == JobStatus.CANCELLED:
+            final_label, final_message, final_step_status = "Backup abgebrochen", run.error_message, RestoreStepStatus.SKIPPED
+        elif run.status == JobStatus.FAILED:
+            final_label, final_message, final_step_status = "Backup mit Fehlern beendet", run.error_message, RestoreStepStatus.ERROR
+        else:
+            final_label, final_message, final_step_status = "Backup erfolgreich beendet", None, RestoreStepStatus.SUCCESS
+        db.add(BackupRunStep(run_id=run.id, step="run-finished", label=final_label, message=final_message, status=final_step_status))
         db.commit()
+        # CANCELLED ist bewusst kein Fehler-Alarm wert (der Nutzer hat den
+        # Lauf ja absichtlich gestoppt) -- nur ein echtes FAILED benachrichtigt.
         if run.status == JobStatus.FAILED:
             notify_backup_failure(db, run.policy_name, run.id, run.error_message, run.targets, policy.email_alert_on_failure)
     except Exception as exc:

@@ -253,6 +253,21 @@ export function useJobRun(id: string | undefined, poll: boolean) {
   });
 }
 
+// Fordert den Abbruch eines laufenden Laufs an (kooperativ, siehe
+// _execute_job_run/_cancel_requested im Backend) -- Status bleibt vorerst
+// "running", cancel_requested_at wird gesetzt ("Abbruch angefordert" im
+// Frontend), bis der Lauf tatsaechlich vor dem naechsten Schritt stoppt.
+export function useCancelJobRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (runId: string) => (await apiClient.post<BackupJobRun>(`/jobs/runs/${runId}/cancel`)).data,
+    onSuccess: (run) => {
+      queryClient.invalidateQueries({ queryKey: ["job-runs"] });
+      queryClient.invalidateQueries({ queryKey: ["job-run", run.id] });
+    },
+  });
+}
+
 export function useTriggerJobRun() {
   const queryClient = useQueryClient();
   return useMutation({

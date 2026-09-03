@@ -32,6 +32,7 @@ const STATUS_COLOR: Record<string, string> = {
   pending: "gray",
   cleaning_up: "yellow",
   cleaned_up_after_failure: "orange",
+  cancelled: "gray",
 };
 
 // Jobs-Tabelle: bis zu 8 Zeilen ohne Scrollen sichtbar, danach vertikal

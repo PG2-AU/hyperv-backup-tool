@@ -24,6 +24,7 @@ class JobStatus(str, enum.Enum):
     FAILED = "failed"
     CLEANING_UP = "cleaning_up"
     CLEANED_UP_AFTER_FAILURE = "cleaned_up_after_failure"
+    CANCELLED = "cancelled"
 
 
 def _id() -> str:
@@ -66,6 +67,14 @@ class BackupRun(Base):
     # Policy kann das nie eintreten -- der Alarm bliebe sonst fuer immer
     # aktiv (Nutzer-Meldung). Manuelles Quittieren setzt dieses Feld.
     alert_dismissed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Gesetzt durch POST /jobs/runs/{id}/cancel -- _execute_job_run prueft
+    # dieses Feld kooperativ zwischen den einzelnen Schritten (je VM-
+    # Checkpoint, je Volume-Snapshot). Python kann einen laufenden Thread
+    # nicht sicher von aussen abbrechen, ein bereits begonnener einzelner
+    # WinRM-/NetApp-Aufruf laeuft daher immer zu Ende (ohnehin durch eigene
+    # Timeouts begrenzt, ~10-50s) -- der Lauf stoppt erst vor dem naechsten
+    # Schritt. Bereits erstellte Checkpoints werden trotzdem IMMER entfernt.
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     snapshots = relationship("BackupRunSnapshot", back_populates="run", cascade="all, delete-orphan")
     vm_configs = relationship("BackupRunVmConfig", back_populates="run", cascade="all, delete-orphan")

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ActionIcon, Badge, Button, Drawer, Group, Paper, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconCopy, IconEdit, IconPlayerPlay, IconPlus, IconStack2, IconTerminal2, IconTrash } from "@tabler/icons-react";
+import { IconCopy, IconEdit, IconPlayerPlay, IconPlus, IconStack2, IconTerminal2, IconTrash, IconX } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -11,6 +11,7 @@ import {
   useDeleteSchedule,
   useJobRuns,
   usePolicies,
+  useCancelJobRun,
   useResourceGroups,
   useSchedules,
   useTriggerJobRun,
@@ -36,6 +37,7 @@ const STATUS_COLOR: Record<JobStatus, string> = {
   pending: "gray",
   cleaning_up: "yellow",
   cleaned_up_after_failure: "orange",
+  cancelled: "gray",
 };
 
 const SCOPE_LABEL: Record<string, string> = { vm: "VMs", csv: "CSVs", lun: "LUNs" };
@@ -59,6 +61,7 @@ export function JobsPage() {
   const { data: runs } = useJobRuns();
   const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
   const triggerRun = useTriggerJobRun();
+  const cancelRun = useCancelJobRun();
   const [groupPickerPolicy, setGroupPickerPolicy] = useState<BackupPolicy | null>(null);
   const deletePolicy = useDeletePolicy();
   const [logsOpened, { open: openLogs, close: closeLogs }] = useDisclosure(false);
@@ -162,6 +165,23 @@ export function JobsPage() {
   function showSnapshots(run: BackupJobRun) {
     setSelectedRun(run);
     openSnapshots();
+  }
+
+  function cancelJob(run: BackupJobRun) {
+    confirmAction({
+      title: "Backup-Lauf abbrechen",
+      message:
+        `'${run.job_name}' wirklich abbrechen? Wird nach dem aktuellen Schritt gestoppt (kann je nach Schritt bis zu ` +
+        "ca. 1 Minute dauern), bereits erstellte Checkpoints werden aufgeräumt. Bereits erstellte Snapshots bleiben gültig.",
+      confirmLabel: "Abbrechen",
+      color: "red",
+      onConfirm: () =>
+        cancelRun.mutate(run.id, {
+          onSuccess: () => notifications.show({ title: "Abbruch angefordert", message: "", color: "orange" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Abbruch konnte nicht angefordert werden."), color: "red" }),
+        }),
+    });
   }
 
   function openCreate() {
@@ -520,9 +540,18 @@ export function JobsPage() {
                   </Table.Td>
                   <Table.Td>{run.job_name}</Table.Td>
                   <Table.Td>
-                    <Badge color={STATUS_COLOR[run.status]} variant="light">
-                      {run.status}
-                    </Badge>
+                    <Group gap={4} wrap="nowrap">
+                      <Badge color={STATUS_COLOR[run.status]} variant="light">
+                        {run.status}
+                      </Badge>
+                      {run.cancel_requested_at && run.status === "running" && (
+                        <Tooltip label="Wird nach dem aktuellen Schritt gestoppt">
+                          <Badge color="orange" variant="light">
+                            Abbruch angefordert
+                          </Badge>
+                        </Tooltip>
+                      )}
+                    </Group>
                   </Table.Td>
                   <Table.Td>{new Date(run.started_at).toLocaleString("de-DE")}</Table.Td>
                   <Table.Td>{run.finished_at ? new Date(run.finished_at).toLocaleString("de-DE") : "-"}</Table.Td>
@@ -535,6 +564,17 @@ export function JobsPage() {
                       <Button size="xs" variant="subtle" leftSection={<IconTerminal2 size={14} />} onClick={() => showLog(run.id, run.job_name)}>
                         Log
                       </Button>
+                      {run.status === "running" && !run.cancel_requested_at && (
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          color="red"
+                          leftSection={<IconX size={14} />}
+                          onClick={() => cancelJob(run)}
+                        >
+                          Abbrechen
+                        </Button>
+                      )}
                     </Group>
                   </Table.Td>
                 </Table.Tr>

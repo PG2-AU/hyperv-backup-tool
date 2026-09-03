@@ -257,7 +257,10 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "backup_policies", {"email_alert_on_failure": "BOOLEAN"})
     _add_missing_columns(engine, "resource_groups", {"schedule_id": "VARCHAR(36)"})
     _add_missing_columns(engine, "resource_group_policies", {"schedule_id": "VARCHAR(36)"})
-    _add_missing_columns(engine, "backup_runs", {"resource_group_id": "VARCHAR(36)", "alert_dismissed_at": "DATETIME"})
+    _add_missing_columns(
+        engine, "backup_runs",
+        {"resource_group_id": "VARCHAR(36)", "alert_dismissed_at": "DATETIME", "cancel_requested_at": "DATETIME"},
+    )
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     _add_missing_columns(engine, "hyperv_clusters", {"unreachable_nodes_json": "VARCHAR(2000)"})
     _add_missing_columns(

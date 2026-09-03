@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
-import { ActionIcon, Badge, Divider, Group, Indicator, Loader, Popover, Stack, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Button, Divider, Group, Indicator, Loader, Popover, Stack, Text, Tooltip } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { IconActivity, IconCheck, IconMinus, IconX } from "@tabler/icons-react";
 
-import { useJobRun, useRunningJobRuns } from "@/api/hooks";
+import { useCancelJobRun, useJobRun, useRunningJobRuns } from "@/api/hooks";
 import { useAuthStore } from "@/store/authStore";
+import { confirmAction } from "@/utils/confirm";
+import { apiErrorMessage } from "@/utils/errors";
 
 const STEP_STATUS_ICON: Record<string, React.ReactNode> = {
   pending: <IconMinus size={13} color="var(--mantine-color-gray-5)" />,
@@ -57,6 +60,33 @@ function RunningJobSteps({ runId }: { runId: string }) {
   );
 }
 
+function CancelJobButton({ runId, jobName }: { runId: string; jobName: string }) {
+  const cancelRun = useCancelJobRun();
+
+  function handleCancel() {
+    confirmAction({
+      title: "Backup-Lauf abbrechen",
+      message:
+        `'${jobName}' wirklich abbrechen? Wird nach dem aktuellen Schritt gestoppt (kann je nach Schritt bis zu ` +
+        "ca. 1 Minute dauern), bereits erstellte Checkpoints werden aufgeräumt. Bereits erstellte Snapshots bleiben gültig.",
+      confirmLabel: "Abbrechen",
+      color: "red",
+      onConfirm: () =>
+        cancelRun.mutate(runId, {
+          onSuccess: () => notifications.show({ title: "Abbruch angefordert", message: "", color: "orange" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Abbruch konnte nicht angefordert werden."), color: "red" }),
+        }),
+    });
+  }
+
+  return (
+    <Button size="xs" variant="subtle" color="red" ml={20} onClick={handleCancel} loading={cancelRun.isPending} style={{ alignSelf: "flex-start" }}>
+      Abbrechen
+    </Button>
+  );
+}
+
 export function RunningJobsIndicator() {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canView = hasPermission("backup:view");
@@ -105,6 +135,13 @@ export function RunningJobsIndicator() {
                   {formatElapsed(run.started_at)}
                 </Badge>
               </Group>
+              {run.cancel_requested_at ? (
+                <Text size="xs" c="orange" ml={20}>
+                  Abbruch angefordert – wird nach dem aktuellen Schritt gestoppt…
+                </Text>
+              ) : (
+                <CancelJobButton runId={run.id} jobName={run.job_name} />
+              )}
               <RunningJobSteps runId={run.id} />
             </Stack>
           ))}

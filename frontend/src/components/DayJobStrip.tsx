@@ -11,6 +11,7 @@ const POINT_MARKER_MS = 20 * 60 * 1000; // nominale Breite fuer geplante (noch n
 function statusColor(status: BackupJobRun["status"]): string {
   if (status === "succeeded") return "green";
   if (status === "failed" || status === "cleaned_up_after_failure") return "red";
+  if (status === "cancelled") return "gray";
   return "blue"; // running/pending/cleaning_up -- noch kein abschliessendes Ergebnis, wie ein geplanter Job
 }
 

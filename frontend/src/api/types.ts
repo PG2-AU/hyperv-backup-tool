@@ -470,7 +470,8 @@ export type JobStatus =
   | "succeeded"
   | "failed"
   | "cleaning_up"
-  | "cleaned_up_after_failure";
+  | "cleaned_up_after_failure"
+  | "cancelled";
 
 export type ScheduleType = "hourly" | "daily" | "weekly" | "monthly";
 
@@ -707,6 +708,7 @@ export interface BackupJobRun {
   scope?: BackupScope | null;
   targets: string[];
   error_message?: string | null;
+  cancel_requested_at?: string | null;
   snapshots: BackupRunSnapshot[];
   steps: RestoreRunStep[];
 }
