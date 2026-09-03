@@ -12,7 +12,7 @@ export function useRunPolicy() {
   const [pickerPolicies, setPickerPolicies] = useState<PolicySummary[] | null>(null);
 
   function runPolicy(policy: PolicySummary) {
-    triggerRun.mutate(policy.id, {
+    triggerRun.mutate({ jobId: policy.id }, {
       // Der Job laeuft jetzt im Hintergrund weiter (siehe RunningJobsIndicator
       // in der Kopfzeile fuer den Live-Fortschritt) -- die Antwort hier
       // bedeutet nur "gestartet", nicht mehr "fertig" wie frueher, als der

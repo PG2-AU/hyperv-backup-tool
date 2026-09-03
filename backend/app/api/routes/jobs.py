@@ -1067,14 +1067,23 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
 @router.post("/{job_id}/run", response_model=BackupJobRun, status_code=status.HTTP_202_ACCEPTED)
 def trigger_job_run(
     job_id: str, background_tasks: BackgroundTasks,
+    resource_group_id: str | None = Query(default=None),
     db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_RUN)),
 ) -> BackupJobRun:
+    """resource_group_id (optional): beschraenkt den Lauf auf genau diese
+    Resource Group statt (Default) alle mit der Policy verknuepften auf
+    einmal auszuloesen -- genutzt vom 'Jetzt nachholen'-Button beim
+    backup_missed-Alarm (siehe app.core.scheduler.run_alert_check), der
+    gezielt nur die verpasste Gruppe nachtraeglich anstossen soll, nicht
+    alle anderen ggf. laengst erfolgreich gelaufenen Gruppen der Policy
+    gleich mit."""
     policy = db.get(BackupPolicy, job_id)
     if policy is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
 
+    resource_group_ids = {resource_group_id} if resource_group_id else None
     try:
-        run, warnings = _start_job_run(policy, db)
+        run, warnings = _start_job_run(policy, db, resource_group_ids=resource_group_ids)
     except _JobAlreadyRunningError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except _NoTargetsError as exc:

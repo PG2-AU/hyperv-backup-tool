@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.api.routes.file_restore import _cleanup_file_restore_run
@@ -547,7 +548,89 @@ def run_alert_check() -> None:
                         threshold_percent=lag_threshold_hours, triggered_percent=lag_hours_actual,
                     )
 
+        # Verpasste geplante Backups (vom Nutzer am 2026-09-03 gewuenscht,
+        # nachdem ein WSL2-Neustart ueber Nacht mehrere faellige Laeufe
+        # stillschweigend ausfallen liess -- der Nachhol-Mechanismus in
+        # run_scheduled_backups deckt bewusst nur kurze Ueberlappungen ab
+        # (15min-Fenster), NICHT eine echte mehrstuendige Downtime). Prueft
+        # rueckwirkend ueber die letzten 48h, ob fuer jedes faellige
+        # Vorkommen einer Resource-Group-Policy-Verknuepfung tatsaechlich
+        # ein BackupRun existiert -- kein eigener Scheduler-Job noetig,
+        # laeuft hier rein DB-basiert mit im bereits alle 15min laufenden
+        # Warnungs-Check mit. Bewusst NICHT Teil der automatischen
+        # Aufloesung oben (seen_keys) -- ein verpasster Lauf ist eine
+        # abgeschlossene historische Tatsache, kein Zustand, der sich von
+        # selbst wieder 'gesund' meldet; bleibt daher aktiv, bis der Nutzer
+        # ihn manuell quittiert (POST /alerts/{id}/dismiss) oder per "Jetzt
+        # nachholen" nachtraegt.
+        try:
+            schedule_tz = ZoneInfo(get_settings().schedule_timezone)
+        except Exception:
+            schedule_tz = timezone.utc
+        grace_minutes = config.backup_missed_grace_minutes if config else 30
+        now_local_missed = datetime.now(schedule_tz)
+        lookback_start = now_local_missed - timedelta(hours=48)
+        cutoff_local = now_local_missed - timedelta(minutes=grace_minutes)
+
+        links = db.query(ResourceGroupPolicyLink).filter(ResourceGroupPolicyLink.schedule_id.isnot(None)).all()
+        missed_occurrences_by_schedule: dict[tuple[str, datetime], list[datetime]] = {}
+        for link in links:
+            schedule = link.schedule
+            policy = link.policy
+            group = link.resource_group
+            if schedule is None or policy is None or group is None or not schedule.times or not policy.enabled:
+                continue
+            # Live gefunden: ein Zeitplan kann juenger sein als das 48h-
+            # Rueckblickfenster (z.B. erst gestern angelegt) -- ohne diese
+            # Untergrenze wuerden Vorkommen VOR seiner Erstellung faelschlich
+            # als 'verpasst' gemeldet, obwohl der Zeitplan zu dem Zeitpunkt
+            # schlicht noch nicht existierte. ResourceGroupPolicyLink selbst
+            # hat (zusammengesetzter Primärschluessel, kein eigenes id/
+            # created_at) keinen exakteren Anhaltspunkt fuer den Zeitpunkt
+            # der Verknuepfung -- Schedule.created_at ist die beste
+            # verfuegbare Naeherung.
+            window_start = max(lookback_start, schedule.created_at.astimezone(schedule_tz))
+            cache_key = (schedule.id, window_start)
+            if cache_key not in missed_occurrences_by_schedule:
+                missed_occurrences_by_schedule[cache_key] = _occurrences_within(schedule, window_start, now_local_missed)
+            for occurrence_local in missed_occurrences_by_schedule[cache_key]:
+                if occurrence_local > cutoff_local:
+                    continue  # noch innerhalb der Karenzzeit -- normale Verzoegerung, kein Fehlalarm
+                occurrence_utc = occurrence_local.astimezone(timezone.utc)
+                # ResourceGroupPolicyLink hat keinen eigenen Primärschluessel
+                # (zusammengesetzt aus resource_group_id+policy_id) -- beide
+                # zusammen identifizieren die Verknuepfung eindeutig.
+                key = f"{link.resource_group_id}:{link.policy_id}:{occurrence_utc.isoformat()}"
+                if (AlertType.BACKUP_MISSED, key) in active_by_key:
+                    continue  # bereits gemeldet
+                matching_run = (
+                    db.query(BackupRun)
+                    .filter(
+                        BackupRun.policy_id == policy.id,
+                        # resource_group_id ist NULL bei einem manuellen
+                        # 'Jetzt ausfuehren' auf der ganzen Policy (deckt
+                        # dann automatisch auch diese Gruppe mit ab) sowie
+                        # bei jedem Lauf von VOR der Resource-Group-
+                        # Verknuepfungs-Funktion (aeltere Bestandsdaten) --
+                        # beides zaehlt als 'nicht verpasst'.
+                        or_(BackupRun.resource_group_id == group.id, BackupRun.resource_group_id.is_(None)),
+                        BackupRun.started_at >= occurrence_utc,
+                        BackupRun.started_at <= occurrence_utc + timedelta(minutes=grace_minutes),
+                    )
+                    .first()
+                )
+                if matching_run is not None:
+                    continue
+                _trigger(
+                    AlertType.BACKUP_MISSED, key,
+                    object_name=f"{group.name} / {policy.name}",
+                    message=f"Geplanter Lauf verpasst: faellig {occurrence_local.strftime('%Y-%m-%d %H:%M')} (Zeitplan '{schedule.name}')",
+                    resource_group_id=group.id, policy_id=policy.id,
+                )
+
         for (alert_type, key), alert in active_by_key.items():
+            if alert_type == AlertType.BACKUP_MISSED:
+                continue  # loest sich nie automatisch -- siehe oben, nur manuell per dismiss
             if (alert_type, key) not in seen_keys:
                 alert.status = AlertStatus.RESOLVED
                 alert.resolved_at = now

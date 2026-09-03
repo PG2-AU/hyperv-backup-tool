@@ -21,6 +21,10 @@ class AlertRead(BaseModel):
     # bzw. backup_failed gesetzt, siehe list_alerts in routes/alerts.py):
     object_uuid: str | None = None
     run_id: str | None = None
+    # Nur bei backup_missed gesetzt -- Grundlage fuer den "Jetzt
+    # nachholen"-Button im Frontend.
+    resource_group_id: str | None = None
+    policy_id: str | None = None
 
 
 class AlertConfigRead(BaseModel):
@@ -29,6 +33,7 @@ class AlertConfigRead(BaseModel):
     volume_threshold_percent: int
     lun_threshold_percent: int
     snapmirror_lag_threshold_hours: int
+    backup_missed_grace_minutes: int
     scope: str
 
 
@@ -36,4 +41,5 @@ class AlertConfigUpdate(BaseModel):
     volume_threshold_percent: int = Field(ge=1, le=100)
     lun_threshold_percent: int = Field(ge=1, le=100)
     snapmirror_lag_threshold_hours: int = Field(ge=1, le=8760)
+    backup_missed_grace_minutes: int = Field(ge=5, le=1440)
     scope: str

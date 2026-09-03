@@ -16,7 +16,7 @@ from app.api.routes.netapp_clusters import _discover_and_persist
 from app.core.rbac import Permission
 from app.core.scheduler import run_alert_check
 from app.db.session import get_db
-from app.models.alert import Alert, AlertConfig, AlertScope, AlertType
+from app.models.alert import Alert, AlertConfig, AlertScope, AlertStatus, AlertType
 from app.models.backup_run import BackupRun, JobStatus
 from app.models.netapp_cluster import NetAppCluster
 from app.schemas.alert import AlertConfigRead, AlertConfigUpdate, AlertRead
@@ -47,6 +47,8 @@ def list_alerts(db: Session = Depends(get_db), user=Depends(require_permission(P
                 triggered_at=a.triggered_at,
                 resolved_at=a.resolved_at,
                 object_uuid=a.object_key if a.alert_type in _CAPACITY_TYPES else None,
+                resource_group_id=a.resource_group_id,
+                policy_id=a.policy_id,
             )
         )
 
@@ -106,6 +108,7 @@ def update_alert_config(
     config.volume_threshold_percent = payload.volume_threshold_percent
     config.lun_threshold_percent = payload.lun_threshold_percent
     config.snapmirror_lag_threshold_hours = payload.snapmirror_lag_threshold_hours
+    config.backup_missed_grace_minutes = payload.backup_missed_grace_minutes
     config.scope = AlertScope(payload.scope)
     config.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -150,4 +153,26 @@ def dismiss_backup_failed_alert(
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup-Lauf nicht gefunden")
     run.alert_dismissed_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+@router.post("/{alert_id}/dismiss", status_code=status.HTTP_204_NO_CONTENT)
+def dismiss_alert(
+    alert_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> None:
+    """Quittiert eine ECHTE, persistierte Alert-Zeile (Kapazitaet/Cluster-
+    Gesundheit/SnapMirror/backup_missed) manuell -- anders als bei den
+    virtuellen 'Backup fehlgeschlagen'-Alarmen (siehe dismiss_backup_failed_
+    alert oben) gibt es hier ein echtes Alert.id. Fuer die meisten
+    Alarm-Typen ohnehin nur temporaer wirksam, da run_alert_check einen
+    weiterhin zutreffenden Zustand beim naechsten Durchlauf erneut meldet
+    -- fuer backup_missed dagegen die einzige Moeglichkeit, einen Alarm
+    loszuwerden, da ein verpasster Lauf sich nie von selbst 'aufloest'
+    (siehe run_alert_check, das backup_missed bewusst von der
+    automatischen Aufloesung ausnimmt)."""
+    alert = db.get(Alert, alert_id)
+    if alert is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alarm nicht gefunden")
+    alert.status = AlertStatus.RESOLVED
+    alert.resolved_at = datetime.now(timezone.utc)
     db.commit()

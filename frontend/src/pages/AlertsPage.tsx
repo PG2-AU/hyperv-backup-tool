@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { notifications } from "@mantine/notifications";
 
-import { useAlerts, useDismissBackupFailedAlert } from "@/api/hooks";
+import { useAlerts, useDismissAlert, useDismissBackupFailedAlert, useTriggerJobRun } from "@/api/hooks";
 import { SearchInput } from "@/components/SearchInput";
 import type { Alert, AlertType } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
@@ -20,6 +20,7 @@ const TYPE_LABEL: Record<AlertType, string> = {
   snapmirror_unhealthy: "SnapMirror",
   snapmirror_lag_exceeded: "SnapMirror-Lag",
   hyperv_node_unreachable: "Hyper-V-Knoten",
+  backup_missed: "Backup verpasst",
   backup_failed: "Backup fehlgeschlagen",
 };
 
@@ -31,6 +32,7 @@ const TYPE_COLOR: Record<AlertType, string> = {
   snapmirror_unhealthy: "grape",
   snapmirror_lag_exceeded: "grape",
   hyperv_node_unreachable: "red",
+  backup_missed: "red",
   backup_failed: "red",
 };
 
@@ -99,7 +101,76 @@ function AlertAction({ alert }: { alert: Alert }) {
       </Group>
     );
   }
+  if (alert.alert_type === "backup_missed") {
+    return (
+      <Group gap="xs" wrap="nowrap">
+        {alert.resource_group_id && alert.policy_id && (
+          <CatchUpMissedBackupButton alertId={alert.id} policyId={alert.policy_id} resourceGroupId={alert.resource_group_id} />
+        )}
+        <DismissAlertButton alertId={alert.id} />
+      </Group>
+    );
+  }
   return null;
+}
+
+function CatchUpMissedBackupButton({ alertId, policyId, resourceGroupId }: { alertId: string; policyId: string; resourceGroupId: string }) {
+  const triggerRun = useTriggerJobRun();
+  const dismissAlert = useDismissAlert();
+
+  function handleCatchUp() {
+    confirmAction({
+      title: "Backup jetzt nachholen",
+      message: "Diesen verpassten Lauf jetzt für genau diese Protection Group starten? Läuft im Hintergrund, Fortschritt siehe Kopfzeile.",
+      confirmLabel: "Jetzt nachholen",
+      onConfirm: () =>
+        triggerRun.mutate(
+          { jobId: policyId, resourceGroupId },
+          {
+            onSuccess: () => {
+              notifications.show({ title: "Backup gestartet", message: "Fortschritt siehe Kopfzeile.", color: "blue" });
+              // Alarm gilt als erledigt, sobald der Nachhol-Lauf gestartet ist -- der
+              // naechste Warnungs-Check wuerde ihn ohnehin nicht erneut melden (ein
+              // BackupRun existiert jetzt), das Quittieren macht das nur sofort sichtbar.
+              dismissAlert.mutate(alertId);
+            },
+            onError: (err) =>
+              notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Backup konnte nicht gestartet werden."), color: "red" }),
+          },
+        ),
+    });
+  }
+
+  return (
+    <Button size="xs" variant="light" onClick={handleCatchUp} loading={triggerRun.isPending}>
+      Jetzt nachholen
+    </Button>
+  );
+}
+
+function DismissAlertButton({ alertId }: { alertId: string }) {
+  const dismissAlert = useDismissAlert();
+
+  function handleDismiss() {
+    confirmAction({
+      title: "Alarm quittieren",
+      message: "Diesen Alarm als erledigt markieren?",
+      confirmLabel: "Quittieren",
+      color: "blue",
+      onConfirm: () =>
+        dismissAlert.mutate(alertId, {
+          onSuccess: () => notifications.show({ title: "Alarm quittiert", message: "", color: "green" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Alarm konnte nicht quittiert werden."), color: "red" }),
+        }),
+    });
+  }
+
+  return (
+    <Button size="xs" variant="light" onClick={handleDismiss} loading={dismissAlert.isPending}>
+      Quittieren
+    </Button>
+  );
 }
 
 function DismissBackupFailedButton({ runId }: { runId: string }) {
@@ -147,8 +218,8 @@ export function AlertsPage() {
         </Tooltip>
       </Group>
       <Text size="xs" c="dimmed" mb="md">
-        Kapazitäts-Schwellwerte (Volume/LUN), Cluster-/SnapMirror-Gesundheit und fehlgeschlagene Backup-Läufe -- aktuelle und
-        historische Warnungen an einer Stelle.
+        Kapazitäts-Schwellwerte (Volume/LUN), Cluster-/SnapMirror-Gesundheit, verpasste und fehlgeschlagene Backup-Läufe -- aktuelle
+        und historische Warnungen an einer Stelle.
       </Text>
 
       <Group justify="space-between" mb="sm">

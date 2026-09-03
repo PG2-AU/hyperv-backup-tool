@@ -13,6 +13,7 @@ export function AlertSettingsTab() {
   const [volumeThreshold, setVolumeThreshold] = useState<number | string>(90);
   const [lunThreshold, setLunThreshold] = useState<number | string>(90);
   const [lagThreshold, setLagThreshold] = useState<number | string>(4);
+  const [missedGraceMinutes, setMissedGraceMinutes] = useState<number | string>(30);
   const [scope, setScope] = useState<AlertScope>("all");
 
   useEffect(() => {
@@ -20,6 +21,7 @@ export function AlertSettingsTab() {
     setVolumeThreshold(config.volume_threshold_percent);
     setLunThreshold(config.lun_threshold_percent);
     setLagThreshold(config.snapmirror_lag_threshold_hours);
+    setMissedGraceMinutes(config.backup_missed_grace_minutes);
     setScope(config.scope);
   }, [config]);
 
@@ -28,6 +30,7 @@ export function AlertSettingsTab() {
       volume_threshold_percent: Number(volumeThreshold),
       lun_threshold_percent: Number(lunThreshold),
       snapmirror_lag_threshold_hours: Number(lagThreshold),
+      backup_missed_grace_minutes: Number(missedGraceMinutes),
       scope,
     };
     updateConfig
@@ -74,6 +77,15 @@ export function AlertSettingsTab() {
           value={lagThreshold}
           onChange={setLagThreshold}
           suffix=" h"
+        />
+        <NumberInput
+          label="Karenzzeit verpasste Backups"
+          description="So lange nach dem geplanten Zeitpunkt wird gewartet, bevor ein Lauf als verpasst gemeldet wird -- muss größer sein als die normale Verzögerung durch sequenzielle Abarbeitung (üblicherweise wenige Minuten)"
+          min={5}
+          max={1440}
+          value={missedGraceMinutes}
+          onChange={setMissedGraceMinutes}
+          suffix=" min"
         />
         <Select
           label="Sichtbarkeit"

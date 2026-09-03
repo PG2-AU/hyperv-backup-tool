@@ -256,7 +256,12 @@ export function useJobRun(id: string | undefined, poll: boolean) {
 export function useTriggerJobRun() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (jobId: string) => (await apiClient.post<BackupJobRun>(`/jobs/${jobId}/run`)).data,
+    // resourceGroupId (optional): beschraenkt den Lauf auf genau diese
+    // Resource Group statt (Default) alle mit der Policy verknuepften --
+    // genutzt vom "Jetzt nachholen"-Button beim backup_missed-Alarm
+    // (siehe AlertsPage.tsx).
+    mutationFn: async ({ jobId, resourceGroupId }: { jobId: string; resourceGroupId?: string }) =>
+      (await apiClient.post<BackupJobRun>(`/jobs/${jobId}/run`, null, { params: { resource_group_id: resourceGroupId } })).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["job-runs"] }),
   });
 }
@@ -867,6 +872,17 @@ export function useDismissBackupFailedAlert() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (runId: string) => (await apiClient.post(`/alerts/backup-runs/${runId}/dismiss`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+  });
+}
+
+// Fuer echte, persistierte Alert-Zeilen (Kapazitaet/Cluster/SnapMirror/
+// backup_missed) -- anders als bei den virtuellen 'Backup fehlgeschlagen'-
+// Alarmen oben gibt es hier ein echtes Alert.id.
+export function useDismissAlert() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (alertId: string) => (await apiClient.post(`/alerts/${alertId}/dismiss`)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alerts"] }),
   });
 }

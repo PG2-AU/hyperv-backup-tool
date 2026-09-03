@@ -29,6 +29,7 @@ class AlertType(str, enum.Enum):
     SNAPMIRROR_UNHEALTHY = "snapmirror_unhealthy"
     SNAPMIRROR_LAG_EXCEEDED = "snapmirror_lag_exceeded"
     HYPERV_NODE_UNREACHABLE = "hyperv_node_unreachable"
+    BACKUP_MISSED = "backup_missed"
 
 
 class AlertScope(str, enum.Enum):
@@ -67,6 +68,12 @@ class Alert(Base):
     triggered_at: Mapped[datetime] = mapped_column(DateTime)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     resolved_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Nur bei backup_missed gesetzt -- Grundlage fuer den "Jetzt nachholen"-
+    # Button (siehe app.api.routes.alerts), der genau diese Resource
+    # Group + Policy erneut auslöst, ohne dass der Nutzer beides erst
+    # wieder manuell zusammensuchen muss.
+    resource_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    policy_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
 class AlertConfig(Base):
@@ -82,5 +89,12 @@ class AlertConfig(Base):
     volume_threshold_percent: Mapped[int] = mapped_column(Integer, default=90)
     lun_threshold_percent: Mapped[int] = mapped_column(Integer, default=90)
     snapmirror_lag_threshold_hours: Mapped[int] = mapped_column(Integer, default=4)
+    # Wie lange nach dem faelligen Zeitpunkt eines geplanten Laufs gewartet
+    # wird, bevor er als verpasst gilt (siehe run_alert_check) -- muss
+    # groesser als die normale Verzoegerung durch sequenzielle Abarbeitung/
+    # das Nachhol-Fenster in run_scheduled_backups sein (max. 15min dort),
+    # sonst wuerden voellig normale, nur leicht verspaetete Laeufe
+    # faelschlich als verpasst gemeldet.
+    backup_missed_grace_minutes: Mapped[int] = mapped_column(Integer, default=30)
     scope: Mapped[AlertScope] = mapped_column(Enum(AlertScope), default=AlertScope.ALL)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

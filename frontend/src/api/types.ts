@@ -517,6 +517,7 @@ export type AlertType =
   | "snapmirror_unhealthy"
   | "snapmirror_lag_exceeded"
   | "hyperv_node_unreachable"
+  | "backup_missed"
   | "backup_failed";
 
 export interface Alert {
@@ -535,6 +536,8 @@ export interface Alert {
   resolved_at?: string | null;
   object_uuid?: string | null;
   run_id?: string | null;
+  resource_group_id?: string | null;
+  policy_id?: string | null;
 }
 
 export type AlertScope = "all" | "hyperv_referenced";
@@ -543,6 +546,7 @@ export interface AlertConfig {
   volume_threshold_percent: number;
   lun_threshold_percent: number;
   snapmirror_lag_threshold_hours: number;
+  backup_missed_grace_minutes: number;
   scope: AlertScope;
 }
 
@@ -550,6 +554,7 @@ export interface AlertConfigWritePayload {
   volume_threshold_percent: number;
   lun_threshold_percent: number;
   snapmirror_lag_threshold_hours: number;
+  backup_missed_grace_minutes: number;
   scope: AlertScope;
 }
 
