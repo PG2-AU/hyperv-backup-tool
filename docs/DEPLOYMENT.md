@@ -898,7 +898,42 @@ Test-NetConnection -ComputerName <Server-IP> -Port 8443
 
 ## 9. Container-Persistenz absichern (rootless Podman + WSL2)
 
-**Hintergrund:** `docker-compose.yml` setzt `restart: unless-stopped`, was
+**Voraussetzung, bevor alles Folgende überhaupt greifen kann: die WSL2-VM
+selbst muss durchgehend laufen.** Live beobachtet: WSL2 fährt seine
+komplette VM standardmäßig herunter, sobald keine Verbindung mehr zu ihr
+besteht (z. B. die letzte RDP-Sitzung/das letzte Terminal geschlossen wird)
+— unabhängig von allem, was innerhalb von Linux per `loginctl
+enable-linger`/Quadlet eingerichtet ist (dazu unten mehr), da hier die
+**gesamte VM** verschwindet, nicht nur der Linux-Login. Nach außen sichtbar
+als: GUI sofort nach dem Abmelden vom Server nicht mehr erreichbar, nach
+der nächsten Anmeldung dauert es rund eine Minute (VM-Boot + Container-
+Neustart), bis sie wieder da ist. In `%UserProfile%\.wslconfig` (auf dem
+Windows Server, NICHT innerhalb von WSL) das automatische Herunterfahren
+deaktivieren:
+
+```ini
+[wsl2]
+vmIdleTimeout=-1
+```
+
+**Wird erst nach einem `wsl --shutdown` wirksam** (WSL liest `.wslconfig`
+nur beim Start einer neuen VM-Instanz, nicht während sie läuft) — das
+beendet kurzzeitig auch den Container, daher einmalig zu einem passenden
+Zeitpunkt ausführen (PowerShell auf dem Windows Server, nicht in WSL
+selbst):
+
+```powershell
+wsl --shutdown
+```
+
+Der Container startet danach automatisch wieder (Quadlet/Linger, siehe
+unten) — kurz prüfen, dass die GUI nach etwa einer Minute wieder erreichbar
+ist.
+
+**Danach greifen erst die beiden folgenden, rein Linux-internen
+Absicherungen** — sie setzen voraus, dass die WSL2-VM (wie oben
+sichergestellt) durchgehend läuft: `docker-compose.yml` setzt `restart:
+unless-stopped`, was
 bei **rootless** Podman (kein dauerhafter Root-Daemon wie bei Docker) nicht
 zuverlässig durchgesetzt wird. Zwei getrennte Probleme:
 
@@ -1010,6 +1045,7 @@ Zeitraum.
 
 | Symptom | Wahrscheinliche Ursache | Abschnitt |
 |---|---|---|
+| GUI sofort nach Abmelden vom Server nicht mehr erreichbar, nach Anmeldung nach ~1min wieder da | `vmIdleTimeout` fehlt in `.wslconfig` -- WSL2 faehrt die ganze VM beim Trennen der letzten Verbindung herunter | 9 |
 | GUI von aussen nicht erreichbar, Container läuft | WSL2-Guest-IP hat sich geändert, Portproxy zeigt ins Leere | 8 |
 | Container nach Server-Neustart als `Exited`/gar nicht gestartet | `loginctl enable-linger` fehlt, oder die Quadlet-Datei fehlt/wurde nicht per `daemon-reload` eingelesen | 6, 9 |
 | Container stoppt/stürzt ab und kommt nicht von selbst wieder hoch | Betrieb läuft noch über `podman-compose up -d` statt der Quadlet-Unit (kein Dauer-Daemon in rootless Podman) | 6, 9 |

@@ -1185,7 +1185,37 @@ kontrollieren.</p>
 </section>
 <section id="s9">
 <h2><span class="step-num">9</span>Container-Persistenz absichern (rootless Podman + WSL2)</h2>
-<p><strong>Hintergrund:</strong> <code>docker-compose.yml</code> setzt <code>restart: unless-stopped</code>, was
+<p><strong>Voraussetzung, bevor alles Folgende überhaupt greifen kann: die WSL2-VM
+selbst muss durchgehend laufen.</strong> Live beobachtet: WSL2 fährt seine
+komplette VM standardmäßig herunter, sobald keine Verbindung mehr zu ihr
+besteht (z. B. die letzte RDP-Sitzung/das letzte Terminal geschlossen wird)
+— unabhängig von allem, was innerhalb von Linux per <code>loginctl enable-linger</code>/Quadlet eingerichtet ist (dazu unten mehr), da hier die
+<strong>gesamte VM</strong> verschwindet, nicht nur der Linux-Login. Nach außen sichtbar
+als: GUI sofort nach dem Abmelden vom Server nicht mehr erreichbar, nach
+der nächsten Anmeldung dauert es rund eine Minute (VM-Boot + Container-
+Neustart), bis sie wieder da ist. In <code>%UserProfile%\.wslconfig</code> (auf dem
+Windows Server, NICHT innerhalb von WSL) das automatische Herunterfahren
+deaktivieren:</p>
+<div class="code-block">
+<span class="code-label">systemd Quadlet</span>
+<pre><code>[wsl2]
+vmIdleTimeout=-1</code></pre>
+</div>
+<p><strong>Wird erst nach einem <code>wsl --shutdown</code> wirksam</strong> (WSL liest <code>.wslconfig</code>
+nur beim Start einer neuen VM-Instanz, nicht während sie läuft) — das
+beendet kurzzeitig auch den Container, daher einmalig zu einem passenden
+Zeitpunkt ausführen (PowerShell auf dem Windows Server, nicht in WSL
+selbst):</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>wsl --shutdown</code></pre>
+</div>
+<p>Der Container startet danach automatisch wieder (Quadlet/Linger, siehe
+unten) — kurz prüfen, dass die GUI nach etwa einer Minute wieder erreichbar
+ist.</p>
+<p><strong>Danach greifen erst die beiden folgenden, rein Linux-internen
+Absicherungen</strong> — sie setzen voraus, dass die WSL2-VM (wie oben
+sichergestellt) durchgehend läuft: <code>docker-compose.yml</code> setzt <code>restart: unless-stopped</code>, was
 bei <strong>rootless</strong> Podman (kein dauerhafter Root-Daemon wie bei Docker) nicht
 zuverlässig durchgesetzt wird. Zwei getrennte Probleme:</p>
 <ol>
@@ -1294,6 +1324,11 @@ Zeitraum.</p>
 </tr>
 </thead>
 <tbody><tr>
+<td>GUI sofort nach Abmelden vom Server nicht mehr erreichbar, nach Anmeldung nach ~1min wieder da</td>
+<td><code>vmIdleTimeout</code> fehlt in <code>.wslconfig</code> -- WSL2 faehrt die ganze VM beim Trennen der letzten Verbindung herunter</td>
+<td>9</td>
+</tr>
+<tr>
 <td>GUI von aussen nicht erreichbar, Container läuft</td>
 <td>WSL2-Guest-IP hat sich geändert, Portproxy zeigt ins Leere</td>
 <td>8</td>
