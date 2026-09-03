@@ -1,4 +1,4 @@
-import type { BackupPolicy, Schedule } from "@/api/types";
+import type { BackupPolicy, BackupRunSnapshot, Schedule } from "@/api/types";
 
 const UNITS = ["Bytes", "KB", "MB", "GB", "TB", "PB"] as const;
 
@@ -35,6 +35,34 @@ export function formatRetention(policy: Pick<BackupPolicy, "retention_type" | "r
 }
 
 const LAG_TIME_PATTERN = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/;
+
+/** Gruppiert die Ziele eines Backup-Laufs nach CSV, statt sie als flache
+ * Liste zu zeigen -- "[CSV02] Test [CSV03] VM01, VM02" statt "CSV02, CSV03,
+ * Test, VM01, VM02", damit ersichtlich ist, welche VMs auf welchem CSV
+ * gesichert wurden (Nutzer-Vorgabe). Nutzt die pro Snapshot bereits
+ * vorhandene csv_names/vm_names-Zuordnung (BackupRunSnapshot) statt der nur
+ * flachen targets-Liste auf BackupRun selbst. VMs ohne zugeordnetes CSV
+ * (z.B. Aufloesungsfehler) werden ohne Klammer vorangestellt; ganz ohne
+ * Snapshot-Daten (z.B. sehr alte Laeufe) faellt die Funktion auf die
+ * mitgegebene flache targets-Liste zurueck. */
+export function formatRunTargets(snapshots: BackupRunSnapshot[], fallbackTargets: string[]): string {
+  if (snapshots.length === 0) return fallbackTargets.join(", ");
+
+  const withCsv = snapshots.filter((s) => s.csv_names.length > 0);
+  const withoutCsv = snapshots.filter((s) => s.csv_names.length === 0);
+
+  const parts: string[] = [];
+  const looseVms = new Set<string>();
+  for (const s of withoutCsv) for (const vm of s.vm_names) looseVms.add(vm);
+  if (looseVms.size > 0) parts.push([...looseVms].sort().join(", "));
+
+  for (const s of [...withCsv].sort((a, b) => a.csv_names.join(",").localeCompare(b.csv_names.join(",")))) {
+    const vms = [...s.vm_names].sort().join(", ");
+    parts.push(`[${s.csv_names.join(", ")}]${vms ? ` ${vms}` : ""}`);
+  }
+
+  return parts.length ? parts.join(" ") : fallbackTargets.join(", ");
+}
 
 export function formatLagTime(lagTime?: string | null): string {
   if (!lagTime) return "-";

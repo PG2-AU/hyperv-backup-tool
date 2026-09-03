@@ -24,6 +24,7 @@ import {
 } from "@/api/hooks";
 import { DayJobStrip } from "@/components/DayJobStrip";
 import type { BackupJobRun, BackupRunSnapshot } from "@/api/types";
+import { formatRunTargets } from "@/utils/format";
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: "green",
@@ -391,7 +392,7 @@ export function DashboardPage() {
                       <Table.Tr key={run.id}>
                         <Table.Td>{run.job_name}</Table.Td>
                         <Table.Td>{run.scope}</Table.Td>
-                        <Table.Td>{run.targets.join(", ")}</Table.Td>
+                        <Table.Td>{formatRunTargets(run.snapshots, run.targets)}</Table.Td>
                         <Table.Td>
                           <Badge color={STATUS_COLOR[run.status]} variant="light">
                             {run.status}
