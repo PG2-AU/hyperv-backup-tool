@@ -294,12 +294,79 @@ antwortenden Knoten noch mit `New-SelfSignedCertificate -DnsName
 Zusätzlich:
 
 - Der verbindende Account (in der GUI beim Hinzufügen des Clusters
-  hinterlegt) braucht **lokale Administratorrechte** auf jedem Knoten.
+  hinterlegt) braucht **lokale Administratorrechte** auf jedem Knoten
+  (Details und Begründung im Kasten unten).
 - `HVNB_WINRM_TRANSPORT` (Abschnitt 5) muss zum serverseitig aktivierten
   Verfahren passen — `credssp` erfordert exakt den obigen
   `Enable-WSManCredSSP -Role Server`-Schritt, `ntlm` kommt ohne diesen
   Schritt aus (nur Listener + Firewall nötig), unterstützt aber keine
   Double-Hop-Szenarien.
+
+### Das Cluster-Konto: welche Rechte genau, und keine mehr
+
+Der Account, der beim Hinzufügen eines Clusters in der GUI hinterlegt wird,
+sollte **nicht** das eingebaute `Administrator`-Konto der Domäne sein (in
+Testumgebungen oft bequem der Fall, real angetroffen z. B. als
+`HYPERVDEMO\Administrator` mit Mitgliedschaft in Domain Admins, Enterprise
+Admins und Schema Admins) — das ist um Größenordnungen mehr Rechteumfang,
+als die App tatsächlich braucht, und macht diesen Server bei Kompromittierung
+zu einem Sprungbrett für die gesamte Domäne bzw. den gesamten Forest.
+
+**Warum lokale Administratorrechte auf den Knoten trotzdem nötig sind** (die
+"Hyper-V-Administratoren"-Gruppe, die für reines VM-Management ausreichen
+würde, genügt hier nicht): die App nutzt über WinRM neben reinen
+Hyper-V-Cmdlets (`Get-VM`, `New-VM`, `Checkpoint-VM`, `Add/Remove-VMHardDiskDrive`
+usw. — dafür würde Mitgliedschaft in **Hyper-V-Administratoren** reichen) auch
+Disk-/iSCSI-/Partitions-Cmdlets für den Restore-Workflow (`Connect-IscsiTarget`,
+`Mount-VHD`/`Mount-DiskImage`, `Set-Disk`, `Add/Remove-PartitionAccessPath`)
+sowie Cluster-Abfragen (`Get-ClusterSharedVolume`, `Get-ClusterNode`,
+`Add-ClusterVirtualMachineRole`). Für die Disk-/iSCSI-Verwaltung gibt es unter
+Windows **keine** eigene, schmalere eingebaute Gruppe (anders als bei
+Hyper-V) — diese Cmdlets verlangen lokale Administratorrechte. Volle
+Cluster-Verwaltung ist davon i. d. R. bereits mit abgedeckt, da Failover
+Clustering lokale Administratoren der Knoten standardmäßig als
+Cluster-Administratoren behandelt; im Zweifel nach Einrichtung mit
+`(Get-Cluster).GetAccessAllowed()` bzw. in Failover Cluster Manager unter
+"Cluster-Berechtigungen" verifizieren.
+
+Das eigentliche Least-Privilege-Prinzip liegt also nicht darin, lokale
+Adminrechte zu vermeiden (technisch für den Restore-Workflow nicht möglich),
+sondern darin, **denselben Rechteumfang auf den kleinstmöglichen
+Geltungsbereich zu begrenzen** — konkret:
+
+1. **Dediziertes Konto** anlegen, ausschließlich für diese App, z. B.
+   `HYPERVDEMO\svc-hvnb-backup` — kein Personenkonto, kein für andere Zwecke
+   mitgenutztes Konto.
+2. **Keine** Mitgliedschaft in Domain Admins, Enterprise Admins, Schema
+   Admins oder einer sonstigen domänenweit privilegierten Gruppe. Das Konto
+   ist ein ganz gewöhnliches Domänenkonto ohne besondere AD-Rechte.
+3. Lokale Administratorrechte **nur** auf den tatsächlich verwalteten
+   Maschinen — allen Hyper-V-Clusterknoten sowie dem Restore-Proxy-Host —,
+   nicht auf sonstigen Servern oder Arbeitsplätzen. Am saubersten über eine
+   Sicherheitsgruppe (z. B. `HVNB-Backup-Hosts`) mit genau diesen Rechnern
+   als Mitglieder, kombiniert mit einer GPO über **Restricted Groups**
+   (Computer-Konfiguration → Richtlinien → Sicherheitseinstellungen →
+   Restricted Groups → `Administratoren` → `HYPERVDEMO\svc-hvnb-backup`
+   hinzufügen), die per Sicherheitsfilterung nur auf diese Gruppe wirkt.
+   Reine manuelle `net localgroup Administratoren /add`-Pflege pro Host
+   funktioniert ebenso, ist aber bei mehreren Knoten fehleranfälliger.
+4. **Interaktive Anmeldung verweigern**, da das Konto ausschließlich über
+   WinRM verwendet wird (GPO: "Anmelden als Batchauftrag verweigern" bzw.
+   "Lokal anmelden verweigern" / "Anmelden über Remotedesktopdienste
+   verweigern" für dieses Konto auf denselben Zielrechnern) — reduziert den
+   Nutzen eines gestohlenen Passworts für alles außer dem WinRM-Zugriff
+   selbst, den die App ohnehin schon hat.
+5. **Kein gMSA** (Group Managed Service Account): CredSSP übergibt das
+   tatsächliche Passwort zur Delegation, und dieses wird der App selbst aus
+   ihrer eigenen, hinterlegten Konfiguration übermittelt — ein gMSA verwaltet
+   sein Passwort selbst und macht es nicht in dieser Form auslesbar, ist also
+   für dieses Zugriffsmuster nicht geeignet. Stattdessen: starkes, für dieses
+   eine Konto einzigartiges Passwort, regelmäßig rotiert.
+6. Nach Einrichtung verifizieren, dass das Konto tatsächlich **nur** auf den
+   vorgesehenen Hosts als Administrator eingetragen ist (`net localgroup
+   Administratoren` auf jedem Knoten) und in keiner der drei genannten
+   Domain-/Enterprise-/Schema-Admin-Gruppen steckt (`Get-ADUser
+   svc-hvnb-backup -Properties MemberOf`).
 
 **Verbindung isoliert testen**, bevor der Cluster in der GUI hinzugefügt
 wird — zuerst lokal auf dem Hyper-V-Host selbst:
