@@ -243,15 +243,13 @@ podman cp ~/winrm-ca.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem
 ```bash
 # .env, im Projektverzeichnis:
 echo "HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem" >> .env
-podman-compose up -d --force-recreate
+systemctl --user restart hvnb-backup.service
 ```
 
-**Live bestätigt:** `podman-compose up -d` ohne `--force-recreate` erkennt
-eine reine `.env`-Änderung nicht zuverlässig und lässt den bestehenden
-Container unverändert laufen (kein Fehler, aber die neue Variable kommt
-nie an) — `--force-recreate` erzwingt das Neuerstellen unabhängig von der
-Diff-Erkennung. Mit `podman inspect hvnb-backup --format '{{.Created}}'`
-lässt sich der Zeitstempel vorher/nachher vergleichen, um das zu bestätigen.
+Der Container-Betrieb läuft seit Abschnitt 6 über eine Quadlet-Unit, die bei
+jedem `restart` unbedingt neu erstellt wird (kein `--force-recreate`-
+Sonderfall mehr nötig, siehe Kasten dort) — `.env`-Änderungen wie diese
+kommen dadurch zuverlässig an.
 
 Da `hvnb-certs` ein benanntes Volume ist, übersteht die Datei den
 Container-Neustart in Schritt 2 unabhängig von der Reihenfolge der beiden
@@ -586,17 +584,19 @@ erstellt** werden, damit `/opt/app` leer beginnt und `entrypoint.sh` den
 "erstmaligen Klon"-Pfad mit der neuen URL erneut durchläuft.
 
 ```bash
-podman-compose up -d --force-recreate
+systemctl --user restart hvnb-backup.service
 ```
 
-Ein reines `podman restart hvnb-backup` reicht dafür **nicht** aus. Ein
-reines `podman-compose up -d` (ohne `--force-recreate`) ebenfalls nicht
-zuverlässig — live bestätigt: `podman-compose` erkennt eine reine
-`.env`-Änderung (Compose-Dateien selbst bleiben gleich) nicht immer als
-Grund für ein Neuerstellen und lässt den bestehenden Container dann
-einfach unverändert weiterlaufen, ohne Fehlermeldung. Mit
-`podman inspect hvnb-backup --format '{{.Created}}'` vor und nach dem
-Befehl lässt sich prüfen, ob tatsächlich neu erstellt wurde.
+Ein reines `podman restart hvnb-backup` reicht dafür **nicht** aus (startet
+denselben, bereits geklonten Container neu, `/opt/app` bleibt unverändert)
+— `systemctl --user restart hvnb-backup.service` dagegen schon: die
+Container-Verwaltung läuft seit Abschnitt 6 über eine Quadlet-Unit, deren
+generiertes `ExecStart` den Container bei jedem Start bedingungslos per
+`--replace --rm` neu erstellt (kein `--force-recreate`-Sonderfall mehr
+nötig wie beim vorherigen `podman-compose up -d`, das eine reine
+`.env`-Änderung nicht zuverlässig erkannte). Mit `podman inspect
+hvnb-backup --format '{{.Created}}'` vor und nach dem Befehl lässt sich
+trotzdem prüfen, ob tatsächlich neu erstellt wurde.
 
 Die `.env`-Datei enthält damit ein Secret im Klartext und
 ist bereits über `.gitignore` von Commits ausgeschlossen — trotzdem
@@ -608,8 +608,8 @@ chmod 600 .env
 
 **Rotation/Widerruf:** Token bei Bedarf jederzeit unter GitHub > Settings >
 Developer settings > Fine-grained tokens widerrufen und durch ein neues
-ersetzen (`.env` aktualisieren, danach `podman-compose up -d
---force-recreate` um den Container mit der neuen URL neu zu erstellen).
+ersetzen (`.env` aktualisieren, danach `systemctl --user restart
+hvnb-backup.service` um den Container mit der neuen URL neu zu erstellen).
 
 ### 4c. Kein Netzwerkpfad zum Git-Server (abgeschottetes Netz)
 
@@ -628,13 +628,18 @@ git clone --bare <PFAD-ODER-URL-MIT-ZUGRIFF> ~/hyperv-repo.git
 git clone ~/hyperv-repo.git ~/hyperv-netapp-backup
 cd ~/hyperv-netapp-backup
 
-podman-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+podman-compose -f docker-compose.yml -f docker-compose.dev.yml build
 ```
 
-`HVNB_GIT_REPO_URL` wird dabei automatisch von `docker-compose.dev.yml` auf
-`file:///srv/git/hyperv-netapp-backup.git` gesetzt (siehe Kommentar in der
-Datei) — das lokale Bare-Repo wird dafür nach `/srv/git/...` in den
-Container gemountet.
+Danach wie in Abschnitt 6 beschrieben die Quadlet-Datei anlegen, **inklusive**
+der dort gezeigten drei zusätzlichen Zeilen für Modell 4c (Bare-Repo-Mount +
+`HVNB_GIT_REPO_URL`/`HVNB_GIT_BRANCH`/`HVNB_AUTO_UPDATE_ENABLED`) — diese
+stecken normalerweise in `docker-compose.dev.yml`, das aber nur noch beim
+Bauen gilt, nicht mehr für den laufenden Betrieb.
+
+`HVNB_GIT_REPO_URL` zeigt dabei auf `file:///srv/git/hyperv-netapp-backup.git`
+— das lokale Bare-Repo wird dafür nach `/srv/git/...` in den Container
+gemountet.
 
 **Code-Updates in diesem Modell:** das Bare-Repo muss erneut befüllt
 werden, z. B. per `git bundle create update.bundle --all` auf einem Host mit
@@ -646,7 +651,7 @@ git -C ~/hyperv-repo.git fetch update.bundle 'refs/*:refs/*'
 
 Der Updater-Prozess im Container erkennt die neuen Commits beim nächsten
 Intervall automatisch (`HVNB_AUTO_UPDATE_ENABLED=true`) bzw. sofort nach
-einem manuellen `podman-compose restart hvnb-backup`.
+einem manuellen `systemctl --user restart hvnb-backup.service`.
 
 ## 5. Konfiguration (`.env`)
 
@@ -693,22 +698,90 @@ in `.env.example` im Projektwurzelverzeichnis.
 
 ## 6. Container bauen und starten
 
+`docker-compose.yml` wird ab hier nur noch zum **Bauen** des Images
+verwendet — der laufende Betrieb wird über eine **Quadlet**-Unit von
+systemd verwaltet (Abschnitt 9 erklärt, warum: rootless Podman hat anders
+als Docker keinen Dauer-Daemon, der einen abgestürzten Container von
+selbst neu starten würde; `restart: unless-stopped` in der Compose-Datei
+greift dafür nicht zuverlässig).
+
+**Image bauen:**
+
 Modell 4b (HTTPS + Token, Regelfall):
 
 ```bash
-podman-compose -f docker-compose.yml up -d --build
+podman-compose -f docker-compose.yml build
 ```
 
 Modell 4c (lokales Bare-Repo):
 
 ```bash
-podman-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+podman-compose -f docker-compose.yml -f docker-compose.dev.yml build
+```
+
+**Quadlet-Unit anlegen** (einmalig, unabhängig vom gewählten Modell) unter
+`~/.config/containers/systemd/hvnb-backup.container` — Werte (Image-Tag,
+Portmapping, Volume-Namen) exakt aus `docker-compose.yml` übernommen, da
+Quadlet die Compose-Datei selbst nicht einliest:
+
+```ini
+# ~/.config/containers/systemd/hvnb-backup.container
+[Unit]
+Description=Hyper-V NetApp Backup Tool
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/hyperv-netapp-backup:local
+ContainerName=hvnb-backup
+PublishPort=8443:443
+EnvironmentFile=%h/hyperv-netapp-backup/.env
+Environment=HVNB_DATABASE_URL=sqlite:////data/app.db
+Volume=hyperv-netapp-backup_hvnb-data:/data
+Volume=hyperv-netapp-backup_hvnb-certs:/etc/hvnb/certs
+
+[Service]
+Restart=always
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target
+```
+
+Die beiden Volume-Namen sind **projekt-präfigiert** (podman-compose hängt
+den Projektnamen — den Namen des Projektverzeichnisses — vor den in
+`docker-compose.yml` angegebenen Namen). Falls das Projektverzeichnis
+nicht `hyperv-netapp-backup` heißt, oder bei einem bereits laufenden
+Compose-Container zur Kontrolle, die tatsächlichen Namen anzeigen:
+
+```bash
+podman volume ls --filter name=hvnb
+```
+
+Modell 4c braucht zusätzlich den Bare-Repo-Mount und die drei
+Umgebungsvariablen aus `docker-compose.dev.yml` — im `[Container]`-Block
+ergänzen:
+
+```ini
+Volume=%h/hyperv-repo.git:/srv/git/hyperv-netapp-backup.git:ro
+Environment=HVNB_GIT_REPO_URL=file:///srv/git/hyperv-netapp-backup.git
+Environment=HVNB_GIT_BRANCH=master
+Environment=HVNB_AUTO_UPDATE_ENABLED=true
+```
+
+**Aktivieren und starten** (Quadlet-Units werden NICHT per `systemctl
+enable` aktiviert, sondern automatisch anhand der `[Install]`-Zeile in
+`default.target` eingehängt, sobald die Datei existiert):
+
+```bash
+systemctl --user daemon-reload
+systemctl --user start hvnb-backup.service
 ```
 
 Prüfen:
 
 ```bash
-podman ps --filter name=hvnb-backup
+systemctl --user status hvnb-backup.service
 podman logs --tail 50 hvnb-backup
 ```
 
@@ -716,13 +789,22 @@ Erwartet: `uvicorn`, `nginx` (und bei aktiviertem Auto-Update `updater`)
 laufen ohne Fehlermeldungen. Der erste Start dauert spürbar länger (Klonen
 des Repos, `npm ci`, Frontend-Build).
 
-> **Für jede spätere `.env`-Änderung gilt:** `podman-compose up -d` allein
-> erkennt eine reine `.env`-Änderung nicht immer zuverlässig und lässt den
-> bestehenden Container dann einfach unverändert weiterlaufen, ohne
-> Fehlermeldung (live bestätigt). Sicherer ist `podman-compose up -d
-> --force-recreate` — mit `podman inspect hvnb-backup --format
-> '{{.Created}}'` vor und nach dem Befehl lässt sich prüfen, ob tatsächlich
-> neu erstellt wurde.
+> **Für jede spätere `.env`-Änderung (oder Änderung an der Quadlet-Datei
+> selbst, z. B. Zertifikats-Volume in Abschnitt 7) gilt:** anders als beim
+> vorherigen `podman-compose up -d` (das eine reine `.env`-Änderung nicht
+> zuverlässig als Grund fürs Neuerstellen erkannte, live bestätigt) baut
+> die Quadlet-Unit den Container bei JEDEM Start unbedingt neu auf
+> (`--replace --rm` im generierten `ExecStart`, sichtbar per `systemctl
+> --user cat hvnb-backup.service`) — ein einfaches
+>
+> ```bash
+> systemctl --user daemon-reload   # nur noetig, wenn sich die .container-Datei selbst aenderte
+> systemctl --user restart hvnb-backup.service
+> ```
+>
+> reicht daher jetzt IMMER zuverlässig aus, ganz ohne `--force-recreate`-
+> Sonderfall. Die beiden Volumes bleiben davon unberührt (`/data`,
+> `/etc/hvnb/certs`), nur der Container selbst wird frisch erstellt.
 
 ## 7. TLS-Zertifikat
 
@@ -730,15 +812,21 @@ Beim allerersten Start erzeugt der Container automatisch ein
 selbstsigniertes Zertifikat (`docker/gen-selfsigned-cert.sh`), damit die GUI
 sofort per HTTPS erreichbar ist. Für den Produktivbetrieb ein von der
 internen PKI ausgestelltes Zertifikat einbinden, statt das benannte Volume
-`hvnb-certs` zu nutzen — in `docker-compose.yml` die Volume-Zeile durch einen
-Bind-Mount ersetzen:
+`hvnb-certs` zu nutzen — seit Abschnitt 6 nicht mehr in `docker-compose.yml`
+(wird nur noch fürs Bauen genutzt), sondern in der Quadlet-Datei
+`~/.config/containers/systemd/hvnb-backup.container` die `Volume`-Zeile für
+die Zertifikate durch einen Bind-Mount ersetzen:
 
-```yaml
-volumes:
-  - ./certs:/etc/hvnb/certs # server.crt + server.key ablegen
+```ini
+Volume=%h/hyperv-netapp-backup/certs:/etc/hvnb/certs # server.crt + server.key ablegen
 ```
 
-Danach den Container neu erstellen (`podman-compose up -d --force-recreate`).
+Danach den Container neu erstellen (siehe Kasten in Abschnitt 6):
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart hvnb-backup.service
+```
 
 ## 8. Externe Erreichbarkeit von WSL2 aus
 
@@ -811,31 +899,56 @@ Test-NetConnection -ComputerName <Server-IP> -Port 8443
 ## 9. Container-Persistenz absichern (rootless Podman + WSL2)
 
 **Hintergrund:** `docker-compose.yml` setzt `restart: unless-stopped`, was
-bei **rootless** Podman (kein dauerhafter Root-Daemon wie bei Docker) nur so
-lange greift, wie die `systemd --user`-Instanz des Benutzers läuft. Ein
-Windows-Sleep/Ruhezustand oder `wsl --shutdown` kann diese Instanz beenden —
-ohne die folgenden zwei Einstellungen bleibt der Container danach als
-`Exited` liegen, statt automatisch neu zu starten.
+bei **rootless** Podman (kein dauerhafter Root-Daemon wie bei Docker) nicht
+zuverlässig durchgesetzt wird. Zwei getrennte Probleme:
 
-In der WSL2-Distribution:
+1. Ein Windows-Sleep/Ruhezustand oder `wsl --shutdown` kann die
+   `systemd --user`-Instanz des Benutzers komplett beenden — ohne die
+   folgende Einstellung startet sie beim nächsten Login zwar neu, aber ohne
+   den Container automatisch mitzunehmen.
+2. **Wichtiger, live bestätigt:** rootless Podman hat KEINEN Dauerprozess,
+   der einen laufenden Container fortlaufend überwacht — stürzt der
+   Container-Hauptprozess ab oder wird er anderweitig beendet, während die
+   `systemd --user`-Instanz selbst durchgehend weiterläuft, kommt er von
+   selbst **nicht** wieder hoch. `restart: unless-stopped` in
+   `docker-compose.yml` bzw. das früher hier dokumentierte
+   `podman-restart.service` decken nur Fall 1 ab (ein einmaliger Check beim
+   (Neu-)Start der `systemd --user`-Instanz), nicht Fall 2.
+
+Beide Fälle werden durch dieselbe **Quadlet**-Unit abgedeckt, die bereits in
+Abschnitt 6 für den normalen Betrieb angelegt wurde
+(`~/.config/containers/systemd/hvnb-backup.container`, `Restart=always` im
+`[Service]`-Block) — systemd überwacht den Container darüber laufend
+selbst und startet ihn innerhalb von Sekunden neu, unabhängig vom Grund des
+Stopps. Zusätzlich nötig, damit die `systemd --user`-Instanz überhaupt
+unabhängig von einer aktiven Login-Session existiert:
 
 ```bash
-# Erlaubt der systemd--user-Instanz des Benutzers, unabhaengig von einer
-# aktiven Login-Session zu laufen (auch nach Reboot/WSL2-Neustart).
+# Einmalig, in der WSL2-Distribution:
 sudo loginctl enable-linger <benutzername>
-
-# Startet beim (Re-)Start der systemd--user-Instanz automatisch alle
-# Container mit passender Restart-Policy neu.
-systemctl --user enable podman-restart.service
 ```
+
+**Live verifiziert** (2026-09-03): Container per `podman kill hvnb-backup`
+hart beendet (simuliert einen Absturz) — systemd hat ihn ohne manuelles
+Eingreifen innerhalb weniger Sekunden neu erstellt (`systemctl --user
+status hvnb-backup.service` zeigte zwischenzeitlich `activating`, danach
+wieder `active`), Datenbank-/Zertifikats-Inhalt unverändert (liegt in den
+Volumes, nicht im Container selbst).
 
 Status prüfen / manuell eingreifen bei Bedarf:
 
 ```bash
-podman ps -a --filter name=hvnb-backup   # Status
-podman logs --tail 50 hvnb-backup        # Logs
-podman start hvnb-backup                 # falls doch einmal gestoppt
+systemctl --user status hvnb-backup.service    # Status (auch: seit wann aktiv, letzte Log-Zeilen)
+journalctl --user -u hvnb-backup.service -f    # Log live verfolgen
+systemctl --user restart hvnb-backup.service   # manueller Neustart, falls je noetig
+podman ps -a --filter name=hvnb-backup         # alternativ direkt ueber podman
+podman logs --tail 50 hvnb-backup
 ```
+
+`podman-restart.service` (falls aus einer älteren Einrichtung noch aktiv)
+kann parallel bestehen bleiben, ist aber für `hvnb-backup` selbst
+überflüssig geworden — die Quadlet-Unit deckt denselben Fall zusätzlich mit
+ab und startet den Container außerdem bei jedem anderen Stopp-Grund neu.
 
 ## 10. Erste Anmeldung
 
@@ -898,6 +1011,7 @@ Zeitraum.
 | Symptom | Wahrscheinliche Ursache | Abschnitt |
 |---|---|---|
 | GUI von aussen nicht erreichbar, Container läuft | WSL2-Guest-IP hat sich geändert, Portproxy zeigt ins Leere | 8 |
-| Container nach Server-Neustart als `Exited` | `loginctl enable-linger` fehlt | 9 |
+| Container nach Server-Neustart als `Exited`/gar nicht gestartet | `loginctl enable-linger` fehlt, oder die Quadlet-Datei fehlt/wurde nicht per `daemon-reload` eingelesen | 6, 9 |
+| Container stoppt/stürzt ab und kommt nicht von selbst wieder hoch | Betrieb läuft noch über `podman-compose up -d` statt der Quadlet-Unit (kein Dauer-Daemon in rootless Podman) | 6, 9 |
 | `git`-Fehler beim Deploy trotz erreichbarem Server | Zugangsdaten/Deploy-Key für die Repository-URL fehlen | 4 |
 | Health-Check liefert `502 Bad Gateway` kurz nach Neustart | uvicorn/nginx starten noch, wenige Sekunden abwarten | — |

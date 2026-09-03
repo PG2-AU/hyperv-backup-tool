@@ -26,7 +26,7 @@ const SRC = path.resolve(__dirname, "../../docs/DEPLOYMENT.md");
 const TEMPLATE = path.resolve(__dirname, "docs-template.html");
 const DEST = path.resolve(__dirname, "../public/docs/deployment.html");
 
-const LANG_LABELS = { powershell: "PowerShell", bash: "Bash" };
+const LANG_LABELS = { powershell: "PowerShell", bash: "Bash", ini: "systemd Quadlet" };
 
 // Ab welcher Abschnittsnummer in der Seitenleiste eine neue
 // Gruppenueberschrift eingefuegt wird -- rein kosmetisch (analog zur
