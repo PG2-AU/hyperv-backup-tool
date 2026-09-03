@@ -312,22 +312,22 @@ Admins und Schema Admins) — das ist um Größenordnungen mehr Rechteumfang,
 als die App tatsächlich braucht, und macht diesen Server bei Kompromittierung
 zu einem Sprungbrett für die gesamte Domäne bzw. den gesamten Forest.
 
-**Warum lokale Administratorrechte auf den Knoten trotzdem nötig sind** (die
-"Hyper-V-Administratoren"-Gruppe, die für reines VM-Management ausreichen
-würde, genügt hier nicht): die App nutzt über WinRM neben reinen
-Hyper-V-Cmdlets (`Get-VM`, `New-VM`, `Checkpoint-VM`, `Add/Remove-VMHardDiskDrive`
-usw. — dafür würde Mitgliedschaft in **Hyper-V-Administratoren** reichen) auch
-Disk-/iSCSI-/Partitions-Cmdlets für den Restore-Workflow (`Connect-IscsiTarget`,
-`Mount-VHD`/`Mount-DiskImage`, `Set-Disk`, `Add/Remove-PartitionAccessPath`)
-sowie Cluster-Abfragen (`Get-ClusterSharedVolume`, `Get-ClusterNode`,
-`Add-ClusterVirtualMachineRole`). Für die Disk-/iSCSI-Verwaltung gibt es unter
-Windows **keine** eigene, schmalere eingebaute Gruppe (anders als bei
-Hyper-V) — diese Cmdlets verlangen lokale Administratorrechte. Volle
-Cluster-Verwaltung ist davon i. d. R. bereits mit abgedeckt, da Failover
-Clustering lokale Administratoren der Knoten standardmäßig als
-Cluster-Administratoren behandelt; im Zweifel nach Einrichtung mit
-`(Get-Cluster).GetAccessAllowed()` bzw. in Failover Cluster Manager unter
-"Cluster-Berechtigungen" verifizieren.
+> **Warum lokale Administratorrechte trotzdem nötig sind:** die
+> "Hyper-V-Administratoren"-Gruppe, die für reines VM-Management ausreichen
+> würde, genügt hier nicht. Die App nutzt über WinRM neben reinen
+> Hyper-V-Cmdlets (`Get-VM`, `New-VM`, `Checkpoint-VM`, `Add/Remove-VMHardDiskDrive`
+> usw. — dafür würde Hyper-V-Administratoren reichen) auch
+> Disk-/iSCSI-/Partitions-Cmdlets für den Restore-Workflow (`Connect-IscsiTarget`,
+> `Mount-VHD`/`Mount-DiskImage`, `Set-Disk`, `Add/Remove-PartitionAccessPath`)
+> sowie Cluster-Abfragen (`Get-ClusterSharedVolume`, `Get-ClusterNode`,
+> `Add-ClusterVirtualMachineRole`). Für die Disk-/iSCSI-Verwaltung gibt es unter
+> Windows **keine** eigene, schmalere eingebaute Gruppe (anders als bei
+> Hyper-V) — diese Cmdlets verlangen lokale Administratorrechte. Volle
+> Cluster-Verwaltung ist davon i. d. R. bereits mit abgedeckt, da Failover
+> Clustering lokale Administratoren der Knoten standardmäßig als
+> Cluster-Administratoren behandelt; im Zweifel nach Einrichtung mit
+> `(Get-Cluster).GetAccessAllowed()` bzw. in Failover Cluster Manager unter
+> "Cluster-Berechtigungen" verifizieren.
 
 Das eigentliche Least-Privilege-Prinzip liegt also nicht darin, lokale
 Adminrechte zu vermeiden (technisch für den Restore-Workflow nicht möglich),

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HVNB Installation & Deployment</title>
+<title>Installation &amp; Deployment</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -186,6 +186,7 @@
   p { max-width: 72ch; }
   ul, ol { max-width: 72ch; padding-left: 1.3em; }
   li { margin-bottom: 5px; }
+  li input[type="checkbox"] { margin-right: 6px; }
   strong { font-weight: 600; }
   code:not(pre code) {
     font-family: var(--font-mono);
@@ -229,22 +230,6 @@
   }
   @media (max-width: 760px) {
     .proc-row { grid-template-columns: 1fr; }
-  }
-
-  /* ---------- Checklist ---------- */
-  .checklist { list-style: none; padding-left: 0; max-width: 72ch; }
-  .checklist li {
-    position: relative;
-    padding-left: 30px;
-    margin-bottom: 10px;
-  }
-  .checklist li::before {
-    content: "";
-    position: absolute;
-    left: 0; top: 3px;
-    width: 16px; height: 16px;
-    border: 1.6px solid var(--ink-muted);
-    border-radius: 4px;
   }
 
   /* ---------- Code blocks ---------- */
@@ -352,17 +337,17 @@
       <a href="#overview">Architekturüberblick</a>
       <div class="group-label">Einrichtung</div>
       <a href="#s1"><span class="num">1</span>Voraussetzungen</a>
-      <a href="#s2"><span class="num">2</span>WSL2 + Linux</a>
-      <a href="#s3"><span class="num">3</span>Basis-Pakete</a>
-      <a href="#s4"><span class="num">4</span>Anwendungscode</a>
-      <a href="#s5"><span class="num">5</span>Konfiguration</a>
-      <a href="#s6"><span class="num">6</span>Container starten</a>
-      <div class="group-label">Netzwerk & Betrieb</div>
+      <a href="#s2"><span class="num">2</span>WSL2 aktivieren und Linux-Distribution einrichten</a>
+      <a href="#s3"><span class="num">3</span>Basis-Pakete installieren</a>
+      <a href="#s4"><span class="num">4</span>Anwendungscode beziehen</a>
+      <a href="#s5"><span class="num">5</span>Konfiguration (.env)</a>
+      <a href="#s6"><span class="num">6</span>Container bauen und starten</a>
+      <div class="group-label">Netzwerk &amp; Betrieb</div>
       <a href="#s7"><span class="num">7</span>TLS-Zertifikat</a>
-      <a href="#s8"><span class="num">8</span>Erreichbarkeit</a>
-      <a href="#s9"><span class="num">9</span>Persistenz</a>
+      <a href="#s8"><span class="num">8</span>Externe Erreichbarkeit von WSL2 aus</a>
+      <a href="#s9"><span class="num">9</span>Container-Persistenz absichern (rootless Podman + WSL2)</a>
       <a href="#s10"><span class="num">10</span>Erste Anmeldung</a>
-      <a href="#s11"><span class="num">11</span>Nächste Schritte</a>
+      <a href="#s11"><span class="num">11</span>Nächste Schritte (in der GUI)</a>
       <a href="#s12"><span class="num">12</span>Betrieb</a>
     </nav>
   </aside>
@@ -370,113 +355,114 @@
   <main>
     <div class="doc-header">
       <div class="eyebrow">Installationsanleitung</div>
-      <h1>Installation & Deployment</h1>
-      <p>Alle Schritte von einem frischen, domain-gejointen <strong>Windows Server 2025</strong> bis zur lauffähigen
-      Applikation — basierend auf einer real gegen eine solche Umgebung verifizierten Ersteinrichtung
-      (Feldprotokoll: <code>docs/INSTALL.md</code>) und zu einer allgemeingültigen, wiederholbaren Anleitung
-      zusammengefasst.</p>
+      <h1>Installation &amp; Deployment</h1>
+<p>Diese Anleitung beschreibt alle Schritte von einem frischen, domain-gejointen
+<strong>Windows Server 2025</strong> bis zur lauffähigen Applikation. Sie basiert auf einer
+real gegen eine solche Umgebung verifizierten Ersteinrichtung (siehe
+<code>INSTALL.md</code> für das dazugehörige Feldprotokoll mit allen dabei
+gefundenen Stolpersteinen) und fasst diese Erkenntnisse zu einer
+allgemeingültigen, wiederholbaren Anleitung zusammen.</p>
+
     </div>
 
-    <section id="overview">
-      <h2>Architekturüberblick</h2>
-      <p>Die Applikation läuft nicht nativ unter Windows, sondern als <strong>rootless Podman-Container innerhalb
-      von WSL2</strong> auf dem Windows Server. Das Container-Image (Rocky Linux 9 Basis) enthält nur die Runtime
-      (Python, Node.js, nginx, git, supervisord) — der eigentliche Anwendungscode wird beim Containerstart per
-      <code>git pull</code> aus einem konfigurierten Repository geladen, Backend- und Frontend-Abhängigkeiten
-      installiert und das Frontend gebaut (siehe <code>docker/entrypoint.sh</code>).</p>
-
-      <div class="proc-row">
-        <div class="proc-card">
-          <div class="name">uvicorn</div>
-          <div class="desc">FastAPI-Backend, lauscht intern auf 127.0.0.1:8000</div>
-        </div>
-        <div class="proc-card">
-          <div class="name">nginx</div>
-          <div class="desc">Terminiert TLS, liefert das gebaute Frontend aus, reverse-proxyt /api/* auf uvicorn</div>
-        </div>
-        <div class="proc-card">
-          <div class="name">updater</div>
-          <div class="desc">Optional — prüft periodisch auf neue Commits und deployt sie automatisch nach</div>
-        </div>
-      </div>
-
-      <div class="arch-note">
-        <strong>Warum WSL2 statt einer nativen Windows-Installation?</strong> Podman/systemd/nginx sind
-        Linux-Werkzeuge, die App selbst muss aber auf einem Windows-Host laufen können, der per WinRM mit den
-        Hyper-V-Clusterknoten und dem Restore-Proxy-Host spricht — WSL2 bringt beides auf eine Maschine.
-      </div>
-    </section>
-
-    <section id="s1">
-      <h2><span class="step-num">1</span>Voraussetzungen</h2>
-      <ul class="checklist">
-        <li>Windows Server 2025, Mitglied der Domäne, lokale Administratorrechte auf dem Server</li>
-        <li>Ausgehender Netzwerkzugriff von diesem Server zu:
-          <ul>
-            <li>dem NetApp-ONTAP-Cluster-Management-LIF (TCP 443, HTTPS/REST)</li>
-            <li>allen zu verwaltenden Hyper-V-Clusterknoten sowie dem geplanten Restore-Proxy-Host (WinRM — TCP 5986 bei HTTPS/Default, TCP 5985 bei HTTP)</li>
-            <li>dem Domain Controller, falls Active-Directory-Login aktiviert werden soll (LDAP/LDAPS — TCP 389 bzw. 636)</li>
-            <li>dem Git-Server/-Repository, aus dem der Anwendungscode bezogen wird (siehe Abschnitt 4)</li>
-          </ul>
-        </li>
-        <li>Eingehender Netzwerkzugriff auf den gewählten HTTPS-Port (Beispiel in dieser Anleitung: 8443) von den Rechnern/Netzen, aus denen die Web-GUI erreichbar sein soll</li>
-        <li>Ein NetApp-Cluster und mindestens ein Hyper-V-Cluster sind bereits grundsätzlich erreichbar — beide werden <strong>nicht</strong> in dieser Anleitung, sondern nach dem ersten Login komplett über die Web-GUI eingerichtet (Abschnitt 10)</li>
-      </ul>
-
-      <h3>WinRM auf jedem Hyper-V-Host aktivieren</h3>
-      <p>Die Applikation spricht mit den Hyper-V-Clusterknoten ausschließlich per WinRM/PowerShell-Remoting
-      (<code>winrm.Session</code>) — nie per SMB oder RPC direkt. Ohne einen laufenden, erreichbaren
-      WinRM-HTTPS-Listener lässt sich der Cluster in <strong>Settings &gt; Hyper-V-Hosts</strong> nicht
-      hinzufügen; ein typischer Fehler dabei: <code>Host '&lt;IP&gt;' ist auf Port 5986 nicht erreichbar:
-      timed out</code> — ein reiner TCP-Verbindungsfehler, tritt also auf, <strong>bevor</strong> überhaupt
-      Zugangsdaten geprüft werden.</p>
-
-      <div class="callout warn">
-        <span class="callout-label">Auf jedem Clusterknoten</span>
-        <p>Nicht nur auf einem — welcher Knoten gerade den Cluster Name Object (CNO) besitzt, kann wechseln.</p>
-      </div>
-
-      <div class="code-block">
-        <span class="code-label">PowerShell — als Administrator, pro Knoten</span>
-        <pre><code># WinRM-Dienst aktivieren (meist bereits per Default aktiv)
+<section id="overview">
+<h2>Architekturüberblick</h2>
+<p>Die Applikation läuft nicht nativ unter Windows, sondern als <strong>rootless
+Podman-Container innerhalb von WSL2</strong> auf dem Windows Server. Das
+Container-Image (Rocky Linux 9 Basis) enthält nur die Runtime (Python,
+Node.js, nginx, git, supervisord) — der eigentliche Anwendungscode wird beim
+Containerstart per <code>git pull</code> aus einem konfigurierten Repository geladen,
+Backend- und Frontend-Abhängigkeiten installiert und das Frontend gebaut
+(siehe <code>docker/entrypoint.sh</code>). <code>supervisord</code> betreibt darin drei Prozesse:</p>
+<ul>
+<li><strong>uvicorn</strong> — FastAPI-Backend, lauscht intern auf <code>127.0.0.1:8000</code></li>
+<li><strong>nginx</strong> — terminiert TLS, liefert das gebaute Frontend aus, reverse-proxyt
+<code>/api/*</code> auf uvicorn</li>
+<li><strong>updater</strong> — optional, prüft periodisch auf neue Commits und deployt sie
+automatisch nach (<code>HVNB_AUTO_UPDATE_ENABLED=true</code>)</li>
+</ul>
+<p>Warum WSL2 statt einer nativen Windows-Installation: Podman/systemd/nginx
+sind Linux-Werkzeuge, die App selbst muss aber auf einem Windows-Host laufen
+können, der per WinRM mit den Hyper-V-Clusterknoten und dem Restore-Proxy-
+Host spricht — WSL2 bringt beides auf eine Maschine.</p>
+</section>
+<section id="s1">
+<h2><span class="step-num">1</span>Voraussetzungen</h2>
+<ul>
+<li><input disabled="" type="checkbox"> Windows Server 2025, Mitglied der Domäne, lokale Administratorrechte
+auf dem Server</li>
+<li><input disabled="" type="checkbox"> Ausgehender Netzwerkzugriff von diesem Server zu:<ul>
+<li>dem NetApp-ONTAP-Cluster-Management-LIF (TCP 443, HTTPS/REST)</li>
+<li>allen zu verwaltenden Hyper-V-Clusterknoten sowie dem geplanten
+Restore-Proxy-Host (WinRM — TCP 5986 bei HTTPS/Default, TCP 5985 bei
+HTTP)</li>
+<li>dem Domain Controller, falls Active-Directory-Login aktiviert werden
+soll (LDAP/LDAPS — TCP 389 bzw. 636)</li>
+<li>dem Git-Server/-Repository, aus dem der Anwendungscode bezogen wird
+(siehe Abschnitt 4 zu den zwei möglichen Modellen, falls kein direkter
+Netzwerkpfad besteht)</li>
+</ul>
+</li>
+<li><input disabled="" type="checkbox"> Eingehender Netzwerkzugriff auf den gewählten HTTPS-Port (Beispiel in
+dieser Anleitung: 8443) von den Rechnern/Netzen, aus denen die Web-GUI
+erreichbar sein soll</li>
+<li><input disabled="" type="checkbox"> Ein NetApp-Cluster und mindestens ein Hyper-V-Cluster sind bereits
+grundsätzlich erreichbar — beide werden <strong>nicht</strong> in dieser Anleitung,
+sondern nach dem ersten Login komplett über die Web-GUI eingerichtet
+(siehe Abschnitt 10)</li>
+</ul>
+<h3>WinRM auf jedem Hyper-V-Host aktivieren</h3>
+<p>Die Applikation spricht mit den Hyper-V-Clusterknoten ausschließlich per
+WinRM/PowerShell-Remoting (<code>winrm.Session</code>, siehe
+<code>backend/app/services/hyperv_service.py</code>) — nie per SMB oder RPC direkt.
+Ohne einen laufenden, erreichbaren WinRM-HTTPS-Listener lässt sich der
+Cluster in <strong>Settings &gt; Hyper-V-Hosts</strong> nicht hinzufügen; ein typischer
+Fehler dabei: <code>Host &#39;&lt;IP&gt;&#39; ist auf Port 5986 nicht erreichbar: timed out</code>
+— das ist ein reiner TCP-Verbindungsfehler, tritt also auf, <strong>bevor</strong>
+überhaupt Zugangsdaten geprüft werden (Listener fehlt, Firewall blockiert,
+oder Netzwerkpfad/VLAN-Trennung).</p>
+<p><strong>Auf JEDEM Clusterknoten</strong> (nicht nur einem — welcher Knoten gerade den
+Cluster Name Object (CNO) besitzt, kann wechseln), als Administrator:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code># WinRM-Dienst aktivieren (meist bereits per Default aktiv)
 Enable-PSRemoting -Force
 
 Get-ChildItem -Path Cert:\LocalMachine\My</code></pre>
-      </div>
-      <p>Ein Failover-Cluster legt dort bereits automatisch erzeugte Zertifikate an (z.B.
-      <code>CN=&lt;GUID&gt;.TLS</code> oder <code>CN=CLIUSR</code>) — die sind <strong>nicht</strong> geeignet,
-      das sind interne Cluster-Kommunikations-/Dienstkonto-Zertifikate, keine Host-Zertifikate für einen
-      WinRM-Listener.</p>
-
-      <div class="callout warn">
-        <span class="callout-label">Wichtig bei einem Failover-Cluster</span>
-        <p>Wird der Cluster in der GUI über die Adresse des <strong>Cluster Name Object (CNO)</strong>
-        angesprochen (empfohlen, statt eines einzelnen physischen Knotens), landet jede WinRM-Verbindung bei
-        genau dem Knoten, der die Cluster-Group gerade besitzt — je nach Failover-Status kann das
-        <strong>jeder</strong> Knoten sein. Das Zertifikat <strong>jedes einzelnen</strong> Knotens muss
-        deshalb zusätzlich zur eigenen Identität auch die CNO-Adresse als Subject Alternative Name (SAN)
-        enthalten. Beispiel: CNO <code>10.93.70.110</code>, Knoten <code>10.93.70.111</code>/<code>.112</code>
-        — <strong>beide</strong> Knoten-Zertifikate brauchen <code>.110</code> zusätzlich zur eigenen Adresse
-        als SAN.</p>
-      </div>
-
-      <div class="callout warn">
-        <span class="callout-label">Stolperstein bei Verbindung per IP-Adresse</span>
-        <p><code>New-SelfSignedCertificate -DnsName &lt;ip-literal&gt;</code> schreibt eine IP-Adresse als
-        <strong>DNS-Typ</strong>-SAN-Eintrag (<code>DNS:10.93.70.110</code>), nicht als
-        <strong>IP-Address-Typ</strong>-Eintrag. Die TLS-Validierung dieser App (Python/OpenSSL) akzeptiert
-        für eine Verbindung per IP-Adresse aber ausschließlich echte <code>IP Address:</code>-Einträge — ein
-        optisch identischer <code>DNS:</code>-Eintrag genügt <strong>nicht</strong> und führt zu
-        <code>SSLCertVerificationError: IP address mismatch</code>, obwohl die IP scheinbar korrekt im
-        Zertifikat steht (live verifiziert). Bei Verbindung per <strong>Hostname</strong> tritt das Problem
-        nicht auf. Bei Verbindung per IP-Adresse (z.B. weil für den CNO kein DNS-Eintrag existiert) muss
-        stattdessen <code>certreq</code> mit einer <code>.inf</code>-Datei verwendet werden, die echte
-        <code>ipaddress=</code>-SAN-Einträge erzeugt:</p>
-      </div>
-
-      <div class="code-block">
-        <span class="code-label">PowerShell — auf JEDEM Knoten einzeln, mit der eigenen $ownIp</span>
-        <pre><code>$hostname = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
+</div>
+<p>Ein Failover-Cluster legt dort bereits automatisch erzeugte Zertifikate an
+(z.B. <code>CN=&lt;GUID&gt;.TLS</code> oder <code>CN=CLIUSR</code>) — die sind <strong>nicht</strong> geeignet, das
+sind interne Cluster-Kommunikations-/Dienstkonto-Zertifikate, keine
+Host-Zertifikate für einen WinRM-Listener.</p>
+<p><strong>Wichtig bei einem Failover-Cluster:</strong> Wird der Cluster in der GUI über
+die Adresse des <strong>Cluster Name Object (CNO)</strong> angesprochen (empfohlen,
+statt eines einzelnen physischen Knotens — sonst fällt die Verwaltung
+beim Ausfall/Failover dieses einen Knotens komplett aus), landet jede
+WinRM-Verbindung bei genau dem Knoten, der die Cluster-Group gerade
+besitzt — je nach Failover-Status kann das <strong>jeder</strong> der Knoten sein. Das
+Zertifikat <strong>jedes einzelnen</strong> Knotens muss deshalb zusätzlich zur eigenen
+Identität auch die CNO-Adresse als Subject Alternative Name (SAN)
+enthalten, sonst schlägt die Verbindung fehl, sobald die Cluster-Group auf
+einen anderen Knoten wechselt. Beispiel: CNO <code>10.93.70.110</code>, Knoten
+<code>10.93.70.111</code>/<code>10.93.70.112</code> — <strong>beide</strong> Knoten-Zertifikate brauchen
+<code>.110</code> zusätzlich zur eigenen Adresse als SAN.</p>
+<p><strong>Stolperstein bei Verbindung per IP-Adresse:</strong>
+<code>New-SelfSignedCertificate -DnsName &lt;ip-literal&gt;</code> schreibt eine IP-Adresse
+als <strong>DNS-Typ</strong>-SAN-Eintrag (<code>DNS:10.93.70.110</code>), nicht als
+<strong>IP-Address-Typ</strong>-Eintrag. Die von dieser App verwendete TLS-Validierung
+(Python/OpenSSL) akzeptiert für eine Verbindung per IP-Adresse aber
+ausschließlich echte <code>IP Address:</code>-Einträge — ein optisch identischer
+<code>DNS:</code>-Eintrag genügt <strong>nicht</strong> und führt zu
+<code>SSLCertVerificationError: IP address mismatch</code>, obwohl die IP scheinbar
+korrekt im Zertifikat steht (live verifiziert). Wird der Cluster in der
+GUI stattdessen per <strong>Hostname</strong> angesprochen, tritt das Problem nicht auf
+— dann genügt <code>New-SelfSignedCertificate -DnsName $hostname, $cnoHostname</code>. Bei Verbindung per IP-Adresse (z.B. weil für den CNO kein
+DNS-Eintrag existiert) muss stattdessen <code>certreq</code> mit einer <code>.inf</code>-Datei
+verwendet werden, die echte <code>ipaddress=</code>-SAN-Einträge erzeugt:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code># Auf JEDEM Knoten einzeln ausfuehren, jeweils mit der eigenen $ownIp:
+$hostname = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
 $ownIp    = "10.93.70.111"   # auf dem jeweils anderen Knoten: 10.93.70.112 usw.
 $cnoIp    = "10.93.70.110"   # IP/Hostname des Cluster Name Object
 
@@ -507,9 +493,9 @@ ValidityPeriodUnits = 5
 
 [Extensions]
 2.5.29.17 = "{text}"
-_continue_ = "dns=$hostname&"
-_continue_ = "ipaddress=$ownIp&"
-_continue_ = "ipaddress=$cnoIp&"
+_continue_ = "dns=$hostname&amp;"
+_continue_ = "ipaddress=$ownIp&amp;"
+_continue_ = "ipaddress=$cnoIp&amp;"
 
 [EnhancedKeyUsageExtension]
 OID=1.3.6.1.5.5.7.3.1
@@ -519,16 +505,19 @@ certreq -new $infPath $cerPath
 $cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq "CN=$hostname" } |
     Sort-Object NotBefore -Descending | Select-Object -First 1
 $cert.Thumbprint</code></pre>
-      </div>
-      <p>Kein Failover-Cluster, oder Verbindung per Hostname statt IP: einfacher via
-      <code>$cert = New-SelfSignedCertificate -DnsName $hostname, $cnoHostname -CertStoreLocation
-      Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)</code> — dann direkt mit dem Listener-Schritt
-      unten weitermachen. Von der internen PKI ausgestellte Zertifikate sind gegenüber beiden selbstsignierten
-      Varianten vorzuziehen — solange auch sie beide Adressen als SAN tragen.</p>
-
-      <div class="code-block">
-        <span class="code-label">PowerShell — Listener einrichten (alten zuerst entfernen, falls vorhanden)</span>
-        <pre><code>Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match "Transport=HTTPS" } |
+</div>
+<p>(Kein Failover-Cluster, oder Verbindung per Hostname statt IP: einfacher
+via <code>$cert = New-SelfSignedCertificate -DnsName $hostname, $cnoHostname -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)</code>
+— dann direkt mit dem Listener-Schritt unten weitermachen.)</p>
+<p>Von der internen PKI ausgestellte Zertifikate sind gegenüber beiden
+selbstsignierten Varianten vorzuziehen (siehe Kasten weiter unten) —
+solange auch sie sowohl die eigene Knoten-Identität als auch die
+CNO-Adresse als SAN tragen.</p>
+<p><strong>Listener einrichten</strong> — falls bereits einer existiert (z.B. von einem
+vorherigen Versuch mit falschem Zertifikat), erst entfernen:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match "Transport=HTTPS" } |
     Remove-Item -Recurse -Force
 New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * `
     -CertificateThumbprint $cert.Thumbprint -Force
@@ -538,261 +527,279 @@ Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
 New-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow
 
 # Nur noetig, wenn HVNB_WINRM_TRANSPORT=credssp (der in dieser App
-# empfohlene Standard -- vermeidet das klassische WinRM-"Double-Hop"-
-# Problem, falls ein Remote-Befehl seinerseits ein weiteres
-# Netzwerkziel erreichen muss):
+# empfohlene Standard, siehe .env-Beispiel in Abschnitt 5 -- CredSSP
+# vermeidet das klassische WinRM-"Double-Hop"-Problem, falls ein
+# Remote-Befehl seinerseits auf ein weiteres Netzwerkziel zugreifen muss):
 Enable-WSManCredSSP -Role Server</code></pre>
-      </div>
-
-      <div class="callout warn">
-        <span class="callout-label">Zertifikat-Vertrauen im Container einrichten</span>
-        <p>Die App validiert das WinRM-Zertifikat bei HTTPS strikt (<code>server_cert_validation="validate"</code>)
-        — der Container kennt eine interne CA oder ein selbstsigniertes Zertifikat aber standardmäßig nicht,
-        die Verbindung schlägt sonst trotz korrekt eingerichtetem Listener fehl.</p>
-      </div>
-
-      <p>Bei einer internen CA reicht es, einmalig nur den CA-ROOT zu exportieren — das deckt dann automatisch
-      ALLE damit ausgestellten Knoten-Zertifikate ab. Bei selbstsignierten Zertifikaten muss dagegen
-      <strong>jeder Knoten</strong> sein eigenes (öffentliches!) Zertifikat exportieren.</p>
-
-      <div class="callout warn">
-        <span class="callout-label">Stolperstein bei certreq</span>
-        <p><code>$cerPath</code> (die Ausgabedatei aus dem <code>certreq -new</code>-Aufruf oben) <strong>nicht</strong>
-        direkt für <code>certutil -encode</code> verwenden — live beobachtet, dass diese Datei statt des
-        fertigen Zertifikats eine unfertige Zertifikatsanforderung (CSR) enthielt, obwohl das Zertifikat selbst
-        korrekt im Speicher erzeugt und am Listener gebunden wurde. Daraus erzeugt <code>certutil -encode</code>
-        eine strukturell gültig aussehende, aber für OpenSSL unlesbare PEM-Datei
-        (<code>SSLError: [X509] PEM lib</code>) — sichtbar erst beim nächsten Verbindungsversuch, nicht beim
-        Export selbst. Immer stattdessen frisch aus dem installierten Zertifikatsobjekt exportieren.</p>
-      </div>
-
-      <div class="code-block">
-        <span class="code-label">PowerShell — auf dem Hyper-V-Host</span>
-        <pre><code>Export-Certificate -Cert $cert -FilePath C:\temp\winrm-host111.cer
+</div>
+<p><strong>Zertifikat-Vertrauen im Container einrichten:</strong> die App validiert das
+WinRM-Zertifikat bei HTTPS strikt (<code>server_cert_validation=&quot;validate&quot;</code>,
+siehe <code>hyperv_service.py</code>) — der Container kennt eine interne CA oder ein
+selbstsigniertes Zertifikat aber standardmäßig nicht, die Verbindung
+schlägt sonst trotz korrekt eingerichtetem Listener fehl. Lösung:
+<code>HVNB_WINRM_CA_TRUST_PATH</code> auf eine PEM-Datei zeigen lassen, die das
+Zertifikat als zusätzlich vertrauenswürdig hinterlegt (pywinrm
+<code>ca_trust_path</code>, additiv zum normalen System-Truststore).</p>
+<p>Bei einer internen CA reicht es, einmalig nur den CA-ROOT zu exportieren
+— das deckt dann automatisch ALLE damit ausgestellten Knoten-Zertifikate
+ab, statt jeden Knoten einzeln zu pflegen. Bei selbstsignierten
+Zertifikaten muss dagegen <strong>jeder Knoten</strong> sein eigenes (öffentliches!)
+Zertifikat exportieren.</p>
+<p><strong>Stolperstein bei <code>certreq</code>:</strong> <code>$cerPath</code> (die beim <code>certreq -new</code>-Aufruf
+oben angegebene Ausgabedatei) <strong>nicht</strong> direkt für <code>certutil -encode</code>
+verwenden — live beobachtet, dass diese Datei statt des fertigen
+Zertifikats eine unfertige Zertifikatsanforderung (CSR) enthielt, obwohl
+das Zertifikat selbst korrekt im Speicher erzeugt und am Listener
+gebunden wurde. <code>certutil -encode</code> darauf angewendet erzeugt eine
+strukturell gültig aussehende, aber für OpenSSL unlesbare PEM-Datei
+(<code>SSLError: [X509] PEM lib</code>), und zwar erst beim nächsten
+Verbindungsversuch sichtbar, nicht beim Export selbst. Immer stattdessen
+frisch aus dem tatsächlich installierten Zertifikatsobjekt exportieren —
+unabhängig davon, ob es per <code>certreq</code> oder <code>New-SelfSignedCertificate</code>
+erzeugt wurde (<code>$cert</code> kommt aus dem <code>Get-ChildItem</code>-Lookup weiter oben):</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Export-Certificate -Cert $cert -FilePath C:\temp\winrm-host111.cer
 certutil -encode C:\temp\winrm-host111.cer C:\temp\winrm-host111.pem
 
-# Vor dem Uebertragen IMMER lokal verifizieren, dass die Datei ein echtes
-# Zertifikat mit der erwarteten SAN enthaelt:
-certutil -dump C:\temp\winrm-host111.cer | Select-String "10.93.70"
-# Erwartet: "IP Address=10.93.70.111" und "IP Address=10.93.70.110"
-# .pem-Datei(en) per RDP-Dateitransfer o.ae. auf den WSL2-Host uebertragen.</code></pre>
-      </div>
-      <p><code>/etc/hvnb/certs</code> im Container ist bereits ein <strong>persistentes benanntes Volume</strong>
-      (<code>hvnb-certs</code>, dort liegt auch schon das TLS-Zertifikat der GUI) — dafür ist also keine
-      zusätzliche Zeile in <code>docker-compose.yml</code> nötig, die Datei kann direkt per <code>podman cp</code>
-      in den laufenden Container gelegt werden.</p>
-      <div class="code-block">
-        <span class="code-label">Bash — auf dem WSL2-Host</span>
-        <pre><code># Datei z.B. per Windows-Explorer unter
+# Vor dem Uebertragen IMMER lokal verifizieren, dass die Datei ein
+# echtes Zertifikat mit der erwarteten SAN enthaelt -- haette beide
+# oben beschriebenen Fehlerbilder (DNS- statt IP-Typ, kaputte PEM aus
+# certreq) sofort hier erkannt, statt erst beim fehlgeschlagenen
+# Verbindungsversuch:
+certutil -dump C:\temp\winrm-host111.cer | Select-String "10.93.70"</code></pre>
+</div>
+<p>Erwartete Ausgabe: <code>IP Address=10.93.70.111</code> (eigene Adresse) und
+<code>IP Address=10.93.70.110</code> (CNO-Adresse) — als <code>IP Address=</code>, nicht als
+reiner Text im DNS-Feld.</p>
+<p>.pem-Datei(en) per RDP-Dateitransfer o.ae. auf den WSL2-Host übertragen.</p>
+<p><code>/etc/hvnb/certs</code> im Container ist bereits ein <strong>persistentes benanntes
+Volume</strong> (<code>hvnb-certs</code>, dort liegt auch schon das TLS-Zertifikat der GUI)
+— dafür ist also keine zusätzliche Zeile in <code>docker-compose.yml</code> nötig,
+die Datei kann direkt per <code>podman cp</code> in den laufenden Container gelegt
+werden:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code># Auf dem WSL2-Host: Datei(en) z.B. per Windows-Explorer unter
 # \\wsl.localhost\&lt;Distro-Name&gt;\home\&lt;Benutzer&gt;\ ablegen, dann:
-podman cp ~/winrm-ca.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem
-
-# .env, im Projektverzeichnis:
-echo "HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem" >> .env
+podman cp ~/winrm-ca.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem</code></pre>
+</div>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code># .env, im Projektverzeichnis:
+echo "HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem" &gt;&gt; .env
 podman-compose up -d --force-recreate</code></pre>
-      </div>
-      <div class="callout warn">
-        <span class="callout-label">Live bestätigt</span>
-        <p><code>podman-compose up -d</code> ohne <code>--force-recreate</code> erkennt eine reine
-        <code>.env</code>-Änderung nicht zuverlässig und lässt den bestehenden Container dann einfach
-        unverändert weiterlaufen, ohne Fehlermeldung. Mit
-        <code>podman inspect hvnb-backup --format '{{.Created}}'</code> vor/nachher prüfen.</p>
-      </div>
-      <p>Da <code>hvnb-certs</code> ein benanntes Volume ist, übersteht die Datei den Container-Neustart
-      unabhängig von der Reihenfolge der beiden Befehle. Settings &gt; Updates zeigt anschließend unter "WinRM
-      CA-Trust-Datei" den konfigurierten Pfad zur Kontrolle an.</p>
-
-      <div class="callout">
-        <span class="callout-label">Mehrere Knoten mit jeweils eigenem, selbstsigniertem Zertifikat</span>
-        <p><code>HVNB_WINRM_CA_TRUST_PATH</code> zeigt auf genau EINEN Pfad — die einzelnen PEMs müssen daher
-        vorher zu einer einzigen Bundle-Datei zusammengefügt werden (eine PEM-Datei kann beliebig viele
-        aneinandergehängte Zertifikate enthalten, genau wie ein öffentliches CA-Bundle). Die obigen Befehle
-        <strong>nicht</strong> pro Host wiederholen (überschreibt sonst jedes Mal die vorherige Datei) —
-        stattdessen einmalig:</p>
-      </div>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code># Alle einzeln uebertragenen Host-PEMs in einem Ordner sammeln, z.B.
+</div>
+<p><strong>Live bestätigt:</strong> <code>podman-compose up -d</code> ohne <code>--force-recreate</code> erkennt
+eine reine <code>.env</code>-Änderung nicht zuverlässig und lässt den bestehenden
+Container unverändert laufen (kein Fehler, aber die neue Variable kommt
+nie an) — <code>--force-recreate</code> erzwingt das Neuerstellen unabhängig von der
+Diff-Erkennung. Mit <code>podman inspect hvnb-backup --format &#39;{{.Created}}&#39;</code>
+lässt sich der Zeitstempel vorher/nachher vergleichen, um das zu bestätigen.</p>
+<p>Da <code>hvnb-certs</code> ein benanntes Volume ist, übersteht die Datei den
+Container-Neustart in Schritt 2 unabhängig von der Reihenfolge der beiden
+Befehle. Settings &gt; Updates zeigt anschließend unter &quot;WinRM
+CA-Trust-Datei&quot; den konfigurierten Pfad zur Kontrolle an.</p>
+<p><strong>Mehrere Knoten mit jeweils eigenem, selbstsigniertem Zertifikat</strong> (kein
+gemeinsamer CA-Root): <code>HVNB_WINRM_CA_TRUST_PATH</code> zeigt auf genau EINEN
+Pfad — die einzelnen PEMs müssen daher vorher zu einer einzigen
+Bundle-Datei zusammengefügt werden (eine PEM-Datei kann beliebig viele
+aneinandergehängte Zertifikate enthalten, genau wie ein öffentliches
+CA-Bundle). Die obigen Befehle also <strong>nicht</strong> pro Host wiederholen
+(überschreibt sonst jedes Mal die vorherige Datei) — stattdessen einmalig:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code># Alle einzeln uebertragenen Host-PEMs in einem Ordner sammeln, z.B.
 # ~/winrm-certs/host1.pem, host2.pem, ... , dann zu einer Datei
 # zusammenfassen:
-cat ~/winrm-certs/*.pem > ~/winrm-ca-bundle.pem
+cat ~/winrm-certs/*.pem &gt; ~/winrm-ca-bundle.pem
 podman cp ~/winrm-ca-bundle.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem</code></pre>
-      </div>
-      <p>Mit einer internen CA reicht dagegen der
-      eine CA-Root für alle Knoten.</p>
-
-      <div class="callout">
-        <span class="callout-label">Verifizieren: echter IP-Address-SAN-Typ ausgeliefert?</span>
-        <p>Von der WSL2-Distribution aus, gegen die CNO-Adresse selbst — Ausgabe muss
-        <code>IP Address:10.93.70.110</code> enthalten (nicht <code>DNS:10.93.70.110</code>, siehe
-        Stolperstein oben):</p>
-      </div>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>openssl s_client -connect 10.93.70.110:5986 -showcerts &lt;/dev/null 2>/dev/null | \
+</div>
+<p>Mit einer internen CA reicht dagegen der eine, einmalig exportierte
+CA-Root für alle Knoten — kein Zusammenführen nötig.</p>
+<p><strong>Verifizieren, dass die CNO-Adresse jetzt als echter IP-Address-SAN-Typ
+ausgeliefert wird</strong> (nicht als <code>DNS:</code>-Eintrag, siehe Stolperstein oben) —
+von der WSL2-Distribution aus, gegen die CNO-Adresse selbst:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>openssl s_client -connect 10.93.70.110:5986 -showcerts &lt;/dev/null 2&gt;/dev/null | \
     openssl x509 -noout -text | grep -A2 "Subject Alternative Name"</code></pre>
-      </div>
-
-      <p>Zusätzlich: Der verbindende Account (beim Hinzufügen des Clusters in der GUI hinterlegt) braucht
-      <strong>lokale Administratorrechte</strong> auf jedem Knoten (Begründung und konkrete Definition im
-      Kasten unten). <code>HVNB_WINRM_TRANSPORT</code>
-      (Abschnitt 5) muss zum serverseitig aktivierten Verfahren passen — <code>credssp</code> erfordert exakt
-      den <code>Enable-WSManCredSSP</code>-Schritt, <code>ntlm</code> kommt ohne diesen Schritt aus, unterstützt
-      aber keine Double-Hop-Szenarien.</p>
-
-      <h3>Das Cluster-Konto: welche Rechte genau, und keine mehr</h3>
-      <p>Der Account, der beim Hinzufügen eines Clusters in der GUI hinterlegt wird, sollte
-      <strong>nicht</strong> das eingebaute <code>Administrator</code>-Konto der Domäne sein (in
-      Testumgebungen oft bequem der Fall, real angetroffen z.&nbsp;B. als
-      <code>HYPERVDEMO\Administrator</code> mit Mitgliedschaft in Domain Admins, Enterprise Admins und Schema
-      Admins) — das ist um Größenordnungen mehr Rechteumfang, als die App tatsächlich braucht, und macht
-      diesen Server bei Kompromittierung zu einem Sprungbrett für die gesamte Domäne bzw. den gesamten
-      Forest.</p>
-
-      <div class="callout">
-        <span class="callout-label">Warum lokale Administratorrechte trotzdem nötig sind</span>
-        <p>Die Gruppe <strong>Hyper-V-Administratoren</strong>, die für reines VM-Management ausreichen würde,
-        genügt hier nicht. Die App nutzt über WinRM neben reinen Hyper-V-Cmdlets (<code>Get-VM</code>,
-        <code>New-VM</code>, <code>Checkpoint-VM</code>, <code>Add/Remove-VMHardDiskDrive</code> usw. — dafür
-        würde Hyper-V-Administratoren reichen) auch Disk-/iSCSI-/Partitions-Cmdlets für den Restore-Workflow
-        (<code>Connect-IscsiTarget</code>, <code>Mount-VHD</code>/<code>Mount-DiskImage</code>,
-        <code>Set-Disk</code>, <code>Add/Remove-PartitionAccessPath</code>) sowie Cluster-Abfragen
-        (<code>Get-ClusterSharedVolume</code>, <code>Get-ClusterNode</code>,
-        <code>Add-ClusterVirtualMachineRole</code>). Für die Disk-/iSCSI-Verwaltung gibt es unter Windows
-        <strong>keine</strong> eigene, schmalere eingebaute Gruppe (anders als bei Hyper-V) — diese Cmdlets
-        verlangen lokale Administratorrechte. Volle Cluster-Verwaltung ist davon i.&nbsp;d.&nbsp;R. bereits mit
-        abgedeckt, da Failover Clustering lokale Administratoren der Knoten standardmäßig als
-        Cluster-Administratoren behandelt; im Zweifel nach Einrichtung mit
-        <code>(Get-Cluster).GetAccessAllowed()</code> bzw. in Failover Cluster Manager unter
-        "Cluster-Berechtigungen" verifizieren.</p>
-      </div>
-
-      <p>Das eigentliche Least-Privilege-Prinzip liegt also nicht darin, lokale Adminrechte zu vermeiden
-      (technisch für den Restore-Workflow nicht möglich), sondern darin, <strong>denselben Rechteumfang auf
-      den kleinstmöglichen Geltungsbereich zu begrenzen</strong> — konkret:</p>
-      <ol>
-        <li><strong>Dediziertes Konto</strong> anlegen, ausschließlich für diese App, z.&nbsp;B.
-        <code>HYPERVDEMO\svc-hvnb-backup</code> — kein Personenkonto, kein für andere Zwecke mitgenutztes
-        Konto.</li>
-        <li><strong>Keine</strong> Mitgliedschaft in Domain Admins, Enterprise Admins, Schema Admins oder
-        einer sonstigen domänenweit privilegierten Gruppe. Das Konto ist ein ganz gewöhnliches Domänenkonto
-        ohne besondere AD-Rechte.</li>
-        <li>Lokale Administratorrechte <strong>nur</strong> auf den tatsächlich verwalteten Maschinen — allen
-        Hyper-V-Clusterknoten sowie dem Restore-Proxy-Host —, nicht auf sonstigen Servern oder Arbeitsplätzen.
-        Am saubersten über eine Sicherheitsgruppe (z.&nbsp;B. <code>HVNB-Backup-Hosts</code>) mit genau diesen
-        Rechnern als Mitglieder, kombiniert mit einer GPO über <strong>Restricted Groups</strong>
-        (Computer-Konfiguration → Richtlinien → Sicherheitseinstellungen → Restricted Groups →
-        <code>Administratoren</code> → <code>HYPERVDEMO\svc-hvnb-backup</code> hinzufügen), die per
-        Sicherheitsfilterung nur auf diese Gruppe wirkt. Reine manuelle
-        <code>net localgroup Administratoren /add</code>-Pflege pro Host funktioniert ebenso, ist aber bei
-        mehreren Knoten fehleranfälliger.</li>
-        <li><strong>Interaktive Anmeldung verweigern</strong>, da das Konto ausschließlich über WinRM
-        verwendet wird (GPO: "Anmelden als Batchauftrag verweigern" bzw. "Lokal anmelden verweigern" /
-        "Anmelden über Remotedesktopdienste verweigern" für dieses Konto auf denselben Zielrechnern) —
-        reduziert den Nutzen eines gestohlenen Passworts für alles außer dem WinRM-Zugriff selbst, den die App
-        ohnehin schon hat.</li>
-        <li><strong>Kein gMSA</strong> (Group Managed Service Account): CredSSP übergibt das tatsächliche
-        Passwort zur Delegation, und dieses wird der App selbst aus ihrer eigenen, hinterlegten Konfiguration
-        übermittelt — ein gMSA verwaltet sein Passwort selbst und macht es nicht in dieser Form auslesbar, ist
-        also für dieses Zugriffsmuster nicht geeignet. Stattdessen: starkes, für dieses eine Konto
-        einzigartiges Passwort, regelmäßig rotiert.</li>
-        <li>Nach Einrichtung verifizieren, dass das Konto tatsächlich <strong>nur</strong> auf den vorgesehenen
-        Hosts als Administrator eingetragen ist (<code>net localgroup Administratoren</code> auf jedem Knoten)
-        und in keiner der drei genannten Domain-/Enterprise-/Schema-Admin-Gruppen steckt
-        (<code>Get-ADUser svc-hvnb-backup -Properties MemberOf</code>).</li>
-      </ol>
-
-      <p><strong>Verbindung isoliert testen</strong>, bevor der Cluster in der GUI hinzugefügt wird — zuerst
-      lokal auf dem Hyper-V-Host selbst:</p>
-      <div class="code-block">
-        <span class="code-label">PowerShell</span>
-        <pre><code>Test-NetConnection -ComputerName localhost -Port 5986</code></pre>
-      </div>
-      <p>Danach von der WSL2-Distribution aus (dort, wo der Container läuft), um den tatsächlichen
-      Netzwerkpfad zu prüfen:</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>timeout 3 bash -c "echo > /dev/tcp/&lt;Hyper-V-Host-IP&gt;/5986" && echo "erreichbar" || echo "NICHT erreichbar"</code></pre>
-      </div>
-      <p>Schlägt nur der zweite Test fehl (lokal auf dem Host funktioniert es aber): Firewall oder
-      Netzwerksegmentierung (VLAN) zwischen WSL2-Host und Hyper-V-Cluster prüfen — genau dieses Muster trat
-      bereits beim Code-Bezug in der Referenzumgebung auf, siehe Abschnitt 4c.</p>
-    </section>
-
-    <section id="s2">
-      <h2><span class="step-num">2</span>WSL2 aktivieren und Linux-Distribution einrichten</h2>
-      <p>PowerShell als Administrator:</p>
-      <div class="code-block">
-        <span class="code-label">PowerShell</span>
-        <pre><code>Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
+</div>
+<p>Erwartete Ausgabe enthält <code>IP Address:10.93.70.110</code> — erscheint
+stattdessen <code>DNS:10.93.70.110</code>, wurde das Zertifikat auf dem gerade
+antwortenden Knoten noch mit <code>New-SelfSignedCertificate -DnsName &lt;ip-literal&gt;</code> statt der <code>certreq</code>-Methode oben erzeugt.</p>
+<p>Zusätzlich:</p>
+<ul>
+<li>Der verbindende Account (in der GUI beim Hinzufügen des Clusters
+hinterlegt) braucht <strong>lokale Administratorrechte</strong> auf jedem Knoten
+(Details und Begründung im Kasten unten).</li>
+<li><code>HVNB_WINRM_TRANSPORT</code> (Abschnitt 5) muss zum serverseitig aktivierten
+Verfahren passen — <code>credssp</code> erfordert exakt den obigen
+<code>Enable-WSManCredSSP -Role Server</code>-Schritt, <code>ntlm</code> kommt ohne diesen
+Schritt aus (nur Listener + Firewall nötig), unterstützt aber keine
+Double-Hop-Szenarien.</li>
+</ul>
+<h3>Das Cluster-Konto: welche Rechte genau, und keine mehr</h3>
+<p>Der Account, der beim Hinzufügen eines Clusters in der GUI hinterlegt wird,
+sollte <strong>nicht</strong> das eingebaute <code>Administrator</code>-Konto der Domäne sein (in
+Testumgebungen oft bequem der Fall, real angetroffen z. B. als
+<code>HYPERVDEMO\Administrator</code> mit Mitgliedschaft in Domain Admins, Enterprise
+Admins und Schema Admins) — das ist um Größenordnungen mehr Rechteumfang,
+als die App tatsächlich braucht, und macht diesen Server bei Kompromittierung
+zu einem Sprungbrett für die gesamte Domäne bzw. den gesamten Forest.</p>
+<div class="callout">
+<span class="callout-label">Warum lokale Administratorrechte trotzdem nötig sind</span>
+<p>die
+&quot;Hyper-V-Administratoren&quot;-Gruppe, die für reines VM-Management ausreichen
+würde, genügt hier nicht. Die App nutzt über WinRM neben reinen
+Hyper-V-Cmdlets (<code>Get-VM</code>, <code>New-VM</code>, <code>Checkpoint-VM</code>, <code>Add/Remove-VMHardDiskDrive</code>
+usw. — dafür würde Hyper-V-Administratoren reichen) auch
+Disk-/iSCSI-/Partitions-Cmdlets für den Restore-Workflow (<code>Connect-IscsiTarget</code>,
+<code>Mount-VHD</code>/<code>Mount-DiskImage</code>, <code>Set-Disk</code>, <code>Add/Remove-PartitionAccessPath</code>)
+sowie Cluster-Abfragen (<code>Get-ClusterSharedVolume</code>, <code>Get-ClusterNode</code>,
+<code>Add-ClusterVirtualMachineRole</code>). Für die Disk-/iSCSI-Verwaltung gibt es unter
+Windows <strong>keine</strong> eigene, schmalere eingebaute Gruppe (anders als bei
+Hyper-V) — diese Cmdlets verlangen lokale Administratorrechte. Volle
+Cluster-Verwaltung ist davon i. d. R. bereits mit abgedeckt, da Failover
+Clustering lokale Administratoren der Knoten standardmäßig als
+Cluster-Administratoren behandelt; im Zweifel nach Einrichtung mit
+<code>(Get-Cluster).GetAccessAllowed()</code> bzw. in Failover Cluster Manager unter
+&quot;Cluster-Berechtigungen&quot; verifizieren.</p>
+</div>
+<p>Das eigentliche Least-Privilege-Prinzip liegt also nicht darin, lokale
+Adminrechte zu vermeiden (technisch für den Restore-Workflow nicht möglich),
+sondern darin, <strong>denselben Rechteumfang auf den kleinstmöglichen
+Geltungsbereich zu begrenzen</strong> — konkret:</p>
+<ol>
+<li><strong>Dediziertes Konto</strong> anlegen, ausschließlich für diese App, z. B.
+<code>HYPERVDEMO\svc-hvnb-backup</code> — kein Personenkonto, kein für andere Zwecke
+mitgenutztes Konto.</li>
+<li><strong>Keine</strong> Mitgliedschaft in Domain Admins, Enterprise Admins, Schema
+Admins oder einer sonstigen domänenweit privilegierten Gruppe. Das Konto
+ist ein ganz gewöhnliches Domänenkonto ohne besondere AD-Rechte.</li>
+<li>Lokale Administratorrechte <strong>nur</strong> auf den tatsächlich verwalteten
+Maschinen — allen Hyper-V-Clusterknoten sowie dem Restore-Proxy-Host —,
+nicht auf sonstigen Servern oder Arbeitsplätzen. Am saubersten über eine
+Sicherheitsgruppe (z. B. <code>HVNB-Backup-Hosts</code>) mit genau diesen Rechnern
+als Mitglieder, kombiniert mit einer GPO über <strong>Restricted Groups</strong>
+(Computer-Konfiguration → Richtlinien → Sicherheitseinstellungen →
+Restricted Groups → <code>Administratoren</code> → <code>HYPERVDEMO\svc-hvnb-backup</code>
+hinzufügen), die per Sicherheitsfilterung nur auf diese Gruppe wirkt.
+Reine manuelle <code>net localgroup Administratoren /add</code>-Pflege pro Host
+funktioniert ebenso, ist aber bei mehreren Knoten fehleranfälliger.</li>
+<li><strong>Interaktive Anmeldung verweigern</strong>, da das Konto ausschließlich über
+WinRM verwendet wird (GPO: &quot;Anmelden als Batchauftrag verweigern&quot; bzw.
+&quot;Lokal anmelden verweigern&quot; / &quot;Anmelden über Remotedesktopdienste
+verweigern&quot; für dieses Konto auf denselben Zielrechnern) — reduziert den
+Nutzen eines gestohlenen Passworts für alles außer dem WinRM-Zugriff
+selbst, den die App ohnehin schon hat.</li>
+<li><strong>Kein gMSA</strong> (Group Managed Service Account): CredSSP übergibt das
+tatsächliche Passwort zur Delegation, und dieses wird der App selbst aus
+ihrer eigenen, hinterlegten Konfiguration übermittelt — ein gMSA verwaltet
+sein Passwort selbst und macht es nicht in dieser Form auslesbar, ist also
+für dieses Zugriffsmuster nicht geeignet. Stattdessen: starkes, für dieses
+eine Konto einzigartiges Passwort, regelmäßig rotiert.</li>
+<li>Nach Einrichtung verifizieren, dass das Konto tatsächlich <strong>nur</strong> auf den
+vorgesehenen Hosts als Administrator eingetragen ist (<code>net localgroup Administratoren</code> auf jedem Knoten) und in keiner der drei genannten
+Domain-/Enterprise-/Schema-Admin-Gruppen steckt (<code>Get-ADUser svc-hvnb-backup -Properties MemberOf</code>).</li>
+</ol>
+<p><strong>Verbindung isoliert testen</strong>, bevor der Cluster in der GUI hinzugefügt
+wird — zuerst lokal auf dem Hyper-V-Host selbst:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Test-NetConnection -ComputerName localhost -Port 5986</code></pre>
+</div>
+<p>Danach von der WSL2-Distribution aus (dort, wo der Container läuft), um
+den tatsächlichen Netzwerkpfad zu prüfen:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>timeout 3 bash -c "echo &gt; /dev/tcp/&lt;Hyper-V-Host-IP&gt;/5986" &amp;&amp; echo "erreichbar" || echo "NICHT erreichbar"</code></pre>
+</div>
+<p>Schlägt nur der zweite Test fehl (lokal auf dem Host aber funktioniert es):
+Firewall oder Netzwerksegmentierung (VLAN) zwischen WSL2-Host und
+Hyper-V-Cluster prüfen — genau dieses Muster (Server erreichbar,
+aber durch eine VLAN-Trennung vom App-Host aus nicht) trat bereits beim
+Code-Bezug in der Referenzumgebung auf, siehe Abschnitt 4c.</p>
+</section>
+<section id="s2">
+<h2><span class="step-num">2</span>WSL2 aktivieren und Linux-Distribution einrichten</h2>
+<p>PowerShell als Administrator:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
 Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
 Restart-Computer</code></pre>
-      </div>
-
-      <p>Nach dem Neustart eine Distribution installieren. Jede systemd-fähige, aktuelle Distribution
-      funktioniert — am einfachsten per eingebautem Ein-Zeiler:</p>
-      <div class="code-block">
-        <span class="code-label">PowerShell</span>
-        <pre><code>wsl --install -d Ubuntu-22.04</code></pre>
-      </div>
-
-      <div class="callout">
-        <span class="callout-label">Hinweis</span>
-        <p>Die real verifizierte Referenzumgebung nutzte Rocky Linux 10.2 statt Ubuntu — das betrifft nur den
-        WSL2-<strong>Host</strong>, nicht das Container-Image selbst, das unabhängig davon immer auf
-        <code>rockylinux:9</code> basiert. Die folgenden Befehle sind für Rocky/RHEL-artige Distributionen
-        (<code>dnf</code>) formuliert; unter Ubuntu/Debian <code>apt</code> statt <code>dnf</code> verwenden.</p>
-      </div>
-
-      <p><strong>Wichtige Voraussetzung für Schritt 9 (Container-Persistenz):</strong> systemd muss innerhalb der
-      WSL2-Distribution aktiv sein.</p>
-      <div class="code-block">
-        <span class="code-label">Bash — in der WSL2-Distro</span>
-        <pre><code>cat /etc/wsl.conf 2>/dev/null</code></pre>
-      </div>
-      <p>Falls kein <code>[boot]</code>-Abschnitt mit <code>systemd=true</code> vorhanden ist:</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>sudo tee -a /etc/wsl.conf > /dev/null << 'EOF'
+</div>
+<p>Nach dem Neustart eine Distribution installieren. Jede systemd-fähige,
+aktuelle Distribution funktioniert — am einfachsten per eingebautem
+Ein-Zeiler:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>wsl --install -d Ubuntu-22.04</code></pre>
+</div>
+<p>(Die real verifizierte Referenzumgebung nutzte Rocky Linux 10.2 statt
+Ubuntu — das betrifft nur den WSL2-<strong>Host</strong>, nicht das Container-Image
+selbst, das unabhängig davon immer auf <code>rockylinux:9</code> basiert. Die
+folgenden Befehle sind für Rocky/RHEL-artige Distributionen (<code>dnf</code>)
+formuliert; unter Ubuntu/Debian <code>apt</code> statt <code>dnf</code> und <code>openssl</code>/<code>git</code>/
+<code>podman</code> über die dort üblichen Paketnamen verwenden.)</p>
+<p><strong>Wichtige Voraussetzung für Schritt 6 (Container-Persistenz):</strong> systemd muss
+innerhalb der WSL2-Distribution aktiv sein. Prüfen bzw. aktivieren:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code># In der WSL2-Distro:
+cat /etc/wsl.conf 2&gt;/dev/null</code></pre>
+</div>
+<p>Falls kein <code>[boot]</code>-Abschnitt mit <code>systemd=true</code> vorhanden ist:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>sudo tee -a /etc/wsl.conf &gt; /dev/null &lt;&lt; 'EOF'
 [boot]
 systemd=true
 EOF</code></pre>
-      </div>
-      <p>Danach aus PowerShell einmal <code>wsl --shutdown</code> und die Distro neu öffnen, damit die Änderung greift.</p>
-    </section>
-
-    <section id="s3">
-      <h2><span class="step-num">3</span>Basis-Pakete installieren</h2>
-      <p>In der WSL2-Distribution:</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>sudo dnf install -y git podman
+</div>
+<p>Danach aus PowerShell einmal <code>wsl --shutdown</code> und die Distro neu öffnen,
+damit die Änderung greift.</p>
+</section>
+<section id="s3">
+<h2><span class="step-num">3</span>Basis-Pakete installieren</h2>
+<p>In der WSL2-Distribution:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>sudo dnf install -y git podman
 sudo dnf install -y python3-pip || true
 sudo pip3 install podman-compose</code></pre>
-      </div>
-      <p>Verifizieren:</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>git --version
+</div>
+<p>Verifizieren:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>git --version
 podman --version
 podman-compose --version</code></pre>
-      </div>
-    </section>
+</div>
+</section>
+<section id="s4">
+<h2><span class="step-num">4</span>Anwendungscode beziehen</h2>
+<p>Zwei Ebenen sind hier zu unterscheiden, die leicht durcheinandergeraten:</p>
+<ul>
+<li><strong>Interaktive Git-Nutzung auf dem Server</strong> (manuell <code>git clone</code>/<code>git pull</code>
+ausführen, z. B. um nachzuschauen oder das Repo für den ersten
+<code>podman-compose</code>-Aufruf lokal zu haben) — läuft über deinen eigenen
+SSH-Zugang (Abschnitt 4a).</li>
+<li><strong>Der Container selbst</strong> klont/pullt den Anwendungscode unabhängig davon
+bei jedem Start und jedem Auto-Update (<code>entrypoint.sh</code>/<code>updater.sh</code>,
+gesteuert über <code>HVNB_GIT_REPO_URL</code>) — dafür empfiehlt sich bei einem
+privaten Repository <strong>HTTPS mit einem Personal Access Token</strong> (Abschnitt
+4b), da dafür kein SSH-Schlüsselmaterial in den Container gemountet werden
+muss.</li>
+</ul>
+<h3>4a. SSH-Zugriff für interaktive Nutzung auf dem Server einrichten</h3>
+<p>Auf dem Windows-Server, in der WSL2-Distribution:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>ssh-keygen -t ed25519 -C "&lt;servername&gt;-interactive" -f ~/.ssh/hyperv_backup_github -N ""
 
-    <section id="s4">
-      <h2><span class="step-num">4</span>Anwendungscode beziehen</h2>
-      <p>Zwei Ebenen sind hier zu unterscheiden, die leicht durcheinandergeraten:</p>
-      <ul>
-        <li><strong>Interaktive Git-Nutzung auf dem Server</strong> (manuell <code>git clone</code>/<code>git pull</code> ausführen) — läuft über deinen eigenen SSH-Zugang (4a).</li>
-        <li><strong>Der Container selbst</strong> klont/pullt den Anwendungscode unabhängig davon bei jedem Start und jedem Auto-Update (<code>entrypoint.sh</code>/<code>updater.sh</code>, gesteuert über <code>HVNB_GIT_REPO_URL</code>) — dafür empfiehlt sich bei einem privaten Repository <strong>HTTPS mit einem Personal Access Token</strong> (4b).</li>
-      </ul>
-
-      <h3>4a. SSH-Zugriff für interaktive Nutzung auf dem Server einrichten</h3>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>ssh-keygen -t ed25519 -C "&lt;servername&gt;-interactive" -f ~/.ssh/hyperv_backup_github -N ""
-
-cat >> ~/.ssh/config << 'EOF'
+cat &gt;&gt; ~/.ssh/config &lt;&lt; 'EOF'
 Host github-hvnb
     HostName github.com
     User git
@@ -802,98 +809,118 @@ EOF
 chmod 600 ~/.ssh/config
 
 cat ~/.ssh/hyperv_backup_github.pub</code></pre>
-      </div>
-      <p>Den ausgegebenen öffentlichen Schlüssel bei GitHub hinterlegen — entweder unter dem eigenen Account
-      (Settings &gt; SSH and GPG keys) oder repo-gebunden als Deploy Key (Repository &gt; Settings &gt; Deploy keys
-      &gt; Add deploy key, Lesezugriff reicht).</p>
-      <p>Test und Erstklon:</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>ssh -T git@github-hvnb
+</div>
+<p>Den ausgegebenen öffentlichen Schlüssel bei GitHub hinterlegen — entweder
+unter dem eigenen Account (Settings &gt; SSH and GPG keys, falls der Server-
+Login einer Person zugeordnet ist) oder repo-gebunden als Deploy Key
+(Repository &gt; Settings &gt; Deploy keys &gt; Add deploy key, Lesezugriff reicht).</p>
+<p>Test und Erstklon:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>ssh -T git@github-hvnb
 git clone git@github-hvnb:&lt;ORG&gt;/&lt;REPO&gt;.git ~/hyperv-netapp-backup
 cd ~/hyperv-netapp-backup</code></pre>
-      </div>
-      <p>Dieser Checkout liefert die Compose-/Dockerfile-Dateien, um den Container in Abschnitt 6 überhaupt bauen
-      und starten zu können — er ist <strong>nicht</strong> dieselbe Quelle, aus der der Container selbst später
-      pullt (das regelt <code>HVNB_GIT_REPO_URL</code>, siehe 4b).</p>
-
-      <h3>4b. HTTPS + Personal Access Token für den Container-eigenen Pull</h3>
-      <p>Empfohlener Weg, damit die Instanz direkt von GitHub aktualisiert, ohne SSH-Schlüsselmaterial in den
-      Container mounten zu müssen.</p>
-      <ol>
-        <li>GitHub &gt; Settings &gt; Developer settings &gt; Fine-grained personal access tokens &gt; Generate new token.</li>
-        <li><strong>Repository access:</strong> nur auf das eine Repository beschränken (nicht "All repositories").</li>
-        <li><strong>Permissions:</strong> unter "Repository permissions" nur <strong>Contents: Read-only</strong> setzen.</li>
-        <li>Token erzeugen und den Wert einmalig kopieren (wird danach nicht mehr angezeigt).</li>
-      </ol>
-      <p>In der <code>.env</code> (Abschnitt 5):</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>HVNB_GIT_REPO_URL=https://&lt;GITHUB-BENUTZERNAME&gt;:&lt;TOKEN&gt;@github.com/&lt;ORG&gt;/&lt;REPO&gt;.git
+</div>
+<p>Dieser Checkout liefert die Compose-/Dockerfile-Dateien, um den Container
+in Abschnitt 6 überhaupt bauen und starten zu können — er ist <strong>nicht</strong>
+dieselbe Quelle, aus der der Container selbst später pullt (das regelt
+<code>HVNB_GIT_REPO_URL</code>, siehe 4b).</p>
+<h3>4b. HTTPS + Personal Access Token für den Container-eigenen Pull</h3>
+<p>Empfohlener Weg, damit die Instanz direkt von GitHub aktualisiert, ohne
+SSH-Schlüsselmaterial in den Container mounten zu müssen (Container läuft
+als eigener, vom Host-SSH-Setup unabhängiger Prozess).</p>
+<ol>
+<li>GitHub &gt; Settings &gt; Developer settings &gt; Fine-grained personal access
+tokens &gt; Generate new token.</li>
+<li><strong>Repository access:</strong> nur auf das eine Repository beschränken (nicht
+&quot;All repositories&quot;).</li>
+<li><strong>Permissions:</strong> unter &quot;Repository permissions&quot; nur <strong>Contents: Read-only</strong>
+setzen — mehr wird für einen reinen Pull nicht gebraucht.</li>
+<li>Token erzeugen und den Wert einmalig kopieren (wird danach nicht mehr
+angezeigt).</li>
+</ol>
+<p>In der <code>.env</code> (Abschnitt 5):</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>HVNB_GIT_REPO_URL=https://&lt;GITHUB-BENUTZERNAME&gt;:&lt;TOKEN&gt;@github.com/&lt;ORG&gt;/&lt;REPO&gt;.git
 HVNB_GIT_BRANCH=master
 HVNB_AUTO_UPDATE_ENABLED=true</code></pre>
-      </div>
-      <p><code>entrypoint.sh</code>/<code>updater.sh</code> führen intern nur einen normalen
-      <code>git clone</code>/<code>git fetch</code> gegen diese URL aus — Zugangsdaten in der URL eingebettet
-      werden dabei von Git nativ unterstützt.</p>
-
-      <div class="callout warn">
-        <span class="callout-label">Wichtig bei einer nachträglichen Änderung von HVNB_GIT_REPO_URL</span>
-        <p><code>entrypoint.sh</code> nutzt diese Variable nur für den <strong>erstmaligen</strong> Klon
-        (<code>/opt/app/.git</code> existiert noch nicht) — ein bereits geklonter Checkout wird bei jedem
-        weiteren Start per <code>git fetch origin</code> aktualisiert, unabhängig von einer geänderten
-        Umgebungsvariable, da <code>origin</code> in der beim ersten Klon geschriebenen <code>.git/config</code>
-        fest verdrahtet ist. <code>/opt/app</code> liegt NICHT in einem persistenten Volume — der Container muss
-        also tatsächlich <strong>neu erstellt</strong> werden, damit <code>/opt/app</code> leer beginnt und der
-        "erstmalige Klon"-Pfad mit der neuen URL erneut durchläuft:</p>
-        <pre><code>podman-compose up -d --force-recreate</code></pre>
-        <p>Ein reines <code>podman restart</code> reicht dafür <strong>nicht</strong> aus. Ein reines
-        <code>podman-compose up -d</code> (ohne <code>--force-recreate</code>) ebenfalls nicht zuverlässig —
-        live bestätigt: eine reine <code>.env</code>-Änderung wird nicht immer als Grund für ein Neuerstellen
-        erkannt, der bestehende Container läuft dann einfach unverändert weiter, ohne Fehlermeldung.</p>
-      </div>
-
-      <p>Die <code>.env</code>-Datei enthält damit ein Secret im Klartext und ist bereits über
-      <code>.gitignore</code> von Commits ausgeschlossen — trotzdem zusätzlich die Dateiberechtigung
-      einschränken:</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>chmod 600 .env</code></pre>
-      </div>
-      <p><strong>Rotation/Widerruf:</strong> Token bei Bedarf jederzeit unter GitHub &gt; Settings &gt; Developer
-      settings &gt; Fine-grained tokens widerrufen und durch ein neues ersetzen (<code>.env</code> aktualisieren,
-      danach <code>podman-compose up -d --force-recreate</code>).</p>
-
-      <h3>4c. Kein Netzwerkpfad zum Git-Server (abgeschottetes Netz)</h3>
-      <p>Wurde in der Referenzumgebung genau so benötigt: eine VLAN-Trennung verhinderte jede Verbindung vom
-      Server zum eigentlichen Git-Server. Lösung: ein lokales Bare-Repository auf dem WSL2-Host, das per
-      <code>docker-compose.dev.yml</code>-Override read-only in den Container gemountet wird.</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code># Einmalig: Bare-Repo aus einem erreichbaren Uebertragungsweg befuellen,
-# z.B. per 'git bundle' + Dateikopie (RDP, USB, ...):
+</div>
+<p><code>entrypoint.sh</code>/<code>updater.sh</code> führen intern nur einen normalen <code>git clone</code>/
+<code>git fetch</code> gegen diese URL aus — Zugangsdaten in der URL eingebettet werden
+dabei von Git nativ unterstützt, es ist keine zusätzliche Konfiguration im
+Container nötig.</p>
+<p><strong>Wichtig bei einer nachträglichen Änderung von <code>HVNB_GIT_REPO_URL</code></strong>
+(z. B. Umstieg von Modell 4c, oder Token-Rotation): <code>entrypoint.sh</code> nutzt
+diese Variable nur für den <strong>erstmaligen</strong> Klon (<code>/opt/app/.git</code> existiert
+noch nicht) — ein bereits geklonter Checkout wird bei jedem weiteren Start
+per <code>git fetch origin</code> aktualisiert, unabhängig von einer geänderten
+Umgebungsvariable, da <code>origin</code> in der beim ersten Klon geschriebenen
+<code>.git/config</code> fest verdrahtet ist. <code>/opt/app</code> liegt NICHT in einem
+persistenten Volume (nur <code>/data</code> und <code>/etc/hvnb/certs</code>, siehe
+<code>docker-compose.yml</code>) — der Container muss also tatsächlich <strong>neu
+erstellt</strong> werden, damit <code>/opt/app</code> leer beginnt und <code>entrypoint.sh</code> den
+&quot;erstmaligen Klon&quot;-Pfad mit der neuen URL erneut durchläuft.</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>podman-compose up -d --force-recreate</code></pre>
+</div>
+<p>Ein reines <code>podman restart hvnb-backup</code> reicht dafür <strong>nicht</strong> aus. Ein
+reines <code>podman-compose up -d</code> (ohne <code>--force-recreate</code>) ebenfalls nicht
+zuverlässig — live bestätigt: <code>podman-compose</code> erkennt eine reine
+<code>.env</code>-Änderung (Compose-Dateien selbst bleiben gleich) nicht immer als
+Grund für ein Neuerstellen und lässt den bestehenden Container dann
+einfach unverändert weiterlaufen, ohne Fehlermeldung. Mit
+<code>podman inspect hvnb-backup --format &#39;{{.Created}}&#39;</code> vor und nach dem
+Befehl lässt sich prüfen, ob tatsächlich neu erstellt wurde.</p>
+<p>Die <code>.env</code>-Datei enthält damit ein Secret im Klartext und
+ist bereits über <code>.gitignore</code> von Commits ausgeschlossen — trotzdem
+zusätzlich die Dateiberechtigung einschränken:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>chmod 600 .env</code></pre>
+</div>
+<p><strong>Rotation/Widerruf:</strong> Token bei Bedarf jederzeit unter GitHub &gt; Settings &gt;
+Developer settings &gt; Fine-grained tokens widerrufen und durch ein neues
+ersetzen (<code>.env</code> aktualisieren, danach <code>podman-compose up -d --force-recreate</code> um den Container mit der neuen URL neu zu erstellen).</p>
+<h3>4c. Kein Netzwerkpfad zum Git-Server (abgeschottetes Netz)</h3>
+<p>Wurde in der Referenzumgebung genau so benötigt: eine VLAN-Trennung
+verhinderte jede Verbindung vom Server zum eigentlichen Git-Server. Lösung:
+ein lokales Bare-Repository auf dem WSL2-Host, das per
+<code>docker-compose.dev.yml</code>-Override read-only in den Container gemountet wird
+— der Container braucht dann gar keinen externen Netzwerkzugriff für den
+Code:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code># Einmalig: Bare-Repo aus einem erreichbaren Uebertragungsweg befuellen,
+# z.B. per 'git bundle' + Dateikopie (RDP, USB, ...), wenn auch kein
+# Zwischenschritt-Host existiert:
 git clone --bare &lt;PFAD-ODER-URL-MIT-ZUGRIFF&gt; ~/hyperv-repo.git
 git clone ~/hyperv-repo.git ~/hyperv-netapp-backup
 cd ~/hyperv-netapp-backup
 
 podman-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build</code></pre>
-      </div>
-      <p><code>HVNB_GIT_REPO_URL</code> wird dabei automatisch von <code>docker-compose.dev.yml</code> auf
-      <code>file:///srv/git/hyperv-netapp-backup.git</code> gesetzt.</p>
-      <p><strong>Code-Updates in diesem Modell:</strong> das Bare-Repo muss erneut befüllt werden, z.&nbsp;B. per
-      <code>git bundle create update.bundle --all</code> auf einem Host mit Zugriff, Transfer der Bundle-Datei,
-      und auf dem Server:</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>git -C ~/hyperv-repo.git fetch update.bundle 'refs/*:refs/*'</code></pre>
-      </div>
-    </section>
-
-    <section id="s5">
-      <h2><span class="step-num">5</span>Konfiguration (.env)</h2>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>cat > .env << 'EOF'
+</div>
+<p><code>HVNB_GIT_REPO_URL</code> wird dabei automatisch von <code>docker-compose.dev.yml</code> auf
+<code>file:///srv/git/hyperv-netapp-backup.git</code> gesetzt (siehe Kommentar in der
+Datei) — das lokale Bare-Repo wird dafür nach <code>/srv/git/...</code> in den
+Container gemountet.</p>
+<p><strong>Code-Updates in diesem Modell:</strong> das Bare-Repo muss erneut befüllt
+werden, z. B. per <code>git bundle create update.bundle --all</code> auf einem Host mit
+Zugriff, Transfer der Bundle-Datei, und auf dem Server:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>git -C ~/hyperv-repo.git fetch update.bundle 'refs/*:refs/*'</code></pre>
+</div>
+<p>Der Updater-Prozess im Container erkennt die neuen Commits beim nächsten
+Intervall automatisch (<code>HVNB_AUTO_UPDATE_ENABLED=true</code>) bzw. sofort nach
+einem manuellen <code>podman-compose restart hvnb-backup</code>.</p>
+</section>
+<section id="s5">
+<h2><span class="step-num">5</span>Konfiguration (<code>.env</code>)</h2>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>cat &gt; .env &lt;&lt; 'EOF'
 HVNB_ENVIRONMENT=production
 HVNB_SECRET_KEY=&lt;zufaelliger, langer String -- z.B. `openssl rand -hex 32`&gt;
 HVNB_INITIAL_ADMIN_PASSWORD=&lt;einmaliges Startpasswort, sofort nach dem ersten Login aendern&gt;
@@ -921,97 +948,94 @@ HVNB_AUTO_UPDATE_ENABLED=true
 HVNB_AUTO_UPDATE_INTERVAL_MINUTES=15
 EOF
 chmod 600 .env</code></pre>
-      </div>
-      <div class="callout">
-        <span class="callout-label">Wichtig</span>
-        <p>NetApp-Cluster, Hyper-V-Hosts, der Restore-Proxy-Host, SnapMirror-Policies, Backup-Policies,
-        E-Mail-Alerting usw. werden <strong>nicht</strong> per <code>.env</code> konfiguriert, sondern
-        vollständig über die Web-GUI nach dem ersten Login — dort auch verschlüsselt in der Datenbank statt im
-        Klartext einer <code>.env</code>-Datei gespeichert.</p>
-      </div>
-      <p>Die vollständige Liste aller unterstützten Variablen mit Erläuterung steht in <code>.env.example</code>
-      im Projektwurzelverzeichnis.</p>
-    </section>
-
-    <section id="s6">
-      <h2><span class="step-num">6</span>Container bauen und starten</h2>
-      <p>Modell 4b (HTTPS + Token, Regelfall):</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>podman-compose -f docker-compose.yml up -d --build</code></pre>
-      </div>
-      <p>Modell 4c (lokales Bare-Repo):</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>podman-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build</code></pre>
-      </div>
-      <p>Prüfen:</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>podman ps --filter name=hvnb-backup
+</div>
+<p><strong>Wichtig:</strong> NetApp-Cluster, Hyper-V-Hosts, der Restore-Proxy-Host,
+SnapMirror-Policies, Backup-Policies, E-Mail-Alerting usw. werden <strong>nicht</strong>
+per <code>.env</code> konfiguriert, sondern vollständig über die Web-GUI nach dem
+ersten Login (Settings, Storage, Restore &gt; Setup, Backup) — dort auch
+verschlüsselt in der Datenbank statt im Klartext einer <code>.env</code>-Datei
+gespeichert.</p>
+<p>Die vollständige Liste aller unterstützten Variablen mit Erläuterung steht
+in <code>.env.example</code> im Projektwurzelverzeichnis.</p>
+</section>
+<section id="s6">
+<h2><span class="step-num">6</span>Container bauen und starten</h2>
+<p>Modell 4b (HTTPS + Token, Regelfall):</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>podman-compose -f docker-compose.yml up -d --build</code></pre>
+</div>
+<p>Modell 4c (lokales Bare-Repo):</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>podman-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build</code></pre>
+</div>
+<p>Prüfen:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>podman ps --filter name=hvnb-backup
 podman logs --tail 50 hvnb-backup</code></pre>
-      </div>
-      <p>Erwartet: <code>uvicorn</code>, <code>nginx</code> (und bei aktiviertem Auto-Update <code>updater</code>)
-      laufen ohne Fehlermeldungen. Der erste Start dauert spürbar länger (Klonen des Repos, <code>npm ci</code>,
-      Frontend-Build).</p>
-      <div class="callout warn">
-        <span class="callout-label">Für jede spätere .env-Änderung gilt</span>
-        <p><code>podman-compose up -d</code> allein erkennt eine reine <code>.env</code>-Änderung nicht immer
-        zuverlässig und lässt den bestehenden Container dann einfach unverändert weiterlaufen, ohne
-        Fehlermeldung (live bestätigt). Sicherer ist <code>podman-compose up -d --force-recreate</code> — mit
-        <code>podman inspect hvnb-backup --format '{{.Created}}'</code> vor/nachher prüfen, ob tatsächlich neu
-        erstellt wurde.</p>
-      </div>
-    </section>
-
-    <section id="s7">
-      <h2><span class="step-num">7</span>TLS-Zertifikat</h2>
-      <p>Beim allerersten Start erzeugt der Container automatisch ein selbstsigniertes Zertifikat, damit die GUI
-      sofort per HTTPS erreichbar ist. Für den Produktivbetrieb ein von der internen PKI ausgestelltes Zertifikat
-      einbinden, statt das benannte Volume <code>hvnb-certs</code> zu nutzen — in <code>docker-compose.yml</code>
-      die Volume-Zeile durch einen Bind-Mount ersetzen:</p>
-      <div class="code-block">
-        <span class="code-label">YAML</span>
-        <pre><code>volumes:
+</div>
+<p>Erwartet: <code>uvicorn</code>, <code>nginx</code> (und bei aktiviertem Auto-Update <code>updater</code>)
+laufen ohne Fehlermeldungen. Der erste Start dauert spürbar länger (Klonen
+des Repos, <code>npm ci</code>, Frontend-Build).</p>
+<div class="callout">
+<span class="callout-label">Für jede spätere <code>.env</code>-Änderung gilt</span>
+<p><code>podman-compose up -d</code> allein
+erkennt eine reine <code>.env</code>-Änderung nicht immer zuverlässig und lässt den
+bestehenden Container dann einfach unverändert weiterlaufen, ohne
+Fehlermeldung (live bestätigt). Sicherer ist <code>podman-compose up -d --force-recreate</code> — mit <code>podman inspect hvnb-backup --format &#39;{{.Created}}&#39;</code> vor und nach dem Befehl lässt sich prüfen, ob tatsächlich
+neu erstellt wurde.</p>
+</div>
+</section>
+<section id="s7">
+<h2><span class="step-num">7</span>TLS-Zertifikat</h2>
+<p>Beim allerersten Start erzeugt der Container automatisch ein
+selbstsigniertes Zertifikat (<code>docker/gen-selfsigned-cert.sh</code>), damit die GUI
+sofort per HTTPS erreichbar ist. Für den Produktivbetrieb ein von der
+internen PKI ausgestelltes Zertifikat einbinden, statt das benannte Volume
+<code>hvnb-certs</code> zu nutzen — in <code>docker-compose.yml</code> die Volume-Zeile durch einen
+Bind-Mount ersetzen:</p>
+<div class="code-block">
+<span class="code-label">yaml</span>
+<pre><code>volumes:
   - ./certs:/etc/hvnb/certs # server.crt + server.key ablegen</code></pre>
-      </div>
-      <p>Danach den Container neu erstellen (<code>podman-compose up -d --force-recreate</code>).</p>
-    </section>
-
-    <section id="s8">
-      <h2><span class="step-num">8</span>Externe Erreichbarkeit von WSL2 aus</h2>
-      <p>Zwei WSL2-Netzwerkmodi kommen infrage:</p>
-
-      <h3>Mirrored Networking (falls auf der Plattform unterstützt)</h3>
-      <p>Der Container ist dann direkt unter der Windows-Host-IP erreichbar, ganz ohne Portweiterleitung.
-      <code>.wslconfig</code> im Windows-Benutzerprofil:</p>
-      <div class="code-block">
-        <span class="code-label">INI — .wslconfig</span>
-        <pre><code>[wsl2]
+</div>
+<p>Danach den Container neu erstellen (<code>podman-compose up -d --force-recreate</code>).</p>
+</section>
+<section id="s8">
+<h2><span class="step-num">8</span>Externe Erreichbarkeit von WSL2 aus</h2>
+<p>Zwei WSL2-Netzwerkmodi kommen infrage:</p>
+<h3>Mirrored Networking (falls auf der Plattform unterstützt)</h3>
+<p>Der Container ist dann direkt unter der Windows-Host-IP erreichbar, ganz
+ohne Portweiterleitung. <code>.wslconfig</code> im Windows-Benutzerprofil:</p>
+<div class="code-block">
+<span class="code-label">ini</span>
+<pre><code>[wsl2]
 networkingMode=mirrored</code></pre>
-      </div>
-      <div class="callout warn">
-        <span class="callout-label">Bekannte Einschränkung</span>
-        <p>Auf manchen Windows-Server-2025-Builds schlägt die Aktivierung mit
-        <code>CreateInstance/CreateVm/ConfigureNetworking/0x803b0015</code> fehl und WSL2 fällt komplett
-        netzwerklos zurück — in diesem Fall <code>.wslconfig</code> wieder entfernen und den NAT-Modus verwenden.</p>
-      </div>
-
-      <h3>NAT-Modus (Standard, funktioniert immer)</h3>
-      <p>Im Standard-NAT-Modus bekommt die WSL2-Distribution eine eigene, nur Windows-intern erreichbare IP, die
-      sich bei jedem <code>wsl --shutdown</code> oder Windows-Neustart <strong>ändert</strong>. Eine
-      Portweiterleitung ist nötig:</p>
-      <div class="code-block">
-        <span class="code-label">PowerShell</span>
-        <pre><code>New-NetFirewallRule -DisplayName "HVNB HTTPS (8443)" -Direction Inbound -Protocol TCP -LocalPort 8443 -Profile Domain,Private,Public -Action Allow
+</div>
+<p>Danach <code>wsl --shutdown</code> und neu starten. <strong>Bekannte Einschränkung:</strong> auf
+manchen Windows-Server-2025-Builds schlägt die Aktivierung mit
+<code>CreateInstance/CreateVm/ConfigureNetworking/0x803b0015</code> fehl und WSL2 fällt
+komplett netzwerklos zurück (<code>networkingMode=None</code>) — in diesem Fall
+<code>.wslconfig</code> wieder entfernen und den NAT-Modus (unten) verwenden.</p>
+<h3>NAT-Modus (Standard, funktioniert immer)</h3>
+<p>Im Standard-NAT-Modus bekommt die WSL2-Distribution eine eigene, nur
+Windows-intern erreichbare IP, die sich bei jedem <code>wsl --shutdown</code> oder
+Windows-Neustart <strong>ändert</strong>. Eine Portweiterleitung von der Windows-
+Server-IP auf die jeweils aktuelle WSL2-Guest-IP ist nötig:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>New-NetFirewallRule -DisplayName "HVNB HTTPS (8443)" -Direction Inbound -Protocol TCP -LocalPort 8443 -Profile Domain,Private,Public -Action Allow
 netsh interface portproxy add v4tov4 listenport=8443 listenaddress=0.0.0.0 connectport=8443 connectaddress=&lt;WSL2-Guest-IP&gt;</code></pre>
-      </div>
-      <p>Da sich die WSL2-Guest-IP bei jedem Neustart ändert, liegt im Repository ein Skript
-      (<code>docs/windows/Update-HvnbPortProxy.ps1</code>), das die Regel automatisch aktuell hält. Als
-      wiederkehrende Aufgabe registrieren (PowerShell als Administrator):</p>
-      <div class="code-block">
-        <span class="code-label">PowerShell</span>
-        <pre><code>$scriptPath = "C:\hvnb\Update-HvnbPortProxy.ps1"  # Skript vorher dorthin kopieren
+</div>
+<p>Da sich die WSL2-Guest-IP bei jedem Neustart ändert, liegt im Repository ein
+Skript, das die Regel automatisch aktuell hält:
+<a href="windows/Update-HvnbPortProxy.ps1"><code>docs/windows/Update-HvnbPortProxy.ps1</code></a>.
+Als wiederkehrende Aufgabe registrieren (PowerShell als Administrator):</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>$scriptPath = "C:\hvnb\Update-HvnbPortProxy.ps1"  # Skript vorher dorthin kopieren
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
@@ -1024,113 +1048,131 @@ $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccou
 Register-ScheduledTask -TaskName "HVNB-PortProxy-Refresh" `
     -Action $action -Trigger $atStartup, $periodic -Principal $principal `
     -Description "Haelt die netsh-Portweiterleitung fuer den HVNB-Container synchron mit der WSL2-Guest-IP."</code></pre>
-      </div>
-      <p>Die wiederkehrende 15-Minuten-Ausführung fängt auch den Fall ab, dass jemand <code>wsl --shutdown</code>
-      ausführt, ohne den Windows-Server neu zu starten.</p>
-      <div class="callout warn">
-        <span class="callout-label">Noch nicht live verifiziert</span>
-        <p>Das Skript ist nicht gegen eine echte Windows-Server-2025-Instanz getestet (nur das darin verwendete
-        <code>netsh</code>-Befehlspaar selbst wurde in der Referenzumgebung manuell bestätigt) — vor dem
-        produktiven Einsatz einmal manuell ausführen und mit <code>netsh interface portproxy show v4tov4</code>
-        kontrollieren.</p>
-      </div>
-      <p>Verifizieren von einem externen Host:</p>
-      <div class="code-block">
-        <span class="code-label">PowerShell</span>
-        <pre><code>Test-NetConnection -ComputerName &lt;Server-IP&gt; -Port 8443</code></pre>
-      </div>
-    </section>
-
-    <section id="s9">
-      <h2><span class="step-num">9</span>Container-Persistenz absichern (rootless Podman + WSL2)</h2>
-      <p><strong>Hintergrund:</strong> <code>docker-compose.yml</code> setzt <code>restart: unless-stopped</code>,
-      was bei <strong>rootless</strong> Podman (kein dauerhafter Root-Daemon wie bei Docker) nur so lange greift,
-      wie die <code>systemd --user</code>-Instanz des Benutzers läuft. Ein Windows-Sleep/Ruhezustand oder
-      <code>wsl --shutdown</code> kann diese Instanz beenden — ohne die folgenden Einstellungen bleibt der
-      Container danach als <code>Exited</code> liegen.</p>
-      <div class="code-block">
-        <span class="code-label">Bash — in der WSL2-Distro</span>
-        <pre><code># Erlaubt der systemd--user-Instanz, unabhaengig von einer aktiven
-# Login-Session zu laufen (auch nach Reboot/WSL2-Neustart).
+</div>
+<p>Die wiederkehrende 15-Minuten-Ausführung fängt auch den Fall ab, dass jemand
+<code>wsl --shutdown</code> ausführt, ohne den Windows-Server neu zu starten.</p>
+<div class="callout">
+<p>Das Skript ist nicht live gegen eine echte Windows-Server-2025-Instanz
+verifiziert (nur das darin verwendete <code>netsh</code>-Befehlspaar selbst wurde in
+der Referenzumgebung manuell bestätigt) — vor dem produktiven Einsatz
+einmal manuell ausführen und mit <code>netsh interface portproxy show v4tov4</code>
+kontrollieren.</p>
+</div>
+<p>Verifizieren von einem externen Host:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Test-NetConnection -ComputerName &lt;Server-IP&gt; -Port 8443</code></pre>
+</div>
+</section>
+<section id="s9">
+<h2><span class="step-num">9</span>Container-Persistenz absichern (rootless Podman + WSL2)</h2>
+<p><strong>Hintergrund:</strong> <code>docker-compose.yml</code> setzt <code>restart: unless-stopped</code>, was
+bei <strong>rootless</strong> Podman (kein dauerhafter Root-Daemon wie bei Docker) nur so
+lange greift, wie die <code>systemd --user</code>-Instanz des Benutzers läuft. Ein
+Windows-Sleep/Ruhezustand oder <code>wsl --shutdown</code> kann diese Instanz beenden —
+ohne die folgenden zwei Einstellungen bleibt der Container danach als
+<code>Exited</code> liegen, statt automatisch neu zu starten.</p>
+<p>In der WSL2-Distribution:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code># Erlaubt der systemd--user-Instanz des Benutzers, unabhaengig von einer
+# aktiven Login-Session zu laufen (auch nach Reboot/WSL2-Neustart).
 sudo loginctl enable-linger &lt;benutzername&gt;
 
 # Startet beim (Re-)Start der systemd--user-Instanz automatisch alle
 # Container mit passender Restart-Policy neu.
 systemctl --user enable podman-restart.service</code></pre>
-      </div>
-      <p>Status prüfen / manuell eingreifen bei Bedarf:</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>podman ps -a --filter name=hvnb-backup   # Status
+</div>
+<p>Status prüfen / manuell eingreifen bei Bedarf:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>podman ps -a --filter name=hvnb-backup   # Status
 podman logs --tail 50 hvnb-backup        # Logs
 podman start hvnb-backup                 # falls doch einmal gestoppt</code></pre>
-      </div>
-    </section>
-
-    <section id="s10">
-      <h2><span class="step-num">10</span>Erste Anmeldung</h2>
-      <div class="code-block">
-        <span class="code-label">URL</span>
-        <pre><code>https://&lt;Server-IP-oder-Name&gt;:8443
+</div>
+</section>
+<section id="s10">
+<h2><span class="step-num">10</span>Erste Anmeldung</h2>
+<div class="code-block">
+<pre><code>https://&lt;Server-IP-oder-Name&gt;:8443
 Benutzer: admin
 Passwort: &lt;HVNB_INITIAL_ADMIN_PASSWORD aus Schritt 5&gt;</code></pre>
-      </div>
-      <p>Sofort nach dem ersten Login unter <strong>Settings &gt; Benutzer &amp; Rollen</strong> das
-      Admin-Passwort ändern.</p>
-      <p>Health-Check (auch ohne Login abrufbar, praktisch für Monitoring):</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>curl -sk https://&lt;Server-IP&gt;:8443/api/health
+</div>
+<p>Sofort nach dem ersten Login unter <strong>Settings &gt; Benutzer &amp; Rollen</strong> das
+Admin-Passwort ändern.</p>
+<p>Health-Check (auch ohne Login abrufbar, praktisch für Monitoring):</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>curl -sk https://&lt;Server-IP&gt;:8443/api/health
 # {"status":"ok","app":"Hyper-V NetApp Backup"}</code></pre>
-      </div>
-    </section>
-
-    <section id="s11">
-      <h2><span class="step-num">11</span>Nächste Schritte (in der GUI)</h2>
-      <p>Die Applikation ist jetzt lauffähig, aber fachlich noch leer. Über die Web-GUI folgen (in dieser
-      Reihenfolge sinnvoll):</p>
-      <ol>
-        <li><strong>Settings &gt; Hyper-V-Hosts</strong> — Hyper-V-Cluster hinzufügen</li>
-        <li><strong>Storage &gt; Cluster</strong> — NetApp-Cluster hinzufügen</li>
-        <li><strong>Restore &gt; Setup</strong> — Restore-Proxy-Host + iSCSI-Infrastruktur einrichten (Voraussetzung für jeden Restore-Vorgang)</li>
-        <li><strong>Backup &gt; Policies / Protection Groups / Zeitpläne</strong> — Backup-Regeln definieren</li>
-        <li><strong>Settings &gt; Active-Directory-Integration</strong> (falls gewünscht) / <strong>Settings &gt; E-Mail</strong> (Alerting) — optional</li>
-      </ol>
-      <p>Eine funktionale Architekturübersicht ist direkt in der Applikation unter dem Dokumentations-Link in der
-      Seitenleiste verlinkt.</p>
-    </section>
-
-    <section id="s12">
-      <h2><span class="step-num">12</span>Betrieb</h2>
-      <p><strong>Updates:</strong> bei <code>HVNB_AUTO_UPDATE_ENABLED=true</code> vollautomatisch. Manuell
-      erzwingen:</p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>podman exec hvnb-backup supervisorctl restart uvicorn nginx</code></pre>
-      </div>
-      <p><strong>Logs:</strong></p>
-      <div class="code-block">
-        <span class="code-label">Bash</span>
-        <pre><code>podman logs --tail 100 hvnb-backup           # supervisord-Gesamtausgabe
+</div>
+</section>
+<section id="s11">
+<h2><span class="step-num">11</span>Nächste Schritte (in der GUI)</h2>
+<p>Die Applikation ist jetzt lauffähig, aber fachlich noch leer. Über die
+Web-GUI folgen (in dieser Reihenfolge sinnvoll):</p>
+<ol>
+<li><strong>Settings &gt; Hyper-V-Hosts</strong> — Hyper-V-Cluster hinzufügen</li>
+<li><strong>Storage &gt; Cluster</strong> — NetApp-Cluster hinzufügen</li>
+<li><strong>Restore &gt; Setup</strong> — Restore-Proxy-Host + iSCSI-Infrastruktur einrichten
+(Voraussetzung für jeden Restore-Vorgang)</li>
+<li><strong>Backup &gt; Policies / Protection Groups / Zeitpläne</strong> — Backup-Regeln
+definieren</li>
+<li><strong>Settings &gt; Active-Directory-Integration</strong> (falls gewünscht) /
+<strong>Settings &gt; E-Mail</strong> (Alerting) — optional</li>
+</ol>
+<p>Eine funktionale Architekturübersicht ist direkt in der Applikation unter
+dem Dokumentations-Link in der Seitenleiste verlinkt.</p>
+</section>
+<section id="s12">
+<h2><span class="step-num">12</span>Betrieb</h2>
+<p><strong>Updates:</strong> bei <code>HVNB_AUTO_UPDATE_ENABLED=true</code> vollautomatisch (siehe
+Abschnitt 4 für die beiden Code-Bezugsmodelle). Manuell erzwingen:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>podman exec hvnb-backup supervisorctl restart uvicorn nginx</code></pre>
+</div>
+<p><strong>Logs:</strong></p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>podman logs --tail 100 hvnb-backup           # supervisord-Gesamtausgabe
 podman exec hvnb-backup tail -f /var/log/hvnb/uvicorn.log
 podman exec hvnb-backup tail -f /var/log/hvnb/updater.log</code></pre>
-      </div>
-      <p>Innerhalb der Applikation zusätzlich das <strong>System Log</strong> (Kopfzeile, Terminal-Symbol) für
-      Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.</p>
-
-      <h3>Troubleshooting-Kurzreferenz</h3>
-      <table>
-        <thead>
-          <tr><th>Symptom</th><th>Wahrscheinliche Ursache</th><th>Abschnitt</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>GUI von außen nicht erreichbar, Container läuft</td><td>WSL2-Guest-IP hat sich geändert, Portproxy zeigt ins Leere</td><td>8</td></tr>
-          <tr><td>Container nach Server-Neustart als <code>Exited</code></td><td><code>loginctl enable-linger</code> fehlt</td><td>9</td></tr>
-          <tr><td><code>git</code>-Fehler beim Deploy trotz erreichbarem Server</td><td>Zugangsdaten/Deploy-Key für die Repository-URL fehlen</td><td>4</td></tr>
-          <tr><td>Health-Check liefert <code>502 Bad Gateway</code> kurz nach Neustart</td><td>uvicorn/nginx starten noch, wenige Sekunden abwarten</td><td>—</td></tr>
-        </tbody>
-      </table>
-    </section>
+</div>
+<p>Innerhalb der Applikation zusätzlich das <strong>System Log</strong> (Kopfzeile,
+Terminal-Symbol) für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem
+Zeitraum.</p>
+<p><strong>Troubleshooting-Kurzreferenz:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Wahrscheinliche Ursache</th>
+<th>Abschnitt</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GUI von aussen nicht erreichbar, Container läuft</td>
+<td>WSL2-Guest-IP hat sich geändert, Portproxy zeigt ins Leere</td>
+<td>8</td>
+</tr>
+<tr>
+<td>Container nach Server-Neustart als <code>Exited</code></td>
+<td><code>loginctl enable-linger</code> fehlt</td>
+<td>9</td>
+</tr>
+<tr>
+<td><code>git</code>-Fehler beim Deploy trotz erreichbarem Server</td>
+<td>Zugangsdaten/Deploy-Key für die Repository-URL fehlen</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Health-Check liefert <code>502 Bad Gateway</code> kurz nach Neustart</td>
+<td>uvicorn/nginx starten noch, wenige Sekunden abwarten</td>
+<td>—</td>
+</tr>
+</tbody></table>
+</section>
 
     <footer>
       Feldprotokoll der ursprünglichen Ersteinrichtung (inkl. umgebungsspezifischer Details wie konkreter IPs
