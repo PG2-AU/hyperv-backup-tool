@@ -266,10 +266,14 @@ export function useTriggerJobRun() {
     // sendet ein Array als wiederholte gleichnamige Query-Parameter
     // (?resource_group_id=a&resource_group_id=b) statt Axios' Default mit
     // eckigen Klammern ([]) -- FastAPIs list[str]-Query-Param erkennt nur
-    // die wiederholte Form, keine Klammern.
+    // die wiederholte Form, keine Klammern. Antwort ist immer eine Liste
+    // (auch bei genau einem Lauf) -- bei mehreren ausgewaehlten Gruppen
+    // legt das Backend je Gruppe einen EIGENEN Lauf an, statt einen
+    // gemeinsamen mit resource_group_id=NULL (Nutzer-Vorgabe: Job-Verlauf
+    // soll pro Gruppe nachvollziehbar bleiben).
     mutationFn: async ({ jobId, resourceGroupId }: { jobId: string; resourceGroupId?: string | string[] }) =>
       (
-        await apiClient.post<BackupJobRun>(`/jobs/${jobId}/run`, null, {
+        await apiClient.post<BackupJobRun[]>(`/jobs/${jobId}/run`, null, {
           params: { resource_group_id: resourceGroupId },
           paramsSerializer: { indexes: null },
         })

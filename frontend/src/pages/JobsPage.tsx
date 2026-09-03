@@ -134,11 +134,18 @@ export function JobsPage() {
     triggerRun.mutate(
       { jobId: policy.id, resourceGroupId: groupIds },
       {
-        onSuccess: () => {
+        onSuccess: (runs) => {
           setGroupPickerPolicy(null);
+          // runs.length kann kleiner als groupIds.length sein, wenn fuer
+          // einzelne Gruppen bereits ein Lauf dieser Policy aktiv war
+          // (das Backend ueberspringt dann nur diese, siehe trigger_job_run) --
+          // die tatsaechlich gestartete Anzahl ist daher aussagekraeftiger.
+          const skipped = groupIds.length - runs.length;
           notifications.show({
             title: "Job gestartet",
-            message: `${policy.name} läuft für ${groupIds.length} Protection Group(s) – Fortschritt siehe Kopfzeile.`,
+            message:
+              `${policy.name} läuft für ${runs.length} Protection Group(s) – Fortschritt siehe Kopfzeile.` +
+              (skipped > 0 ? ` (${skipped} bereits laufend, übersprungen)` : ""),
             color: "blue",
           });
         },

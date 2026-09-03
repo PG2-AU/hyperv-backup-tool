@@ -1064,39 +1064,65 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         db.close()
 
 
-@router.post("/{job_id}/run", response_model=BackupJobRun, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{job_id}/run", response_model=list[BackupJobRun], status_code=status.HTTP_202_ACCEPTED)
 def trigger_job_run(
     job_id: str, background_tasks: BackgroundTasks,
     resource_group_id: list[str] | None = Query(default=None),
     db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_RUN)),
-) -> BackupJobRun:
+) -> list[BackupJobRun]:
     """resource_group_id (optional, wiederholbar): beschraenkt den Lauf auf
     genau diese Resource Group(s) statt (Default, Parameter weggelassen)
-    alle mit der Policy verknuepften auf einmal auszuloesen. Zwei
-    Verwendungen:
+    alle mit der Policy verknuepften auf einmal auszuloesen. Drei Faelle:
+    - weggelassen: klassischer Ganze-Policy-Lauf, EIN Lauf mit
+      resource_group_id=NULL (unveraendertes Verhalten).
     - genau eine ID: 'Jetzt nachholen'-Button beim backup_missed-Alarm
-      (siehe app.core.scheduler.run_alert_check), der gezielt nur die
-      verpasste Gruppe nachtraeglich anstossen soll.
+      (siehe app.core.scheduler.run_alert_check) sowie der Normalfall im
+      Auswahldialog (Policy mit nur einer verknuepften Gruppe) -- EIN Lauf,
+      przise dieser Gruppe zugeordnet.
     - mehrere IDs: Auswahldialog bei 'Jetzt ausfuehren' auf einer Policy
       mit mehreren verknuepften Protection Groups (siehe
-      ResourceGroupPickerModal im Frontend) -- Nutzer waehlt eine
-      Teilmenge statt zwangslaeufig alle zu sichern.
-    Bei mehreren IDs bleibt BackupRun.resource_group_id (einzelnes Feld)
-    NULL, genau wie bei einem klassischen Ganze-Policy-Lauf -- 'Protection
-    Group' in Job-Verlauf/Alarm zeigt dann 'Alle Gruppen' an, auch wenn es
-    nur eine bewusst gewaehlte Teilmenge war. run.targets selbst ist davon
-    nicht betroffen und spiegelt korrekt nur die gewaehlten Gruppen."""
+      ResourceGroupPickerModal im Frontend). Nutzer-Vorgabe (2026-09-03):
+      JE ausgewaehlter Gruppe ein EIGENER Lauf (wie ein geplanter Lauf pro
+      faelliger Verknuepfung, siehe run_scheduled_backups), statt eines
+      gemeinsamen Laufs mit resource_group_id=NULL -- damit Job-Verlauf
+      und Alarme praezise pro Gruppe nachvollziehbar bleiben, statt
+      'Alle Gruppen' anzuzeigen, obwohl nur eine Auswahl gemeint war. Ist
+      fuer eine der Gruppen bereits ein Lauf dieser Policy aktiv, wird nur
+      diese eine uebersprungen (Fehler geloggt), die anderen laufen
+      trotzdem an -- ein einzelner blockierter Lauf soll nicht die ganze
+      Auswahl verhindern."""
     policy = db.get(BackupPolicy, job_id)
     if policy is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
 
-    resource_group_ids = set(resource_group_id) if resource_group_id else None
-    try:
-        run, warnings = _start_job_run(policy, db, resource_group_ids=resource_group_ids)
-    except _JobAlreadyRunningError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except _NoTargetsError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    # Reihenfolge erhalten, Duplikate entfernen (falls das Frontend aus
+    # Versehen dieselbe ID zweimal mitschickt).
+    group_ids = list(dict.fromkeys(resource_group_id)) if resource_group_id else None
 
-    background_tasks.add_task(_execute_job_run, run.id, warnings)
-    return _to_run_read(run)
+    created_runs: list[BackupRun] = []
+    errors: list[str] = []
+
+    if group_ids and len(group_ids) > 1:
+        for group_id in group_ids:
+            try:
+                run, warnings = _start_job_run(policy, db, resource_group_ids={group_id})
+            except (_JobAlreadyRunningError, _NoTargetsError) as exc:
+                errors.append(str(exc))
+                continue
+            created_runs.append(run)
+            background_tasks.add_task(_execute_job_run, run.id, warnings)
+    else:
+        single_group_ids = {group_ids[0]} if group_ids else None
+        try:
+            run, warnings = _start_job_run(policy, db, resource_group_ids=single_group_ids)
+        except _JobAlreadyRunningError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except _NoTargetsError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        created_runs.append(run)
+        background_tasks.add_task(_execute_job_run, run.id, warnings)
+
+    if not created_runs:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="; ".join(errors) or "Keine Läufe gestartet")
+
+    return [_to_run_read(r) for r in created_runs]
