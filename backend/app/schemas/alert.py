@@ -34,6 +34,7 @@ class AlertConfigRead(BaseModel):
     lun_threshold_percent: int
     snapmirror_lag_threshold_hours: int
     backup_missed_grace_minutes: int
+    schedule_collision_window_minutes: int
     scope: str
 
 
@@ -42,4 +43,14 @@ class AlertConfigUpdate(BaseModel):
     lun_threshold_percent: int = Field(ge=1, le=100)
     snapmirror_lag_threshold_hours: int = Field(ge=1, le=8760)
     backup_missed_grace_minutes: int = Field(ge=5, le=1440)
+    schedule_collision_window_minutes: int = Field(ge=1, le=240)
     scope: str
+
+
+class AllowedScheduleCollisionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    collision_key: str
+    summary: str
+    allowed_at: datetime

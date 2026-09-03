@@ -55,6 +55,7 @@ import type {
   Alert,
   AlertConfig,
   AlertConfigWritePayload,
+  AllowedScheduleCollision,
   SchedulerConfig,
   SchedulerConfigWritePayload,
   StorageAccess,
@@ -915,6 +916,36 @@ export function useDismissAlert() {
   return useMutation({
     mutationFn: async (alertId: string) => (await apiClient.post(`/alerts/${alertId}/dismiss`)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+  });
+}
+
+// Erlaubt eine Zeitplan-Kollision dauerhaft (siehe Backend alerts.py) --
+// anders als useDismissAlert oben taucht dieser Alarm-Typ dank
+// AllowedScheduleCollision danach nicht beim naechsten Check erneut auf,
+// solange sich die genaue Zusammensetzung der Kollision nicht aendert.
+export function useAllowScheduleCollision() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (alertId: string) => (await apiClient.post(`/alerts/${alertId}/allow-collision`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+  });
+}
+
+// Verwaltungsliste in Settings > Alarme fuer bereits dauerhaft erlaubte
+// Zeitplan-Kollisionen (mit der Moeglichkeit, eine Erlaubnis wieder
+// zurueckzunehmen).
+export function useAllowedCollisions() {
+  return useQuery({
+    queryKey: ["allowed-collisions"],
+    queryFn: async () => (await apiClient.get<AllowedScheduleCollision[]>("/alerts/allowed-collisions")).data,
+  });
+}
+
+export function useRevokeAllowedCollision() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.delete(`/alerts/allowed-collisions/${id}`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["allowed-collisions"] }),
   });
 }
 

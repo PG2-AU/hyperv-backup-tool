@@ -268,7 +268,7 @@ def init_db(db: Session) -> None:
         {
             "volume_threshold_percent": "INTEGER", "lun_threshold_percent": "INTEGER",
             "snapmirror_lag_threshold_minutes": "INTEGER", "snapmirror_lag_threshold_hours": "INTEGER", "scope": "VARCHAR(30)",
-            "backup_missed_grace_minutes": "INTEGER",
+            "backup_missed_grace_minutes": "INTEGER", "schedule_collision_window_minutes": "INTEGER",
         },
     )
     _add_missing_columns(engine, "alerts", {"resource_group_id": "VARCHAR(36)", "policy_id": "VARCHAR(36)"})
@@ -289,6 +289,11 @@ def init_db(db: Session) -> None:
         )
         conn.execute(text("UPDATE alert_config SET snapmirror_lag_threshold_hours = 4 WHERE snapmirror_lag_threshold_hours IS NULL"))
         conn.execute(text("UPDATE alert_config SET backup_missed_grace_minutes = 30 WHERE backup_missed_grace_minutes IS NULL"))
+        conn.execute(
+            text(
+                "UPDATE alert_config SET schedule_collision_window_minutes = 15 WHERE schedule_collision_window_minutes IS NULL"
+            )
+        )
         # SQLAlchemys Enum-Spalte speichert per Default den Enum-NAMEN, nicht
         # den .value-String (anders als bei String(N)-Spalten mit str-Enums)
         # -- 'ALL' (Name von AlertScope.ALL), nicht 'all'.

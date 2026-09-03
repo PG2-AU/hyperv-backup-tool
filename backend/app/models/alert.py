@@ -30,6 +30,7 @@ class AlertType(str, enum.Enum):
     SNAPMIRROR_LAG_EXCEEDED = "snapmirror_lag_exceeded"
     HYPERV_NODE_UNREACHABLE = "hyperv_node_unreachable"
     BACKUP_MISSED = "backup_missed"
+    SCHEDULE_COLLISION = "schedule_collision"
 
 
 class AlertScope(str, enum.Enum):
@@ -96,5 +97,9 @@ class AlertConfig(Base):
     # sonst wuerden voellig normale, nur leicht verspaetete Laeufe
     # faelschlich als verpasst gemeldet.
     backup_missed_grace_minutes: Mapped[int] = mapped_column(Integer, default=30)
+    # Zwei Zeitplan-Vorkommen, die an einem gemeinsam moeglichen Kalendertag
+    # innerhalb dieser Spanne liegen, gelten als 'Kollision' (siehe
+    # app.core.scheduler._find_schedule_collisions).
+    schedule_collision_window_minutes: Mapped[int] = mapped_column(Integer, default=15)
     scope: Mapped[AlertScope] = mapped_column(Enum(AlertScope), default=AlertScope.ALL)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

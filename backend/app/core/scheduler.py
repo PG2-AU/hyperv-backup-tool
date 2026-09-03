@@ -34,6 +34,7 @@ from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.alert import Alert, AlertConfig, AlertScope, AlertStatus, AlertType
+from app.models.allowed_schedule_collision import AllowedScheduleCollision
 from app.models.backup_policy import BackupPolicy, RetentionType
 from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapshotDestination, JobStatus
 from app.models.email_config import EmailConfig
@@ -44,6 +45,7 @@ from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink
 from app.models.restore_run import RestoreRun, RestoreStatus
+from app.models.schedule import ScheduleType
 from app.models.scheduler_config import SchedulerConfig
 from app.models.scheduler_status import SchedulerStatus
 from app.models.system_log import SystemLogEvent
@@ -396,6 +398,123 @@ def _hyperv_referenced_keys(db: Session) -> tuple[set[str], set[tuple[str, str, 
     return referenced_lun_ids, referenced_volume_keys
 
 
+def _schedule_day_key(schedule) -> tuple:
+    """Reduziert einen Zeitplan auf die Tage, an denen er ueberhaupt feuern
+    kann -- fuer den Kollisions-Check in _find_schedule_collisions. HOURLY/
+    DAILY feuern jeden Tag (('ANY',), kompatibel mit allem), WEEKLY nur am
+    eingestellten Wochentag, MONTHLY nur am eingestellten Monatstag."""
+    if schedule.schedule_type == ScheduleType.WEEKLY:
+        return ("WEEKDAY", schedule.weekday)
+    if schedule.schedule_type == ScheduleType.MONTHLY:
+        return ("MONTHDAY", schedule.day_of_month)
+    return ("ANY",)
+
+
+def _days_compatible(day_key_a: tuple, day_key_b: tuple) -> bool:
+    if day_key_a[0] == "ANY" or day_key_b[0] == "ANY":
+        return True
+    return day_key_a == day_key_b
+
+
+def _circular_minute_distance(a: int, b: int) -> int:
+    diff = abs(a - b) % 1440
+    return min(diff, 1440 - diff)
+
+
+def _find_schedule_collisions(
+    links: list[ResourceGroupPolicyLink], threshold_minutes: int
+) -> list[dict]:
+    """Findet Zeitplan-Kollisionen rein aus der Konfiguration heraus, ohne
+    Vorkommen ueber ein Datumsfenster zu simulieren (anders als
+    _occurrences_within/BACKUP_MISSED oben) -- dadurch werden auch seltene
+    Kombinationen zuverlaessig erkannt, z.B. ein monatlicher Lauf am 15.,
+    der nur an diesem einen Tag im Monat mit einem taeglichen Lauf
+    kollidiert, ohne dass dafuer ein 30+ Tage weites Vorschau-Fenster noetig
+    waere.
+
+    Zwei Zeitplan-Zeiten 'kollidieren', wenn sie (a) an einem gemeinsam
+    moeglichen Kalendertag feuern koennen (siehe _days_compatible -- WEEKLY
+    x MONTHLY wird dabei bewusst NIE als kompatibel gewertet, da eine
+    Ueberschneidung nur zufaellig in manchen Monaten vorkommt und dafuer zu
+    selten/verwirrend waere) UND (b) ihr Uhrzeit-Abstand (zirkulaer ueber
+    Mitternacht hinweg) innerhalb von threshold_minutes liegt.
+
+    Kollidierende Zeiten werden per Union-Find zu Clustern zusammengefasst
+    (>= 2 Mitglieder). Das ist eine Vereinfachung: bei genau drei
+    unterschiedlichen Kadenzen, die nur ueber ein gemeinsames drittes
+    Mitglied verbunden sind (z.B. ein taeglicher Lauf, der sowohl mit einem
+    woechentlichen als auch einem an sich inkompatiblen monatlichen Lauf
+    kollidiert), landen alle drei in einem Cluster, obwohl die aeusseren
+    beiden fuer sich genommen nicht kollidieren -- in der weit
+    ueberwiegenden Praxis (gleiche oder aehnliche Kadenzen) liefert das
+    trotzdem das richtige Ergebnis und vermeidet den Aufwand einer vollen
+    Cliquen-Suche.
+
+    Jeder zurueckgegebene Cluster traegt einen stabilen `key`
+    (ausschliesslich aus resource_group_id/policy_id/Uhrzeit abgeleitet,
+    unabhaengig vom aktuellen Datum) -- Grundlage sowohl fuer die
+    Alert.object_key-Wiedererkennung als auch fuer AllowedScheduleCollision.
+    """
+    slots: list[dict] = []
+    for link in links:
+        schedule = link.schedule
+        policy = link.policy
+        group = link.resource_group
+        if schedule is None or policy is None or group is None or not schedule.times or not policy.enabled:
+            continue
+        day_key = _schedule_day_key(schedule)
+        for time_str in schedule.times:
+            try:
+                hour, minute = (int(p) for p in time_str.split(":"))
+            except ValueError:
+                continue
+            slots.append(
+                {
+                    "minutes": hour * 60 + minute,
+                    "time_str": time_str,
+                    "day_key": day_key,
+                    "rg_id": group.id,
+                    "rg_name": group.name,
+                    "policy_id": policy.id,
+                    "policy_name": policy.name,
+                }
+            )
+
+    parent = list(range(len(slots)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    for i in range(len(slots)):
+        for j in range(i + 1, len(slots)):
+            if not _days_compatible(slots[i]["day_key"], slots[j]["day_key"]):
+                continue
+            if _circular_minute_distance(slots[i]["minutes"], slots[j]["minutes"]) <= threshold_minutes:
+                union(i, j)
+
+    clusters: dict[int, list[dict]] = defaultdict(list)
+    for i, slot in enumerate(slots):
+        clusters[find(i)].append(slot)
+
+    results: list[dict] = []
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        members_sorted = sorted(members, key=lambda s: (s["minutes"], s["rg_id"], s["policy_id"]))
+        key = "|".join(f"{m['rg_id']}:{m['policy_id']}:{m['time_str']}" for m in members_sorted)
+        summary = ", ".join(f"[{m['rg_name']}] {m['policy_name']} um {m['time_str']} Uhr" for m in members_sorted)
+        results.append({"key": key, "members": members_sorted, "summary": summary})
+    return results
+
+
 def run_alert_check() -> None:
     """Prueft die Bedingungen, die im Dashboard unter 'Warnungen' gezaehlt
     werden (siehe app.api.routes.alerts): Kapazitaets-Schwellwerte (Volume/
@@ -410,7 +529,13 @@ def run_alert_check() -> None:
     erkannten Verstoessen einen Alert an und markiert nicht mehr
     zutreffende als resolved (object_key verhindert doppelte aktive Alarme
     fuer dasselbe Objekt). Fehlgeschlagene Backup-Laeufe sind bewusst NICHT
-    Teil dieses Checks, siehe app.models.alert."""
+    Teil dieses Checks, siehe app.models.alert.
+
+    Prueft ausserdem verpasste geplante Laeufe (BACKUP_MISSED, bewusst NICHT
+    Teil der automatischen Aufloesung) sowie Zeitplan-Kollisionen
+    (SCHEDULE_COLLISION, siehe _find_schedule_collisions -- IST Teil der
+    automatischen Aufloesung, aber vom Nutzer bestaetigte Kollisionen werden
+    dauerhaft uebersprungen, siehe AllowedScheduleCollision)."""
     db = SessionLocal()
     try:
         # Bewusst KEIN "Task gestartet"-Log hier (anders als Health-Check/
@@ -626,6 +751,31 @@ def run_alert_check() -> None:
                     object_name=f"{group.name} / {policy.name}",
                     message=f"Geplanter Lauf verpasst: faellig {occurrence_local.strftime('%Y-%m-%d %H:%M')} (Zeitplan '{schedule.name}')",
                     resource_group_id=group.id, policy_id=policy.id,
+                )
+
+        # Zeitplan-Kollisionen (Backlog-Punkt 17, GUI-Warnung -- die
+        # zugrundeliegende Korrektheits-Luecke, ein stillschweigend
+        # uebersprungener Scheduler-Tick, wurde bereits am 2026-09-02 per
+        # Nachhol-Mechanismus behoben, siehe run_scheduled_backups). Anders
+        # als backup_missed IST dies ein sich selbst aufloesender Zustand
+        # (rein aus der aktuellen Konfiguration abgeleitet, keine
+        # historische Tatsache) -- daher normaler Teil der seen_keys-
+        # Aufloesungsschleife unten. Einmal vom Nutzer bestaetigte
+        # Kollisionen (siehe POST /alerts/{id}/allow-collision) werden
+        # dauerhaft uebersprungen, bis sich ihre genaue Zusammensetzung
+        # aendert (siehe AllowedScheduleCollision).
+        collision_window_minutes = config.schedule_collision_window_minutes if config else 15
+        allowed_collision_keys = {row[0] for row in db.query(AllowedScheduleCollision.collision_key).all()}
+        for cluster in _find_schedule_collisions(links, collision_window_minutes):
+            key = cluster["key"]
+            seen_keys.add((AlertType.SCHEDULE_COLLISION, key))
+            if key in allowed_collision_keys:
+                continue
+            if (AlertType.SCHEDULE_COLLISION, key) not in active_by_key:
+                _trigger(
+                    AlertType.SCHEDULE_COLLISION, key,
+                    object_name="Zeitplan-Kollision",
+                    message=f"{len(cluster['members'])} Job-Starts liegen innerhalb von {collision_window_minutes} Minuten: {cluster['summary']}",
                 )
 
         for (alert_type, key), alert in active_by_key.items():

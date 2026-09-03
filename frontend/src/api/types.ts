@@ -519,6 +519,7 @@ export type AlertType =
   | "snapmirror_lag_exceeded"
   | "hyperv_node_unreachable"
   | "backup_missed"
+  | "schedule_collision"
   | "backup_failed";
 
 export interface Alert {
@@ -548,6 +549,7 @@ export interface AlertConfig {
   lun_threshold_percent: number;
   snapmirror_lag_threshold_hours: number;
   backup_missed_grace_minutes: number;
+  schedule_collision_window_minutes: number;
   scope: AlertScope;
 }
 
@@ -556,7 +558,15 @@ export interface AlertConfigWritePayload {
   lun_threshold_percent: number;
   snapmirror_lag_threshold_hours: number;
   backup_missed_grace_minutes: number;
+  schedule_collision_window_minutes: number;
   scope: AlertScope;
+}
+
+export interface AllowedScheduleCollision {
+  id: string;
+  collision_key: string;
+  summary: string;
+  allowed_at: string;
 }
 
 export interface SchedulerConfig {

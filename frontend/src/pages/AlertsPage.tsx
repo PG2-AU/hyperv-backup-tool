@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { notifications } from "@mantine/notifications";
 
-import { useAlerts, useDismissAlert, useDismissBackupFailedAlert, useTriggerJobRun } from "@/api/hooks";
+import { useAlerts, useAllowScheduleCollision, useDismissAlert, useDismissBackupFailedAlert, useTriggerJobRun } from "@/api/hooks";
 import { SearchInput } from "@/components/SearchInput";
 import type { Alert, AlertType } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
@@ -21,6 +21,7 @@ const TYPE_LABEL: Record<AlertType, string> = {
   snapmirror_lag_exceeded: "SnapMirror-Lag",
   hyperv_node_unreachable: "Hyper-V-Knoten",
   backup_missed: "Backup verpasst",
+  schedule_collision: "Zeitplan-Kollision",
   backup_failed: "Backup fehlgeschlagen",
 };
 
@@ -33,6 +34,7 @@ const TYPE_COLOR: Record<AlertType, string> = {
   snapmirror_lag_exceeded: "grape",
   hyperv_node_unreachable: "red",
   backup_missed: "red",
+  schedule_collision: "yellow",
   backup_failed: "red",
 };
 
@@ -111,7 +113,40 @@ function AlertAction({ alert }: { alert: Alert }) {
       </Group>
     );
   }
+  if (alert.alert_type === "schedule_collision") {
+    // Bewusst OHNE den generischen "Quittieren"-Button: eine Kollision
+    // loest sich nie von selbst aus der Konfiguration heraus, ein reines
+    // Quittieren wuerde beim naechsten 15min-Check sofort wieder auftauchen
+    // (irrefuehrend). "Erlauben" ist die einzig sinnvolle Aktion hier.
+    return <AllowCollisionButton alertId={alert.id} />;
+  }
   return null;
+}
+
+function AllowCollisionButton({ alertId }: { alertId: string }) {
+  const allowCollision = useAllowScheduleCollision();
+
+  function handleAllow() {
+    confirmAction({
+      title: "Kollision erlauben",
+      message:
+        "Diese Zeitplan-Kollision dauerhaft erlauben? Sie wird künftig nicht mehr gemeldet, solange sich die beteiligten Zeitpläne nicht ändern.",
+      confirmLabel: "Dauerhaft erlauben",
+      color: "blue",
+      onConfirm: () =>
+        allowCollision.mutate(alertId, {
+          onSuccess: () => notifications.show({ title: "Kollision erlaubt", message: "Wird künftig nicht mehr gemeldet.", color: "green" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Kollision konnte nicht erlaubt werden."), color: "red" }),
+        }),
+    });
+  }
+
+  return (
+    <Button size="xs" variant="light" onClick={handleAllow} loading={allowCollision.isPending}>
+      Erlauben
+    </Button>
+  );
 }
 
 function CatchUpMissedBackupButton({ alertId, policyId, resourceGroupId }: { alertId: string; policyId: string; resourceGroupId: string }) {

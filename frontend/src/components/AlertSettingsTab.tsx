@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { Button, Group, NumberInput, Paper, Select, Stack, Text, Title } from "@mantine/core";
+import { ActionIcon, Button, Group, NumberInput, Paper, Select, Stack, Table, Text, Title, Tooltip } from "@mantine/core";
+import { IconTrash } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
 
-import { useAlertConfig, useUpdateAlertConfig } from "@/api/hooks";
+import { useAlertConfig, useAllowedCollisions, useRevokeAllowedCollision, useUpdateAlertConfig } from "@/api/hooks";
 import type { AlertConfigWritePayload, AlertScope } from "@/api/types";
+import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 
 export function AlertSettingsTab() {
@@ -14,6 +16,7 @@ export function AlertSettingsTab() {
   const [lunThreshold, setLunThreshold] = useState<number | string>(90);
   const [lagThreshold, setLagThreshold] = useState<number | string>(4);
   const [missedGraceMinutes, setMissedGraceMinutes] = useState<number | string>(30);
+  const [collisionWindowMinutes, setCollisionWindowMinutes] = useState<number | string>(15);
   const [scope, setScope] = useState<AlertScope>("all");
 
   useEffect(() => {
@@ -22,6 +25,7 @@ export function AlertSettingsTab() {
     setLunThreshold(config.lun_threshold_percent);
     setLagThreshold(config.snapmirror_lag_threshold_hours);
     setMissedGraceMinutes(config.backup_missed_grace_minutes);
+    setCollisionWindowMinutes(config.schedule_collision_window_minutes);
     setScope(config.scope);
   }, [config]);
 
@@ -31,6 +35,7 @@ export function AlertSettingsTab() {
       lun_threshold_percent: Number(lunThreshold),
       snapmirror_lag_threshold_hours: Number(lagThreshold),
       backup_missed_grace_minutes: Number(missedGraceMinutes),
+      schedule_collision_window_minutes: Number(collisionWindowMinutes),
       scope,
     };
     updateConfig
@@ -87,6 +92,15 @@ export function AlertSettingsTab() {
           onChange={setMissedGraceMinutes}
           suffix=" min"
         />
+        <NumberInput
+          label="Kollisions-Schwellwert"
+          description="Job-Starts, die innerhalb dieser Spanne liegen (an einem Tag, an dem beide Zeitpläne feuern können), gelten als Kollision"
+          min={1}
+          max={240}
+          value={collisionWindowMinutes}
+          onChange={setCollisionWindowMinutes}
+          suffix=" min"
+        />
         <Select
           label="Sichtbarkeit"
           description="Nur die tatsächlich vom Hyper-V-Cluster genutzten Volumes/LUNs/SnapMirror-Beziehungen berücksichtigen, oder alle im NetApp-Cluster vorhandenen (z.B. auch fremde Workloads auf demselben Storage)"
@@ -104,6 +118,58 @@ export function AlertSettingsTab() {
           </Button>
         </Group>
       </Stack>
+      <AllowedCollisionsSection />
     </Paper>
+  );
+}
+
+function AllowedCollisionsSection() {
+  const { data: allowed } = useAllowedCollisions();
+  const revoke = useRevokeAllowedCollision();
+
+  if (!allowed || allowed.length === 0) return null;
+
+  function handleRevoke(id: string) {
+    confirmAction({
+      title: "Erlaubnis zurücknehmen",
+      message: "Diese Kollision wird beim nächsten Check wieder gemeldet, falls sie weiterhin besteht.",
+      confirmLabel: "Zurücknehmen",
+      color: "red",
+      onConfirm: () =>
+        revoke.mutate(id, {
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Erlaubnis konnte nicht zurückgenommen werden."), color: "red" }),
+        }),
+    });
+  }
+
+  return (
+    <>
+      <Title order={6} mt="xl" mb={4}>
+        Erlaubte Kollisionen
+      </Title>
+      <Text size="xs" c="dimmed" mb="sm">
+        Zeitplan-Kollisionen, die einmal über "Erlauben" bestätigt wurden -- werden nicht mehr gemeldet, solange sich die
+        beteiligten Zeitpläne nicht ändern.
+      </Text>
+      <Table>
+        <Table.Tbody>
+          {allowed.map((row) => (
+            <Table.Tr key={row.id}>
+              <Table.Td>
+                <Text size="sm">{row.summary}</Text>
+              </Table.Td>
+              <Table.Td w={40}>
+                <Tooltip label="Erlaubnis zurücknehmen">
+                  <ActionIcon color="red" variant="subtle" onClick={() => handleRevoke(row.id)}>
+                    <IconTrash size={16} />
+                  </ActionIcon>
+                </Tooltip>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </>
   );
 }

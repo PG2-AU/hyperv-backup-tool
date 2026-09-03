@@ -17,9 +17,10 @@ from app.core.rbac import Permission
 from app.core.scheduler import run_alert_check
 from app.db.session import get_db
 from app.models.alert import Alert, AlertConfig, AlertScope, AlertStatus, AlertType
+from app.models.allowed_schedule_collision import AllowedScheduleCollision
 from app.models.backup_run import BackupRun, JobStatus
 from app.models.netapp_cluster import NetAppCluster
-from app.schemas.alert import AlertConfigRead, AlertConfigUpdate, AlertRead
+from app.schemas.alert import AlertConfigRead, AlertConfigUpdate, AlertRead, AllowedScheduleCollisionRead
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -109,6 +110,7 @@ def update_alert_config(
     config.lun_threshold_percent = payload.lun_threshold_percent
     config.snapmirror_lag_threshold_hours = payload.snapmirror_lag_threshold_hours
     config.backup_missed_grace_minutes = payload.backup_missed_grace_minutes
+    config.schedule_collision_window_minutes = payload.schedule_collision_window_minutes
     config.scope = AlertScope(payload.scope)
     config.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -175,4 +177,54 @@ def dismiss_alert(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alarm nicht gefunden")
     alert.status = AlertStatus.RESOLVED
     alert.resolved_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+@router.post("/{alert_id}/allow-collision", status_code=status.HTTP_204_NO_CONTENT)
+def allow_schedule_collision(
+    alert_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> None:
+    """Erlaubt eine Zeitplan-Kollision dauerhaft (Nutzer-Vorgabe: zwei
+    Jobs sollen bewusst kollidierend laufen duerfen, ohne bei jedem
+    15min-Check erneut zu melden) -- anders als der generische dismiss()
+    oben, der bei einem sich selbst aufloesenden Alarmtyp wie
+    SCHEDULE_COLLISION beim naechsten Durchlauf sofort wieder auftauchen
+    wuerde, da die zugrundeliegende Konfiguration ja unveraendert bleibt.
+    Legt dafuer eine AllowedScheduleCollision-Zeile mit demselben
+    object_key an (siehe run_alert_check), die run_alert_check kuenftig
+    vor dem Ausloesen prueft, und quittiert den aktuell aktiven Alarm
+    sofort."""
+    alert = db.get(Alert, alert_id)
+    if alert is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alarm nicht gefunden")
+    if alert.alert_type != AlertType.SCHEDULE_COLLISION:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nur fuer Zeitplan-Kollisionen verfuegbar")
+    if not db.query(AllowedScheduleCollision).filter(AllowedScheduleCollision.collision_key == alert.object_key).first():
+        db.add(AllowedScheduleCollision(collision_key=alert.object_key, summary=alert.message, allowed_at=datetime.now(timezone.utc)))
+    alert.status = AlertStatus.RESOLVED
+    alert.resolved_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+@router.get("/allowed-collisions", response_model=list[AllowedScheduleCollisionRead])
+def list_allowed_collisions(
+    db: Session = Depends(get_db), user=Depends(require_permission(Permission.SETTINGS_MANAGE)),
+) -> list[AllowedScheduleCollision]:
+    """Fuer die Verwaltungsliste in Settings > Alarme -- zeigt alle
+    dauerhaft erlaubten Zeitplan-Kollisionen, mit der Moeglichkeit, eine
+    Erlaubnis wieder zurueckzunehmen (DELETE unten)."""
+    return db.query(AllowedScheduleCollision).order_by(AllowedScheduleCollision.allowed_at.desc()).all()
+
+
+@router.delete("/allowed-collisions/{allowed_id}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_allowed_collision(
+    allowed_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.SETTINGS_MANAGE)),
+) -> None:
+    """Nimmt eine zuvor erlaubte Kollision wieder zurueck -- besteht die
+    zugrundeliegende Zeitplan-Ueberschneidung weiterhin, meldet sie der
+    naechste Warnungs-Check erneut."""
+    allowed = db.get(AllowedScheduleCollision, allowed_id)
+    if allowed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Erlaubte Kollision nicht gefunden")
+    db.delete(allowed)
     db.commit()
