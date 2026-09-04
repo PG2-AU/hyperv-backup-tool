@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Group, Modal, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { Button, Group, List, Modal, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
 
 import { useNetAppSchedules, useSnapmirrorPolicies } from "@/api/hooks";
 import { PolicyRulesEditor } from "@/components/PolicyRulesEditor";
@@ -115,6 +115,7 @@ export function SnapmirrorFormModal({
     (v) => v.cluster_id === sourceClusterId && v.svm_name === sourceSvmName && v.name === sourceVolumeName,
   );
   const destinationVolumeName = sourceVolumeName ? `${destinationPrefix}${sourceVolumeName}${destinationSuffix}` : "";
+  const selectedPolicy = policies.find((p) => p.name === policySelection);
   const policyMode = policySelection === NEW_POLICY_VALUE ? "new" : "existing";
   const scheduleMode = scheduleSelection === NEW_SCHEDULE_VALUE ? "new" : scheduleSelection === NO_SCHEDULE_VALUE ? "none" : "existing";
   const validNewPolicyRules = newPolicyRules.filter((r) => r.label.trim() && r.count > 0);
@@ -217,10 +218,30 @@ export function SnapmirrorFormModal({
         )}
         <Select label="Ziel-Aggregat" data={destinationAggregateOptions} value={destinationAggregate} onChange={setDestinationAggregate} required />
 
-        <Text size="sm" fw={600} mt="sm">
-          SnapMirror-Policy
-        </Text>
-        <Select label="Policy" data={policyOptions} value={policySelection} onChange={setPolicySelection} required searchable />
+        <Select
+          label="SnapMirror-Policy"
+          mt="sm"
+          data={policyOptions}
+          value={policySelection}
+          onChange={setPolicySelection}
+          required
+          searchable
+        />
+        {policyMode === "existing" && selectedPolicy && (
+          selectedPolicy.rules.length ? (
+            <List size="xs" c="dimmed" pl={4} withPadding>
+              {selectedPolicy.rules.map((rule) => (
+                <List.Item key={rule.label}>
+                  Label „{rule.label}“ — {rule.count} Versionen aufbewahrt
+                </List.Item>
+              ))}
+            </List>
+          ) : (
+            <Text size="xs" c="dimmed" pl={4}>
+              Keine Retention-Regeln definiert
+            </Text>
+          )
+        )}
         {policyMode === "new" && (
           <Stack gap="xs">
             <Group grow>
@@ -240,10 +261,7 @@ export function SnapmirrorFormModal({
           </Stack>
         )}
 
-        <Text size="sm" fw={600} mt="sm">
-          Schedule
-        </Text>
-        <Select label="Schedule" data={scheduleOptions} value={scheduleSelection} onChange={setScheduleSelection} searchable />
+        <Select label="Schedule" mt="sm" data={scheduleOptions} value={scheduleSelection} onChange={setScheduleSelection} searchable />
         {scheduleMode === "new" && (
           <Stack gap="xs">
             <TextInput label="Name des neuen Schedules" value={newScheduleName} onChange={(e) => setNewScheduleName(e.currentTarget.value)} required />

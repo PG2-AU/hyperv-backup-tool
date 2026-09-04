@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Group, Modal, Select, Stack, Text, TextInput } from "@mantine/core";
+import { Alert, Button, Group, List, Modal, Select, Stack, Text, TextInput } from "@mantine/core";
 import { IconAlertTriangle } from "@tabler/icons-react";
 
 import { useNetAppSchedules, useSnapmirrorPolicies } from "@/api/hooks";
@@ -123,11 +123,8 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, clusters, o
             Policy und Schedule leben auf dem Zielcluster und können daher hier nicht bearbeitet werden.
           </Alert>
         )}
-        <Text size="sm" fw={600}>
-          SnapMirror-Policy
-        </Text>
         <Select
-          label="Policy"
+          label="SnapMirror-Policy"
           data={policyOptions}
           value={policySelection}
           onChange={setPolicySelection}
@@ -136,11 +133,19 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, clusters, o
           searchable
         />
         {policyMode === "existing" && selectedPolicy && (
-          <Text size="xs" c="dimmed">
-            {selectedPolicy.rules.length
-              ? `SnapMirror-Labels: ${selectedPolicy.rules.map((r) => `${r.label}: ${r.count}`).join(", ")}`
-              : "Keine Retention-Regeln definiert"}
-          </Text>
+          selectedPolicy.rules.length ? (
+            <List size="xs" c="dimmed" pl={4} withPadding>
+              {selectedPolicy.rules.map((rule) => (
+                <List.Item key={rule.label}>
+                  Label „{rule.label}“ — {rule.count} Versionen aufbewahrt
+                </List.Item>
+              ))}
+            </List>
+          ) : (
+            <Text size="xs" c="dimmed" pl={4}>
+              Keine Retention-Regeln definiert
+            </Text>
+          )
         )}
         {policyMode === "new" && (
           <Stack gap="xs">
