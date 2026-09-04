@@ -162,6 +162,8 @@ export interface NetAppLun extends NetAppDiscoveredBase {
   volume_name?: string | null;
   state?: string | null;
   size_bytes?: number | null;
+  used_bytes?: number | null;
+  percent_used?: number | null;
   os_type?: string | null;
   mapped_igroups?: string | null;
 }

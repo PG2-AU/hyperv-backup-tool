@@ -866,6 +866,7 @@ export function StoragePage() {
                 <Table.Th>Name</Table.Th>
                 <Table.Th>OS-Type</Table.Th>
                 <Table.Th>Größe</Table.Th>
+                <Table.Th>Belegung</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>LUN-Mapping (IGroups)</Table.Th>
                 <Table.Th>Aktionen</Table.Th>
@@ -880,6 +881,19 @@ export function StoragePage() {
                   <Table.Td>{lun.name}</Table.Td>
                   <Table.Td>{lun.os_type ?? "-"}</Table.Td>
                   <Table.Td>{formatBytes(lun.size_bytes)}</Table.Td>
+                  <Table.Td miw={140}>
+                    <Text size="xs" c="dimmed">
+                      {formatBytes(lun.used_bytes)} {lun.percent_used != null ? `(${lun.percent_used}%)` : ""}
+                    </Text>
+                    {lun.percent_used != null && (
+                      <Progress
+                        value={lun.percent_used}
+                        size={6}
+                        mt={2}
+                        color={lun.percent_used >= 90 ? "red" : lun.percent_used >= 75 ? "yellow" : "blue"}
+                      />
+                    )}
+                  </Table.Td>
                   <Table.Td>
                     <Badge color={lun.state === "online" ? "green" : "gray"} variant="light">
                       {lun.state ?? "-"}

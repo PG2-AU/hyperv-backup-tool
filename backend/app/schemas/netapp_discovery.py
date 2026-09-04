@@ -150,6 +150,11 @@ class NetAppLunRead(BaseModel):
     state: str | None = None
     size_bytes: int | None = None
     used_bytes: int | None = None
+    # Anders als bei NetAppVolume (space.percent_used direkt von ONTAP) gibt
+    # es fuer LUNs keinen eigenen ONTAP-Prozentwert -- wird aus used_bytes/
+    # size_bytes berechnet (siehe storage.py, gleiche Formel wie im
+    # Kapazitaets-Alarm-Check in scheduler.py).
+    percent_used: int | None = None
     os_type: str | None = None
     mapped_igroups: str | None = None
     serial_number: str | None = None

@@ -356,15 +356,17 @@ export function VmsPage() {
                 <Table.Th>Host</Table.Th>
                 <Table.Th>Cluster</Table.Th>
                 <Table.Th>CSV-Pfade</Table.Th>
-                <Table.Th>VHDX-Größe</Table.Th>
-                <Table.Th>Belegter Platz</Table.Th>
+                <Table.Th>Belegung</Table.Th>
                 <Table.Th>Protection Group</Table.Th>
                 <Table.Th>Protected</Table.Th>
                 <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {filteredVms.map((vm) => (
+              {filteredVms.map((vm) => {
+                const hasVhdxUsage = vm.vhdx_used_bytes != null && vm.vhdx_size_bytes != null && vm.vhdx_size_bytes > 0;
+                const vhdxPct = hasVhdxUsage ? Math.round((vm.vhdx_used_bytes! / vm.vhdx_size_bytes!) * 100) : null;
+                return (
                 <Table.Tr
                   key={vm.id}
                   onClick={() => toggleSelectedVm(vm)}
@@ -379,8 +381,15 @@ export function VmsPage() {
                   <Table.Td>{vm.host}</Table.Td>
                   <Table.Td>{vm.cluster ?? "-"}</Table.Td>
                   <Table.Td>{vm.csv_paths.join(", ")}</Table.Td>
-                  <Table.Td>{formatBytes(vm.vhdx_size_bytes)}</Table.Td>
-                  <Table.Td>{formatBytes(vm.vhdx_used_bytes)}</Table.Td>
+                  <Table.Td miw={140}>
+                    <Text size="xs" c="dimmed">
+                      {formatBytes(vm.vhdx_used_bytes)} / {formatBytes(vm.vhdx_size_bytes)}
+                      {vhdxPct != null ? ` (${vhdxPct}%)` : ""}
+                    </Text>
+                    {vhdxPct != null && (
+                      <Progress value={vhdxPct} size={6} mt={2} color={vhdxPct >= 90 ? "red" : vhdxPct >= 75 ? "yellow" : "blue"} />
+                    )}
+                  </Table.Td>
                   <Table.Td>
                     <ResourceGroupCell groups={vm.resource_group_names} policies={vm.policy_names} />
                   </Table.Td>
@@ -407,7 +416,8 @@ export function VmsPage() {
                     </Group>
                   </Table.Td>
                 </Table.Tr>
-              ))}
+                );
+              })}
             </Table.Tbody>
           </Table>
             {(vms?.length ?? 0) > 0 && filteredVms.length === 0 && (
