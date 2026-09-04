@@ -1186,33 +1186,68 @@ kontrollieren.</p>
 <section id="s9">
 <h2><span class="step-num">9</span>Container-Persistenz absichern (rootless Podman + WSL2)</h2>
 <p><strong>Voraussetzung, bevor alles Folgende überhaupt greifen kann: die WSL2-VM
-selbst muss durchgehend laufen.</strong> Live beobachtet: WSL2 fährt seine
-komplette VM standardmäßig herunter, sobald keine Verbindung mehr zu ihr
-besteht (z. B. die letzte RDP-Sitzung/das letzte Terminal geschlossen wird)
-— unabhängig von allem, was innerhalb von Linux per <code>loginctl enable-linger</code>/Quadlet eingerichtet ist (dazu unten mehr), da hier die
-<strong>gesamte VM</strong> verschwindet, nicht nur der Linux-Login. Nach außen sichtbar
-als: GUI sofort nach dem Abmelden vom Server nicht mehr erreichbar, nach
-der nächsten Anmeldung dauert es rund eine Minute (VM-Boot + Container-
-Neustart), bis sie wieder da ist. In <code>%UserProfile%\.wslconfig</code> (auf dem
-Windows Server, NICHT innerhalb von WSL) das automatische Herunterfahren
+selbst muss durchgehend laufen — unabhängig davon, ob überhaupt jemand am
+Server angemeldet ist.</strong> Live beobachtet (zweimal, mit unterschiedlichem
+Bild): WSL2 kann seine komplette VM herunterfahren, sobald keine Verbindung
+mehr zu ihr besteht (z. B. die letzte RDP-Sitzung/das letzte Terminal
+geschlossen wird) — unabhängig von allem, was innerhalb von Linux per
+<code>loginctl enable-linger</code>/Quadlet eingerichtet ist (dazu unten mehr), da hier
+die <strong>gesamte VM</strong> verschwindet, nicht nur der Linux-Login. Nach außen
+sichtbar als: GUI sofort nach dem Abmelden vom Server nicht mehr erreichbar,
+nach der nächsten Anmeldung dauert es rund eine Minute (VM-Boot +
+Container-Neustart), bis sie wieder da ist.</p>
+<p><strong>Zuverlässigste Lösung: eine Windows-Systemaufgabe, die eine dauerhafte
+Verbindung zur WSL2-VM offen hält</strong> — dadurch hat die VM unabhängig von
+jeder Benutzeranmeldung immer mindestens einen aktiven &quot;Client&quot; und wird
+nie als inaktiv eingestuft; als Nebeneffekt startet dieselbe Aufgabe die VM
+außerdem automatisch bei jedem Windows-Systemstart, noch bevor sich
+überhaupt jemand anmeldet. Wichtig: <strong>NICHT</strong> als <code>SYSTEM</code>-Konto ausführen
+(live fehlgeschlagen — SYSTEM hat keinen Zugriff auf die WSL-Distribution,
+die unter dem interaktiven Benutzerkonto registriert ist, der Task lief
+scheinbar, ohne dass jemals ein Prozess in der VM startete) — stattdessen
+<code>LogonType S4U</code> mit dem tatsächlichen Windows-Benutzerkonto: läuft ebenso
+ohne aktive Anmeldung und ohne gespeichertes Passwort, aber mit Zugriff auf
+dessen registrierte WSL-Distribution.</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>$action = New-ScheduledTaskAction -Execute "wsl.exe" -Argument "-d rocky -e sleep infinity"
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId "Administrator" -LogonType S4U -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit 0 -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName "HVNB-WSL-KeepAlive" -Action $action -Trigger $trigger `
+    -Principal $principal -Settings $settings -Description `
+    "Haelt die WSL2-VM dauerhaft am Leben, unabhaengig von Benutzer-An-/Abmeldung, damit der HVNB-Backup-Container jederzeit erreichbar bleibt."
+Start-ScheduledTask -TaskName "HVNB-WSL-KeepAlive"</code></pre>
+</div>
+<p><code>-d rocky</code> an den tatsächlichen Distributionsnamen anpassen (<code>wsl --status</code>
+zeigt die Standard-Distribution). <code>-ExecutionTimeLimit 0</code> verhindert, dass
+Windows die Aufgabe nach der sonst üblichen Standard-Laufzeit (3 Tage)
+automatisch beendet; <code>-RestartCount</code>/<code>-RestartInterval</code> starten sie neu,
+falls der <code>sleep infinity</code>-Prozess doch einmal enden sollte.</p>
+<p><strong>Verifizieren</strong> (auf dem Windows Server bzw. per WSL-Interop):</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Get-ScheduledTask -TaskName "HVNB-WSL-KeepAlive" | Select-Object State
+Get-CimInstance Win32_Process -Filter "Name='wsl.exe'" | Select-Object CommandLine</code></pre>
+</div>
+<p>Ein <code>wsl.exe -d rocky -e sleep infinity</code>-Prozess muss dauerhaft in der
+Liste erscheinen — verschwindet er (z. B. nach einem manuellen <code>wsl --shutdown</code>), startet ihn <code>RestartCount</code>/der nächste Windows-Start
+automatisch neu.</p>
+<p><strong>Zusätzlich, als zweite Absicherungsebene</strong> (schadet nicht, auch wenn die
+Aufgabe oben bereits verhindert, dass die VM je als inaktiv gilt): in
+<code>%UserProfile%\.wslconfig</code> (auf dem Windows Server, NICHT innerhalb von
+WSL) das automatische Herunterfahren bei Inaktivität ebenfalls explizit
 deaktivieren:</p>
 <div class="code-block">
 <span class="code-label">systemd Quadlet</span>
 <pre><code>[wsl2]
 vmIdleTimeout=-1</code></pre>
 </div>
-<p><strong>Wird erst nach einem <code>wsl --shutdown</code> wirksam</strong> (WSL liest <code>.wslconfig</code>
-nur beim Start einer neuen VM-Instanz, nicht während sie läuft) — das
-beendet kurzzeitig auch den Container, daher einmalig zu einem passenden
-Zeitpunkt ausführen (PowerShell auf dem Windows Server, nicht in WSL
-selbst):</p>
-<div class="code-block">
-<span class="code-label">PowerShell</span>
-<pre><code>wsl --shutdown</code></pre>
-</div>
-<p>Der Container startet danach automatisch wieder (Quadlet/Linger, siehe
-unten) — kurz prüfen, dass die GUI nach etwa einer Minute wieder erreichbar
-ist.</p>
+<p>Wird erst nach einem <code>wsl --shutdown</code> wirksam (WSL liest <code>.wslconfig</code> nur
+beim Start einer neuen VM-Instanz) — das beendet kurzzeitig auch den
+Container; die obige Systemaufgabe fängt den Neustart automatisch wieder
+auf.</p>
 <p><strong>Danach greifen erst die beiden folgenden, rein Linux-internen
 Absicherungen</strong> — sie setzen voraus, dass die WSL2-VM (wie oben
 sichergestellt) durchgehend läuft: <code>docker-compose.yml</code> setzt <code>restart: unless-stopped</code>, was
@@ -1325,7 +1360,7 @@ Zeitraum.</p>
 </thead>
 <tbody><tr>
 <td>GUI sofort nach Abmelden vom Server nicht mehr erreichbar, nach Anmeldung nach ~1min wieder da</td>
-<td><code>vmIdleTimeout</code> fehlt in <code>.wslconfig</code> -- WSL2 faehrt die ganze VM beim Trennen der letzten Verbindung herunter</td>
+<td><code>HVNB-WSL-KeepAlive</code>-Systemaufgabe fehlt oder laeuft (faelschlich) als SYSTEM statt per S4U -- WSL2 faehrt die ganze VM beim Trennen der letzten Verbindung herunter</td>
 <td>9</td>
 </tr>
 <tr>

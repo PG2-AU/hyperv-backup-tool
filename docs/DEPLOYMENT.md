@@ -899,16 +899,64 @@ Test-NetConnection -ComputerName <Server-IP> -Port 8443
 ## 9. Container-Persistenz absichern (rootless Podman + WSL2)
 
 **Voraussetzung, bevor alles Folgende überhaupt greifen kann: die WSL2-VM
-selbst muss durchgehend laufen.** Live beobachtet: WSL2 fährt seine
-komplette VM standardmäßig herunter, sobald keine Verbindung mehr zu ihr
-besteht (z. B. die letzte RDP-Sitzung/das letzte Terminal geschlossen wird)
-— unabhängig von allem, was innerhalb von Linux per `loginctl
-enable-linger`/Quadlet eingerichtet ist (dazu unten mehr), da hier die
-**gesamte VM** verschwindet, nicht nur der Linux-Login. Nach außen sichtbar
-als: GUI sofort nach dem Abmelden vom Server nicht mehr erreichbar, nach
-der nächsten Anmeldung dauert es rund eine Minute (VM-Boot + Container-
-Neustart), bis sie wieder da ist. In `%UserProfile%\.wslconfig` (auf dem
-Windows Server, NICHT innerhalb von WSL) das automatische Herunterfahren
+selbst muss durchgehend laufen — unabhängig davon, ob überhaupt jemand am
+Server angemeldet ist.** Live beobachtet (zweimal, mit unterschiedlichem
+Bild): WSL2 kann seine komplette VM herunterfahren, sobald keine Verbindung
+mehr zu ihr besteht (z. B. die letzte RDP-Sitzung/das letzte Terminal
+geschlossen wird) — unabhängig von allem, was innerhalb von Linux per
+`loginctl enable-linger`/Quadlet eingerichtet ist (dazu unten mehr), da hier
+die **gesamte VM** verschwindet, nicht nur der Linux-Login. Nach außen
+sichtbar als: GUI sofort nach dem Abmelden vom Server nicht mehr erreichbar,
+nach der nächsten Anmeldung dauert es rund eine Minute (VM-Boot +
+Container-Neustart), bis sie wieder da ist.
+
+**Zuverlässigste Lösung: eine Windows-Systemaufgabe, die eine dauerhafte
+Verbindung zur WSL2-VM offen hält** — dadurch hat die VM unabhängig von
+jeder Benutzeranmeldung immer mindestens einen aktiven "Client" und wird
+nie als inaktiv eingestuft; als Nebeneffekt startet dieselbe Aufgabe die VM
+außerdem automatisch bei jedem Windows-Systemstart, noch bevor sich
+überhaupt jemand anmeldet. Wichtig: **NICHT** als `SYSTEM`-Konto ausführen
+(live fehlgeschlagen — SYSTEM hat keinen Zugriff auf die WSL-Distribution,
+die unter dem interaktiven Benutzerkonto registriert ist, der Task lief
+scheinbar, ohne dass jemals ein Prozess in der VM startete) — stattdessen
+`LogonType S4U` mit dem tatsächlichen Windows-Benutzerkonto: läuft ebenso
+ohne aktive Anmeldung und ohne gespeichertes Passwort, aber mit Zugriff auf
+dessen registrierte WSL-Distribution.
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "wsl.exe" -Argument "-d rocky -e sleep infinity"
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId "Administrator" -LogonType S4U -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit 0 -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName "HVNB-WSL-KeepAlive" -Action $action -Trigger $trigger `
+    -Principal $principal -Settings $settings -Description `
+    "Haelt die WSL2-VM dauerhaft am Leben, unabhaengig von Benutzer-An-/Abmeldung, damit der HVNB-Backup-Container jederzeit erreichbar bleibt."
+Start-ScheduledTask -TaskName "HVNB-WSL-KeepAlive"
+```
+
+`-d rocky` an den tatsächlichen Distributionsnamen anpassen (`wsl --status`
+zeigt die Standard-Distribution). `-ExecutionTimeLimit 0` verhindert, dass
+Windows die Aufgabe nach der sonst üblichen Standard-Laufzeit (3 Tage)
+automatisch beendet; `-RestartCount`/`-RestartInterval` starten sie neu,
+falls der `sleep infinity`-Prozess doch einmal enden sollte.
+
+**Verifizieren** (auf dem Windows Server bzw. per WSL-Interop):
+
+```powershell
+Get-ScheduledTask -TaskName "HVNB-WSL-KeepAlive" | Select-Object State
+Get-CimInstance Win32_Process -Filter "Name='wsl.exe'" | Select-Object CommandLine
+```
+
+Ein `wsl.exe -d rocky -e sleep infinity`-Prozess muss dauerhaft in der
+Liste erscheinen — verschwindet er (z. B. nach einem manuellen `wsl
+--shutdown`), startet ihn `RestartCount`/der nächste Windows-Start
+automatisch neu.
+
+**Zusätzlich, als zweite Absicherungsebene** (schadet nicht, auch wenn die
+Aufgabe oben bereits verhindert, dass die VM je als inaktiv gilt): in
+`%UserProfile%\.wslconfig` (auf dem Windows Server, NICHT innerhalb von
+WSL) das automatische Herunterfahren bei Inaktivität ebenfalls explizit
 deaktivieren:
 
 ```ini
@@ -916,19 +964,10 @@ deaktivieren:
 vmIdleTimeout=-1
 ```
 
-**Wird erst nach einem `wsl --shutdown` wirksam** (WSL liest `.wslconfig`
-nur beim Start einer neuen VM-Instanz, nicht während sie läuft) — das
-beendet kurzzeitig auch den Container, daher einmalig zu einem passenden
-Zeitpunkt ausführen (PowerShell auf dem Windows Server, nicht in WSL
-selbst):
-
-```powershell
-wsl --shutdown
-```
-
-Der Container startet danach automatisch wieder (Quadlet/Linger, siehe
-unten) — kurz prüfen, dass die GUI nach etwa einer Minute wieder erreichbar
-ist.
+Wird erst nach einem `wsl --shutdown` wirksam (WSL liest `.wslconfig` nur
+beim Start einer neuen VM-Instanz) — das beendet kurzzeitig auch den
+Container; die obige Systemaufgabe fängt den Neustart automatisch wieder
+auf.
 
 **Danach greifen erst die beiden folgenden, rein Linux-internen
 Absicherungen** — sie setzen voraus, dass die WSL2-VM (wie oben
@@ -1045,7 +1084,7 @@ Zeitraum.
 
 | Symptom | Wahrscheinliche Ursache | Abschnitt |
 |---|---|---|
-| GUI sofort nach Abmelden vom Server nicht mehr erreichbar, nach Anmeldung nach ~1min wieder da | `vmIdleTimeout` fehlt in `.wslconfig` -- WSL2 faehrt die ganze VM beim Trennen der letzten Verbindung herunter | 9 |
+| GUI sofort nach Abmelden vom Server nicht mehr erreichbar, nach Anmeldung nach ~1min wieder da | `HVNB-WSL-KeepAlive`-Systemaufgabe fehlt oder laeuft (faelschlich) als SYSTEM statt per S4U -- WSL2 faehrt die ganze VM beim Trennen der letzten Verbindung herunter | 9 |
 | GUI von aussen nicht erreichbar, Container läuft | WSL2-Guest-IP hat sich geändert, Portproxy zeigt ins Leere | 8 |
 | Container nach Server-Neustart als `Exited`/gar nicht gestartet | `loginctl enable-linger` fehlt, oder die Quadlet-Datei fehlt/wurde nicht per `daemon-reload` eingelesen | 6, 9 |
 | Container stoppt/stürzt ab und kommt nicht von selbst wieder hoch | Betrieb läuft noch über `podman-compose up -d` statt der Quadlet-Unit (kein Dauer-Daemon in rootless Podman) | 6, 9 |
