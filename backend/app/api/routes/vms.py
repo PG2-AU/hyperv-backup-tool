@@ -151,12 +151,22 @@ def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Per
     volumes_by_key: dict[tuple[str | None, str | None], NetAppVolume] = {
         (v.svm_name, v.name): v for v in db.query(NetAppVolume).all()
     }
-    luns_by_id: dict[str, NetAppLun] = {lun.id: lun for lun in db.query(NetAppLun).all()}
+    # Ueber serial_number matchen, NICHT ueber NetAppLun.id -- die interne
+    # DB-ID wird bei JEDER NetApp-Discovery komplett neu vergeben (Loeschen +
+    # Neuanlegen aller Zeilen), waehrend csv.disk_serial_number/lun.serial_number
+    # dieselbe stabile Windows-Disk-/ONTAP-Seriennummer ueber Discovery-Laeufe
+    # hinweg bleiben (identisches Muster wie _hyperv_referenced_keys in
+    # scheduler.py). csv.netapp_lun_id (von der Hyper-V-Discovery gesetzt)
+    # zeigte dadurch schon kurz nach der naechsten NetApp-Discovery ins Leere
+    # -- live gefunden: lun_capacity_bytes/lun_used_bytes waren dadurch fuer
+    # bereits laenger nicht neu Hyper-V-discovertes CSVs leer/falsch, obwohl
+    # Storage > LUNs den korrekten Wert zeigte.
+    luns_by_serial: dict[str, NetAppLun] = {lun.serial_number: lun for lun in db.query(NetAppLun).all() if lun.serial_number}
 
     csvs: list[CsvRead] = []
     for csv in db.query(HyperVCsv).order_by(HyperVCsv.name).all():
         volume = volumes_by_key.get((csv.netapp_svm_name, csv.netapp_volume_name)) if csv.netapp_volume_name else None
-        lun = luns_by_id.get(csv.netapp_lun_id) if csv.netapp_lun_id else None
+        lun = luns_by_serial.get(csv.disk_serial_number) if csv.disk_serial_number else None
         csv_read = CsvRead(
             name=csv.name,
             owner_node=csv.owner_node or "",
@@ -168,7 +178,7 @@ def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Per
             used_bytes=csv.used_bytes,
             lun_name=csv.netapp_lun_name,
             lun_capacity_bytes=lun.size_bytes if lun else None,
-            lun_used_bytes=None,
+            lun_used_bytes=lun.used_bytes if lun else None,
             volume_name=csv.netapp_volume_name,
             volume_capacity_bytes=volume.size_bytes if volume else None,
             volume_used_bytes=volume.used_bytes if volume else None,
