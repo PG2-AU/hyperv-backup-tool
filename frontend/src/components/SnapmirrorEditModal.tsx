@@ -75,6 +75,7 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, clusters, o
     { value: NEW_SCHEDULE_VALUE, label: "+ Neuen Schedule anlegen" },
   ]);
 
+  const selectedPolicy = policies.find((p) => p.name === policySelection);
   const policyMode = policySelection === NEW_POLICY_VALUE ? "new" : "existing";
   const scheduleMode = scheduleSelection === NEW_SCHEDULE_VALUE ? "new" : scheduleSelection === NO_SCHEDULE_VALUE ? "none" : "existing";
   const validNewPolicyRules = newPolicyRules.filter((r) => r.label.trim() && r.count > 0);
@@ -134,6 +135,13 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, clusters, o
           required
           searchable
         />
+        {policyMode === "existing" && selectedPolicy && (
+          <Text size="xs" c="dimmed">
+            {selectedPolicy.rules.length
+              ? `SnapMirror-Labels: ${selectedPolicy.rules.map((r) => `${r.label}: ${r.count}`).join(", ")}`
+              : "Keine Retention-Regeln definiert"}
+          </Text>
+        )}
         {policyMode === "new" && (
           <Stack gap="xs">
             <Group grow>
@@ -153,11 +161,9 @@ export function SnapmirrorEditModal({ opened, onClose, relationship, clusters, o
           </Stack>
         )}
 
-        <Text size="sm" fw={600} mt="sm">
-          Schedule
-        </Text>
         <Select
           label="Schedule"
+          mt="sm"
           data={scheduleOptions}
           value={scheduleSelection}
           onChange={setScheduleSelection}
