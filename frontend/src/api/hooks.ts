@@ -11,6 +11,7 @@ import type {
   DiscoveryStep,
   HyperVCluster,
   HyperVClusterCreate,
+  HyperVClusterUpdate,
   IgroupCreate,
   MetroClusterStatus,
   NetAppAggregate,
@@ -499,11 +500,29 @@ export interface NetAppClusterCreatePayload {
   verify_ssl: boolean;
 }
 
+export interface NetAppClusterUpdatePayload {
+  name: string;
+  management_lif: string;
+  username: string;
+  // Leer = bestehendes Passwort beibehalten (siehe Backend NetAppClusterUpdate).
+  password?: string;
+  verify_ssl: boolean;
+}
+
 export function useCreateNetAppCluster() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (payload: NetAppClusterCreatePayload) =>
       (await apiClient.post<NetAppCluster>("/netapp/clusters", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["netapp-clusters"] }),
+  });
+}
+
+export function useUpdateNetAppCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: NetAppClusterUpdatePayload }) =>
+      (await apiClient.put<NetAppCluster>(`/netapp/clusters/${id}`, payload)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["netapp-clusters"] }),
   });
 }
@@ -545,6 +564,15 @@ export function useCreateHyperVCluster() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (payload: HyperVClusterCreate) => (await apiClient.post<HyperVCluster>("/hyperv/clusters", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["hyperv-clusters"] }),
+  });
+}
+
+export function useUpdateHyperVCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: HyperVClusterUpdate }) =>
+      (await apiClient.put<HyperVCluster>(`/hyperv/clusters/${id}`, payload)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["hyperv-clusters"] }),
   });
 }

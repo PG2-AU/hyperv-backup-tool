@@ -40,7 +40,7 @@ from app.models.netapp_discovery import (
     NetAppSvmPeer,
     NetAppVolume,
 )
-from app.schemas.netapp_cluster import DiscoveryStepRead, NetAppClusterCreate, NetAppClusterRead
+from app.schemas.netapp_cluster import DiscoveryStepRead, NetAppClusterCreate, NetAppClusterRead, NetAppClusterUpdate
 from app.schemas.netapp_write import (
     ClusterPeerCreate,
     IgroupCreate,
@@ -322,6 +322,53 @@ def create_cluster(
         last_checked_at=datetime.now(timezone.utc),
     )
     db.add(cluster)
+    db.commit()
+    db.refresh(cluster)
+    return cluster
+
+
+@router.put("/{cluster_id}", response_model=NetAppClusterRead)
+def update_cluster(
+    cluster_id: str,
+    payload: NetAppClusterUpdate,
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> NetAppCluster:
+    """Aendert die Verbindungsdaten eines bereits registrierten Clusters IN
+    PLACE (gleiche cluster.id bleibt erhalten) -- siehe update_cluster in
+    hyperv_clusters.py fuer dieselbe Begruendung (Loeschen+Neuanlegen haette
+    eine neue cluster.id erzeugt und damit alle NetApp-Objekt-Referenzen
+    ueber diese ID stillschweigend verwaist)."""
+    cluster = _get_cluster_or_404(db, cluster_id)
+    name_conflict = (
+        db.query(NetAppCluster).filter(NetAppCluster.name == payload.name, NetAppCluster.id != cluster_id).first()
+    )
+    if name_conflict is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ein Cluster mit diesem Namen existiert bereits")
+
+    effective_password = payload.password or decrypt_secret(cluster.encrypted_password)
+    probe = NetAppOntapService(
+        host=payload.management_lif, verify_ssl=payload.verify_ssl, username=payload.username, password=effective_password,
+    )
+    try:
+        summary = probe.get_cluster_summary()
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Verbindung fehlgeschlagen: {exc}") from exc
+
+    cluster.name = payload.name
+    cluster.management_lif = payload.management_lif
+    cluster.username = payload.username
+    if payload.password:
+        cluster.encrypted_password = encrypt_secret(payload.password)
+    cluster.verify_ssl = payload.verify_ssl
+    cluster.ontap_version = summary.ontap_version
+    cluster.ontap_cluster_name = summary.name
+    cluster.cluster_uuid = summary.uuid
+    cluster.node_count = summary.node_count
+    cluster.healthy_node_count = summary.healthy_node_count
+    cluster.health = NetAppClusterHealth.HEALTHY if summary.healthy else NetAppClusterHealth.DEGRADED
+    cluster.is_metrocluster = summary.is_metrocluster
+    cluster.last_checked_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(cluster)
     return cluster

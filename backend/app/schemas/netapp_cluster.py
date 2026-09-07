@@ -13,6 +13,18 @@ class NetAppClusterCreate(BaseModel):
     verify_ssl: bool = True
 
 
+class NetAppClusterUpdate(BaseModel):
+    name: str
+    management_lif: str
+    username: str
+    # Leer/None = bestehendes (verschluesseltes) Passwort beibehalten, siehe
+    # HyperVClusterUpdate fuer dieselbe Begruendung. Ruehrt bewusst nicht an
+    # auth_method/Zertifikats-Feldern -- Umstellung auf Zertifikat bleibt die
+    # separate "Auf Zertifikat umstellen"-Aktion.
+    password: str | None = None
+    verify_ssl: bool = True
+
+
 class DiscoveryStepRead(BaseModel):
     step: str
     success: bool

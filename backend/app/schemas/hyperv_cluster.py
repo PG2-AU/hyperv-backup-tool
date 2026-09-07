@@ -18,6 +18,18 @@ class HyperVClusterCreate(BaseModel):
     use_https: bool = True
 
 
+class HyperVClusterUpdate(BaseModel):
+    name: str
+    management_address: str
+    username: str
+    # Leer/None = bestehendes (verschluesseltes) Passwort beibehalten -- eine
+    # Passwort-Rotation soll nicht erfordern, alle anderen Felder ebenfalls
+    # neu einzugeben, und umgekehrt soll eine reine Namens-/Adress-Aenderung
+    # kein neues Passwort erzwingen.
+    password: str | None = None
+    use_https: bool = True
+
+
 class HyperVUnreachableNode(BaseModel):
     name: str
     address: str | None = None

@@ -21,7 +21,7 @@ from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppLun
-from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead, HyperVReachabilityCheck
+from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead, HyperVClusterUpdate, HyperVReachabilityCheck
 from app.schemas.netapp_cluster import DiscoveryStepRead
 from app.services.hyperv_service import HyperVConnectionError, HyperVService, check_reachability
 
@@ -135,6 +135,49 @@ def create_cluster(
     _apply_summary(cluster, summary)
     _refresh_node_reachability(cluster, probe, payload.username, payload.password)
     db.add(cluster)
+    db.commit()
+    db.refresh(cluster)
+    return cluster
+
+
+@router.put("/{cluster_id}", response_model=HyperVClusterRead)
+def update_cluster(
+    cluster_id: str,
+    payload: HyperVClusterUpdate,
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.HYPERV_MANAGE)),
+) -> HyperVCluster:
+    """Aendert die Verbindungsdaten eines bereits registrierten Clusters IN
+    PLACE (gleiche cluster.id bleibt erhalten) -- insbesondere fuer eine
+    Passwort-Rotation gedacht. Vorher gab es dafuer nur Loeschen+Neuanlegen,
+    was aber eine NEUE cluster.id erzeugt haette: ResourceGroup.members
+    referenziert Cluster-Mitglieder Cluster-qualifiziert (`<cluster_id>::
+    <name>`, siehe make_member_key), ein Neuanlegen haette also alle
+    bestehenden Protection-Group-Zuordnungen zu diesem Cluster stillschweigend
+    kaputt gemacht -- nicht nur die discoverten Inventardaten."""
+    cluster = _get_cluster_or_404(db, cluster_id)
+    name_conflict = (
+        db.query(HyperVCluster).filter(HyperVCluster.name == payload.name, HyperVCluster.id != cluster_id).first()
+    )
+    if name_conflict is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ein Cluster mit diesem Namen existiert bereits")
+
+    effective_password = payload.password or decrypt_secret(cluster.encrypted_password)
+    probe = HyperVService(get_settings(), payload.management_address, use_https=payload.use_https)
+    try:
+        summary = probe.get_cluster_summary(payload.username, effective_password)
+    except HyperVConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Verbindung fehlgeschlagen: {exc}") from exc
+
+    cluster.name = payload.name
+    cluster.management_address = payload.management_address
+    cluster.username = payload.username
+    if payload.password:
+        cluster.encrypted_password = encrypt_secret(payload.password)
+    cluster.use_https = payload.use_https
+    cluster.last_checked_at = datetime.now(timezone.utc)
+    _apply_summary(cluster, summary)
+    _refresh_node_reachability(cluster, probe, payload.username, effective_password)
     db.commit()
     db.refresh(cluster)
     return cluster

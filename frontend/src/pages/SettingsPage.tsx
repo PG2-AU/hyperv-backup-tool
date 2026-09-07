@@ -43,7 +43,7 @@ import { SnapMirrorLabelFormModal } from "@/components/SnapMirrorLabelFormModal"
 import type { HyperVCluster, SnapMirrorLabel } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
-import { buildHyperVClusterCreationSteps } from "@/utils/hypervSteps";
+import { buildHyperVClusterCreationSteps, buildHyperVClusterUpdateSteps } from "@/utils/hypervSteps";
 import { LOG_FONT_SIZE_OPTIONS, useDisplayStore, type ContentFontSize } from "@/store/displayStore";
 
 const HYPERV_HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
@@ -232,6 +232,7 @@ export function SettingsPage() {
   const deleteHyperVCluster = useDeleteHyperVCluster();
   const discoverHyperVCluster = useDiscoverHyperVCluster();
   const [hyperVFormOpen, setHyperVFormOpen] = useState(false);
+  const [editingHyperVCluster, setEditingHyperVCluster] = useState<HyperVCluster | null>(null);
   const [hyperVDiscoveryOpen, setHyperVDiscoveryOpen] = useState(false);
   const [hyperVDiscoveryClusterName, setHyperVDiscoveryClusterName] = useState<string | undefined>(undefined);
 
@@ -559,6 +560,11 @@ export function SettingsPage() {
                           <ActionIcon variant="light" onClick={() => runHyperVDiscovery(c.id, c.name)}>
                             <IconRadar2 size={16} />
                           </ActionIcon>
+                          <Tooltip label="Bearbeiten (z.B. Kennwort-Rotation)">
+                            <ActionIcon variant="light" onClick={() => setEditingHyperVCluster(c)}>
+                              <IconEdit size={16} />
+                            </ActionIcon>
+                          </Tooltip>
                           <ActionIcon variant="light" color="red" onClick={() => handleDeleteHyperVCluster(c)}>
                             <IconTrash size={16} />
                           </ActionIcon>
@@ -576,10 +582,23 @@ export function SettingsPage() {
             </Paper>
 
             <HyperVClusterFormModal
-              opened={hyperVFormOpen}
-              onClose={() => setHyperVFormOpen(false)}
-              onSubmitPlan={(plan) => {
+              opened={hyperVFormOpen || !!editingHyperVCluster}
+              cluster={editingHyperVCluster}
+              onClose={() => {
                 setHyperVFormOpen(false);
+                setEditingHyperVCluster(null);
+              }}
+              onSubmitPlan={(plan) => {
+                const editing = editingHyperVCluster;
+                setHyperVFormOpen(false);
+                setEditingHyperVCluster(null);
+                if (editing) {
+                  setProcess({
+                    title: "Hyper-V-Cluster bearbeiten",
+                    steps: buildHyperVClusterUpdateSteps(editing.id, plan),
+                  });
+                  return;
+                }
                 let createdClusterId: string | null = null;
                 setProcess({
                   title: "Hyper-V-Cluster hinzufügen",

@@ -52,6 +52,7 @@ import {
   useStorageAccess,
   useSvmPeers,
   useSvms,
+  useUpdateNetAppCluster,
   useVerifyNetAppCluster,
   useVolumes,
 } from "@/api/hooks";
@@ -114,53 +115,75 @@ const SNAPMIRROR_POLICY_TYPE_LABEL: Record<string, string> = {
   continuous: "Continuous",
 };
 
-function AddClusterModal({ opened, onClose, onCreated }: { opened: boolean; onClose: () => void; onCreated: (cluster: NetAppCluster) => void }) {
+function AddClusterModal({
+  opened,
+  onClose,
+  onCreated,
+  cluster,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  onCreated: (cluster: NetAppCluster) => void;
+  // Gesetzt = Bearbeiten-Modus (z.B. fuer eine Passwort-Rotation) statt
+  // Neuanlage -- aendert den bestehenden Cluster IN PLACE (gleiche
+  // cluster.id bleibt erhalten), siehe update_cluster in netapp_clusters.py.
+  cluster?: NetAppCluster | null;
+}) {
+  const isEdit = !!cluster;
   const createCluster = useCreateNetAppCluster();
+  const updateCluster = useUpdateNetAppCluster();
   const [name, setName] = useState("");
   const [mgmtLif, setMgmtLif] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [verifySsl, setVerifySsl] = useState(true);
 
-  function reset() {
-    setName("");
-    setMgmtLif("");
-    setUsername("");
+  useEffect(() => {
+    if (!opened) return;
+    setName(cluster?.name ?? "");
+    setMgmtLif(cluster?.management_lif ?? "");
+    setUsername(cluster?.username ?? "");
+    // Passwort bleibt beim Bearbeiten bewusst leer, siehe Hinweistext unten.
     setPassword("");
-    setVerifySsl(true);
-  }
+    setVerifySsl(cluster?.verify_ssl ?? true);
+  }, [opened, cluster]);
 
   function handleClose() {
-    reset();
     onClose();
   }
 
   function handleSubmit() {
-    createCluster.mutate(
-      { name, management_lif: mgmtLif, username, password, verify_ssl: verifySsl },
-      {
-        onSuccess: (cluster) => {
-          notifications.show({
-            title: "Cluster hinzugefügt",
-            message: `'${cluster.name}' verbunden (ONTAP ${cluster.ontap_version ?? "?"}).`,
-            color: "green",
-          });
-          handleClose();
-          onCreated(cluster);
-        },
-        onError: (err) => {
-          notifications.show({
-            title: "Verbindung fehlgeschlagen",
-            message: apiErrorMessage(err, "Cluster konnte nicht hinzugefügt werden."),
-            color: "red",
-          });
-        },
-      },
-    );
+    const onSuccess = (updated: NetAppCluster) => {
+      notifications.show({
+        title: isEdit ? "Cluster aktualisiert" : "Cluster hinzugefügt",
+        message: `'${updated.name}' verbunden (ONTAP ${updated.ontap_version ?? "?"}).`,
+        color: "green",
+      });
+      handleClose();
+      onCreated(updated);
+    };
+    const onError = (err: unknown) => {
+      notifications.show({
+        title: "Verbindung fehlgeschlagen",
+        message: apiErrorMessage(err, isEdit ? "Cluster konnte nicht aktualisiert werden." : "Cluster konnte nicht hinzugefügt werden."),
+        color: "red",
+      });
+    };
+    if (isEdit) {
+      updateCluster.mutate(
+        { id: cluster!.id, payload: { name, management_lif: mgmtLif, username, password: password || undefined, verify_ssl: verifySsl } },
+        { onSuccess, onError },
+      );
+      return;
+    }
+    createCluster.mutate({ name, management_lif: mgmtLif, username, password, verify_ssl: verifySsl }, { onSuccess, onError });
   }
 
+  const isPending = createCluster.isPending || updateCluster.isPending;
+  const canSubmit = !!name && !!mgmtLif && !!username && (isEdit || !!password);
+
   return (
-    <Modal opened={opened} onClose={handleClose} title="NetApp-Cluster hinzufügen">
+    <Modal opened={opened} onClose={handleClose} title={isEdit ? `NetApp-Cluster bearbeiten: ${cluster!.name}` : "NetApp-Cluster hinzufügen"}>
       <Stack>
         <TextInput label="Cluster-Name" placeholder="z.B. NETAPP-PROD" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
         <TextInput
@@ -171,22 +194,30 @@ function AddClusterModal({ opened, onClose, onCreated }: { opened: boolean; onCl
           onChange={(e) => setMgmtLif(e.currentTarget.value)}
         />
         <TextInput label="Benutzername" required value={username} onChange={(e) => setUsername(e.currentTarget.value)} />
-        <PasswordInput label="Kennwort" required value={password} onChange={(e) => setPassword(e.currentTarget.value)} />
+        <PasswordInput
+          label="Kennwort"
+          placeholder={isEdit ? "Leer lassen, um das bestehende Kennwort beizubehalten" : undefined}
+          required={!isEdit}
+          value={password}
+          onChange={(e) => setPassword(e.currentTarget.value)}
+        />
         <Switch
           label="TLS-Zertifikat des Clusters validieren"
           checked={verifySsl}
           onChange={(e) => setVerifySsl(e.currentTarget.checked)}
         />
         <Text size="xs" c="dimmed">
-          Beim Hinzufügen wird die Verbindung sofort getestet, anschließend startet automatisch eine Discovery.
-          Zertifikatsbasierte Authentifizierung kann danach über das Kontextmenü aktiviert werden.
+          {isEdit
+            ? "Die Verbindung wird mit den neuen Angaben sofort getestet, bevor sie gespeichert werden. Leeres Kennwort behält das bisherige bei."
+            : "Beim Hinzufügen wird die Verbindung sofort getestet, anschließend startet automatisch eine Discovery. " +
+              "Zertifikatsbasierte Authentifizierung kann danach über das Kontextmenü aktiviert werden."}
         </Text>
         <Group justify="flex-end" mt="sm">
           <Button variant="default" onClick={handleClose}>
             Abbrechen
           </Button>
-          <Button onClick={handleSubmit} loading={createCluster.isPending} disabled={!name || !mgmtLif || !username || !password}>
-            Verbinden & hinzufügen
+          <Button onClick={handleSubmit} loading={isPending} disabled={!canSubmit}>
+            {isEdit ? "Speichern" : "Verbinden & hinzufügen"}
           </Button>
         </Group>
       </Stack>
@@ -240,6 +271,7 @@ function ClusterTab({ locked }: { locked: boolean }) {
   const deleteCluster = useDeleteNetAppCluster();
   const discoverCluster = useDiscoverNetAppCluster();
   const [addOpen, setAddOpen] = useState(false);
+  const [editingCluster, setEditingCluster] = useState<NetAppCluster | null>(null);
   const [clusterSearch, setClusterSearch] = useState("");
   const filteredClusters = (clusters ?? []).filter((c) => matchesAllColumns(c, clusterSearch));
 
@@ -385,6 +417,17 @@ function ClusterTab({ locked }: { locked: boolean }) {
                         </ActionIcon>
                       </Tooltip>
                     )}
+                    <Tooltip label="Bearbeiten (z.B. Kennwort-Rotation)">
+                      {/* Bewusst NICHT disabled={locked} -- wie beim "hinzufuegen"-Button
+                          gilt dieselbe Ausnahme (siehe Hinweistext unten): das Aendern der
+                          Verbindungsdaten ist keine Storage-Mutation im eigentlichen Sinn,
+                          sondern noetig um die Verbindung selbst herzustellen/zu warten
+                          (z.B. eine Passwort-Rotation), auch waehrend Storage-Aktionen
+                          gesperrt sind. Backend-seitig ebenso ohne require_storage_unlocked. */}
+                      <ActionIcon variant="light" onClick={() => setEditingCluster(cluster)}>
+                        <IconEdit size={16} />
+                      </ActionIcon>
+                    </Tooltip>
                     <Tooltip label="Entfernen">
                       <ActionIcon variant="light" color="red" disabled={locked} onClick={() => handleDelete(cluster)}>
                         <IconTrash size={16} />
@@ -409,7 +452,15 @@ function ClusterTab({ locked }: { locked: boolean }) {
       </div>
     </Paper>
 
-      <AddClusterModal opened={addOpen} onClose={() => setAddOpen(false)} onCreated={runDiscovery} />
+      <AddClusterModal
+        opened={addOpen || !!editingCluster}
+        cluster={editingCluster}
+        onClose={() => {
+          setAddOpen(false);
+          setEditingCluster(null);
+        }}
+        onCreated={runDiscovery}
+      />
 
       <DiscoveryModal
         opened={discoveryOpen}
@@ -614,8 +665,8 @@ export function StoragePage() {
       {locked && (
         <Alert color="orange" icon={<IconAlertTriangle size={18} />} title="Storage-Aktionen gesperrt">
           Ändernde Aktionen sind aktuell global deaktiviert (Settings &gt; Storage) -- Ansicht bleibt möglich, alle
-          Buttons zum Anlegen/Ändern/Löschen sind ausgegraut. Ausnahme: einen neuen NetApp-Cluster hinzufügen bleibt
-          weiterhin möglich.
+          Buttons zum Anlegen/Ändern/Löschen sind ausgegraut. Ausnahme: einen NetApp-Cluster hinzuzufügen oder seine
+          Verbindungsdaten zu bearbeiten (z.B. für eine Passwort-Rotation) bleibt weiterhin möglich.
         </Alert>
       )}
 

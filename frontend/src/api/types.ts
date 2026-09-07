@@ -109,6 +109,15 @@ export interface HyperVClusterCreate {
   use_https: boolean;
 }
 
+export interface HyperVClusterUpdate {
+  name: string;
+  management_address: string;
+  username: string;
+  // Leer = bestehendes Passwort beibehalten (siehe Backend HyperVClusterUpdate).
+  password?: string;
+  use_https: boolean;
+}
+
 export interface HyperVClusterCreationPlan {
   name: string;
   managementAddress: string;
