@@ -403,12 +403,16 @@ export function SettingsPage() {
                     <Table.Td>{l.name}</Table.Td>
                     <Table.Td>
                       <Group gap="xs">
-                        <ActionIcon variant="light" onClick={() => openEditLabel(l)}>
-                          <IconEdit size={16} />
-                        </ActionIcon>
-                        <ActionIcon variant="light" color="red" onClick={() => removeLabel(l)}>
-                          <IconTrash size={16} />
-                        </ActionIcon>
+                        <Tooltip label="Bearbeiten">
+                          <ActionIcon variant="light" onClick={() => openEditLabel(l)}>
+                            <IconEdit size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Löschen">
+                          <ActionIcon variant="light" color="red" onClick={() => removeLabel(l)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Tooltip>
                       </Group>
                     </Table.Td>
                   </Table.Tr>

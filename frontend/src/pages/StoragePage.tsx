@@ -1453,16 +1453,18 @@ export function StoragePage() {
                       {p.rules.length ? p.rules.map((r) => `${r.label}: ${r.count}`).join(", ") : "-"}
                     </Table.Td>
                     <Table.Td>
-                      <ActionIcon
-                        variant="light"
-                        disabled={locked}
-                        onClick={() => {
-                          setEditingPolicy(p);
-                          setPolicyEditOpen(true);
-                        }}
-                      >
-                        <IconEdit size={16} />
-                      </ActionIcon>
+                      <Tooltip label="Bearbeiten">
+                        <ActionIcon
+                          variant="light"
+                          disabled={locked}
+                          onClick={() => {
+                            setEditingPolicy(p);
+                            setPolicyEditOpen(true);
+                          }}
+                        >
+                          <IconEdit size={16} />
+                        </ActionIcon>
+                      </Tooltip>
                     </Table.Td>
                   </Table.Tr>
                 ))}
