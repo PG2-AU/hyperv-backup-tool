@@ -4,6 +4,7 @@ import { IconX } from "@tabler/icons-react";
 
 import { JobTimelineTrack, type TimelineEntry } from "@/components/JobTimelineTrack";
 import type { BackupJobRun, UpcomingJob } from "@/api/types";
+import { formatRunTargets } from "@/utils/format";
 
 const MIN_BAR_MS = 15 * 60 * 1000; // Mindestbreite, damit sehr kurze/laufende Balken sichtbar bleiben
 const POINT_MARKER_MS = 20 * 60 * 1000; // nominale Breite fuer geplante (noch nicht gelaufene) Vorkommen
@@ -70,7 +71,7 @@ export function DayJobStrip({
         endMs,
         tooltip: `${new Date(startMs).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} — ${run.job_name}${
           run.resource_group_name ? ` / ${run.resource_group_name}` : ""
-        }\n${run.status}${run.targets.length ? `\nZiele: ${run.targets.join(", ")}` : ""}`,
+        }\n${run.status}${run.targets.length ? `\nZiele: ${formatRunTargets(run.snapshots, run.targets)}` : ""}`,
       });
     }
 
