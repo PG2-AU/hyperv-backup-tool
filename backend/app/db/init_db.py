@@ -263,6 +263,14 @@ def init_db(db: Session) -> None:
     )
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     _add_missing_columns(engine, "netapp_aggregates", {"efficiency_ratio_wo_snapshots_flexclones": "FLOAT"})
+    _add_missing_columns(engine, "netapp_clusters", {"system_type": "VARCHAR(20)"})
+    with engine.connect() as conn:
+        # Wie bei alert_config.scope oben: SQLAlchemys Enum-Spalte speichert
+        # per Default den Enum-NAMEN (CLUSTER), nicht den .value-String
+        # (cluster) -- bestehende, vor Einfuehrung des Feldes angelegte
+        # Systeme sind immer ganze Cluster gewesen.
+        conn.execute(text("UPDATE netapp_clusters SET system_type = 'CLUSTER' WHERE system_type IS NULL"))
+        conn.commit()
     _add_missing_columns(engine, "hyperv_clusters", {"unreachable_nodes_json": "VARCHAR(2000)"})
     _add_missing_columns(engine, "hyperv_vms", {"checkpoints": "JSON"})
     _add_missing_columns(

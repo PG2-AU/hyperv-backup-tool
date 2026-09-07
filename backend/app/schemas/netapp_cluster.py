@@ -2,11 +2,12 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.netapp_cluster import NetAppAuthMethod, NetAppClusterHealth
+from app.models.netapp_cluster import NetAppAuthMethod, NetAppClusterHealth, NetAppSystemType
 
 
 class NetAppClusterCreate(BaseModel):
     name: str
+    system_type: NetAppSystemType = NetAppSystemType.CLUSTER
     management_lif: str
     username: str
     password: str
@@ -14,6 +15,10 @@ class NetAppClusterCreate(BaseModel):
 
 
 class NetAppClusterUpdate(BaseModel):
+    # Bewusst OHNE system_type -- der Typ wird nur beim Hinzufuegen gewaehlt
+    # und ist danach unveraenderlich (siehe NetAppSystemType-Docstring), ein
+    # nachtraeglicher Wechsel wuerde verwaiste Nodes/Aggregate/Cluster-Peer-
+    # Zeilen aus der vorherigen Discovery hinterlassen.
     name: str
     management_lif: str
     username: str
@@ -37,6 +42,7 @@ class NetAppClusterRead(BaseModel):
 
     id: str
     name: str
+    system_type: NetAppSystemType
     management_lif: str
     username: str
     auth_method: NetAppAuthMethod

@@ -73,10 +73,12 @@ export interface Csv {
 
 export type NetAppAuthMethod = "password" | "certificate";
 export type NetAppClusterHealth = "unknown" | "healthy" | "degraded" | "unreachable";
+export type NetAppSystemType = "cluster" | "svm";
 
 export interface NetAppCluster {
   id: string;
   name: string;
+  system_type: NetAppSystemType;
   management_lif: string;
   username: string;
   auth_method: NetAppAuthMethod;

@@ -251,12 +251,14 @@ def _service_for(cluster: NetAppCluster) -> NetAppOntapService:
             verify_ssl=cluster.verify_ssl,
             cert_path=cluster.client_cert_path,
             key_path=cluster.client_key_path,
+            system_type=cluster.system_type.value,
         )
     return NetAppOntapService(
         host=cluster.management_lif,
         verify_ssl=cluster.verify_ssl,
         username=cluster.username,
         password=decrypt_secret(cluster.encrypted_password) if cluster.encrypted_password else None,
+        system_type=cluster.system_type.value,
     )
 
 
@@ -300,6 +302,7 @@ def create_cluster(
 
     probe = NetAppOntapService(
         host=payload.management_lif, verify_ssl=payload.verify_ssl, username=payload.username, password=payload.password,
+        system_type=payload.system_type.value,
     )
     try:
         summary = probe.get_cluster_summary()
@@ -308,6 +311,7 @@ def create_cluster(
 
     cluster = NetAppCluster(
         name=payload.name,
+        system_type=payload.system_type,
         management_lif=payload.management_lif,
         username=payload.username,
         encrypted_password=encrypt_secret(payload.password),
@@ -349,6 +353,7 @@ def update_cluster(
     effective_password = payload.password or decrypt_secret(cluster.encrypted_password)
     probe = NetAppOntapService(
         host=payload.management_lif, verify_ssl=payload.verify_ssl, username=payload.username, password=effective_password,
+        system_type=cluster.system_type.value,
     )
     try:
         summary = probe.get_cluster_summary()

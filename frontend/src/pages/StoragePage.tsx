@@ -10,6 +10,7 @@ import {
   Paper,
   PasswordInput,
   Progress,
+  SegmentedControl,
   Stack,
   Switch,
   Table,
@@ -73,7 +74,15 @@ import { CapacityBarCard, DistributionCard, StatCard, StatRibbon, groupCount } f
 import { SvmPeerFormModal } from "@/components/SvmPeerFormModal";
 import { VolumeEditModal } from "@/components/VolumeEditModal";
 import { VolumeFormModal } from "@/components/VolumeFormModal";
-import type { NetAppCluster, NetAppClusterPeer, NetAppLun, NetAppSnapMirrorPolicy, NetAppVolume, SnapMirrorRelationship } from "@/api/types";
+import type {
+  NetAppCluster,
+  NetAppClusterPeer,
+  NetAppLun,
+  NetAppSnapMirrorPolicy,
+  NetAppSystemType,
+  NetAppVolume,
+  SnapMirrorRelationship,
+} from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, formatLagTime } from "@/utils/format";
@@ -133,6 +142,7 @@ function AddClusterModal({
   const createCluster = useCreateNetAppCluster();
   const updateCluster = useUpdateNetAppCluster();
   const [name, setName] = useState("");
+  const [systemType, setSystemType] = useState<NetAppSystemType>("cluster");
   const [mgmtLif, setMgmtLif] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -141,6 +151,7 @@ function AddClusterModal({
   useEffect(() => {
     if (!opened) return;
     setName(cluster?.name ?? "");
+    setSystemType(cluster?.system_type ?? "cluster");
     setMgmtLif(cluster?.management_lif ?? "");
     setUsername(cluster?.username ?? "");
     // Passwort bleibt beim Bearbeiten bewusst leer, siehe Hinweistext unten.
@@ -155,7 +166,7 @@ function AddClusterModal({
   function handleSubmit() {
     const onSuccess = (updated: NetAppCluster) => {
       notifications.show({
-        title: isEdit ? "Cluster aktualisiert" : "Cluster hinzugefügt",
+        title: isEdit ? "System aktualisiert" : "System hinzugefügt",
         message: `'${updated.name}' verbunden (ONTAP ${updated.ontap_version ?? "?"}).`,
         color: "green",
       });
@@ -165,7 +176,7 @@ function AddClusterModal({
     const onError = (err: unknown) => {
       notifications.show({
         title: "Verbindung fehlgeschlagen",
-        message: apiErrorMessage(err, isEdit ? "Cluster konnte nicht aktualisiert werden." : "Cluster konnte nicht hinzugefügt werden."),
+        message: apiErrorMessage(err, isEdit ? "System konnte nicht aktualisiert werden." : "System konnte nicht hinzugefügt werden."),
         color: "red",
       });
     };
@@ -176,24 +187,51 @@ function AddClusterModal({
       );
       return;
     }
-    createCluster.mutate({ name, management_lif: mgmtLif, username, password, verify_ssl: verifySsl }, { onSuccess, onError });
+    createCluster.mutate({ name, system_type: systemType, management_lif: mgmtLif, username, password, verify_ssl: verifySsl }, { onSuccess, onError });
   }
 
   const isPending = createCluster.isPending || updateCluster.isPending;
   const canSubmit = !!name && !!mgmtLif && !!username && (isEdit || !!password);
 
   return (
-    <Modal opened={opened} onClose={handleClose} title={isEdit ? `NetApp-Cluster bearbeiten: ${cluster!.name}` : "NetApp-Cluster hinzufügen"}>
+    <Modal opened={opened} onClose={handleClose} title={isEdit ? `NetApp-System bearbeiten: ${cluster!.name}` : "NetApp-System hinzufügen"}>
       <Stack>
-        <TextInput label="Cluster-Name" placeholder="z.B. NETAPP-PROD" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
+        {!isEdit && (
+          <SegmentedControl
+            fullWidth
+            value={systemType}
+            onChange={(v) => setSystemType(v as NetAppSystemType)}
+            data={[
+              { label: "Ganzer Cluster", value: "cluster" },
+              { label: "Einzelne SVM", value: "svm" },
+            ]}
+          />
+        )}
+        {isEdit && (
+          <Text size="xs" c="dimmed">
+            Typ ({systemType === "svm" ? "Einzelne SVM" : "Ganzer Cluster"}) ist nach dem Hinzufügen nicht mehr änderbar.
+          </Text>
+        )}
+        <TextInput label="System-Name" placeholder="z.B. NETAPP-PROD" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
         <TextInput
-          label="Cluster-Management-IP"
+          label={systemType === "svm" ? "SVM-Management-IP" : "Cluster-Management-IP"}
+          description={
+            systemType === "svm"
+              ? "Eigene Management-LIF der SVM, falls vorhanden -- sonst die Cluster-Management-IP, die Zugangsdaten unten entscheiden über den Umfang."
+              : undefined
+          }
           placeholder="z.B. 10.0.0.10"
           required
           value={mgmtLif}
           onChange={(e) => setMgmtLif(e.currentTarget.value)}
         />
-        <TextInput label="Benutzername" required value={username} onChange={(e) => setUsername(e.currentTarget.value)} />
+        <TextInput
+          label="Benutzername"
+          description={systemType === "svm" ? "Ein an genau diese SVM gebundener Benutzer (ONTAP-Rolle vsadmin)" : undefined}
+          required
+          value={username}
+          onChange={(e) => setUsername(e.currentTarget.value)}
+        />
         <PasswordInput
           label="Kennwort"
           placeholder={isEdit ? "Leer lassen, um das bestehende Kennwort beizubehalten" : undefined}
@@ -202,15 +240,19 @@ function AddClusterModal({
           onChange={(e) => setPassword(e.currentTarget.value)}
         />
         <Switch
-          label="TLS-Zertifikat des Clusters validieren"
+          label="TLS-Zertifikat des Systems validieren"
           checked={verifySsl}
           onChange={(e) => setVerifySsl(e.currentTarget.checked)}
         />
         <Text size="xs" c="dimmed">
           {isEdit
             ? "Die Verbindung wird mit den neuen Angaben sofort getestet, bevor sie gespeichert werden. Leeres Kennwort behält das bisherige bei."
-            : "Beim Hinzufügen wird die Verbindung sofort getestet, anschließend startet automatisch eine Discovery. " +
-              "Zertifikatsbasierte Authentifizierung kann danach über das Kontextmenü aktiviert werden."}
+            : systemType === "svm"
+              ? "Bei 'Einzelne SVM' werden Nodes/Aggregate/Cluster Peer/MetroCluster bei der Discovery bewusst nicht abgefragt -- ONTAPs " +
+                "eigenes Rechtemodell beschränkt den vsadmin-Zugang ohnehin automatisch auf diese eine SVM. Die Verbindung wird sofort " +
+                "getestet, anschließend startet automatisch eine Discovery."
+              : "Beim Hinzufügen wird die Verbindung sofort getestet, anschließend startet automatisch eine Discovery. " +
+                "Zertifikatsbasierte Authentifizierung kann danach über das Kontextmenü aktiviert werden."}
         </Text>
         <Group justify="flex-end" mt="sm">
           <Button variant="default" onClick={handleClose}>
@@ -318,14 +360,14 @@ function ClusterTab({ locked }: { locked: boolean }) {
 
   function handleDelete(cluster: NetAppCluster) {
     confirmAction({
-      title: "Cluster entfernen",
-      message: `Cluster '${cluster.name}' wirklich entfernen? Die gespeicherten Zugangsdaten werden gelöscht.`,
+      title: "System entfernen",
+      message: `System '${cluster.name}' wirklich entfernen? Die gespeicherten Zugangsdaten werden gelöscht.`,
       confirmLabel: "Entfernen",
       onConfirm: () =>
         deleteCluster.mutate(cluster.id, {
-          onSuccess: () => notifications.show({ title: "Cluster entfernt", message: cluster.name, color: "blue" }),
+          onSuccess: () => notifications.show({ title: "System entfernt", message: cluster.name, color: "blue" }),
           onError: (err) =>
-            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Cluster konnte nicht entfernt werden."), color: "red" }),
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "System konnte nicht entfernt werden."), color: "red" }),
         }),
     });
   }
@@ -336,10 +378,10 @@ function ClusterTab({ locked }: { locked: boolean }) {
   return (
     <>
     <Paper p="md">
-      <Title order={5} mb="sm">Cluster</Title>
+      <Title order={5} mb="sm">Systeme</Title>
 
       <StatRibbon>
-        <StatCard label="Anzahl Cluster" value={clusters?.length ?? 0} />
+        <StatCard label="Anzahl Systeme" value={clusters?.length ?? 0} />
         <DistributionCard label="ONTAP-Versionen" items={versionDistribution} />
         <DistributionCard
           label="Gesundheitszustand"
@@ -350,7 +392,7 @@ function ClusterTab({ locked }: { locked: boolean }) {
       <Group justify="space-between" mb="xs" mt="md">
         <SearchInput value={clusterSearch} onChange={setClusterSearch} />
         <Button leftSection={<IconPlus size={16} />} onClick={() => setAddOpen(true)}>
-          Cluster hinzufügen
+          System hinzufügen
         </Button>
       </Group>
 
@@ -358,12 +400,13 @@ function ClusterTab({ locked }: { locked: boolean }) {
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th>Cluster-Name</Table.Th>
+              <Table.Th>System-Name</Table.Th>
+              <Table.Th>Typ</Table.Th>
               <Table.Th>Mgmt-IP</Table.Th>
               <Table.Th>Benutzer</Table.Th>
               <Table.Th>Auth</Table.Th>
               <Table.Th>ONTAP-Version</Table.Th>
-              <Table.Th>Cluster Health</Table.Th>
+              <Table.Th>Health</Table.Th>
               <Table.Th>MetroCluster</Table.Th>
               <Table.Th>Letzte Prüfung</Table.Th>
               <Table.Th>Aktionen</Table.Th>
@@ -379,6 +422,11 @@ function ClusterTab({ locked }: { locked: boolean }) {
                       ONTAP: {cluster.ontap_cluster_name}
                     </Text>
                   )}
+                </Table.Td>
+                <Table.Td>
+                  <Badge variant="light" color={cluster.system_type === "svm" ? "teal" : "blue"}>
+                    {cluster.system_type === "svm" ? "SVM" : "Cluster"}
+                  </Badge>
                 </Table.Td>
                 <Table.Td>{cluster.management_lif}</Table.Td>
                 <Table.Td>{cluster.username}</Table.Td>
@@ -396,7 +444,7 @@ function ClusterTab({ locked }: { locked: boolean }) {
                     </Badge>
                   </Tooltip>
                 </Table.Td>
-                <Table.Td>{cluster.is_metrocluster ? "Ja" : "Nein"}</Table.Td>
+                <Table.Td>{cluster.system_type === "svm" ? "-" : cluster.is_metrocluster ? "Ja" : "Nein"}</Table.Td>
                 <Table.Td>{cluster.last_checked_at ? new Date(cluster.last_checked_at).toLocaleString("de-DE") : "nie"}</Table.Td>
                 <Table.Td>
                   <Group gap="xs" wrap="nowrap">
@@ -446,7 +494,7 @@ function ClusterTab({ locked }: { locked: boolean }) {
         )}
         {(clusters?.length ?? 0) > 0 && filteredClusters.length === 0 && (
           <Text c="dimmed" size="sm" ta="center" py="md">
-            Kein Cluster passt zur Suche „{clusterSearch}".
+            Kein System passt zur Suche „{clusterSearch}".
           </Text>
         )}
       </div>
@@ -487,6 +535,10 @@ export function StoragePage() {
   const { data: aggregates } = useAggregates();
   const { data: mcc } = useMetroClusterStatus();
   const { data: clusters } = useNetAppClusters();
+  // Siehe Tabs.List unten: Nodes/Aggregate/Cluster-Peer/MetroCluster nur
+  // anzeigen, wenn mindestens ein registriertes System ein ganzer Cluster
+  // ist (nicht nur einzelne SVMs).
+  const hasClusterTypeSystem = (clusters ?? []).some((c) => c.system_type !== "svm");
   const { data: netappPolicies } = useSnapmirrorPolicies();
   const { data: netappSchedules } = useNetAppSchedules();
   // Globaler Sicherheits-Schalter (Settings > Storage) -- siehe
@@ -665,26 +717,36 @@ export function StoragePage() {
       {locked && (
         <Alert color="orange" icon={<IconAlertTriangle size={18} />} title="Storage-Aktionen gesperrt">
           Ändernde Aktionen sind aktuell global deaktiviert (Settings &gt; Storage) -- Ansicht bleibt möglich, alle
-          Buttons zum Anlegen/Ändern/Löschen sind ausgegraut. Ausnahme: einen NetApp-Cluster hinzuzufügen oder seine
+          Buttons zum Anlegen/Ändern/Löschen sind ausgegraut. Ausnahme: ein NetApp-System hinzuzufügen oder seine
           Verbindungsdaten zu bearbeiten (z.B. für eine Passwort-Rotation) bleibt weiterhin möglich.
         </Alert>
       )}
 
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "clusters" })}>
         <Tabs.List>
-          <Tabs.Tab value="clusters">Cluster</Tabs.Tab>
-          <Tabs.Tab value="platforms">Nodes</Tabs.Tab>
-          <Tabs.Tab value="aggregates">Aggregate</Tabs.Tab>
+          <Tabs.Tab value="clusters">System</Tabs.Tab>
+          {/* Nodes/Aggregate/Cluster Peer/MetroCluster sind reine
+              Cluster-Konzepte -- fuer ein SVM-System nicht abfragbar (siehe
+              NetAppOntapService.run_discovery), Zeilen bleiben dafuer dort
+              einfach leer. Nur wenn AUSSCHLIESSLICH SVM-Systeme registriert
+              sind, waeren diese Reiter dauerhaft leer -- dann kosmetisch
+              ganz ausgeblendet statt verwirrend leer stehenzulassen. */}
+          {hasClusterTypeSystem && (
+            <>
+              <Tabs.Tab value="platforms">Nodes</Tabs.Tab>
+              <Tabs.Tab value="aggregates">Aggregate</Tabs.Tab>
+            </>
+          )}
           <Tabs.Tab value="svms">Storage Virtual Machines</Tabs.Tab>
           <Tabs.Tab value="volumes">Volumes</Tabs.Tab>
           <Tabs.Tab value="luns">LUNs</Tabs.Tab>
           <Tabs.Tab value="igroups">IGroups</Tabs.Tab>
-          <Tabs.Tab value="cluster-peers">Cluster Peer</Tabs.Tab>
+          {hasClusterTypeSystem && <Tabs.Tab value="cluster-peers">Cluster Peer</Tabs.Tab>}
           <Tabs.Tab value="svm-peers">SVM Peer</Tabs.Tab>
           <Tabs.Tab value="snapmirror">SnapMirror-Beziehungen</Tabs.Tab>
           <Tabs.Tab value="snapmirror-policies">SnapMirror-Policies</Tabs.Tab>
           <Tabs.Tab value="schedules">Schedules</Tabs.Tab>
-          <Tabs.Tab value="metrocluster">MetroCluster</Tabs.Tab>
+          {hasClusterTypeSystem && <Tabs.Tab value="metrocluster">MetroCluster</Tabs.Tab>}
         </Tabs.List>
 
         <Tabs.Panel value="clusters" pt="md">
@@ -703,7 +765,7 @@ export function StoragePage() {
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Cluster</Table.Th>
+                <Table.Th>System</Table.Th>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Subtype</Table.Th>
@@ -730,7 +792,7 @@ export function StoragePage() {
           </Table>
           {svms?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
-              Noch keine SVMs erkannt. Führe eine Discovery unter Cluster aus.
+              Noch keine SVMs erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
           {(svms?.length ?? 0) > 0 && filteredSvms.length === 0 && (
@@ -773,7 +835,7 @@ export function StoragePage() {
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Cluster</Table.Th>
+                <Table.Th>System</Table.Th>
                 <Table.Th>SVM</Table.Th>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Status</Table.Th>
@@ -883,7 +945,7 @@ export function StoragePage() {
           </Table>
           {volumes?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
-              Noch keine Volumes erkannt. Führe eine Discovery unter Cluster aus.
+              Noch keine Volumes erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
           {(volumes?.length ?? 0) > 0 && filteredVolumes.length === 0 && (
@@ -911,7 +973,7 @@ export function StoragePage() {
           <Table striped highlightOnHover horizontalSpacing="sm">
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Cluster</Table.Th>
+                <Table.Th>System</Table.Th>
                 <Table.Th>SVM</Table.Th>
                 <Table.Th>Volume</Table.Th>
                 <Table.Th>Name</Table.Th>
@@ -1001,7 +1063,7 @@ export function StoragePage() {
           </Table>
           {luns?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
-              Noch keine LUNs erkannt. Führe eine Discovery unter Cluster aus.
+              Noch keine LUNs erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
           {(luns?.length ?? 0) > 0 && filteredLuns.length === 0 && (
@@ -1029,7 +1091,7 @@ export function StoragePage() {
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Cluster</Table.Th>
+                <Table.Th>System</Table.Th>
                 <Table.Th>SVM</Table.Th>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>OS-Type</Table.Th>
@@ -1052,7 +1114,7 @@ export function StoragePage() {
           </Table>
           {igroups?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
-              Noch keine Initiator-Gruppen erkannt. Führe eine Discovery unter Cluster aus.
+              Noch keine Initiator-Gruppen erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
           {(igroups?.length ?? 0) > 0 && filteredIgroups.length === 0 && (
@@ -1079,7 +1141,7 @@ export function StoragePage() {
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Cluster</Table.Th>
+                <Table.Th>System</Table.Th>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Remote-Name</Table.Th>
                 <Table.Th>Status</Table.Th>
@@ -1109,7 +1171,7 @@ export function StoragePage() {
           </Table>
           {clusterPeers?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
-              Noch keine Cluster-Peer-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
+              Noch keine Cluster-Peer-Beziehungen erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
           {(clusterPeers?.length ?? 0) > 0 && filteredClusterPeers.length === 0 && (
@@ -1135,7 +1197,7 @@ export function StoragePage() {
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Cluster</Table.Th>
+                <Table.Th>System</Table.Th>
                 <Table.Th>SVM</Table.Th>
                 <Table.Th>Peer-SVM</Table.Th>
                 <Table.Th>Peer-Cluster</Table.Th>
@@ -1162,7 +1224,7 @@ export function StoragePage() {
           </Table>
           {svmPeers?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
-              Noch keine SVM-Peer-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
+              Noch keine SVM-Peer-Beziehungen erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
           {(svmPeers?.length ?? 0) > 0 && filteredSvmPeers.length === 0 && (
@@ -1200,7 +1262,7 @@ export function StoragePage() {
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Cluster</Table.Th>
+                <Table.Th>System</Table.Th>
                 <Table.Th>Quelle</Table.Th>
                 <Table.Th>Ziel</Table.Th>
                 <Table.Th>Ziel-Cluster</Table.Th>
@@ -1280,7 +1342,7 @@ export function StoragePage() {
           </Table>
           {relationships?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
-              Noch keine SnapMirror-Beziehungen erkannt. Führe eine Discovery unter Cluster aus.
+              Noch keine SnapMirror-Beziehungen erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
           {(relationships?.length ?? 0) > 0 && filteredRelationships.length === 0 && (
@@ -1306,7 +1368,7 @@ export function StoragePage() {
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Cluster</Table.Th>
+                <Table.Th>System</Table.Th>
                 <Table.Th>Node</Table.Th>
                 <Table.Th>Modell</Table.Th>
                 <Table.Th>Seriennummer</Table.Th>
@@ -1335,7 +1397,7 @@ export function StoragePage() {
           </Table>
           {platforms?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
-              Noch keine Plattform-Informationen erkannt. Führe eine Discovery unter Cluster aus.
+              Noch keine Plattform-Informationen erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
           {(platforms?.length ?? 0) > 0 && filteredPlatforms.length === 0 && (
@@ -1363,7 +1425,7 @@ export function StoragePage() {
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Cluster</Table.Th>
+                <Table.Th>System</Table.Th>
                 <Table.Th>Node</Table.Th>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Status</Table.Th>
@@ -1408,7 +1470,7 @@ export function StoragePage() {
           </Table>
           {aggregates?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
-              Noch keine Aggregate erkannt. Führe eine Discovery unter Cluster aus.
+              Noch keine Aggregate erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
           {(aggregates?.length ?? 0) > 0 && filteredAggregates.length === 0 && (
@@ -1430,7 +1492,7 @@ export function StoragePage() {
             <Table striped highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Cluster</Table.Th>
+                  <Table.Th>System</Table.Th>
                   <Table.Th>SVM</Table.Th>
                   <Table.Th>Name</Table.Th>
                   <Table.Th>Typ</Table.Th>
@@ -1472,7 +1534,7 @@ export function StoragePage() {
             </Table>
             {netappPolicies?.length === 0 && (
               <Text c="dimmed" size="sm" ta="center" py="md">
-                Noch keine SnapMirror-Policies erkannt. Führe eine Discovery unter Cluster aus.
+                Noch keine SnapMirror-Policies erkannt. Führe eine Discovery unter System aus.
               </Text>
             )}
           </Paper>
@@ -1509,7 +1571,7 @@ export function StoragePage() {
             <Table striped highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Cluster</Table.Th>
+                  <Table.Th>System</Table.Th>
                   <Table.Th>SVM</Table.Th>
                   <Table.Th>Name</Table.Th>
                   <Table.Th>Minuten</Table.Th>
@@ -1534,7 +1596,7 @@ export function StoragePage() {
             </Table>
             {netappSchedules?.length === 0 && (
               <Text c="dimmed" size="sm" ta="center" py="md">
-                Noch keine Schedules erkannt. Führe eine Discovery unter Cluster aus.
+                Noch keine Schedules erkannt. Führe eine Discovery unter System aus.
               </Text>
             )}
           </Paper>

@@ -21,15 +21,33 @@ class NetAppClusterHealth(str, enum.Enum):
     UNREACHABLE = "unreachable"
 
 
+class NetAppSystemType(str, enum.Enum):
+    """Ob dieses registrierte Storage-System der gesamte ONTAP-Cluster
+    (Cluster-Admin-Zugangsdaten, volle Sicht auf Nodes/Aggregate/Cluster-
+    Peers/MetroCluster) oder nur eine einzelne SVM ist (vsadmin-Zugangsdaten,
+    an genau eine SVM gebunden -- ONTAPs eigenes RBAC beschraenkt die Sicht
+    serverseitig automatisch auf die Objekte dieser SVM, die App muss dafuer
+    keinen eigenen Filter bauen). Wird beim Hinzufuegen EINMALIG gewaehlt und
+    ist danach nicht mehr aenderbar (siehe NetAppClusterUpdate) -- ein
+    nachtraeglicher Typwechsel wuerde verwaiste Nodes/Aggregate/Cluster-Peer-
+    Zeilen aus der vorherigen Discovery hinterlassen."""
+
+    CLUSTER = "cluster"
+    SVM = "svm"
+
+
 class NetAppCluster(Base):
-    """Registrierter ONTAP-Cluster (unabhaengig davon, ob er Teil einer
-    HA-/MetroCluster-Konfiguration ist -- das wird nach dem Hinzufuegen ueber
-    die Cluster-API selbst erkannt, nicht beim Anlegen abgefragt)."""
+    """Registriertes ONTAP-Storage-System -- entweder ein ganzer Cluster
+    (unabhaengig davon, ob er Teil einer HA-/MetroCluster-Konfiguration ist
+    -- das wird nach dem Hinzufuegen ueber die Cluster-API selbst erkannt,
+    nicht beim Anlegen abgefragt) oder eine einzelne SVM (siehe
+    NetAppSystemType)."""
 
     __tablename__ = "netapp_clusters"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), unique=True)
+    system_type: Mapped[NetAppSystemType] = mapped_column(Enum(NetAppSystemType), default=NetAppSystemType.CLUSTER)
     management_lif: Mapped[str] = mapped_column(String(255))
     username: Mapped[str] = mapped_column(String(255))
     auth_method: Mapped[NetAppAuthMethod] = mapped_column(Enum(NetAppAuthMethod), default=NetAppAuthMethod.PASSWORD)

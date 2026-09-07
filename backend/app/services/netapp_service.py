@@ -321,6 +321,7 @@ class NetAppOntapService:
         password: str | None = None,
         cert_path: str | None = None,
         key_path: str | None = None,
+        system_type: str = "cluster",
     ):
         self._host = host
         self._verify_ssl = verify_ssl
@@ -328,6 +329,15 @@ class NetAppOntapService:
         self._password = password
         self._cert_path = cert_path
         self._key_path = key_path
+        # "svm": Zugangsdaten sind an genau eine SVM gebunden (ONTAP-Rolle
+        # vsadmin) -- Cluster-weite Ressourcen (Nodes/Aggregate/Cluster-
+        # Peers/MetroCluster) sind damit nicht abfragbar (403), werden daher
+        # gar nicht erst versucht statt per try/except abgefangen (siehe
+        # get_cluster_summary/run_discovery). ONTAPs eigenes RBAC beschraenkt
+        # alle anderen Abfragen (SVMs/Volumes/LUNs/IGroups/SnapMirror) bereits
+        # serverseitig automatisch auf die eigene SVM -- kein eigener Filter
+        # in dieser Klasse noetig.
+        self._system_type = system_type
 
     def _connection(self) -> HostConnection:
         if self._cert_path and self._key_path:
@@ -336,14 +346,31 @@ class NetAppOntapService:
 
     def get_cluster_summary(self) -> ClusterSummary:
         """Verbindungstest + Basisinfo (Version, Node-Health, MetroCluster).
-        Wird sowohl beim Hinzufuegen eines Clusters als auch fuer die
-        regelmaessige Aktualisierung der 'NetApp-Systeme'-Uebersicht genutzt."""
+        Wird sowohl beim Hinzufuegen eines Systems als auch fuer die
+        regelmaessige Aktualisierung der 'NetApp-Systeme'-Uebersicht genutzt.
+
+        Bei system_type='svm' werden Node-Liste und MetroCluster-Status gar
+        nicht erst abgefragt (Cluster-weite Ressourcen, fuer einen an eine
+        SVM gebundenen vsadmin-Login typischerweise 403) -- Health gilt dann
+        vacuous als 'gesund' (es gibt keine dem System zugeordneten Nodes,
+        ueber deren Zustand etwas auszusagen waere). UNVERIFIED: ob der
+        Basis-Aufruf 'Cluster().get()' selbst fuer einen vsadmin-Login lesbar
+        ist, wurde nicht live gegen ein echtes ONTAP-System mit
+        SVM-gescopten Zugangsdaten getestet -- falls das 403 wirft, muesste
+        hier stattdessen z.B. auf Svm.get_collection(fields='name') als
+        Verbindungs-/Identitaetspruefung ausgewichen werden."""
         try:
             with self._connection():
                 cluster = Cluster()
                 cluster.get(fields="uuid,name,version")
                 version = getattr(cluster, "version", None)
                 version_str = getattr(version, "full", None) or "unbekannt"
+
+                if self._system_type == "svm":
+                    return ClusterSummary(
+                        name=cluster.name, uuid=cluster.uuid, ontap_version=version_str,
+                        node_count=0, healthy_node_count=0, healthy=True, is_metrocluster=False,
+                    )
 
                 # Hinweis: 'health' ist als Wert fuer den 'fields'-Query-Parameter auf
                 # manchen ONTAP-Versionen kein gueltiger Feldname (400 Bad Request).
@@ -503,31 +530,40 @@ class NetAppOntapService:
                 except NetAppRestError as exc:
                     results.append(DiscoveryStepResult("lun_maps", False, str(exc)))
 
-                try:
-                    local_intercluster_ips: list[str] = []
+                if self._system_type == "svm":
+                    # Cluster-weite Ressource, fuer einen an eine SVM
+                    # gebundenen vsadmin-Login nicht abfragbar -- wird gar
+                    # nicht erst versucht statt per try/except abgefangen
+                    # (siehe NetAppOntapService.__init__).
+                    results.append(DiscoveryStepResult("cluster_peers", True, "Übersprungen (SVM-System)", 0))
+                else:
                     try:
-                        local_lifs = IpInterface.get_collection(fields="ip.address", services="intercluster_core")
-                        local_intercluster_ips = [ip for lif in local_lifs if (ip := _get_nested(lif, "ip.address"))]
-                    except NetAppRestError:
-                        pass  # lokale Intercluster-LIFs sind fuer die Peer-Liste selbst nicht kritisch
-                    local_ip_str = ", ".join(local_intercluster_ips) or None
+                        local_intercluster_ips: list[str] = []
+                        try:
+                            local_lifs = IpInterface.get_collection(fields="ip.address", services="intercluster_core")
+                            local_intercluster_ips = [ip for lif in local_lifs if (ip := _get_nested(lif, "ip.address"))]
+                        except NetAppRestError:
+                            pass  # lokale Intercluster-LIFs sind fuer die Peer-Liste selbst nicht kritisch
+                        local_ip_str = ", ".join(local_intercluster_ips) or None
 
-                    peers = list(ClusterPeer.get_collection(fields="**"))
-                    for p in peers:
-                        remote_ips = _get_nested(p, "remote.ip_addresses") or []
-                        data.cluster_peers.append(
-                            DiscoveredClusterPeer(
-                                uuid=_get_nested(p, "uuid"),
-                                name=_get_nested(p, "name"),
-                                remote_name=_get_nested(p, "remote.name"),
-                                state=_get_nested(p, "status.state"),
-                                peer_ip_addresses=", ".join(remote_ips) or None,
-                                local_ip_addresses=local_ip_str,
+                        peers = list(ClusterPeer.get_collection(fields="**"))
+                        for p in peers:
+                            remote_ips = _get_nested(p, "remote.ip_addresses") or []
+                            data.cluster_peers.append(
+                                DiscoveredClusterPeer(
+                                    uuid=_get_nested(p, "uuid"),
+                                    name=_get_nested(p, "name"),
+                                    remote_name=_get_nested(p, "remote.name"),
+                                    state=_get_nested(p, "status.state"),
+                                    peer_ip_addresses=", ".join(remote_ips) or None,
+                                    local_ip_addresses=local_ip_str,
+                                )
                             )
+                        results.append(
+                            DiscoveryStepResult("cluster_peers", True, f"{len(peers)} Cluster-Peer-Beziehung(en) gefunden", len(peers))
                         )
-                    results.append(DiscoveryStepResult("cluster_peers", True, f"{len(peers)} Cluster-Peer-Beziehung(en) gefunden", len(peers)))
-                except NetAppRestError as exc:
-                    results.append(DiscoveryStepResult("cluster_peers", False, str(exc)))
+                    except NetAppRestError as exc:
+                        results.append(DiscoveryStepResult("cluster_peers", False, str(exc)))
 
                 try:
                     svm_peers = list(SvmPeer.get_collection(fields="**"))
@@ -644,50 +680,55 @@ class NetAppOntapService:
                 except NetAppRestError as exc:
                     results.append(DiscoveryStepResult("network_interfaces", False, str(exc)))
 
-                try:
-                    nodes = list(Node.get_collection(fields="**"))
-                    for n in nodes:
-                        data.platforms.append(
-                            DiscoveredPlatform(
-                                uuid=_get_nested(n, "uuid"),
-                                node_name=_get_nested(n, "name", ""),
-                                model=_get_nested(n, "model"),
-                                serial_number=_get_nested(n, "serial_number"),
-                                ontap_version=_get_nested(n, "version.full"),
-                                uptime_seconds=_get_nested(n, "uptime"),
-                                state=_get_nested(n, "state"),
+                if self._system_type == "svm":
+                    # Cluster-weite Ressourcen, siehe cluster_peers oben.
+                    results.append(DiscoveryStepResult("platforms", True, "Übersprungen (SVM-System)", 0))
+                    results.append(DiscoveryStepResult("aggregates", True, "Übersprungen (SVM-System)", 0))
+                else:
+                    try:
+                        nodes = list(Node.get_collection(fields="**"))
+                        for n in nodes:
+                            data.platforms.append(
+                                DiscoveredPlatform(
+                                    uuid=_get_nested(n, "uuid"),
+                                    node_name=_get_nested(n, "name", ""),
+                                    model=_get_nested(n, "model"),
+                                    serial_number=_get_nested(n, "serial_number"),
+                                    ontap_version=_get_nested(n, "version.full"),
+                                    uptime_seconds=_get_nested(n, "uptime"),
+                                    state=_get_nested(n, "state"),
+                                )
                             )
-                        )
-                    results.append(DiscoveryStepResult("platforms", True, f"{len(nodes)} Plattform(en) gefunden", len(nodes)))
-                except NetAppRestError as exc:
-                    results.append(DiscoveryStepResult("platforms", False, str(exc)))
+                        results.append(DiscoveryStepResult("platforms", True, f"{len(nodes)} Plattform(en) gefunden", len(nodes)))
+                    except NetAppRestError as exc:
+                        results.append(DiscoveryStepResult("platforms", False, str(exc)))
 
-                try:
-                    aggregates = list(Aggregate.get_collection(fields="**"))
-                    for agg in aggregates:
-                        data.aggregates.append(
-                            DiscoveredAggregate(
-                                uuid=_get_nested(agg, "uuid"),
-                                name=_get_nested(agg, "name", ""),
-                                node_name=_get_nested(agg, "node.name"),
-                                state=_get_nested(agg, "state"),
-                                size_bytes=_get_nested(agg, "space.block_storage.size"),
-                                used_bytes=_get_nested(agg, "space.block_storage.used"),
-                                used_percent=_get_nested(agg, "space.block_storage.used_percent"),
-                                efficiency_ratio=_get_nested(agg, "space.efficiency.ratio"),
-                                # Nutzer-Vorgabe: die Kennzahl ohne Snapshots UND FlexClones
-                                # (ONTAP-CLI/ZAPI: total-data-reduction-efficiency-ratio-wo-
-                                # snapshots-flexclones) -- NICHT das eigentlich falsch benannte
-                                # "space.efficiency_without_snapshots.ratio" (das schliesst nur
-                                # Snapshots aus, FlexClones weiterhin mit ein).
-                                efficiency_ratio_wo_snapshots_flexclones=_get_nested(
-                                    agg, "space.efficiency_without_snapshots_flexclones.ratio"
-                                ),
+                    try:
+                        aggregates = list(Aggregate.get_collection(fields="**"))
+                        for agg in aggregates:
+                            data.aggregates.append(
+                                DiscoveredAggregate(
+                                    uuid=_get_nested(agg, "uuid"),
+                                    name=_get_nested(agg, "name", ""),
+                                    node_name=_get_nested(agg, "node.name"),
+                                    state=_get_nested(agg, "state"),
+                                    size_bytes=_get_nested(agg, "space.block_storage.size"),
+                                    used_bytes=_get_nested(agg, "space.block_storage.used"),
+                                    used_percent=_get_nested(agg, "space.block_storage.used_percent"),
+                                    efficiency_ratio=_get_nested(agg, "space.efficiency.ratio"),
+                                    # Nutzer-Vorgabe: die Kennzahl ohne Snapshots UND FlexClones
+                                    # (ONTAP-CLI/ZAPI: total-data-reduction-efficiency-ratio-wo-
+                                    # snapshots-flexclones) -- NICHT das eigentlich falsch benannte
+                                    # "space.efficiency_without_snapshots.ratio" (das schliesst nur
+                                    # Snapshots aus, FlexClones weiterhin mit ein).
+                                    efficiency_ratio_wo_snapshots_flexclones=_get_nested(
+                                        agg, "space.efficiency_without_snapshots_flexclones.ratio"
+                                    ),
+                                )
                             )
-                        )
-                    results.append(DiscoveryStepResult("aggregates", True, f"{len(aggregates)} Aggregat(e) gefunden", len(aggregates)))
-                except NetAppRestError as exc:
-                    results.append(DiscoveryStepResult("aggregates", False, str(exc)))
+                        results.append(DiscoveryStepResult("aggregates", True, f"{len(aggregates)} Aggregat(e) gefunden", len(aggregates)))
+                    except NetAppRestError as exc:
+                        results.append(DiscoveryStepResult("aggregates", False, str(exc)))
         except Exception as exc:  # Verbindungsfehler wie bei get_cluster_summary behandeln
             results.append(DiscoveryStepResult("login", False, str(exc)))
 

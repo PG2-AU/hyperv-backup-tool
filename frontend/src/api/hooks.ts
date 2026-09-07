@@ -24,6 +24,7 @@ import type {
   NetAppSchedule,
   NetAppSnapMirrorPolicy,
   NetAppSvm,
+  NetAppSystemType,
   NetAppSvmPeer,
   NetAppVolume,
   ResourceGroup,
@@ -512,6 +513,7 @@ export function useNetAppClusters() {
 
 export interface NetAppClusterCreatePayload {
   name: string;
+  system_type: NetAppSystemType;
   management_lif: string;
   username: string;
   password: string;
