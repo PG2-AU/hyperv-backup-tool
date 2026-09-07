@@ -724,7 +724,7 @@ export function StoragePage() {
 
       <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "clusters" })}>
         <Tabs.List>
-          <Tabs.Tab value="clusters">System</Tabs.Tab>
+          <Tabs.Tab value="clusters">Systeme</Tabs.Tab>
           {/* Nodes/Aggregate/Cluster Peer/MetroCluster sind reine
               Cluster-Konzepte -- fuer ein SVM-System nicht abfragbar (siehe
               NetAppOntapService.run_discovery), Zeilen bleiben dafuer dort
