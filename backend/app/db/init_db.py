@@ -42,8 +42,23 @@ def _migrate_resource_group_policy_link_schedules(db: Session) -> None:
     ANDEREN Policy geerbt. Ohne eigenen Policy-Zeitplan bleibt die
     Verknuepfung daher unveraendert ungeplant (nur manuell ausfuehrbar) --
     korrekt, da das exakt ihrem urspruenglichen Zustand entspricht."""
-    cols = [row[1] for row in db.execute(text("PRAGMA table_info(resource_group_policies)"))]
-    if "schedule_id" not in cols:
+    # Zwei Existenz-Pruefungen noetig, nicht nur eine: die ZIEL-Spalte
+    # (resource_group_policies.schedule_id) ist ein aktuelles Modellfeld und
+    # existiert auf einer frischen DB immer -- die QUELL-Spalte
+    # (backup_policies.schedule_id) dagegen ist die Altlast, die auf einer
+    # frischen Installation (Base.metadata.create_all() aus dem AKTUELLEN
+    # Modell, das dieses Feld nicht mehr kennt) gar nicht existiert. Ohne
+    # diese zweite Pruefung schlug SELECT ... FROM backup_policies auf einer
+    # frisch installierten Instanz mit 'no such column: schedule_id' fehl --
+    # bootete den Container in eine Absturzschleife (live beim allerersten
+    # Deploy auf einem neuen Server entdeckt, 2026-09-07). Auf jeder bisher
+    # hier getesteten, ueber Monate inkrementell migrierten DB existierte
+    # die Altlast-Spalte zufaellig noch, deshalb fiel der Bug nie auf.
+    dest_cols = [row[1] for row in db.execute(text("PRAGMA table_info(resource_group_policies)"))]
+    if "schedule_id" not in dest_cols:
+        return
+    source_cols = [row[1] for row in db.execute(text("PRAGMA table_info(backup_policies)"))]
+    if "schedule_id" not in source_cols:
         return
 
     policy_schedule = {
