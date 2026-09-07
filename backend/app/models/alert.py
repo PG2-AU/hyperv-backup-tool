@@ -113,5 +113,11 @@ class AlertConfig(Base):
     # existiert nur Sekunden bis wenige Minuten (siehe _execute_job_run),
     # alles darueber hinaus ist praktisch sicher ein Ueberbleibsel.
     orphan_checkpoint_grace_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    # Wie oft der periodische Warnungs-Check (run_alert_check) automatisch
+    # laeuft -- Aenderung hier wird sofort per scheduler.reschedule_job() auf
+    # die laufende APScheduler-Job-ID "alert-check" angewendet, kein
+    # Container-Neustart noetig (siehe update_alert_config in
+    # app.api.routes.alerts, analog zu SchedulerConfig).
+    alert_check_interval_minutes: Mapped[int] = mapped_column(Integer, default=5)
     scope: Mapped[AlertScope] = mapped_column(Enum(AlertScope), default=AlertScope.ALL)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

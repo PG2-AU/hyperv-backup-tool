@@ -334,7 +334,7 @@ export function AlertsPage() {
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th>Typ</Table.Th>
+              <Table.Th style={{ whiteSpace: "nowrap" }}>Typ</Table.Th>
               <Table.Th>Objekt</Table.Th>
               <Table.Th>Meldung</Table.Th>
               <Table.Th>Status</Table.Th>
@@ -355,8 +355,8 @@ export function AlertsPage() {
             )}
             {filtered.map((alert) => (
               <Table.Tr key={alert.id}>
-                <Table.Td>
-                  <Badge color={TYPE_COLOR[alert.alert_type]} variant="light">
+                <Table.Td style={{ whiteSpace: "nowrap" }}>
+                  <Badge color={TYPE_COLOR[alert.alert_type]} variant="light" style={{ maxWidth: "none" }}>
                     {TYPE_LABEL[alert.alert_type]}
                   </Badge>
                 </Table.Td>

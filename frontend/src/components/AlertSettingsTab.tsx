@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ActionIcon, Button, Group, NumberInput, Paper, Select, Stack, Table, Text, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Button, Group, NumberInput, Paper, Select, SimpleGrid, Table, Text, Title, Tooltip } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
 
@@ -18,6 +18,7 @@ export function AlertSettingsTab() {
   const [missedGraceMinutes, setMissedGraceMinutes] = useState<number | string>(30);
   const [collisionWindowMinutes, setCollisionWindowMinutes] = useState<number | string>(15);
   const [orphanCheckpointGraceMinutes, setOrphanCheckpointGraceMinutes] = useState<number | string>(60);
+  const [alertCheckIntervalMinutes, setAlertCheckIntervalMinutes] = useState<number | string>(5);
   const [scope, setScope] = useState<AlertScope>("all");
 
   useEffect(() => {
@@ -28,6 +29,7 @@ export function AlertSettingsTab() {
     setMissedGraceMinutes(config.backup_missed_grace_minutes);
     setCollisionWindowMinutes(config.schedule_collision_window_minutes);
     setOrphanCheckpointGraceMinutes(config.orphan_checkpoint_grace_minutes);
+    setAlertCheckIntervalMinutes(config.alert_check_interval_minutes);
     setScope(config.scope);
   }, [config]);
 
@@ -39,6 +41,7 @@ export function AlertSettingsTab() {
       backup_missed_grace_minutes: Number(missedGraceMinutes),
       schedule_collision_window_minutes: Number(collisionWindowMinutes),
       orphan_checkpoint_grace_minutes: Number(orphanCheckpointGraceMinutes),
+      alert_check_interval_minutes: Number(alertCheckIntervalMinutes),
       scope,
     };
     updateConfig
@@ -50,15 +53,15 @@ export function AlertSettingsTab() {
   }
 
   return (
-    <Paper p="md" maw={560}>
+    <Paper p="md" maw={980}>
       <Title order={5} mb={4}>
         Alarms
       </Title>
       <Text size="xs" c="dimmed" mb="md">
-        Schwellwerte pro Kategorie für die Alarme-Seite (Dashboard &gt; Warnungen). Alle 15 Minuten gegen den zuletzt discoverten
-        Zustand geprüft, zusätzlich sofort nach einer Aktion auf der Alarme-Seite selbst.
+        Schwellwerte pro Kategorie für die Alarme-Seite (Dashboard &gt; Warnungen). Automatisch im unten eingestellten Intervall
+        gegen den zuletzt discoverten Zustand geprüft, zusätzlich sofort nach einer Aktion auf der Alarme-Seite selbst.
       </Text>
-      <Stack gap="md">
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md" verticalSpacing="md">
         <NumberInput
           label="Schwellwert Volume"
           description="Ab diesem Füllstand wird pro Volume eine Warnung erzeugt"
@@ -113,6 +116,15 @@ export function AlertSettingsTab() {
           onChange={setOrphanCheckpointGraceMinutes}
           suffix=" min"
         />
+        <NumberInput
+          label="Intervall automatischer Check"
+          description="Wie oft die obigen Bedingungen automatisch neu geprüft werden -- wird sofort live übernommen, ohne Neustart"
+          min={1}
+          max={1440}
+          value={alertCheckIntervalMinutes}
+          onChange={setAlertCheckIntervalMinutes}
+          suffix=" min"
+        />
         <Select
           label="Sichtbarkeit"
           description="Nur die tatsächlich vom Hyper-V-Cluster genutzten Volumes/LUNs/SnapMirror-Beziehungen berücksichtigen, oder alle im NetApp-Cluster vorhandenen (z.B. auch fremde Workloads auf demselben Storage)"
@@ -124,12 +136,12 @@ export function AlertSettingsTab() {
           onChange={(v) => v && setScope(v as AlertScope)}
           allowDeselect={false}
         />
-        <Group justify="flex-end">
-          <Button onClick={handleSave} loading={updateConfig.isPending}>
-            Speichern
-          </Button>
-        </Group>
-      </Stack>
+      </SimpleGrid>
+      <Group justify="flex-end" mt="md">
+        <Button onClick={handleSave} loading={updateConfig.isPending}>
+          Speichern
+        </Button>
+      </Group>
       <AllowedCollisionsSection />
     </Paper>
   );

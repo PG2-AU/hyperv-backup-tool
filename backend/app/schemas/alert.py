@@ -40,6 +40,7 @@ class AlertConfigRead(BaseModel):
     backup_missed_grace_minutes: int
     schedule_collision_window_minutes: int
     orphan_checkpoint_grace_minutes: int
+    alert_check_interval_minutes: int
     scope: str
 
 
@@ -50,6 +51,7 @@ class AlertConfigUpdate(BaseModel):
     backup_missed_grace_minutes: int = Field(ge=5, le=1440)
     schedule_collision_window_minutes: int = Field(ge=1, le=240)
     orphan_checkpoint_grace_minutes: int = Field(ge=5, le=1440)
+    alert_check_interval_minutes: int = Field(ge=1, le=1440)
     scope: str
 
 

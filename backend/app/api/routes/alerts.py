@@ -11,10 +11,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from apscheduler.triggers.interval import IntervalTrigger
+
 from app.api.deps import require_permission
 from app.api.routes.netapp_clusters import _discover_and_persist
 from app.core.rbac import Permission
-from app.core.scheduler import run_alert_check
+from app.core.scheduler import get_scheduler, run_alert_check
 from app.db.session import get_db
 from app.models.alert import Alert, AlertConfig, AlertScope, AlertStatus, AlertType
 from app.models.allowed_schedule_collision import AllowedScheduleCollision
@@ -114,17 +116,25 @@ def update_alert_config(
     config.backup_missed_grace_minutes = payload.backup_missed_grace_minutes
     config.schedule_collision_window_minutes = payload.schedule_collision_window_minutes
     config.orphan_checkpoint_grace_minutes = payload.orphan_checkpoint_grace_minutes
+    config.alert_check_interval_minutes = payload.alert_check_interval_minutes
     config.scope = AlertScope(payload.scope)
     config.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(config)
 
     # Sofort mit den neuen Schwellwerten/Scope neu bewerten, statt auf das
-    # naechste 15min-Intervall zu warten -- sonst blieben z.B. beim
+    # naechste automatische Intervall zu warten -- sonst blieben z.B. beim
     # Umschalten auf den engeren Hyper-V-Scope bestehende, jetzt nicht mehr
     # zutreffende Alarme faelschlich als 'aktiv' stehen, bis der naechste
     # periodische Lauf sie aufloest.
     run_alert_check()
+
+    # Live umschalten, ohne Container-Neustart -- reschedule_job() ersetzt
+    # den bestehenden Trigger derselben Job-ID (siehe start_scheduler),
+    # analog zu update_scheduler_config in app.api.routes.scheduler_config.
+    scheduler = get_scheduler()
+    if scheduler is not None:
+        scheduler.reschedule_job("alert-check", trigger=IntervalTrigger(minutes=config.alert_check_interval_minutes))
 
     return config
 

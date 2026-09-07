@@ -271,7 +271,7 @@ def init_db(db: Session) -> None:
             "volume_threshold_percent": "INTEGER", "lun_threshold_percent": "INTEGER",
             "snapmirror_lag_threshold_minutes": "INTEGER", "snapmirror_lag_threshold_hours": "INTEGER", "scope": "VARCHAR(30)",
             "backup_missed_grace_minutes": "INTEGER", "schedule_collision_window_minutes": "INTEGER",
-            "orphan_checkpoint_grace_minutes": "INTEGER",
+            "orphan_checkpoint_grace_minutes": "INTEGER", "alert_check_interval_minutes": "INTEGER",
         },
     )
     _add_missing_columns(
@@ -303,6 +303,11 @@ def init_db(db: Session) -> None:
         conn.execute(
             text(
                 "UPDATE alert_config SET orphan_checkpoint_grace_minutes = 60 WHERE orphan_checkpoint_grace_minutes IS NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE alert_config SET alert_check_interval_minutes = 5 WHERE alert_check_interval_minutes IS NULL"
             )
         )
         # SQLAlchemys Enum-Spalte speichert per Default den Enum-NAMEN, nicht

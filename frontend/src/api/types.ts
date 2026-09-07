@@ -577,6 +577,7 @@ export interface AlertConfig {
   backup_missed_grace_minutes: number;
   schedule_collision_window_minutes: number;
   orphan_checkpoint_grace_minutes: number;
+  alert_check_interval_minutes: number;
   scope: AlertScope;
 }
 
@@ -587,6 +588,7 @@ export interface AlertConfigWritePayload {
   backup_missed_grace_minutes: number;
   schedule_collision_window_minutes: number;
   orphan_checkpoint_grace_minutes: number;
+  alert_check_interval_minutes: number;
   scope: AlertScope;
 }
 

@@ -1132,12 +1132,14 @@ def start_scheduler() -> BackgroundScheduler:
     startup_db = SessionLocal()
     try:
         config = startup_db.query(SchedulerConfig).first()
+        alert_config = startup_db.query(AlertConfig).first()
     finally:
         startup_db.close()
     hc_interval = config.healthcheck_interval_minutes if config else settings.healthcheck_interval_minutes
     discovery_interval = config.discovery_interval_minutes if config else settings.discovery_interval_minutes
     snapshot_hour = config.snapshot_reconcile_hour if config else settings.snapshot_reconcile_hour
     retention_hour = config.retention_cleanup_hour if config else settings.snapshot_reconcile_hour
+    alert_check_interval = alert_config.alert_check_interval_minutes if alert_config else 5
 
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(
@@ -1169,7 +1171,7 @@ def start_scheduler() -> BackgroundScheduler:
         id="daily-email-summary", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
-        run_alert_check, IntervalTrigger(minutes=15),
+        run_alert_check, IntervalTrigger(minutes=alert_check_interval),
         id="alert-check", replace_existing=True, max_instances=1,
     )
     scheduler.start()
@@ -1193,7 +1195,7 @@ def start_scheduler() -> BackgroundScheduler:
             f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone}, "
             f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h), "
             f"E-Mail-Tageszusammenfassung alle 15min geprueft, "
-            f"Warnungs-Check (Kapazitaet/Cluster/SnapMirror) alle 15min)",
+            f"Warnungs-Check (Kapazitaet/Cluster/SnapMirror) alle {alert_check_interval}min)",
         )
     finally:
         startup_db.close()
