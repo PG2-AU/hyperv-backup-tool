@@ -554,20 +554,26 @@ export function SettingsPage() {
                       <Table.Td>{c.last_checked_at ? new Date(c.last_checked_at).toLocaleString("de-DE") : "nie"}</Table.Td>
                       <Table.Td>
                         <Group gap="xs">
-                          <ActionIcon variant="light" onClick={() => handleVerifyHyperVCluster(c)}>
-                            <IconRefresh size={16} />
-                          </ActionIcon>
-                          <ActionIcon variant="light" onClick={() => runHyperVDiscovery(c.id, c.name)}>
-                            <IconRadar2 size={16} />
-                          </ActionIcon>
+                          <Tooltip label="Verbindung erneut prüfen">
+                            <ActionIcon variant="light" onClick={() => handleVerifyHyperVCluster(c)}>
+                              <IconRefresh size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Discovery erneut ausführen">
+                            <ActionIcon variant="light" onClick={() => runHyperVDiscovery(c.id, c.name)}>
+                              <IconRadar2 size={16} />
+                            </ActionIcon>
+                          </Tooltip>
                           <Tooltip label="Bearbeiten (z.B. Kennwort-Rotation)">
                             <ActionIcon variant="light" onClick={() => setEditingHyperVCluster(c)}>
                               <IconEdit size={16} />
                             </ActionIcon>
                           </Tooltip>
-                          <ActionIcon variant="light" color="red" onClick={() => handleDeleteHyperVCluster(c)}>
-                            <IconTrash size={16} />
-                          </ActionIcon>
+                          <Tooltip label="Entfernen">
+                            <ActionIcon variant="light" color="red" onClick={() => handleDeleteHyperVCluster(c)}>
+                              <IconTrash size={16} />
+                            </ActionIcon>
+                          </Tooltip>
                         </Group>
                       </Table.Td>
                     </Table.Tr>
