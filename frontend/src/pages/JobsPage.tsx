@@ -372,7 +372,7 @@ export function JobsPage() {
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Name</Table.Th>
-                  <Table.Th>Typ</Table.Th>
+                  <Table.Th style={{ whiteSpace: "nowrap" }}>Typ</Table.Th>
                   <Table.Th>Anzahl</Table.Th>
                   <Table.Th>Objekte</Table.Th>
                   <Table.Th>Verknüpfte Policies (Zeitplan)</Table.Th>
@@ -383,8 +383,8 @@ export function JobsPage() {
                 {groups?.map((group) => (
                   <Table.Tr key={group.id}>
                     <Table.Td>{group.name}</Table.Td>
-                    <Table.Td>
-                      <Badge variant="light" color="blue">
+                    <Table.Td style={{ whiteSpace: "nowrap" }}>
+                      <Badge variant="light" color="blue" styles={{ label: { overflow: "visible", textOverflow: "unset" } }}>
                         {SCOPE_LABEL[group.scope] ?? group.scope}
                       </Badge>
                     </Table.Td>
