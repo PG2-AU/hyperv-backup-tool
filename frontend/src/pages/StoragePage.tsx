@@ -857,7 +857,7 @@ export function StoragePage() {
               LUN anlegen
             </Button>
           </Group>
-          <Table striped highlightOnHover>
+          <Table striped highlightOnHover horizontalSpacing="sm">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Cluster</Table.Th>
@@ -868,7 +868,7 @@ export function StoragePage() {
                 <Table.Th>Größe</Table.Th>
                 <Table.Th>Belegung</Table.Th>
                 <Table.Th>Status</Table.Th>
-                <Table.Th>LUN-Mapping (IGroups)</Table.Th>
+                <Table.Th>IGroups</Table.Th>
                 <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -877,8 +877,25 @@ export function StoragePage() {
                 <Table.Tr key={lun.id}>
                   <Table.Td>{lun.cluster_name}</Table.Td>
                   <Table.Td>{lun.svm_name ?? "-"}</Table.Td>
-                  <Table.Td>{lun.volume_name ?? "-"}</Table.Td>
-                  <Table.Td>{lun.name}</Table.Td>
+                  <Table.Td>
+                    <Tooltip label={lun.volume_name ?? ""} openDelay={300} disabled={!lun.volume_name}>
+                      <Text size="sm" truncate maw={160} style={{ cursor: "default" }}>
+                        {lun.volume_name ?? "-"}
+                      </Text>
+                    </Tooltip>
+                  </Table.Td>
+                  <Table.Td>
+                    {/* Voller Pfad enthaelt den Volume-Namen bereits als Praefix
+                        (/vol/{volume}/{name}.lun, bis zu ~100 Zeichen lang, live
+                        gemessen) -- redundant zur Volume-Spalte daneben und war der
+                        Haupttreiber fuer den horizontalen Tabellen-Overflow. Nur der
+                        Dateiname wird angezeigt, voller Pfad per Tooltip verfuegbar. */}
+                    <Tooltip label={lun.name} openDelay={300}>
+                      <Text size="sm" truncate maw={200} style={{ cursor: "default" }}>
+                        {lun.name.split("/").pop()}
+                      </Text>
+                    </Tooltip>
+                  </Table.Td>
                   <Table.Td>{lun.os_type ?? "-"}</Table.Td>
                   <Table.Td>{formatBytes(lun.size_bytes)}</Table.Td>
                   <Table.Td miw={140}>
@@ -899,7 +916,13 @@ export function StoragePage() {
                       {lun.state ?? "-"}
                     </Badge>
                   </Table.Td>
-                  <Table.Td>{lun.mapped_igroups ?? "-"}</Table.Td>
+                  <Table.Td>
+                    <Tooltip label={lun.mapped_igroups ?? ""} openDelay={300} disabled={!lun.mapped_igroups}>
+                      <Text size="sm" truncate maw={180} style={{ cursor: "default" }}>
+                        {lun.mapped_igroups ?? "-"}
+                      </Text>
+                    </Tooltip>
+                  </Table.Td>
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
                       <Tooltip label="Bearbeiten">
