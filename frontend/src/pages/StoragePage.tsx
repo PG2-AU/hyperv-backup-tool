@@ -535,7 +535,7 @@ export function StoragePage() {
     const list = aggregates ?? [];
     const totalSize = list.reduce((sum, a) => sum + (a.size_bytes ?? 0), 0);
     const totalUsed = list.reduce((sum, a) => sum + (a.used_bytes ?? 0), 0);
-    const ratios = list.map((a) => a.efficiency_ratio_wo_snapshots).filter((r): r is number => r != null);
+    const ratios = list.map((a) => a.efficiency_ratio_wo_snapshots_flexclones).filter((r): r is number => r != null);
     const avgEfficiency = ratios.length ? ratios.reduce((sum, r) => sum + r, 0) / ratios.length : null;
     return { totalSize, totalUsed, avgEfficiency };
   }, [aggregates]);
@@ -1279,7 +1279,7 @@ export function StoragePage() {
             <StatCard label="Anzahl Aggregate" value={aggregates?.length ?? 0} />
             <CapacityBarCard label="Kapazität" used={aggregateStats.totalUsed} total={aggregateStats.totalSize} formatValue={formatBytes} />
             <StatCard
-              label="Storage Efficiency"
+              label="Storage Efficiency (ohne Snapshots/FlexClones)"
               value={aggregateStats.avgEfficiency != null ? `${aggregateStats.avgEfficiency.toFixed(2)} : 1` : "-"}
             />
           </StatRibbon>
@@ -1295,7 +1295,7 @@ export function StoragePage() {
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Größe</Table.Th>
                 <Table.Th>Belegt</Table.Th>
-                <Table.Th>Storage Efficiency</Table.Th>
+                <Table.Th>Storage Efficiency (ohne Snapshots/FlexClones)</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -1323,7 +1323,11 @@ export function StoragePage() {
                       />
                     )}
                   </Table.Td>
-                  <Table.Td>{agg.efficiency_ratio != null ? `${agg.efficiency_ratio.toFixed(2)} : 1` : "-"}</Table.Td>
+                  <Table.Td>
+                    {agg.efficiency_ratio_wo_snapshots_flexclones != null
+                      ? `${agg.efficiency_ratio_wo_snapshots_flexclones.toFixed(2)} : 1`
+                      : "-"}
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>

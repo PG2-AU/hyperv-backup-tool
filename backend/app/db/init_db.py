@@ -262,6 +262,7 @@ def init_db(db: Session) -> None:
         {"resource_group_id": "VARCHAR(36)", "alert_dismissed_at": "DATETIME", "cancel_requested_at": "DATETIME"},
     )
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
+    _add_missing_columns(engine, "netapp_aggregates", {"efficiency_ratio_wo_snapshots_flexclones": "FLOAT"})
     _add_missing_columns(engine, "hyperv_clusters", {"unreachable_nodes_json": "VARCHAR(2000)"})
     _add_missing_columns(
         engine, "alert_config",

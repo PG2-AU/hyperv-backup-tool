@@ -220,5 +220,9 @@ class NetAppAggregate(Base):
     used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     used_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
     efficiency_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
-    efficiency_ratio_wo_snapshots: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Ohne Snapshots UND FlexClones (ONTAP: space.efficiency_without_snapshots_flexclones.ratio,
+    # CLI/ZAPI-Name total-data-reduction-efficiency-ratio-wo-snapshots-flexclones). Ersetzt die
+    # gleichnamige Alt-Spalte, die faelschlich nur "ohne Snapshots" (FlexClones weiterhin
+    # eingerechnet) lieferte -- die Alt-Spalte bleibt als ungenutzte Altlast in der DB bestehen.
+    efficiency_ratio_wo_snapshots_flexclones: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

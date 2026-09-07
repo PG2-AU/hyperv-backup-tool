@@ -189,7 +189,7 @@ def list_aggregates(db: Session = Depends(get_db), user=Depends(require_permissi
             id=a.id, cluster_id=a.cluster_id, cluster_name=names.get(a.cluster_id, "?"),
             uuid=a.uuid, name=a.name, node_name=a.node_name, state=a.state,
             size_bytes=a.size_bytes, used_bytes=a.used_bytes, used_percent=a.used_percent,
-            efficiency_ratio=a.efficiency_ratio, efficiency_ratio_wo_snapshots=a.efficiency_ratio_wo_snapshots,
+            efficiency_ratio=a.efficiency_ratio, efficiency_ratio_wo_snapshots_flexclones=a.efficiency_ratio_wo_snapshots_flexclones,
             last_seen_at=a.last_seen_at,
         )
         for a in db.query(NetAppAggregate).order_by(NetAppAggregate.name).all()
