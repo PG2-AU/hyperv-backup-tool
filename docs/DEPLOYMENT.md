@@ -408,6 +408,58 @@ bedient, kann jederzeit wechseln (siehe Kasten weiter oben). Die interne
 Cluster-Kommunikation zwischen den Knoten (Heartbeat, CSV, Failover) läuft
 über eigene Ports/Regeln und ist von dieser Einschränkung nicht betroffen.
 
+### Listener auf das Management-Interface binden (empfohlen)
+
+Der Listener wurde oben mit `-Address *` angelegt — er lauscht damit auf
+**jedem** Netzwerkadapter des Knotens, nicht nur dem für die App
+gedachten Management-Netz. Live auf einem echten Cluster-Knoten geprüft
+(`Get-NetAdapter` + `Get-NetIPAddress`): das betrifft in der Praxis
+typischerweise auch das iSCSI-Netz und ggf. das Live-Migration-Netz, die
+jeweils eigene Adapter mit eigener IP haben — WinRM ist dort also
+unnötig erreichbar, obwohl die App nur das Management-Netz braucht.
+
+Eine einzelne IP-Adresse eignet sich als Bindung dabei **nicht** direkt:
+bei einem Failover-Cluster liegen auf dem Management-Adapter *zwei*
+Adressen gleichzeitig — die eigene, feste Adresse des Knotens **und**
+(sofern dieser Knoten die Cluster-Group gerade besitzt) die CNO-Adresse
+als zusätzliche IP auf demselben Adapter. `-Address` unterstützt dafür
+gezielt eine Bindung **per Netzwerkadapter** (per MAC-Adresse) statt per
+einzelner IP — deckt dadurch beide Adressen auf diesem einen Adapter ab,
+und bleibt auch nach einem Failover korrekt, da die CNO-Adresse laut
+Cluster-Netzwerk-Konfiguration immer auf demselben Adapter erscheint:
+
+```powershell
+# MAC-Adresse des Management-Adapters ermitteln (der Adapter, der sowohl
+# die eigene Knoten-IP als auch -- bei aktivem Besitz -- die CNO-Adresse
+# traegt; live am Beispiel eines echten Clusterknotens: Get-NetAdapter |
+# Get-NetIPAddress zeigte hier "vNIC-MGMT" mit beiden Adressen 10.93.70.101
+# und 10.93.70.100 gleichzeitig, waehrend "iSCSI-1" und "vNIC-LiveMig"
+# eigene, davon getrennte Adressen auf anderen Adaptern trugen):
+Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object Name, MacAddress, ifIndex
+Get-NetIPAddress -AddressFamily IPv4 | Select-Object InterfaceAlias, IPAddress
+
+# Bestehenden Listener entfernen und mit MAC-Bindung neu anlegen (MAC-
+# Adresse aus dem obigen Befehl einsetzen):
+Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match "Transport=HTTPS" } |
+    Remove-Item -Recurse -Force
+New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address 'MAC:00-15-5D-FB-EE-00' `
+    -CertificateThumbprint $cert.Thumbprint -Force
+```
+
+> **Vor dem Rollout auf allen Knoten einmal gegenprüfen:** die
+> MAC-Adressbindung ist nicht Teil dieser Referenzumgebung-Verifikation
+> (das Erzeugen/Ersetzen eines produktiven Listeners war hier bewusst
+> nicht risikofrei genug für einen Live-Test) — nach dem Anlegen mit
+> `Get-ChildItem WSMan:\localhost\Listener` kontrollieren, dass der
+> Listener existiert und mit `Test-NetConnection -ComputerName localhost
+> -Port 5986` sowie einmal über die CNO-Adresse testen, **bevor** die
+> alte `-Address *`-Regel auf weiteren Knoten ersetzt wird. Schlägt die
+> MAC-Syntax fehl, ersatzweise `-Address 'IP:<eigene-IP>'` **und**
+> `-Address 'IP:<CNO-IP>'` als zwei separate Listener auf demselben Port
+> anlegen (WSMan erlaubt mehrere Listener auf unterschiedlichen
+> Adressen) — funktional gleichwertig, nur etwas mehr Pflegeaufwand bei
+> einer IP-Änderung.
+
 **Verbindung isoliert testen**, bevor der Cluster in der GUI hinzugefügt
 wird — zuerst lokal auf dem Hyper-V-Host selbst:
 
