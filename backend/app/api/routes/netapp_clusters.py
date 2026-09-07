@@ -445,6 +445,22 @@ def delete_cluster(
     cluster_id: str, db: Session = Depends(get_db), user=Depends(require_storage_unlocked),
 ) -> None:
     cluster = _get_cluster_or_404(db, cluster_id)
+    # Discovery-Kindtabellen sind zwar mit ForeignKey(..., ondelete="CASCADE")
+    # deklariert, aber SQLite erzwingt das nur, wenn PRAGMA foreign_keys=ON
+    # pro Verbindung gesetzt wird -- das passiert in dieser App nirgends,
+    # die CASCADE-Angabe im Modell ist also reine Dokumentation ohne
+    # Wirkung (analog zu delete_cluster in hyperv_clusters.py). Ohne diesen
+    # expliziten Cleanup blieben discoverte SVMs/Volumes/LUNs/etc. des
+    # geloeschten Systems als Stale-Entries stehen (live beobachtet: '?' in
+    # der System-Spalte, da kein passendes NetAppCluster mehr existiert --
+    # siehe auch die Selbstheilung _cleanup_orphaned_netapp_discovery_rows
+    # in init_db.py fuer bereits so entstandene Alt-Staende).
+    for model in (
+        NetAppSvm, NetAppVolume, NetAppLun, NetAppIgroup, NetAppClusterPeer, NetAppSvmPeer,
+        NetAppSnapMirrorRelationship, NetAppNetworkInterface, NetAppSnapMirrorPolicy,
+        NetAppSchedule, NetAppPlatform, NetAppAggregate,
+    ):
+        db.query(model).filter(model.cluster_id == cluster_id).delete()
     db.delete(cluster)
     db.commit()
 

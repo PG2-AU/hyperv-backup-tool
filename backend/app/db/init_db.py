@@ -83,6 +83,35 @@ def _cleanup_orphaned_hyperv_discovery_rows(engine) -> None:
         conn.commit()
 
 
+def _cleanup_orphaned_netapp_discovery_rows(engine) -> None:
+    """Loescht NetApp-Discovery-Zeilen (SVMs/Volumes/LUNs/IGroups/Cluster-
+    Peers/SVM-Peers/SnapMirror-Beziehungen/-Policies/Schedules/Netzwerk-
+    Interfaces/Platforms/Aggregate), deren cluster_id auf kein mehr
+    existierendes NetAppCluster-System zeigt -- exakt dasselbe Muster wie
+    _cleanup_orphaned_hyperv_discovery_rows oben (ForeignKey(...,
+    ondelete='CASCADE') ist deklariert, SQLite erzwingt das aber nur bei
+    PRAGMA foreign_keys=ON pro Verbindung, das diese App nirgends setzt).
+    Live beobachtet 2026-09-07: nach dem Loeschen eines testweise
+    hinzugefuegten SVM-Systems blieben dessen SVMs/Volumes/LUNs als
+    Stale-Entries stehen, in der GUI als '?' in der System-Spalte sichtbar
+    (kein passendes NetAppCluster mehr zum Anzeigen des Namens). Laeuft bei
+    JEDEM Start (nicht nur einmalig) -- idempotent, raeumt so auch
+    zukuenftig liegen gebliebene Reste auf, unabhaengig davon ob
+    delete_cluster() selbst korrekt aufraeumt."""
+    with engine.connect() as conn:
+        existing_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(netapp_clusters)"))]
+        if not existing_cols:
+            return  # Tabellen existieren noch nicht -- frischer Erststart
+        for table in (
+            "netapp_svms", "netapp_volumes", "netapp_luns", "netapp_igroups",
+            "netapp_cluster_peers", "netapp_svm_peers", "netapp_snapmirror_relationships",
+            "netapp_network_interfaces", "netapp_snapmirror_policies", "netapp_schedules",
+            "netapp_platforms", "netapp_aggregates",
+        ):
+            conn.execute(text(f"DELETE FROM {table} WHERE cluster_id NOT IN (SELECT id FROM netapp_clusters)"))
+        conn.commit()
+
+
 def _reap_orphaned_in_progress_runs(engine) -> None:
     """Markiert Backup-/Restore-/VM-Neuerstellungs-/Datei-Restore-Laeufe, die
     beim letzten Herunterfahren noch als 'laeuft' in der DB standen, als
@@ -333,6 +362,7 @@ def init_db(db: Session) -> None:
         conn.commit()
 
     _cleanup_orphaned_hyperv_discovery_rows(engine)
+    _cleanup_orphaned_netapp_discovery_rows(engine)
     _reap_orphaned_in_progress_runs(engine)
     _migrate_resource_group_members(db)
     _migrate_resource_group_policy_link_schedules(db)
