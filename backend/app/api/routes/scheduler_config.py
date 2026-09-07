@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.core.rbac import Permission
-from app.core.scheduler import get_scheduler
+from app.core.scheduler import INTERVAL_ANCHOR, get_scheduler
 from app.db.session import get_db
 from app.models.scheduler_config import SchedulerConfig
 from app.schemas.scheduler_config import SchedulerConfigRead, SchedulerConfigUpdate
@@ -57,8 +57,12 @@ def update_scheduler_config(
     # wird sofort nach dem neuen Trigger berechnet.
     scheduler = get_scheduler()
     if scheduler is not None:
-        scheduler.reschedule_job("health-check", trigger=IntervalTrigger(minutes=config.healthcheck_interval_minutes))
-        scheduler.reschedule_job("discovery", trigger=IntervalTrigger(minutes=config.discovery_interval_minutes))
+        scheduler.reschedule_job(
+            "health-check", trigger=IntervalTrigger(minutes=config.healthcheck_interval_minutes, start_date=INTERVAL_ANCHOR)
+        )
+        scheduler.reschedule_job(
+            "discovery", trigger=IntervalTrigger(minutes=config.discovery_interval_minutes, start_date=INTERVAL_ANCHOR)
+        )
         scheduler.reschedule_job("snapshot-reconciliation", trigger=CronTrigger(hour=config.snapshot_reconcile_hour, minute=0))
         scheduler.reschedule_job("retention-cleanup", trigger=CronTrigger(hour=config.retention_cleanup_hour, minute=15))
 

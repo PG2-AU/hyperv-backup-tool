@@ -16,7 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.api.deps import require_permission
 from app.api.routes.netapp_clusters import _discover_and_persist
 from app.core.rbac import Permission
-from app.core.scheduler import get_scheduler, run_alert_check
+from app.core.scheduler import INTERVAL_ANCHOR, get_scheduler, run_alert_check
 from app.db.session import get_db
 from app.models.alert import Alert, AlertConfig, AlertScope, AlertStatus, AlertType
 from app.models.allowed_schedule_collision import AllowedScheduleCollision
@@ -134,7 +134,9 @@ def update_alert_config(
     # analog zu update_scheduler_config in app.api.routes.scheduler_config.
     scheduler = get_scheduler()
     if scheduler is not None:
-        scheduler.reschedule_job("alert-check", trigger=IntervalTrigger(minutes=config.alert_check_interval_minutes))
+        scheduler.reschedule_job(
+            "alert-check", trigger=IntervalTrigger(minutes=config.alert_check_interval_minutes, start_date=INTERVAL_ANCHOR)
+        )
 
     return config
 

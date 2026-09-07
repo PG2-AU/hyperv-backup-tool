@@ -54,6 +54,26 @@ from app.services.email_service import DailySummaryFailure, DailySummaryRow, Dai
 
 _scheduler: BackgroundScheduler | None = None
 
+# Fester Ankerpunkt fuer ALLE intervallbasierten Jobs (IntervalTrigger).
+# Ohne start_date berechnet IntervalTrigger den naechsten Lauf als "jetzt +
+# Intervall" ab dem Moment der (Neu-)Registrierung -- d.h. bei JEDEM
+# Prozess-Neustart (z.B. durch einen Deploy) wird die Uhr neu gestartet.
+# Bei kurzen Intervallen (Health-Check/Alert-Check, wenige Minuten) faellt
+# das kaum auf, bei langen (Discovery, Default 240min) kann ein Prozess,
+# der oefter als einmal pro Intervall neu startet, den Job dadurch DAUERHAFT
+# verhungern lassen, statt ihn nur zu verzoegern -- real beobachtet am
+# 2026-09-07 (Discovery lief zwischen 05:34 UTC und einem manuellen Anstoss
+# kein einziges Mal mehr, trotz 240min-Intervall, weil der Prozess durch
+# laufende Deploys elfmal in der Zwischenzeit neu gestartet ist, siehe
+# app-feature-backlog-Memory). Ein fester Ankerpunkt in der Vergangenheit
+# sorgt dafuer, dass IntervalTrigger den naechsten Lauf immer auf demselben
+# festen Zeitraster (Anker + n*Intervall) berechnet -- unabhaengig davon,
+# wie oft der Prozess dazwischen neu gestartet wird. Muss bei JEDER
+# IntervalTrigger-Instanziierung fuer einen periodischen Job mitgegeben
+# werden (Erstregistrierung in start_scheduler UND jedes spaetere
+# reschedule_job, siehe app.api.routes.scheduler_config/alerts).
+INTERVAL_ANCHOR = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
 
 def _log(db: Session | None, message: str, level: str = "INFO") -> None:
     """Schreibt eine Hintergrund-Meldung ins Container-Log UND (falls eine
@@ -1143,11 +1163,11 @@ def start_scheduler() -> BackgroundScheduler:
 
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(
-        run_health_checks, IntervalTrigger(minutes=hc_interval),
+        run_health_checks, IntervalTrigger(minutes=hc_interval, start_date=INTERVAL_ANCHOR),
         id="health-check", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
-        run_discovery, IntervalTrigger(minutes=discovery_interval),
+        run_discovery, IntervalTrigger(minutes=discovery_interval, start_date=INTERVAL_ANCHOR),
         id="discovery", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
@@ -1163,15 +1183,15 @@ def start_scheduler() -> BackgroundScheduler:
         id="scheduled-backups", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
-        run_file_restore_expiry, IntervalTrigger(hours=1),
+        run_file_restore_expiry, IntervalTrigger(hours=1, start_date=INTERVAL_ANCHOR),
         id="file-restore-expiry", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
-        run_daily_email_summary, IntervalTrigger(minutes=15),
+        run_daily_email_summary, IntervalTrigger(minutes=15, start_date=INTERVAL_ANCHOR),
         id="daily-email-summary", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
-        run_alert_check, IntervalTrigger(minutes=alert_check_interval),
+        run_alert_check, IntervalTrigger(minutes=alert_check_interval, start_date=INTERVAL_ANCHOR),
         id="alert-check", replace_existing=True, max_instances=1,
     )
     scheduler.start()
