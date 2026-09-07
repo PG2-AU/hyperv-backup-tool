@@ -80,7 +80,13 @@ export function useDeleteVmCheckpoint() {
     mutationFn: async ({ clusterId, vmName, checkpointId }: { clusterId: string; vmName: string; checkpointId: string }) => {
       await apiClient.post(`/vms/${clusterId}/${encodeURIComponent(vmName)}/checkpoints/${checkpointId}/delete`);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vms"] }),
+    // Der Endpunkt loest serverseitig auch einen ggf. zugehoerigen Alarm auf
+    // (unabhaengig davon, ob von hier oder von der Alarme-Seite aus
+    // ausgeloest) -- beide Ansichten aktuell halten.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vms"] });
+      queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    },
   });
 }
 

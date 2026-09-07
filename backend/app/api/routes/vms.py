@@ -18,16 +18,19 @@ Schutz -- die VM-Sicherung erfolgt in diesem Fall ueber das CSV-Backup).
 """
 
 from collections import defaultdict
+from datetime import datetime, timezone
 from ntpath import basename as win_basename
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.api.routes.hyperv_clusters import _parse_csv_name
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
+from app.models.alert import Alert, AlertStatus, AlertType
 from app.models.backup_policy import BackupPolicy, BackupScope
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
@@ -229,6 +232,7 @@ def delete_vm_checkpoint(
 
     settings = get_settings()
     password = decrypt_secret(cluster.encrypted_password)
+    refreshed_vm = None
     try:
         hv_service = HyperVService(settings, cluster.management_address, use_https=cluster.use_https)
         cno_session = hv_service.connect(cluster.username, password, read_timeout_sec=15, operation_timeout_sec=10)
@@ -239,11 +243,56 @@ def delete_vm_checkpoint(
         result = node_service.remove_checkpoint(node_session, vm_name, checkpoint["name"])
         if not result.success:
             raise RuntimeError(result.error)
+        # Solange ein Checkpoint besteht, zeigt Get-VM als aktive Festplatte
+        # die AVHDX-Differenzdatei statt der Basis-VHDX -- Remove-VMSnapshot
+        # merget sie danach zurueck, bei einer laufenden VM aber nicht immer
+        # synchron (Live-Merge im Hintergrund, live beobachtet: bei einer
+        # ausgeschalteten VM war die VHDX direkt danach schon korrekt, bei
+        # einer laufenden VM zeigte dieselbe Abfrage noch kurz die AVHDX).
+        # Direkt danach trotzdem neu abfragen (statt auf die naechste volle
+        # Discovery zu warten, siehe get_vm) -- liefert entweder schon den
+        # korrekten VHDX-Stand, oder zumindest einen ehrlichen Zwischenstand,
+        # der sich spaetestens mit der naechsten Discovery von selbst
+        # korrigiert. Best-effort: schlaegt NUR diese Abfrage fehl (der
+        # Checkpoint ist ja bereits weg), bleibt der alte VHD-Stand bis zur
+        # naechsten Discovery bestehen -- kein Grund, die ganze Aktion als
+        # fehlgeschlagen zu melden.
+        try:
+            refreshed_vm = node_service.get_vm(node_session, vm_name)
+        except Exception:
+            refreshed_vm = None
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Checkpoint konnte nicht geloescht werden: {exc}") from exc
 
-    # Sofort aus dem discoverten Zustand entfernen, statt auf die naechste
-    # Discovery zu warten -- damit verschwindet das Warn-Badge in der GUI
-    # sofort, nicht erst nach bis zu einem Discovery-Intervall.
-    vm.checkpoints = [c for c in (vm.checkpoints or []) if c["id"] != checkpoint_id]
+    if refreshed_vm is not None:
+        vm.checkpoints = [{"name": c.name, "id": c.id, "creation_time": c.creation_time} for c in refreshed_vm.checkpoints]
+        db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_uuid == vm.vm_uuid).delete()
+        now = datetime.now(timezone.utc)
+        for vhd in refreshed_vm.vhds:
+            db.add(
+                HyperVVhd(
+                    cluster_id=cluster_id, vm_uuid=vm.vm_uuid, vm_name=vm.name, path=vhd.path,
+                    csv_name=_parse_csv_name(vhd.path), size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
+                    last_seen_at=now,
+                )
+            )
+    else:
+        # Sofort aus dem discoverten Zustand entfernen, statt auf die naechste
+        # Discovery zu warten -- damit verschwindet zumindest das Warn-Badge
+        # in der GUI sofort, auch wenn die VHD-Ansicht (AVHDX vs. VHDX) hier
+        # ausnahmsweise erst mit der naechsten Discovery nachzieht.
+        vm.checkpoints = [c for c in (vm.checkpoints or []) if c["id"] != checkpoint_id]
+
+    # Den zugehoerigen Alarm sofort mit aufloesen, statt bis zum naechsten
+    # 15min-Check zu warten -- unabhaengig davon, ob die Loeschung von hier
+    # (Inventory) oder von der Alarme-Seite selbst ausgeloest wurde.
+    matching_alert = (
+        db.query(Alert)
+        .filter(Alert.alert_type == AlertType.HYPERV_ORPHAN_CHECKPOINT, Alert.checkpoint_id == checkpoint_id, Alert.status == AlertStatus.ACTIVE)
+        .first()
+    )
+    if matching_alert is not None:
+        matching_alert.status = AlertStatus.RESOLVED
+        matching_alert.resolved_at = datetime.now(timezone.utc)
+
     db.commit()

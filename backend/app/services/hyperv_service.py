@@ -289,6 +289,20 @@ class HyperVService:
         # Get-VM liefert nur die auf DIESEM Host lokalen VMs -- fuer eine
         # clusterweite Sicht wird diese Methode daher pro Knoten einzeln
         # aufgerufen (siehe run_discovery), nicht einmalig gegen den CNO.
+        return self._query_vms(session)
+
+    def get_vm(self, session: winrm.Session, vm_name: str) -> VirtualMachineInfo | None:
+        """Gezielte Abfrage EINER VM (Get-VM -Name), statt wie list_vms alle
+        VMs des Knotens zu discovern -- fuer Faelle, in denen ein einzelner
+        Vorgang (z.B. eine Checkpoint-Loeschung) den discoverten Zustand
+        gezielt und sofort aktualisieren soll, ohne auf den naechsten vollen
+        Discovery-Lauf zu warten (siehe delete_vm_checkpoint in
+        app.api.routes.vms). Liefert None, falls die VM nicht (mehr)
+        existiert oder auf diesem Knoten nicht (mehr) liegt."""
+        results = self._query_vms(session, name_filter=vm_name)
+        return results[0] if results else None
+
+    def _query_vms(self, session: winrm.Session, name_filter: str | None = None) -> list[VirtualMachineInfo]:
         # $env:COMPUTERNAME statt $vm.ComputerName, da wir wissen, mit
         # welchem Knoten diese Session tatsaechlich verbunden ist.
         #
@@ -300,8 +314,10 @@ class HyperVService:
         # koennen je nach Hyper-V-Version/DDA-Konfiguration fehlschlagen,
         # daher mit -ErrorAction SilentlyContinue bzw. try/catch abgesichert
         # statt den gesamten Discovery-Lauf daran scheitern zu lassen.
+        escaped_name = name_filter.replace("'", "''") if name_filter else None
+        name_clause = f" -Name '{escaped_name}' -ErrorAction SilentlyContinue" if escaped_name else ""
         script = (
-            "$vms = Get-VM; "
+            f"$vms = Get-VM{name_clause}; "
             "$hostName = $env:COMPUTERNAME; "
             "$vms | ForEach-Object { "
             "$vm = $_; "

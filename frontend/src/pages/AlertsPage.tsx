@@ -133,12 +133,7 @@ function AlertAction({ alert }: { alert: Alert }) {
     return (
       <Group gap="xs" wrap="nowrap">
         {alert.hyperv_cluster_id && alert.vm_name && alert.checkpoint_id && (
-          <DeleteOrphanCheckpointButton
-            alertId={alert.id}
-            clusterId={alert.hyperv_cluster_id}
-            vmName={alert.vm_name}
-            checkpointId={alert.checkpoint_id}
-          />
+          <DeleteOrphanCheckpointButton clusterId={alert.hyperv_cluster_id} vmName={alert.vm_name} checkpointId={alert.checkpoint_id} />
         )}
         <DismissAlertButton alertId={alert.id} />
       </Group>
@@ -148,18 +143,15 @@ function AlertAction({ alert }: { alert: Alert }) {
 }
 
 function DeleteOrphanCheckpointButton({
-  alertId,
   clusterId,
   vmName,
   checkpointId,
 }: {
-  alertId: string;
   clusterId: string;
   vmName: string;
   checkpointId: string;
 }) {
   const deleteCheckpoint = useDeleteVmCheckpoint();
-  const dismissAlert = useDismissAlert();
 
   function handleDelete() {
     confirmAction({
@@ -168,15 +160,14 @@ function DeleteOrphanCheckpointButton({
       confirmLabel: "Löschen",
       color: "red",
       onConfirm: () =>
+        // Der Endpunkt loest den zugehoerigen Alarm serverseitig direkt mit
+        // auf (siehe delete_vm_checkpoint) -- kein zusaetzlicher
+        // Quittieren-Aufruf hier noetig, useDeleteVmCheckpoint invalidiert
+        // bereits die Alarm-Liste.
         deleteCheckpoint.mutate(
           { clusterId, vmName, checkpointId },
           {
-            onSuccess: () => {
-              notifications.show({ title: "Checkpoint gelöscht", message: vmName, color: "green" });
-              // Der naechste 15min-Check wuerde den Alarm ohnehin nicht mehr
-              // finden (Checkpoint ist weg) -- Quittieren macht das nur sofort sichtbar.
-              dismissAlert.mutate(alertId);
-            },
+            onSuccess: () => notifications.show({ title: "Checkpoint gelöscht", message: vmName, color: "green" }),
             onError: (err) =>
               notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Checkpoint konnte nicht gelöscht werden."), color: "red" }),
           },
