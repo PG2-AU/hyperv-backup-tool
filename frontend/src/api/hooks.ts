@@ -72,6 +72,18 @@ export function useVms() {
   });
 }
 
+// Loescht einen einzelnen VM-Checkpoint -- von Inventory > VMs UND von der
+// Alarme-Seite (hyperv_orphan_checkpoint) genutzt, derselbe Endpunkt.
+export function useDeleteVmCheckpoint() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clusterId, vmName, checkpointId }: { clusterId: string; vmName: string; checkpointId: string }) => {
+      await apiClient.post(`/vms/${clusterId}/${encodeURIComponent(vmName)}/checkpoints/${checkpointId}/delete`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vms"] }),
+  });
+}
+
 export function useCsvs() {
   return useQuery({
     queryKey: ["csvs"],

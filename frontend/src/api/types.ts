@@ -13,6 +13,15 @@ export interface NetworkAdapter {
   vlan_id?: number | null;
 }
 
+export interface VmCheckpoint {
+  name: string;
+  id: string;
+  creation_time: string;
+  // "hvnb_"-Praefix = von dieser App selbst erstellt, typischerweise ein
+  // Ueberbleibsel eines abgebrochenen Backup-Laufs.
+  app_created: boolean;
+}
+
 export interface Vm {
   id: string;
   name: string;
@@ -36,6 +45,7 @@ export interface Vm {
   dynamic_memory_enabled?: boolean | null;
   network_adapters: NetworkAdapter[];
   pci_devices: string[];
+  checkpoints: VmCheckpoint[];
 }
 
 export interface Csv {
@@ -531,6 +541,7 @@ export type AlertType =
   | "hyperv_node_unreachable"
   | "backup_missed"
   | "schedule_collision"
+  | "hyperv_orphan_checkpoint"
   | "backup_failed";
 
 export interface Alert {
@@ -551,6 +562,10 @@ export interface Alert {
   run_id?: string | null;
   resource_group_id?: string | null;
   policy_id?: string | null;
+  // Nur bei hyperv_orphan_checkpoint gesetzt -- Grundlage fuer den
+  // "Checkpoint löschen"-Button.
+  vm_name?: string | null;
+  checkpoint_id?: string | null;
 }
 
 export type AlertScope = "all" | "hyperv_referenced";
@@ -561,6 +576,7 @@ export interface AlertConfig {
   snapmirror_lag_threshold_hours: number;
   backup_missed_grace_minutes: number;
   schedule_collision_window_minutes: number;
+  orphan_checkpoint_grace_minutes: number;
   scope: AlertScope;
 }
 
@@ -570,6 +586,7 @@ export interface AlertConfigWritePayload {
   snapmirror_lag_threshold_hours: number;
   backup_missed_grace_minutes: number;
   schedule_collision_window_minutes: number;
+  orphan_checkpoint_grace_minutes: number;
   scope: AlertScope;
 }
 

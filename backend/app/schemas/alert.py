@@ -25,6 +25,10 @@ class AlertRead(BaseModel):
     # nachholen"-Button im Frontend.
     resource_group_id: str | None = None
     policy_id: str | None = None
+    # Nur bei hyperv_orphan_checkpoint gesetzt -- Grundlage fuer den
+    # "Checkpoint löschen"-Button im Frontend.
+    vm_name: str | None = None
+    checkpoint_id: str | None = None
 
 
 class AlertConfigRead(BaseModel):
@@ -35,6 +39,7 @@ class AlertConfigRead(BaseModel):
     snapmirror_lag_threshold_hours: int
     backup_missed_grace_minutes: int
     schedule_collision_window_minutes: int
+    orphan_checkpoint_grace_minutes: int
     scope: str
 
 
@@ -44,6 +49,7 @@ class AlertConfigUpdate(BaseModel):
     snapmirror_lag_threshold_hours: int = Field(ge=1, le=8760)
     backup_missed_grace_minutes: int = Field(ge=5, le=1440)
     schedule_collision_window_minutes: int = Field(ge=1, le=240)
+    orphan_checkpoint_grace_minutes: int = Field(ge=5, le=1440)
     scope: str
 
 

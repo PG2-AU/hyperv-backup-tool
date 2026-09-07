@@ -50,6 +50,8 @@ def list_alerts(db: Session = Depends(get_db), user=Depends(require_permission(P
                 object_uuid=a.object_key if a.alert_type in _CAPACITY_TYPES else None,
                 resource_group_id=a.resource_group_id,
                 policy_id=a.policy_id,
+                vm_name=a.vm_name,
+                checkpoint_id=a.checkpoint_id,
             )
         )
 
@@ -111,6 +113,7 @@ def update_alert_config(
     config.snapmirror_lag_threshold_hours = payload.snapmirror_lag_threshold_hours
     config.backup_missed_grace_minutes = payload.backup_missed_grace_minutes
     config.schedule_collision_window_minutes = payload.schedule_collision_window_minutes
+    config.orphan_checkpoint_grace_minutes = payload.orphan_checkpoint_grace_minutes
     config.scope = AlertScope(payload.scope)
     config.updated_at = datetime.now(timezone.utc)
     db.commit()

@@ -41,6 +41,10 @@ class HyperVVm(Base):
     dynamic_memory_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     network_adapters: Mapped[list | None] = mapped_column(JSON, nullable=True)
     pci_devices: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Aktuell vorhandene Checkpoints (Get-VMSnapshot) -- Liste von
+    # {name, id, creation_time}. Grundlage fuer die Erkennung verwaister
+    # Checkpoints (siehe run_alert_check in scheduler.py).
+    checkpoints: Mapped[list | None] = mapped_column(JSON, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

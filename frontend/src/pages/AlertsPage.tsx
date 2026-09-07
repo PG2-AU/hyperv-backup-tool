@@ -5,7 +5,14 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { notifications } from "@mantine/notifications";
 
-import { useAlerts, useAllowScheduleCollision, useDismissAlert, useDismissBackupFailedAlert, useTriggerJobRun } from "@/api/hooks";
+import {
+  useAlerts,
+  useAllowScheduleCollision,
+  useDeleteVmCheckpoint,
+  useDismissAlert,
+  useDismissBackupFailedAlert,
+  useTriggerJobRun,
+} from "@/api/hooks";
 import { SearchInput } from "@/components/SearchInput";
 import type { Alert, AlertType } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
@@ -22,6 +29,7 @@ const TYPE_LABEL: Record<AlertType, string> = {
   hyperv_node_unreachable: "Hyper-V-Knoten",
   backup_missed: "Backup verpasst",
   schedule_collision: "Zeitplan-Kollision",
+  hyperv_orphan_checkpoint: "Verwaister Checkpoint",
   backup_failed: "Backup fehlgeschlagen",
 };
 
@@ -35,6 +43,7 @@ const TYPE_COLOR: Record<AlertType, string> = {
   hyperv_node_unreachable: "red",
   backup_missed: "red",
   schedule_collision: "yellow",
+  hyperv_orphan_checkpoint: "orange",
   backup_failed: "red",
 };
 
@@ -120,7 +129,66 @@ function AlertAction({ alert }: { alert: Alert }) {
     // (irrefuehrend). "Erlauben" ist die einzig sinnvolle Aktion hier.
     return <AllowCollisionButton alertId={alert.id} />;
   }
+  if (alert.alert_type === "hyperv_orphan_checkpoint") {
+    return (
+      <Group gap="xs" wrap="nowrap">
+        {alert.hyperv_cluster_id && alert.vm_name && alert.checkpoint_id && (
+          <DeleteOrphanCheckpointButton
+            alertId={alert.id}
+            clusterId={alert.hyperv_cluster_id}
+            vmName={alert.vm_name}
+            checkpointId={alert.checkpoint_id}
+          />
+        )}
+        <DismissAlertButton alertId={alert.id} />
+      </Group>
+    );
+  }
   return null;
+}
+
+function DeleteOrphanCheckpointButton({
+  alertId,
+  clusterId,
+  vmName,
+  checkpointId,
+}: {
+  alertId: string;
+  clusterId: string;
+  vmName: string;
+  checkpointId: string;
+}) {
+  const deleteCheckpoint = useDeleteVmCheckpoint();
+  const dismissAlert = useDismissAlert();
+
+  function handleDelete() {
+    confirmAction({
+      title: "Checkpoint löschen",
+      message: `Den verwaisten Checkpoint auf "${vmName}" unwiderruflich löschen?`,
+      confirmLabel: "Löschen",
+      color: "red",
+      onConfirm: () =>
+        deleteCheckpoint.mutate(
+          { clusterId, vmName, checkpointId },
+          {
+            onSuccess: () => {
+              notifications.show({ title: "Checkpoint gelöscht", message: vmName, color: "green" });
+              // Der naechste 15min-Check wuerde den Alarm ohnehin nicht mehr
+              // finden (Checkpoint ist weg) -- Quittieren macht das nur sofort sichtbar.
+              dismissAlert.mutate(alertId);
+            },
+            onError: (err) =>
+              notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Checkpoint konnte nicht gelöscht werden."), color: "red" }),
+          },
+        ),
+    });
+  }
+
+  return (
+    <Button size="xs" variant="light" color="red" onClick={handleDelete} loading={deleteCheckpoint.isPending}>
+      Checkpoint löschen
+    </Button>
+  );
 }
 
 function AllowCollisionButton({ alertId }: { alertId: string }) {

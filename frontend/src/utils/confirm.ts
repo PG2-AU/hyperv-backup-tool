@@ -1,8 +1,12 @@
+import type { ReactNode } from "react";
 import { modals } from "@mantine/modals";
 
 interface ConfirmActionOptions {
   title: string;
-  message: string;
+  // Meist ein einfacher String, aber gelegentlich mehrzeiliger Inhalt
+  // (z.B. eine Liste konkret betroffener Objekte) -- Mantines eigenes
+  // openConfirmModal nimmt fuer "children" ohnehin schon ReactNode an.
+  message: ReactNode;
   confirmLabel?: string;
   color?: string;
   onConfirm: () => void;

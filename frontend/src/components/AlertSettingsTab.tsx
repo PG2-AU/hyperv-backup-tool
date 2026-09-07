@@ -17,6 +17,7 @@ export function AlertSettingsTab() {
   const [lagThreshold, setLagThreshold] = useState<number | string>(4);
   const [missedGraceMinutes, setMissedGraceMinutes] = useState<number | string>(30);
   const [collisionWindowMinutes, setCollisionWindowMinutes] = useState<number | string>(15);
+  const [orphanCheckpointGraceMinutes, setOrphanCheckpointGraceMinutes] = useState<number | string>(60);
   const [scope, setScope] = useState<AlertScope>("all");
 
   useEffect(() => {
@@ -26,6 +27,7 @@ export function AlertSettingsTab() {
     setLagThreshold(config.snapmirror_lag_threshold_hours);
     setMissedGraceMinutes(config.backup_missed_grace_minutes);
     setCollisionWindowMinutes(config.schedule_collision_window_minutes);
+    setOrphanCheckpointGraceMinutes(config.orphan_checkpoint_grace_minutes);
     setScope(config.scope);
   }, [config]);
 
@@ -36,6 +38,7 @@ export function AlertSettingsTab() {
       snapmirror_lag_threshold_hours: Number(lagThreshold),
       backup_missed_grace_minutes: Number(missedGraceMinutes),
       schedule_collision_window_minutes: Number(collisionWindowMinutes),
+      orphan_checkpoint_grace_minutes: Number(orphanCheckpointGraceMinutes),
       scope,
     };
     updateConfig
@@ -99,6 +102,15 @@ export function AlertSettingsTab() {
           max={240}
           value={collisionWindowMinutes}
           onChange={setCollisionWindowMinutes}
+          suffix=" min"
+        />
+        <NumberInput
+          label="Karenzzeit verwaiste Checkpoints"
+          description="So lange darf ein Hyper-V-Checkpoint bestehen, bevor er als verwaist gemeldet wird -- ein normaler Backup-Checkpoint besteht nur Sekunden bis wenige Minuten"
+          min={5}
+          max={1440}
+          value={orphanCheckpointGraceMinutes}
+          onChange={setOrphanCheckpointGraceMinutes}
           suffix=" min"
         />
         <Select

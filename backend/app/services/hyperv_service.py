@@ -40,6 +40,13 @@ class NetworkAdapterDetail:
 
 
 @dataclass
+class CheckpointDetail:
+    name: str
+    id: str
+    creation_time: str  # ISO-8601-String (.NET 'o'-Format), wird erst bei Bedarf geparst
+
+
+@dataclass
 class VirtualMachineInfo:
     name: str
     id: str
@@ -54,6 +61,11 @@ class VirtualMachineInfo:
     dynamic_memory_enabled: bool | None = None
     network_adapters: list[NetworkAdapterDetail] = field(default_factory=list)
     pci_devices: list[str] = field(default_factory=list)
+    # Verwaiste Checkpoints erkennen (z.B. von einem abgebrochenen Backup-Lauf,
+    # der Checkpoint-Erstellung + -Entfernung sind im Erfolgsfall nur ueber die
+    # Laufzeit von _execute_job_run im Speicher verknuepft -- ein harter Absturz
+    # dazwischen hinterlaesst nichts Persistiertes, siehe run_alert_check).
+    checkpoints: list[CheckpointDetail] = field(default_factory=list)
 
 
 @dataclass
@@ -303,11 +315,14 @@ class HyperVService:
             "[PSCustomObject]@{ Name = $_.Name; MacAddress = $_.MacAddress; SwitchName = $_.SwitchName; VlanId = $vlanId } "
             "}); "
             "$pci = @(Get-VMAssignableDevice -VM $vm -ErrorAction SilentlyContinue | ForEach-Object { $_.InstancePath }); "
+            "$checkpoints = @(Get-VMSnapshot -VM $vm -ErrorAction SilentlyContinue | ForEach-Object { "
+            "[PSCustomObject]@{ Name = $_.Name; Id = $_.Id.ToString(); CreationTime = $_.CreationTime.ToString('o') } "
+            "}); "
             "[PSCustomObject]@{ "
             "Name = $vm.Name; Id = $vm.Id.ToString(); State = $vm.State.ToString(); ComputerName = $hostName; Vhds = $vhds; "
             "ProcessorCount = $vm.ProcessorCount; Generation = $vm.Generation; "
             "MemoryStartupBytes = $vm.MemoryStartup; MemoryMinimumBytes = $vm.MemoryMinimum; MemoryMaximumBytes = $vm.MemoryMaximum; "
-            "DynamicMemoryEnabled = $vm.DynamicMemoryEnabled; NetworkAdapters = $nics; PciDevices = $pci "
+            "DynamicMemoryEnabled = $vm.DynamicMemoryEnabled; NetworkAdapters = $nics; PciDevices = $pci; Checkpoints = $checkpoints "
             "} "
             "} | ConvertTo-Json -Depth 6"
         )
@@ -337,13 +352,20 @@ class HyperVService:
             ]
             pci_raw = e.get("PciDevices") or []
             pci_devices = pci_raw if isinstance(pci_raw, list) else [pci_raw]
+            checkpoints_raw = e.get("Checkpoints") or []
+            checkpoints_raw = checkpoints_raw if isinstance(checkpoints_raw, list) else [checkpoints_raw]
+            checkpoints = [
+                CheckpointDetail(name=c.get("Name") or "", id=c["Id"], creation_time=c.get("CreationTime") or "")
+                for c in checkpoints_raw
+                if c.get("Id")
+            ]
             vms.append(
                 VirtualMachineInfo(
                     name=e["Name"], id=e["Id"], state=str(e["State"]), host=e.get("ComputerName", self._target_host), vhds=vhds,
                     cpu_count=e.get("ProcessorCount"), generation=e.get("Generation"),
                     memory_startup_bytes=e.get("MemoryStartupBytes"), memory_minimum_bytes=e.get("MemoryMinimumBytes"),
                     memory_maximum_bytes=e.get("MemoryMaximumBytes"), dynamic_memory_enabled=e.get("DynamicMemoryEnabled"),
-                    network_adapters=nics, pci_devices=[p for p in pci_devices if p],
+                    network_adapters=nics, pci_devices=[p for p in pci_devices if p], checkpoints=checkpoints,
                 )
             )
         return vms

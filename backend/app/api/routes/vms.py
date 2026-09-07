@@ -20,10 +20,12 @@ Schutz -- die VM-Sicherung erfolgt in diesem Fall ueber das CSV-Backup).
 from collections import defaultdict
 from ntpath import basename as win_basename
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.core.config import get_settings
+from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.backup_policy import BackupPolicy, BackupScope
@@ -31,7 +33,8 @@ from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_discovery import NetAppLun, NetAppVolume
 from app.models.resource_group import ResourceGroup, make_member_key
-from app.schemas.vm import CsvRead, NetworkAdapterRead, VhdInfo, VmRead
+from app.schemas.vm import CheckpointRead, CsvRead, NetworkAdapterRead, VhdInfo, VmRead
+from app.services.hyperv_service import HyperVService
 
 router = APIRouter(prefix="/api/vms", tags=["vms"])
 
@@ -138,6 +141,10 @@ def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Perm
             dynamic_memory_enabled=vm.dynamic_memory_enabled,
             network_adapters=[NetworkAdapterRead(**n) for n in (vm.network_adapters or [])],
             pci_devices=vm.pci_devices or [],
+            checkpoints=[
+                CheckpointRead(name=c["name"], id=c["id"], creation_time=c["creation_time"], app_created=c["name"].startswith("hvnb_"))
+                for c in (vm.checkpoints or [])
+            ],
         )
         vms.append(_annotate_vm(vm_read, groups))
     return vms
@@ -187,3 +194,56 @@ def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Per
         )
         csvs.append(_annotate_csv(csv_read, groups))
     return csvs
+
+
+@router.post("/{cluster_id}/{vm_name}/checkpoints/{checkpoint_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
+def delete_vm_checkpoint(
+    cluster_id: str,
+    vm_name: str,
+    checkpoint_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.HYPERV_MANAGE)),
+) -> None:
+    """Loescht einen einzelnen Checkpoint einer VM -- fuer verwaiste
+    Checkpoints (siehe AlertType.HYPERV_ORPHAN_CHECKPOINT in scheduler.py),
+    typischerweise ein Ueberbleibsel eines abgebrochenen Backup-Laufs. Von
+    Inventory > VMs UND von der Alarme-Seite aus genutzt (ein Endpunkt,
+    keine doppelte Logik).
+
+    Nutzt denselben Node-Aufloesungs-Ablauf wie die Checkpoint-Erstellung in
+    _execute_job_run (jobs.py): erst CNO-Verbindung, dann live den
+    aktuellen Besitzer-Knoten ermitteln (kann sich seit der letzten
+    Discovery per Live-Migration/Failover geaendert haben), erst danach
+    dorthin verbinden. Remove-VMSnapshot selbst ist bereits generisch ueber
+    HyperVService.remove_checkpoint verfuegbar (auch fuer die normale
+    Nachlauf-Bereinigung genutzt) -- hier nur neu verdrahtet."""
+    cluster = db.get(HyperVCluster, cluster_id)
+    if cluster is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster nicht gefunden")
+    vm = db.query(HyperVVm).filter(HyperVVm.cluster_id == cluster_id, HyperVVm.name == vm_name).first()
+    if vm is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="VM nicht gefunden")
+    checkpoint = next((c for c in (vm.checkpoints or []) if c["id"] == checkpoint_id), None)
+    if checkpoint is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Checkpoint nicht (mehr) gefunden -- ggf. bereits geloescht")
+
+    settings = get_settings()
+    password = decrypt_secret(cluster.encrypted_password)
+    try:
+        hv_service = HyperVService(settings, cluster.management_address, use_https=cluster.use_https)
+        cno_session = hv_service.connect(cluster.username, password, read_timeout_sec=15, operation_timeout_sec=10)
+        owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or vm.host_name
+        node_address = hv_service.resolve_node_address(cno_session, owner_node)
+        node_service = HyperVService(settings, node_address, use_https=cluster.use_https)
+        node_session = node_service.connect(cluster.username, password)
+        result = node_service.remove_checkpoint(node_session, vm_name, checkpoint["name"])
+        if not result.success:
+            raise RuntimeError(result.error)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Checkpoint konnte nicht geloescht werden: {exc}") from exc
+
+    # Sofort aus dem discoverten Zustand entfernen, statt auf die naechste
+    # Discovery zu warten -- damit verschwindet das Warn-Badge in der GUI
+    # sofort, nicht erst nach bis zu einem Discovery-Intervall.
+    vm.checkpoints = [c for c in (vm.checkpoints or []) if c["id"] != checkpoint_id]
+    db.commit()

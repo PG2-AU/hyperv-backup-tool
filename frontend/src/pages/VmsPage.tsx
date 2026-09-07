@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { ActionIcon, Badge, Box, Group, Paper, Progress, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import {
+  IconAlertTriangle,
   IconChevronsRight,
   IconCpu,
   IconDatabase,
@@ -14,19 +16,37 @@ import {
   IconServer2,
   IconServerCog,
   IconStack2,
+  IconTrash,
   IconX,
 } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useCsvs, useVms } from "@/api/hooks";
+import { useCsvs, useDeleteVmCheckpoint, useVms } from "@/api/hooks";
 import { BackupsModal } from "@/components/BackupsModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
 import type { BackupScope, Csv, PolicySummary, Vm } from "@/api/types";
+import { confirmAction } from "@/utils/confirm";
+import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
 import { useRunPolicy } from "@/utils/runPolicy";
 import { matchesAllColumns } from "@/utils/search";
+
+// Grobe, aber ausreichende Alters-Anzeige fuer einen Checkpoint-Zeitstempel
+// (ISO-8601 mit Offset, siehe HyperVService.list_vms) -- dieselbe
+// Aufloesung wie im Backend-Alarmtext (run_alert_check), nur clientseitig
+// fuer die Inventory-Tabelle nachgebildet, da hier kein Alarm noetig ist,
+// nur eine Anzeige.
+function formatCheckpointAge(creationTime: string): string {
+  const created = new Date(creationTime);
+  if (Number.isNaN(created.getTime())) return "unbekanntes Alter";
+  const minutes = Math.max(0, Math.round((Date.now() - created.getTime()) / 60000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h`;
+  return `${Math.round(hours / 24)} Tage`;
+}
 
 // CsvRead hat (anders als VmRead.id) keine eigene stabile Zeilen-ID -- der
 // Name allein ist NICHT eindeutig, sobald zwei Hyper-V-Cluster ein CSV mit
@@ -302,9 +322,53 @@ export function VmsPage() {
   const [csvSearch, setCsvSearch] = useState("");
   const filteredCsvs = (csvs ?? []).filter((csv) => matchesAllColumns(csv, csvSearch));
   const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
+  const deleteCheckpoint = useDeleteVmCheckpoint();
 
   function showBackups(scope: BackupScope, name: string, clusterId: string | null | undefined) {
     setBackupsTarget({ scope, name, clusterId: clusterId ?? null });
+  }
+
+  // Loescht ALLE Checkpoints einer VM in einem Rutsch -- der Regelfall ist
+  // ohnehin genau einer (ein abgebrochener Backup-Lauf hinterlaesst nicht
+  // mehrere), eine Einzelauswahl je Checkpoint waere fuer diesen seltenen
+  // Fall unnoetige UI-Komplexitaet.
+  function deleteVmCheckpoints(vm: Vm) {
+    if (!vm.cluster_id || vm.checkpoints.length === 0) return;
+    const clusterId = vm.cluster_id;
+    confirmAction({
+      title: "Checkpoint löschen",
+      message: (
+        <Stack gap={4}>
+          <Text size="sm">
+            {vm.checkpoints.length === 1 ? "Diesen Checkpoint" : `Diese ${vm.checkpoints.length} Checkpoints`} von "{vm.name}"
+            unwiderruflich löschen?
+          </Text>
+          {vm.checkpoints.map((cp) => (
+            <Text key={cp.id} size="xs" c="dimmed">
+              {cp.name} — seit {formatCheckpointAge(cp.creation_time)}
+              {cp.app_created ? " (vermutlich von einem abgebrochenen Backup-Lauf)" : " (manuell erstellt)"}
+            </Text>
+          ))}
+        </Stack>
+      ),
+      confirmLabel: "Löschen",
+      color: "red",
+      onConfirm: async () => {
+        for (const cp of vm.checkpoints) {
+          try {
+            await deleteCheckpoint.mutateAsync({ clusterId, vmName: vm.name, checkpointId: cp.id });
+          } catch (err) {
+            notifications.show({
+              title: "Fehler",
+              message: apiErrorMessage(err, `Checkpoint '${cp.name}' konnte nicht gelöscht werden.`),
+              color: "red",
+            });
+            return;
+          }
+        }
+        notifications.show({ title: "Checkpoint(s) gelöscht", message: vm.name, color: "green" });
+      },
+    });
   }
 
   function toggleSelectedVm(vm: Vm) {
@@ -374,9 +438,30 @@ export function VmsPage() {
                 >
                   <Table.Td>{vm.name}</Table.Td>
                   <Table.Td>
-                    <Badge color={STATE_COLOR[vm.state] ?? "gray"} variant="light">
-                      {vm.state}
-                    </Badge>
+                    <Group gap={4} wrap="nowrap">
+                      <Badge color={STATE_COLOR[vm.state] ?? "gray"} variant="light">
+                        {vm.state}
+                      </Badge>
+                      {vm.checkpoints.length > 0 && (
+                        <Tooltip
+                          multiline
+                          w={280}
+                          label={
+                            <Stack gap={2}>
+                              {vm.checkpoints.map((cp) => (
+                                <Text key={cp.id} size="xs">
+                                  {cp.name} — seit {formatCheckpointAge(cp.creation_time)}
+                                </Text>
+                              ))}
+                            </Stack>
+                          }
+                        >
+                          <Badge color="orange" variant="filled" leftSection={<IconAlertTriangle size={12} />}>
+                            {vm.checkpoints.length > 1 ? `${vm.checkpoints.length} Checkpoints` : "Checkpoint"}
+                          </Badge>
+                        </Tooltip>
+                      )}
+                    </Group>
                   </Table.Td>
                   <Table.Td>{vm.host}</Table.Td>
                   <Table.Td>{vm.cluster ?? "-"}</Table.Td>
@@ -413,6 +498,13 @@ export function VmsPage() {
                           <IconHistory size={16} />
                         </ActionIcon>
                       </Tooltip>
+                      {vm.checkpoints.length > 0 && (
+                        <Tooltip label="Checkpoint löschen">
+                          <ActionIcon variant="light" color="red" onClick={() => deleteVmCheckpoints(vm)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
                     </Group>
                   </Table.Td>
                 </Table.Tr>

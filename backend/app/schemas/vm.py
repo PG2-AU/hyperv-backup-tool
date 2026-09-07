@@ -22,6 +22,17 @@ class NetworkAdapterRead(BaseModel):
     vlan_id: int | None = None
 
 
+class CheckpointRead(BaseModel):
+    name: str
+    id: str
+    creation_time: str
+    # 'hvnb_'-Praefix = von dieser App selbst erstellt (siehe
+    # _execute_job_run/create_checkpoint), typischerweise ein Ueberbleibsel
+    # eines abgebrochenen Backup-Laufs. Alles andere: vermutlich manuell in
+    # Hyper-V Manager erstellt.
+    app_created: bool = False
+
+
 class VmRead(BaseModel):
     id: str
     name: str
@@ -48,6 +59,7 @@ class VmRead(BaseModel):
     dynamic_memory_enabled: bool | None = None
     network_adapters: list[NetworkAdapterRead] = []
     pci_devices: list[str] = []
+    checkpoints: list[CheckpointRead] = []
 
 
 class CsvRead(BaseModel):

@@ -264,15 +264,20 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     _add_missing_columns(engine, "netapp_aggregates", {"efficiency_ratio_wo_snapshots_flexclones": "FLOAT"})
     _add_missing_columns(engine, "hyperv_clusters", {"unreachable_nodes_json": "VARCHAR(2000)"})
+    _add_missing_columns(engine, "hyperv_vms", {"checkpoints": "JSON"})
     _add_missing_columns(
         engine, "alert_config",
         {
             "volume_threshold_percent": "INTEGER", "lun_threshold_percent": "INTEGER",
             "snapmirror_lag_threshold_minutes": "INTEGER", "snapmirror_lag_threshold_hours": "INTEGER", "scope": "VARCHAR(30)",
             "backup_missed_grace_minutes": "INTEGER", "schedule_collision_window_minutes": "INTEGER",
+            "orphan_checkpoint_grace_minutes": "INTEGER",
         },
     )
-    _add_missing_columns(engine, "alerts", {"resource_group_id": "VARCHAR(36)", "policy_id": "VARCHAR(36)"})
+    _add_missing_columns(
+        engine, "alerts",
+        {"resource_group_id": "VARCHAR(36)", "policy_id": "VARCHAR(36)", "vm_name": "VARCHAR(255)", "checkpoint_id": "VARCHAR(36)"},
+    )
     with engine.connect() as conn:
         conn.execute(text("UPDATE alert_config SET volume_threshold_percent = 90 WHERE volume_threshold_percent IS NULL"))
         conn.execute(text("UPDATE alert_config SET lun_threshold_percent = 90 WHERE lun_threshold_percent IS NULL"))
@@ -293,6 +298,11 @@ def init_db(db: Session) -> None:
         conn.execute(
             text(
                 "UPDATE alert_config SET schedule_collision_window_minutes = 15 WHERE schedule_collision_window_minutes IS NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE alert_config SET orphan_checkpoint_grace_minutes = 60 WHERE orphan_checkpoint_grace_minutes IS NULL"
             )
         )
         # SQLAlchemys Enum-Spalte speichert per Default den Enum-NAMEN, nicht

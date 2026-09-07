@@ -31,6 +31,7 @@ class AlertType(str, enum.Enum):
     HYPERV_NODE_UNREACHABLE = "hyperv_node_unreachable"
     BACKUP_MISSED = "backup_missed"
     SCHEDULE_COLLISION = "schedule_collision"
+    HYPERV_ORPHAN_CHECKPOINT = "hyperv_orphan_checkpoint"
 
 
 class AlertScope(str, enum.Enum):
@@ -75,6 +76,12 @@ class Alert(Base):
     # wieder manuell zusammensuchen muss.
     resource_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     policy_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Nur bei hyperv_orphan_checkpoint gesetzt -- Grundlage fuer den
+    # "Checkpoint löschen"-Button (siehe app.api.routes.alerts), der denselben
+    # Endpunkt wie die Inventory-Aktion aufruft (POST /api/vms/{cluster}/
+    # {vm}/checkpoints/{checkpoint}/delete, siehe app.api.routes.vms).
+    vm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    checkpoint_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
 class AlertConfig(Base):
@@ -101,5 +108,10 @@ class AlertConfig(Base):
     # innerhalb dieser Spanne liegen, gelten als 'Kollision' (siehe
     # app.core.scheduler._find_schedule_collisions).
     schedule_collision_window_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    # Ein Checkpoint gilt erst als verwaist, wenn er laenger als diese Spanne
+    # besteht -- ein normaler applikationskonsistenter Backup-Checkpoint
+    # existiert nur Sekunden bis wenige Minuten (siehe _execute_job_run),
+    # alles darueber hinaus ist praktisch sicher ein Ueberbleibsel.
+    orphan_checkpoint_grace_minutes: Mapped[int] = mapped_column(Integer, default=60)
     scope: Mapped[AlertScope] = mapped_column(Enum(AlertScope), default=AlertScope.ALL)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

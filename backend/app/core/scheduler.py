@@ -40,7 +40,7 @@ from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapsho
 from app.models.email_config import EmailConfig
 from app.models.file_restore_run import FileRestoreRun
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
-from app.models.hyperv_discovery import HyperVCsv
+from app.models.hyperv_discovery import HyperVCsv, HyperVVm
 from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink
@@ -535,7 +535,11 @@ def run_alert_check() -> None:
     Teil der automatischen Aufloesung) sowie Zeitplan-Kollisionen
     (SCHEDULE_COLLISION, siehe _find_schedule_collisions -- IST Teil der
     automatischen Aufloesung, aber vom Nutzer bestaetigte Kollisionen werden
-    dauerhaft uebersprungen, siehe AllowedScheduleCollision)."""
+    dauerhaft uebersprungen, siehe AllowedScheduleCollision) sowie verwaiste
+    Hyper-V-Checkpoints (HYPERV_ORPHAN_CHECKPOINT, IST Teil der
+    automatischen Aufloesung -- verschwindet der Checkpoint, egal ob durch
+    Loeschen ueber die GUI oder anderweitig, aus der naechsten Discovery,
+    loest sich der Alarm von selbst)."""
     db = SessionLocal()
     try:
         # Bewusst KEIN "Task gestartet"-Log hier (anders als Health-Check/
@@ -777,6 +781,48 @@ def run_alert_check() -> None:
                     object_name="Zeitplan-Kollision",
                     message=f"{len(cluster['members'])} Job-Starts liegen innerhalb von {collision_window_minutes} Minuten: {cluster['summary']}",
                 )
+
+        # Verwaiste Hyper-V-Checkpoints (Nutzer-Vorgabe 2026-09-07): ein
+        # Backup-Job kann abbrechen, bevor der von ihm erstellte Checkpoint
+        # wieder entfernt wird -- _execute_job_run haelt die Liste der aktiven
+        # Checkpoints nur im Prozessspeicher (active_checkpoints), ein harter
+        # Absturz zwischen Erstellung und Entfernung hinterlaesst dazu nichts
+        # Persistiertes. Erkennung daher rein ueber die naechste Discovery
+        # (Get-VMSnapshot, siehe HyperVService.list_vms) statt ueber eine
+        # Live-Lauf-Pruefung -- ein normaler Checkpoint besteht nur Sekunden
+        # bis wenige Minuten, eine Karenzzeit auf Basis des Checkpoint-Alters
+        # reicht daher aus, um ihn von einem gerade laufenden Backup zu
+        # unterscheiden, ohne BackupRun/VM gegeneinander abgleichen zu muessen.
+        checkpoint_grace_minutes = config.orphan_checkpoint_grace_minutes if config else 60
+        hyperv_cluster_names = {c.id: c.name for c in db.query(HyperVCluster).all()}
+        checkpoint_cutoff = now - timedelta(minutes=checkpoint_grace_minutes)
+        for vm in db.query(HyperVVm).filter(HyperVVm.checkpoints.isnot(None)).all():
+            for cp in vm.checkpoints or []:
+                try:
+                    created_at = datetime.fromisoformat(cp["creation_time"])
+                except (KeyError, ValueError, TypeError):
+                    continue
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                if created_at > checkpoint_cutoff:
+                    continue  # noch innerhalb der Karenzzeit -- vermutlich ein normaler, noch laufender Backup-Checkpoint
+                key = cp["id"]
+                seen_keys.add((AlertType.HYPERV_ORPHAN_CHECKPOINT, key))
+                if (AlertType.HYPERV_ORPHAN_CHECKPOINT, key) not in active_by_key:
+                    is_app_created = cp["name"].startswith("hvnb_")
+                    origin = "vermutlich von einem abgebrochenen Backup-Lauf" if is_app_created else "manuell erstellt"
+                    age_minutes = int((now - created_at).total_seconds() // 60)
+                    _trigger(
+                        AlertType.HYPERV_ORPHAN_CHECKPOINT, key,
+                        object_name=f"{vm.name} / {cp['name']}",
+                        hyperv_cluster_id=vm.cluster_id,
+                        vm_name=vm.name,
+                        checkpoint_id=cp["id"],
+                        message=(
+                            f"Checkpoint '{cp['name']}' seit {age_minutes} Minuten vorhanden ({origin}), "
+                            f"Cluster {hyperv_cluster_names.get(vm.cluster_id, '?')}"
+                        ),
+                    )
 
         for (alert_type, key), alert in active_by_key.items():
             if alert_type == AlertType.BACKUP_MISSED:

@@ -237,6 +237,7 @@ def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
                         for n in vm.network_adapters
                     ],
                     pci_devices=vm.pci_devices,
+                    checkpoints=[{"name": c.name, "id": c.id, "creation_time": c.creation_time} for c in vm.checkpoints],
                 )
             )
             for vhd in vm.vhds:
