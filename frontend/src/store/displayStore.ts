@@ -32,7 +32,10 @@ interface DisplayState {
 export const useDisplayStore = create<DisplayState>()(
   persist(
     (set) => ({
-      contentFontSize: "normal",
+      // Nutzer-Vorgabe: die Standard-Schriftgroesse soll der bisherigen
+      // "Klein"-Stufe entsprechen -- also insgesamt etwas kleiner als
+      // Mantines eigener Default ("normal"/1.0).
+      contentFontSize: "small",
       logFontSizePx: 12,
       setContentFontSize: (value) => set({ contentFontSize: value }),
       setLogFontSizePx: (value) => set({ logFontSizePx: value }),

@@ -46,6 +46,12 @@ export function AppShellLayout() {
   const logout = useAuthStore((s) => s.logout);
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const isDark = colorScheme === "dark";
+  // Nutzer-Vorgabe: die Schriftgroesse soll die GESAMTE App betreffen, nicht
+  // nur den Hauptbereich -- auf dem AppShell-Wurzelelement gesetzt (statt nur
+  // um <Outlet/> gewrappt wie zuvor), damit sie per CSS-Vererbung auch das
+  // Menue (AppShell.Navbar) erreicht. Betrifft NICHT per Portal ausserhalb
+  // des AppShell gerenderte Inhalte (Modals/Drawer/Dropdown-Menues), das ist
+  // eine vorbestehende Mantine-Eigenschaft, kein Regressions-Fall.
   const contentFontSize = useDisplayStore((s) => s.contentFontSize);
   const scale = CONTENT_FONT_SCALE[contentFontSize];
   const contentFontStyle = {
@@ -69,6 +75,7 @@ export function AppShellLayout() {
       header={{ height: 60 }}
       navbar={{ width: 280, breakpoint: "sm", collapsed: { mobile: !navOpened } }}
       padding="md"
+      style={contentFontStyle}
     >
       <AppShell.Header>
         <Group h="100%" px="md" justify="space-between" wrap="nowrap">
@@ -202,9 +209,7 @@ export function AppShellLayout() {
       </AppShell.Navbar>
 
       <AppShell.Main>
-        <div style={contentFontStyle}>
-          <Outlet />
-        </div>
+        <Outlet />
       </AppShell.Main>
 
       <Drawer

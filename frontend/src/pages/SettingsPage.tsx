@@ -637,8 +637,8 @@ export function SettingsPage() {
             </Text>
             <Stack gap="md">
               <Select
-                label="Content-Schriftgröße"
-                description="Schriftgröße für Tabellen und Texte im Hauptbereich"
+                label="Schriftgröße"
+                description="Schriftgröße für Menü, Tabellen und Texte in der gesamten App (außer dem System-Log, siehe unten)"
                 data={[
                   { value: "small", label: "Klein" },
                   { value: "normal", label: "Standard" },
