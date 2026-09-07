@@ -356,7 +356,11 @@ export function AlertsPage() {
             {filtered.map((alert) => (
               <Table.Tr key={alert.id}>
                 <Table.Td style={{ whiteSpace: "nowrap" }}>
-                  <Badge color={TYPE_COLOR[alert.alert_type]} variant="light" style={{ maxWidth: "none" }}>
+                  <Badge
+                    color={TYPE_COLOR[alert.alert_type]}
+                    variant="light"
+                    styles={{ label: { overflow: "visible", textOverflow: "unset" } }}
+                  >
                     {TYPE_LABEL[alert.alert_type]}
                   </Badge>
                 </Table.Td>
