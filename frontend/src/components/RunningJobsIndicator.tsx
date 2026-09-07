@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActionIcon, Badge, Button, Divider, Group, Indicator, Loader, Popover, Stack, Text, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconActivity, IconCheck, IconMinus, IconX } from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { useCancelJobRun, useJobRun, useRunningJobRuns } from "@/api/hooks";
 import { useAuthStore } from "@/store/authStore";
@@ -88,10 +89,32 @@ function CancelJobButton({ runId, jobName }: { runId: string; jobName: string })
 }
 
 export function RunningJobsIndicator() {
+  const queryClient = useQueryClient();
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canView = hasPermission("backup:view");
   const { data: runs } = useRunningJobRuns(canView);
   useNowTick(1000);
+
+  // Sobald ein zuvor laufender Job aus dieser (alle 4s gepollten) Liste
+  // verschwindet, ist er fertig (erfolgreich/fehlgeschlagen/abgebrochen) --
+  // der Dashboard-/Kalender-Zeitstrahl (useJobRuns, siehe DayJobStrip)
+  // haengt sonst am "laeuft noch"-Stand (blau) fest, bis die Seite manuell
+  // neu geladen oder der Browser-Tab refokussiert wird (React-Query
+  // aktualisiert sonst nur bei Remount/Fokus-Wechsel). Betrifft geplante
+  // wie manuell ausgeloeste Laeufe gleichermassen, faellt aber besonders
+  // bei einem gerade beobachteten manuellen Lauf auf (Nutzer-Meldung
+  // 2026-09-07). previousRunIds bleibt ueber Renders hinweg erhalten (Ref),
+  // damit nur ein TATSAECHLICHES Verschwinden (nicht jeder Poll) invalidiert.
+  const previousRunIdsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!runs) return;
+    const currentIds = new Set(runs.map((r) => r.id));
+    const previousIds = previousRunIdsRef.current;
+    if (previousIds && [...previousIds].some((id) => !currentIds.has(id))) {
+      queryClient.invalidateQueries({ queryKey: ["job-runs"] });
+    }
+    previousRunIdsRef.current = currentIds;
+  }, [runs, queryClient]);
 
   if (!canView) return null;
 
