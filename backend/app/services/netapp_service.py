@@ -353,12 +353,13 @@ class NetAppOntapService:
         nicht erst abgefragt (Cluster-weite Ressourcen, fuer einen an eine
         SVM gebundenen vsadmin-Login typischerweise 403) -- Health gilt dann
         vacuous als 'gesund' (es gibt keine dem System zugeordneten Nodes,
-        ueber deren Zustand etwas auszusagen waere). UNVERIFIED: ob der
-        Basis-Aufruf 'Cluster().get()' selbst fuer einen vsadmin-Login lesbar
-        ist, wurde nicht live gegen ein echtes ONTAP-System mit
-        SVM-gescopten Zugangsdaten getestet -- falls das 403 wirft, muesste
-        hier stattdessen z.B. auf Svm.get_collection(fields='name') als
-        Verbindungs-/Identitaetspruefung ausgewichen werden."""
+        ueber deren Zustand etwas auszusagen waere). Live gegen ein echtes
+        ONTAP-System (vsadmin-Login, an SVM 'DEMO7' gebunden) verifiziert
+        2026-09-07: 'Cluster().get(fields=uuid,name,version)' ist fuer einen
+        SVM-gescopten Login lesbar (liefert sogar den rohen ONTAP-
+        Cluster-Namen zurueck), Discovery fand korrekt genau die eine
+        zugehoerige SVM plus deren Volumes/LUNs, Nodes/Aggregate/Cluster-
+        Peers blieben wie vorgesehen leer."""
         try:
             with self._connection():
                 cluster = Cluster()
