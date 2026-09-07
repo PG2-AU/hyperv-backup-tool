@@ -1438,6 +1438,16 @@ Zeitraum.</p>
 <td>uvicorn/nginx starten noch, wenige Sekunden abwarten</td>
 <td>—</td>
 </tr>
+<tr>
+<td><code>curl https://localhost:8443/...</code> bricht mit <code>TLS connect error</code>/<code>SSL_ERROR_SYSCALL</code> ab, <code>https://127.0.0.1:8443/...</code> funktioniert dagegen einwandfrei</td>
+<td><code>localhost</code> löst zuerst zu IPv6 (<code>::1</code>) auf -- <code>podman port</code> mapped nur IPv4 (<code>0.0.0.0:8443</code>), auf <code>[::1]:8443</code> reagiert etwas anderes (oder eine pasta-Eigenheit). Kein Fehler im Container selbst, immer die IPv4-Adresse explizit testen</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Container stürzt bei JEDEM Start sofort wieder ab (<code>supervisord</code>-Log zeigt <code>exited: uvicorn</code> im Sekundentakt), betrifft nur eine komplett frische Erstinstallation</td>
+<td>War ein echter Bug (<code>no such column: schedule_id</code> in <code>_migrate_resource_group_policy_link_schedules</code>, <code>backend/app/db/init_db.py</code>), behoben in Commit <code>1c1289f</code> -- betraf nur DBs, die <em>nie</em> die alte <code>backup_policies.schedule_id</code>-Spalte hatten. Aktuellen Code ziehen (<code>git pull</code>) behebt es</td>
+<td>4, 6</td>
+</tr>
 </tbody></table>
 </section>
 
