@@ -70,7 +70,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: IconDatabase,
     searchContext: "storage",
     children: [
-      { label: "Cluster", path: "/storage?tab=clusters", searchContext: "netapp-clusters" },
+      { label: "Systeme", path: "/storage?tab=clusters", searchContext: "netapp-clusters" },
       { label: "Nodes", path: "/storage?tab=platforms" },
       { label: "Aggregate", path: "/storage?tab=aggregates" },
       { label: "Storage Virtual Machines", path: "/storage?tab=svms" },
