@@ -33,7 +33,7 @@ const LANG_LABELS = { powershell: "PowerShell", bash: "Bash", ini: "systemd Quad
 // vorherigen Handpflege), hat keine Entsprechung in der Markdown-Struktur
 // selbst und muss nur gepflegt werden, wenn eine neue grosse Phase
 // dazukommt.
-const GROUP_DIVIDERS = { 1: "Einrichtung", 7: "Netzwerk & Betrieb" };
+const GROUP_DIVIDERS = { 1: "Vorbereitung", 2: "Teil 1: HVNB-Server", 10: "Teil 2: Hyper-V-Hosts", 11: "Teil 3: Beides zusammenführen" };
 
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

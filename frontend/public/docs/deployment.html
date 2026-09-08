@@ -335,20 +335,23 @@
     <div class="sidebar-brand">Hyper-V NetApp Backup</div>
     <nav>
       <a href="#overview">Architekturüberblick</a>
-      <div class="group-label">Einrichtung</div>
+      <div class="group-label">Vorbereitung</div>
       <a href="#s1"><span class="num">1</span>Voraussetzungen</a>
+      <div class="group-label">Teil 1: HVNB-Server</div>
       <a href="#s2"><span class="num">2</span>WSL2 aktivieren und Linux-Distribution einrichten</a>
       <a href="#s3"><span class="num">3</span>Basis-Pakete installieren</a>
       <a href="#s4"><span class="num">4</span>Anwendungscode beziehen</a>
       <a href="#s5"><span class="num">5</span>Konfiguration (.env)</a>
       <a href="#s6"><span class="num">6</span>Container bauen und starten</a>
-      <div class="group-label">Netzwerk &amp; Betrieb</div>
       <a href="#s7"><span class="num">7</span>TLS-Zertifikat</a>
       <a href="#s8"><span class="num">8</span>Externe Erreichbarkeit von WSL2 aus</a>
       <a href="#s9"><span class="num">9</span>Container-Persistenz absichern (rootless Podman + WSL2)</a>
-      <a href="#s10"><span class="num">10</span>Erste Anmeldung</a>
-      <a href="#s11"><span class="num">11</span>Nächste Schritte (in der GUI)</a>
-      <a href="#s12"><span class="num">12</span>Betrieb</a>
+      <div class="group-label">Teil 2: Hyper-V-Hosts</div>
+      <a href="#s10"><span class="num">10</span>WinRM auf jedem Hyper-V-Host aktivieren</a>
+      <div class="group-label">Teil 3: Beides zusammenführen</div>
+      <a href="#s11"><span class="num">11</span>Erste Anmeldung</a>
+      <a href="#s12"><span class="num">12</span>Nächste Schritte (in der GUI)</a>
+      <a href="#s13"><span class="num">13</span>Betrieb</a>
     </nav>
   </aside>
 
@@ -409,405 +412,46 @@ erreichbar sein soll</li>
 <li><input disabled="" type="checkbox"> Ein NetApp-Cluster und mindestens ein Hyper-V-Cluster sind bereits
 grundsätzlich erreichbar — beide werden <strong>nicht</strong> in dieser Anleitung,
 sondern nach dem ersten Login komplett über die Web-GUI eingerichtet
-(siehe Abschnitt 10)</li>
+(siehe Abschnitt 12)</li>
 </ul>
-<h3>WinRM auf jedem Hyper-V-Host aktivieren</h3>
-<p>Die Applikation spricht mit den Hyper-V-Clusterknoten ausschließlich per
-WinRM/PowerShell-Remoting (<code>winrm.Session</code>, siehe
-<code>backend/app/services/hyperv_service.py</code>) — nie per SMB oder RPC direkt.
-Ohne einen laufenden, erreichbaren WinRM-HTTPS-Listener lässt sich der
-Cluster in <strong>Settings &gt; Hyper-V-Hosts</strong> nicht hinzufügen; ein typischer
-Fehler dabei: <code>Host &#39;&lt;IP&gt;&#39; ist auf Port 5986 nicht erreichbar: timed out</code>
-— das ist ein reiner TCP-Verbindungsfehler, tritt also auf, <strong>bevor</strong>
-überhaupt Zugangsdaten geprüft werden (Listener fehlt, Firewall blockiert,
-oder Netzwerkpfad/VLAN-Trennung).</p>
-<p><strong>Auf JEDEM Clusterknoten</strong> (nicht nur einem — welcher Knoten gerade den
-Cluster Name Object (CNO) besitzt, kann wechseln), als Administrator:</p>
-<div class="code-block">
-<span class="code-label">PowerShell</span>
-<pre><code># WinRM-Dienst aktivieren (meist bereits per Default aktiv)
-Enable-PSRemoting -Force
-
-Get-ChildItem -Path Cert:\LocalMachine\My</code></pre>
-</div>
-<p>Ein Failover-Cluster legt dort bereits automatisch erzeugte Zertifikate an
-(z.B. <code>CN=&lt;GUID&gt;.TLS</code> oder <code>CN=CLIUSR</code>) — die sind <strong>nicht</strong> geeignet, das
-sind interne Cluster-Kommunikations-/Dienstkonto-Zertifikate, keine
-Host-Zertifikate für einen WinRM-Listener.</p>
-<p><strong>Wichtig bei einem Failover-Cluster:</strong> Wird der Cluster in der GUI über
-die Adresse des <strong>Cluster Name Object (CNO)</strong> angesprochen (empfohlen,
-statt eines einzelnen physischen Knotens — sonst fällt die Verwaltung
-beim Ausfall/Failover dieses einen Knotens komplett aus), landet jede
-WinRM-Verbindung bei genau dem Knoten, der die Cluster-Group gerade
-besitzt — je nach Failover-Status kann das <strong>jeder</strong> der Knoten sein. Das
-Zertifikat <strong>jedes einzelnen</strong> Knotens muss deshalb zusätzlich zur eigenen
-Identität auch die CNO-Adresse als Subject Alternative Name (SAN)
-enthalten, sonst schlägt die Verbindung fehl, sobald die Cluster-Group auf
-einen anderen Knoten wechselt. Beispiel: CNO <code>10.93.70.110</code>, Knoten
-<code>10.93.70.111</code>/<code>10.93.70.112</code> — <strong>beide</strong> Knoten-Zertifikate brauchen
-<code>.110</code> zusätzlich zur eigenen Adresse als SAN.</p>
-<p><strong>Stolperstein bei Verbindung per IP-Adresse:</strong>
-<code>New-SelfSignedCertificate -DnsName &lt;ip-literal&gt;</code> schreibt eine IP-Adresse
-als <strong>DNS-Typ</strong>-SAN-Eintrag (<code>DNS:10.93.70.110</code>), nicht als
-<strong>IP-Address-Typ</strong>-Eintrag. Die von dieser App verwendete TLS-Validierung
-(Python/OpenSSL) akzeptiert für eine Verbindung per IP-Adresse aber
-ausschließlich echte <code>IP Address:</code>-Einträge — ein optisch identischer
-<code>DNS:</code>-Eintrag genügt <strong>nicht</strong> und führt zu
-<code>SSLCertVerificationError: IP address mismatch</code>, obwohl die IP scheinbar
-korrekt im Zertifikat steht (live verifiziert). Wird der Cluster in der
-GUI stattdessen per <strong>Hostname</strong> angesprochen, tritt das Problem nicht auf
-— dann genügt <code>New-SelfSignedCertificate -DnsName $hostname, $cnoHostname</code>. Bei Verbindung per IP-Adresse (z.B. weil für den CNO kein
-DNS-Eintrag existiert) muss stattdessen <code>certreq</code> mit einer <code>.inf</code>-Datei
-verwendet werden, die echte <code>ipaddress=</code>-SAN-Einträge erzeugt:</p>
-<div class="code-block">
-<span class="code-label">PowerShell</span>
-<pre><code># Auf JEDEM Knoten einzeln ausfuehren, jeweils mit der eigenen $ownIp:
-$hostname = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
-$ownIp    = "10.93.70.111"   # auf dem jeweils anderen Knoten: 10.93.70.112 usw.
-$cnoIp    = "10.93.70.110"   # IP/Hostname des Cluster Name Object
-
-New-Item -ItemType Directory -Path C:\temp -Force | Out-Null
-$infPath = "C:\temp\winrm-cert.inf"
-$cerPath = "C:\temp\winrm-cert.cer"
-
-@"
-[Version]
-Signature="`$Windows NT`$"
-
-[NewRequest]
-Subject = "CN=$hostname"
-KeySpec = 1
-KeyLength = 2048
-Exportable = TRUE
-MachineKeySet = TRUE
-SMIME = FALSE
-PrivateKeyArchive = FALSE
-UserProtected = FALSE
-UseExistingKeySet = FALSE
-ProviderName = "Microsoft RSA SChannel Cryptographic Provider"
-ProviderType = 12
-RequestType = Cert
-KeyUsage = 0xa0
-ValidityPeriod = Years
-ValidityPeriodUnits = 5
-
-[Extensions]
-2.5.29.17 = "{text}"
-_continue_ = "dns=$hostname&amp;"
-_continue_ = "ipaddress=$ownIp&amp;"
-_continue_ = "ipaddress=$cnoIp&amp;"
-
-[EnhancedKeyUsageExtension]
-OID=1.3.6.1.5.5.7.3.1
-"@ | Set-Content -Path $infPath -Encoding ASCII
-
-certreq -new $infPath $cerPath
-$cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq "CN=$hostname" } |
-    Sort-Object NotBefore -Descending | Select-Object -First 1
-$cert.Thumbprint</code></pre>
-</div>
-<p>(Kein Failover-Cluster, oder Verbindung per Hostname statt IP: einfacher
-via <code>$cert = New-SelfSignedCertificate -DnsName $hostname, $cnoHostname -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)</code>
-— dann direkt mit dem Listener-Schritt unten weitermachen.)</p>
-<p>Von der internen PKI ausgestellte Zertifikate sind gegenüber beiden
-selbstsignierten Varianten vorzuziehen (siehe Kasten weiter unten) —
-solange auch sie sowohl die eigene Knoten-Identität als auch die
-CNO-Adresse als SAN tragen.</p>
-<p><strong>Listener einrichten</strong> — falls bereits einer existiert (z.B. von einem
-vorherigen Versuch mit falschem Zertifikat), erst entfernen:</p>
-<div class="code-block">
-<span class="code-label">PowerShell</span>
-<pre><code>Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match "Transport=HTTPS" } |
-    Remove-Item -Recurse -Force
-New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * `
-    -CertificateThumbprint $cert.Thumbprint -Force
-
-# Eingehende WinRM-HTTPS-Verbindungen zulassen
-Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
-New-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow
-
-# Nur noetig, wenn HVNB_WINRM_TRANSPORT=credssp (der in dieser App
-# empfohlene Standard, siehe .env-Beispiel in Abschnitt 5 -- CredSSP
-# vermeidet das klassische WinRM-"Double-Hop"-Problem, falls ein
-# Remote-Befehl seinerseits auf ein weiteres Netzwerkziel zugreifen muss):
-Enable-WSManCredSSP -Role Server</code></pre>
-</div>
-<p><strong>Zertifikat-Vertrauen im Container einrichten:</strong> die App validiert das
-WinRM-Zertifikat bei HTTPS strikt (<code>server_cert_validation=&quot;validate&quot;</code>,
-siehe <code>hyperv_service.py</code>) — der Container kennt eine interne CA oder ein
-selbstsigniertes Zertifikat aber standardmäßig nicht, die Verbindung
-schlägt sonst trotz korrekt eingerichtetem Listener fehl. Lösung:
-<code>HVNB_WINRM_CA_TRUST_PATH</code> auf eine PEM-Datei zeigen lassen, die das
-Zertifikat als zusätzlich vertrauenswürdig hinterlegt (pywinrm
-<code>ca_trust_path</code>, additiv zum normalen System-Truststore).</p>
-<p>Bei einer internen CA reicht es, einmalig nur den CA-ROOT zu exportieren
-— das deckt dann automatisch ALLE damit ausgestellten Knoten-Zertifikate
-ab, statt jeden Knoten einzeln zu pflegen. Bei selbstsignierten
-Zertifikaten muss dagegen <strong>jeder Knoten</strong> sein eigenes (öffentliches!)
-Zertifikat exportieren.</p>
-<p><strong>Stolperstein bei <code>certreq</code>:</strong> <code>$cerPath</code> (die beim <code>certreq -new</code>-Aufruf
-oben angegebene Ausgabedatei) <strong>nicht</strong> direkt für <code>certutil -encode</code>
-verwenden — live beobachtet, dass diese Datei statt des fertigen
-Zertifikats eine unfertige Zertifikatsanforderung (CSR) enthielt, obwohl
-das Zertifikat selbst korrekt im Speicher erzeugt und am Listener
-gebunden wurde. <code>certutil -encode</code> darauf angewendet erzeugt eine
-strukturell gültig aussehende, aber für OpenSSL unlesbare PEM-Datei
-(<code>SSLError: [X509] PEM lib</code>), und zwar erst beim nächsten
-Verbindungsversuch sichtbar, nicht beim Export selbst. Immer stattdessen
-frisch aus dem tatsächlich installierten Zertifikatsobjekt exportieren —
-unabhängig davon, ob es per <code>certreq</code> oder <code>New-SelfSignedCertificate</code>
-erzeugt wurde (<code>$cert</code> kommt aus dem <code>Get-ChildItem</code>-Lookup weiter oben):</p>
-<div class="code-block">
-<span class="code-label">PowerShell</span>
-<pre><code>Export-Certificate -Cert $cert -FilePath C:\temp\winrm-host111.cer
-certutil -encode C:\temp\winrm-host111.cer C:\temp\winrm-host111.pem
-
-# Vor dem Uebertragen IMMER lokal verifizieren, dass die Datei ein
-# echtes Zertifikat mit der erwarteten SAN enthaelt -- haette beide
-# oben beschriebenen Fehlerbilder (DNS- statt IP-Typ, kaputte PEM aus
-# certreq) sofort hier erkannt, statt erst beim fehlgeschlagenen
-# Verbindungsversuch:
-certutil -dump C:\temp\winrm-host111.cer | Select-String "10.93.70"</code></pre>
-</div>
-<p>Erwartete Ausgabe: <code>IP Address=10.93.70.111</code> (eigene Adresse) und
-<code>IP Address=10.93.70.110</code> (CNO-Adresse) — als <code>IP Address=</code>, nicht als
-reiner Text im DNS-Feld.</p>
-<p>.pem-Datei(en) per RDP-Dateitransfer o.ae. auf den WSL2-Host übertragen.</p>
-<p><code>/etc/hvnb/certs</code> im Container ist bereits ein <strong>persistentes benanntes
-Volume</strong> (<code>hvnb-certs</code>, dort liegt auch schon das TLS-Zertifikat der GUI)
-— dafür ist also keine zusätzliche Zeile in <code>docker-compose.yml</code> nötig,
-die Datei kann direkt per <code>podman cp</code> in den laufenden Container gelegt
-werden:</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code># Auf dem WSL2-Host: Datei(en) z.B. per Windows-Explorer unter
-# \\wsl.localhost\&lt;Distro-Name&gt;\home\&lt;Benutzer&gt;\ ablegen, dann:
-podman cp ~/winrm-ca.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem</code></pre>
-</div>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code># .env, im Projektverzeichnis:
-echo "HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem" &gt;&gt; .env
-systemctl --user restart hvnb-backup.service</code></pre>
-</div>
-<p>Der Container-Betrieb läuft seit Abschnitt 6 über eine Quadlet-Unit, die bei
-jedem <code>restart</code> unbedingt neu erstellt wird (kein <code>--force-recreate</code>-
-Sonderfall mehr nötig, siehe Kasten dort) — <code>.env</code>-Änderungen wie diese
-kommen dadurch zuverlässig an.</p>
-<p>Da <code>hvnb-certs</code> ein benanntes Volume ist, übersteht die Datei den
-Container-Neustart in Schritt 2 unabhängig von der Reihenfolge der beiden
-Befehle. Settings &gt; Updates zeigt anschließend unter &quot;WinRM
-CA-Trust-Datei&quot; den konfigurierten Pfad zur Kontrolle an.</p>
-<p><strong>Mehrere Knoten mit jeweils eigenem, selbstsigniertem Zertifikat</strong> (kein
-gemeinsamer CA-Root): <code>HVNB_WINRM_CA_TRUST_PATH</code> zeigt auf genau EINEN
-Pfad — die einzelnen PEMs müssen daher vorher zu einer einzigen
-Bundle-Datei zusammengefügt werden (eine PEM-Datei kann beliebig viele
-aneinandergehängte Zertifikate enthalten, genau wie ein öffentliches
-CA-Bundle). Die obigen Befehle also <strong>nicht</strong> pro Host wiederholen
-(überschreibt sonst jedes Mal die vorherige Datei) — stattdessen einmalig:</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code># Alle einzeln uebertragenen Host-PEMs in einem Ordner sammeln, z.B.
-# ~/winrm-certs/host1.pem, host2.pem, ... , dann zu einer Datei
-# zusammenfassen:
-cat ~/winrm-certs/*.pem &gt; ~/winrm-ca-bundle.pem
-podman cp ~/winrm-ca-bundle.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem</code></pre>
-</div>
-<p>Mit einer internen CA reicht dagegen der eine, einmalig exportierte
-CA-Root für alle Knoten — kein Zusammenführen nötig.</p>
-<p><strong>Verifizieren, dass die CNO-Adresse jetzt als echter IP-Address-SAN-Typ
-ausgeliefert wird</strong> (nicht als <code>DNS:</code>-Eintrag, siehe Stolperstein oben) —
-von der WSL2-Distribution aus, gegen die CNO-Adresse selbst:</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code>openssl s_client -connect 10.93.70.110:5986 -showcerts &lt;/dev/null 2&gt;/dev/null | \
-    openssl x509 -noout -text | grep -A2 "Subject Alternative Name"</code></pre>
-</div>
-<p>Erwartete Ausgabe enthält <code>IP Address:10.93.70.110</code> — erscheint
-stattdessen <code>DNS:10.93.70.110</code>, wurde das Zertifikat auf dem gerade
-antwortenden Knoten noch mit <code>New-SelfSignedCertificate -DnsName &lt;ip-literal&gt;</code> statt der <code>certreq</code>-Methode oben erzeugt.</p>
-<p>Zusätzlich:</p>
-<ul>
-<li>Der verbindende Account (in der GUI beim Hinzufügen des Clusters
-hinterlegt) braucht <strong>lokale Administratorrechte</strong> auf jedem Knoten
-(Details und Begründung im Kasten unten).</li>
-<li><code>HVNB_WINRM_TRANSPORT</code> (Abschnitt 5) muss zum serverseitig aktivierten
-Verfahren passen — <code>credssp</code> erfordert exakt den obigen
-<code>Enable-WSManCredSSP -Role Server</code>-Schritt, <code>ntlm</code> kommt ohne diesen
-Schritt aus (nur Listener + Firewall nötig), unterstützt aber keine
-Double-Hop-Szenarien.</li>
-</ul>
-<h3>Das Cluster-Konto: welche Rechte genau, und keine mehr</h3>
-<p>Der Account, der beim Hinzufügen eines Clusters in der GUI hinterlegt wird,
-sollte <strong>nicht</strong> das eingebaute <code>Administrator</code>-Konto der Domäne sein (in
-Testumgebungen oft bequem der Fall, real angetroffen z. B. als
-<code>HYPERVDEMO\Administrator</code> mit Mitgliedschaft in Domain Admins, Enterprise
-Admins und Schema Admins) — das ist um Größenordnungen mehr Rechteumfang,
-als die App tatsächlich braucht, und macht diesen Server bei Kompromittierung
-zu einem Sprungbrett für die gesamte Domäne bzw. den gesamten Forest.</p>
+<p>Diese Anleitung ist in <strong>drei Teile</strong> gegliedert, die auf unterschiedlichen
+Maschinen laufen:</p>
+<table>
+<thead>
+<tr>
+<th>Teil</th>
+<th>Abschnitte</th>
+<th>Läuft auf</th>
+<th>Inhalt</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Teil 1</strong></td>
+<td>2–9</td>
+<td><strong>dem neuen Windows Server 2025</strong> (der eigentliche Backup-Host, im Rest dieser Anleitung „HVNB-Server&quot; genannt)</td>
+<td>WSL2, Podman-Container, Konfiguration, Betrieb</td>
+</tr>
+<tr>
+<td><strong>Teil 2</strong></td>
+<td>10</td>
+<td><strong>jedem Hyper-V-Clusterknoten</strong></td>
+<td>WinRM aktivieren, Zertifikat, Servicekonto, Firewall</td>
+</tr>
+<tr>
+<td><strong>Teil 3</strong></td>
+<td>11–12</td>
+<td><strong>beiden zusammen</strong>, über die Web-GUI auf dem HVNB-Server — braucht Teil 1 UND Teil 2 abgeschlossen</td>
+<td>Erste Anmeldung, Cluster/Storage in der App hinzufügen</td>
+</tr>
+</tbody></table>
+<p>Abschnitt 13 (Betrieb) ist laufender Betrieb, kein Einrichtungsschritt mehr.</p>
+<hr>
+<p><strong>Teil 1: Auf dem HVNB-Server</strong></p>
 <div class="callout">
-<span class="callout-label">Warum lokale Administratorrechte trotzdem nötig sind</span>
-<p>die
-&quot;Hyper-V-Administratoren&quot;-Gruppe, die für reines VM-Management ausreichen
-würde, genügt hier nicht. Die App nutzt über WinRM neben reinen
-Hyper-V-Cmdlets (<code>Get-VM</code>, <code>New-VM</code>, <code>Checkpoint-VM</code>, <code>Add/Remove-VMHardDiskDrive</code>
-usw. — dafür würde Hyper-V-Administratoren reichen) auch
-Disk-/iSCSI-/Partitions-Cmdlets für den Restore-Workflow (<code>Connect-IscsiTarget</code>,
-<code>Mount-VHD</code>/<code>Mount-DiskImage</code>, <code>Set-Disk</code>, <code>Add/Remove-PartitionAccessPath</code>)
-sowie Cluster-Abfragen (<code>Get-ClusterSharedVolume</code>, <code>Get-ClusterNode</code>,
-<code>Add-ClusterVirtualMachineRole</code>). Für die Disk-/iSCSI-Verwaltung gibt es unter
-Windows <strong>keine</strong> eigene, schmalere eingebaute Gruppe (anders als bei
-Hyper-V) — diese Cmdlets verlangen lokale Administratorrechte. Volle
-Cluster-Verwaltung ist davon i. d. R. bereits mit abgedeckt, da Failover
-Clustering lokale Administratoren der Knoten standardmäßig als
-Cluster-Administratoren behandelt; im Zweifel nach Einrichtung mit
-<code>(Get-Cluster).GetAccessAllowed()</code> bzw. in Failover Cluster Manager unter
-&quot;Cluster-Berechtigungen&quot; verifizieren.</p>
+<p>Ab hier bis einschließlich Abschnitt 9 laufen alle Befehle auf dem neuen
+Windows Server 2025 (PowerShell bzw. einer WSL2-Shell darauf) — <strong>nicht</strong>
+auf einem Hyper-V-Clusterknoten (dafür siehe Teil 2).</p>
 </div>
-<p>Das eigentliche Least-Privilege-Prinzip liegt also nicht darin, lokale
-Adminrechte zu vermeiden (technisch für den Restore-Workflow nicht möglich),
-sondern darin, <strong>denselben Rechteumfang auf den kleinstmöglichen
-Geltungsbereich zu begrenzen</strong> — konkret:</p>
-<ol>
-<li><strong>Dediziertes Konto</strong> anlegen, ausschließlich für diese App, z. B.
-<code>HYPERVDEMO\svc-hvnb-backup</code> — kein Personenkonto, kein für andere Zwecke
-mitgenutztes Konto.</li>
-<li><strong>Keine</strong> Mitgliedschaft in Domain Admins, Enterprise Admins, Schema
-Admins oder einer sonstigen domänenweit privilegierten Gruppe. Das Konto
-ist ein ganz gewöhnliches Domänenkonto ohne besondere AD-Rechte.</li>
-<li>Lokale Administratorrechte <strong>nur</strong> auf den tatsächlich verwalteten
-Maschinen — allen Hyper-V-Clusterknoten sowie dem Restore-Proxy-Host —,
-nicht auf sonstigen Servern oder Arbeitsplätzen. Am saubersten über eine
-Sicherheitsgruppe (z. B. <code>HVNB-Backup-Hosts</code>) mit genau diesen Rechnern
-als Mitglieder, kombiniert mit einer GPO über <strong>Restricted Groups</strong>
-(Computer-Konfiguration → Richtlinien → Sicherheitseinstellungen →
-Restricted Groups → <code>Administratoren</code> → <code>HYPERVDEMO\svc-hvnb-backup</code>
-hinzufügen), die per Sicherheitsfilterung nur auf diese Gruppe wirkt.
-Reine manuelle <code>net localgroup Administratoren /add</code>-Pflege pro Host
-funktioniert ebenso, ist aber bei mehreren Knoten fehleranfälliger.</li>
-<li><strong>Interaktive Anmeldung verweigern</strong>, da das Konto ausschließlich über
-WinRM verwendet wird (GPO: &quot;Anmelden als Batchauftrag verweigern&quot; bzw.
-&quot;Lokal anmelden verweigern&quot; / &quot;Anmelden über Remotedesktopdienste
-verweigern&quot; für dieses Konto auf denselben Zielrechnern) — reduziert den
-Nutzen eines gestohlenen Passworts für alles außer dem WinRM-Zugriff
-selbst, den die App ohnehin schon hat.</li>
-<li><strong>Kein gMSA</strong> (Group Managed Service Account): CredSSP übergibt das
-tatsächliche Passwort zur Delegation, und dieses wird der App selbst aus
-ihrer eigenen, hinterlegten Konfiguration übermittelt — ein gMSA verwaltet
-sein Passwort selbst und macht es nicht in dieser Form auslesbar, ist also
-für dieses Zugriffsmuster nicht geeignet. Stattdessen: starkes, für dieses
-eine Konto einzigartiges Passwort, regelmäßig rotiert.</li>
-<li>Nach Einrichtung verifizieren, dass das Konto tatsächlich <strong>nur</strong> auf den
-vorgesehenen Hosts als Administrator eingetragen ist (<code>net localgroup Administratoren</code> auf jedem Knoten) und in keiner der drei genannten
-Domain-/Enterprise-/Schema-Admin-Gruppen steckt (<code>Get-ADUser svc-hvnb-backup -Properties MemberOf</code>).</li>
-</ol>
-<h3>Firewall auf die IP des Backup-Hosts einschränken (empfohlen)</h3>
-<p>Die oben angelegte Firewall-Regel erlaubt WinRM-HTTPS (5986) bislang von
-<strong>jeder</strong> erreichbaren Adresse aus — dabei braucht diese Verbindung
-niemals mehr als ein einziger Host: der Windows Server, auf dem der
-Container läuft. Eine einzige zusätzliche Zeile pro Knoten schließt diese
-Lücke, ohne die App in irgendeiner Weise einzuschränken:</p>
-<div class="code-block">
-<span class="code-label">PowerShell</span>
-<pre><code># Auf JEDEM Hyper-V-Knoten (und dem Restore-Proxy-Host) ausfuehren --
-# &lt;Backup-Host-IP&gt; durch die tatsaechliche IP-Adresse des Windows Servers
-# ersetzen, auf dem der Container laeuft (nicht die interne WSL2-Guest-IP
-# -- siehe Hinweis unten). Mehrere erlaubte Adressen durch Komma trennen.
-Set-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -RemoteAddress &lt;Backup-Host-IP&gt;</code></pre>
-</div>
-<div class="callout">
-<span class="callout-label">Welche IP-Adresse gehört hier hin</span>
-<p>die IP-Adresse des Windows
-Servers selbst (dieselbe, die z. B. für die GUI unter Abschnitt 8 als
-<code>&lt;Server-IP&gt;</code> verwendet wird) — <strong>nicht</strong> die interne, nur
-WSL2-intern gültige und bei jedem Neustart wechselnde Guest-IP. Für
-ausgehende Verbindungen aus WSL2 heraus (wie hier: der Container baut
-die WinRM-Verbindung zum Hyper-V-Host auf) übersetzt Windows die
-Quelladresse ohnehin auf die physische Server-IP, bevor der Datenverkehr
-das Netzwerk verlässt — unabhängig davon, ob NAT- oder Mirrored-Modus
-aktiv ist (Abschnitt 8). Die Server-IP ist stabil; nur sie eignet sich
-hier als dauerhafte Einschränkung.</p>
-</div>
-<p><strong>Verifizieren:</strong></p>
-<ul>
-<li>Vom Windows Server aus (bzw. aus der WSL2-Distribution heraus, siehe
-Testbefehl weiter unten): Verbindung funktioniert unverändert.</li>
-<li>Von einem beliebigen anderen Host im Netz: <code>Test-NetConnection -ComputerName &lt;Hyper-V-Host-IP&gt; -Port 5986</code> liefert jetzt
-<code>TcpTestSucceeded : False</code> (Firewall blockiert, statt vorher <code>True</code>).</li>
-</ul>
-<p><strong>Bei einem Failover-Cluster</strong> muss dieselbe Einschränkung auf <strong>jedem</strong>
-Knoten einzeln gesetzt werden, nicht nur auf dem gerade aktiven — welcher
-Knoten eine über die CNO-Adresse aufgebaute Verbindung tatsächlich
-bedient, kann jederzeit wechseln (siehe Kasten weiter oben). Die interne
-Cluster-Kommunikation zwischen den Knoten (Heartbeat, CSV, Failover) läuft
-über eigene Ports/Regeln und ist von dieser Einschränkung nicht betroffen.</p>
-<h3>Listener auf das Management-Interface binden (empfohlen)</h3>
-<p>Der Listener wurde oben mit <code>-Address *</code> angelegt — er lauscht damit auf
-<strong>jedem</strong> Netzwerkadapter des Knotens, nicht nur dem für die App
-gedachten Management-Netz. Live auf einem echten Cluster-Knoten geprüft
-(<code>Get-NetAdapter</code> + <code>Get-NetIPAddress</code>): das betrifft in der Praxis
-typischerweise auch das iSCSI-Netz und ggf. das Live-Migration-Netz, die
-jeweils eigene Adapter mit eigener IP haben — WinRM ist dort also
-unnötig erreichbar, obwohl die App nur das Management-Netz braucht.</p>
-<p>Eine einzelne IP-Adresse eignet sich als Bindung dabei <strong>nicht</strong> direkt:
-bei einem Failover-Cluster liegen auf dem Management-Adapter <em>zwei</em>
-Adressen gleichzeitig — die eigene, feste Adresse des Knotens <strong>und</strong>
-(sofern dieser Knoten die Cluster-Group gerade besitzt) die CNO-Adresse
-als zusätzliche IP auf demselben Adapter. <code>-Address</code> unterstützt dafür
-gezielt eine Bindung <strong>per Netzwerkadapter</strong> (per MAC-Adresse) statt per
-einzelner IP — deckt dadurch beide Adressen auf diesem einen Adapter ab,
-und bleibt auch nach einem Failover korrekt, da die CNO-Adresse laut
-Cluster-Netzwerk-Konfiguration immer auf demselben Adapter erscheint:</p>
-<div class="code-block">
-<span class="code-label">PowerShell</span>
-<pre><code># MAC-Adresse des Management-Adapters ermitteln (der Adapter, der sowohl
-# die eigene Knoten-IP als auch -- bei aktivem Besitz -- die CNO-Adresse
-# traegt; live am Beispiel eines echten Clusterknotens: Get-NetAdapter |
-# Get-NetIPAddress zeigte hier "vNIC-MGMT" mit beiden Adressen 10.93.70.101
-# und 10.93.70.100 gleichzeitig, waehrend "iSCSI-1" und "vNIC-LiveMig"
-# eigene, davon getrennte Adressen auf anderen Adaptern trugen):
-Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object Name, MacAddress, ifIndex
-Get-NetIPAddress -AddressFamily IPv4 | Select-Object InterfaceAlias, IPAddress
-
-# Bestehenden Listener entfernen und mit MAC-Bindung neu anlegen (MAC-
-# Adresse aus dem obigen Befehl einsetzen):
-Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match "Transport=HTTPS" } |
-    Remove-Item -Recurse -Force
-New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address 'MAC:00-15-5D-FB-EE-00' `
-    -CertificateThumbprint $cert.Thumbprint -Force</code></pre>
-</div>
-<div class="callout">
-<span class="callout-label">Vor dem Rollout auf allen Knoten einmal gegenprüfen</span>
-<p>die
-MAC-Adressbindung ist nicht Teil dieser Referenzumgebung-Verifikation
-(das Erzeugen/Ersetzen eines produktiven Listeners war hier bewusst
-nicht risikofrei genug für einen Live-Test) — nach dem Anlegen mit
-<code>Get-ChildItem WSMan:\localhost\Listener</code> kontrollieren, dass der
-Listener existiert und mit <code>Test-NetConnection -ComputerName localhost -Port 5986</code> sowie einmal über die CNO-Adresse testen, <strong>bevor</strong> die
-alte <code>-Address *</code>-Regel auf weiteren Knoten ersetzt wird. Schlägt die
-MAC-Syntax fehl, ersatzweise <code>-Address &#39;IP:&lt;eigene-IP&gt;&#39;</code> <strong>und</strong>
-<code>-Address &#39;IP:&lt;CNO-IP&gt;&#39;</code> als zwei separate Listener auf demselben Port
-anlegen (WSMan erlaubt mehrere Listener auf unterschiedlichen
-Adressen) — funktional gleichwertig, nur etwas mehr Pflegeaufwand bei
-einer IP-Änderung.</p>
-</div>
-<p><strong>Verbindung isoliert testen</strong>, bevor der Cluster in der GUI hinzugefügt
-wird — zuerst lokal auf dem Hyper-V-Host selbst:</p>
-<div class="code-block">
-<span class="code-label">PowerShell</span>
-<pre><code>Test-NetConnection -ComputerName localhost -Port 5986</code></pre>
-</div>
-<p>Danach von der WSL2-Distribution aus (dort, wo der Container läuft), um
-den tatsächlichen Netzwerkpfad zu prüfen:</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code>timeout 3 bash -c "echo &gt; /dev/tcp/&lt;Hyper-V-Host-IP&gt;/5986" &amp;&amp; echo "erreichbar" || echo "NICHT erreichbar"</code></pre>
-</div>
-<p>Schlägt nur der zweite Test fehl (lokal auf dem Host aber funktioniert es):
-Firewall oder Netzwerksegmentierung (VLAN) zwischen WSL2-Host und
-Hyper-V-Cluster prüfen — genau dieses Muster (Server erreichbar,
-aber durch eine VLAN-Trennung vom App-Host aus nicht) trat bereits beim
-Code-Bezug in der Referenzumgebung auf, siehe Abschnitt 4c.</p>
 </section>
 <section id="s2">
 <h2><span class="step-num">2</span>WSL2 aktivieren und Linux-Distribution einrichten</h2>
@@ -831,8 +475,8 @@ selbst, das unabhängig davon immer auf <code>rockylinux:9</code> basiert. Die
 folgenden Befehle sind für Rocky/RHEL-artige Distributionen (<code>dnf</code>)
 formuliert; unter Ubuntu/Debian <code>apt</code> statt <code>dnf</code> und <code>openssl</code>/<code>git</code>/
 <code>podman</code> über die dort üblichen Paketnamen verwenden.)</p>
-<p><strong>Wichtige Voraussetzung für Schritt 6 (Container-Persistenz):</strong> systemd muss
-innerhalb der WSL2-Distribution aktiv sein. Prüfen bzw. aktivieren:</p>
+<p><strong>Wichtige Voraussetzung für Abschnitt 9 (Container-Persistenz):</strong> systemd
+muss innerhalb der WSL2-Distribution aktiv sein. Prüfen bzw. aktivieren:</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
 <pre><code># In der WSL2-Distro:
@@ -1389,13 +1033,427 @@ podman logs --tail 50 hvnb-backup</code></pre>
 kann parallel bestehen bleiben, ist aber für <code>hvnb-backup</code> selbst
 überflüssig geworden — die Quadlet-Unit deckt denselben Fall zusätzlich mit
 ab und startet den Container außerdem bei jedem anderen Stopp-Grund neu.</p>
+<hr>
+<p><strong>Teil 2: Auf jedem Hyper-V-Clusterknoten</strong></p>
+<div class="callout">
+<p>Maschine: der jeweilige Hyper-V-Host — alle Befehle in diesem Teil laufen
+lokal auf dem Cluster-Knoten selbst (PowerShell als Administrator),
+<strong>nicht</strong> auf dem HVNB-Server aus Teil 1.</p>
+</div>
 </section>
 <section id="s10">
-<h2><span class="step-num">10</span>Erste Anmeldung</h2>
+<h2><span class="step-num">10</span>WinRM auf jedem Hyper-V-Host aktivieren</h2>
+<p>Die Applikation spricht mit den Hyper-V-Clusterknoten ausschließlich per
+WinRM/PowerShell-Remoting (<code>winrm.Session</code>, siehe
+<code>backend/app/services/hyperv_service.py</code>) — nie per SMB oder RPC direkt.
+Ohne einen laufenden, erreichbaren WinRM-HTTPS-Listener lässt sich der
+Cluster in <strong>Settings &gt; Hyper-V-Hosts</strong> nicht hinzufügen; ein typischer
+Fehler dabei: <code>Host &#39;&lt;IP&gt;&#39; ist auf Port 5986 nicht erreichbar: timed out</code>
+— das ist ein reiner TCP-Verbindungsfehler, tritt also auf, <strong>bevor</strong>
+überhaupt Zugangsdaten geprüft werden (Listener fehlt, Firewall blockiert,
+oder Netzwerkpfad/VLAN-Trennung).</p>
+<p><strong>Auf JEDEM Clusterknoten</strong> (nicht nur einem — welcher Knoten gerade den
+Cluster Name Object (CNO) besitzt, kann wechseln), als Administrator:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code># WinRM-Dienst aktivieren (meist bereits per Default aktiv)
+Enable-PSRemoting -Force
+
+Get-ChildItem -Path Cert:\LocalMachine\My</code></pre>
+</div>
+<p>Ein Failover-Cluster legt dort bereits automatisch erzeugte Zertifikate an
+(z.B. <code>CN=&lt;GUID&gt;.TLS</code> oder <code>CN=CLIUSR</code>) — die sind <strong>nicht</strong> geeignet, das
+sind interne Cluster-Kommunikations-/Dienstkonto-Zertifikate, keine
+Host-Zertifikate für einen WinRM-Listener.</p>
+<p><strong>Wichtig bei einem Failover-Cluster:</strong> Wird der Cluster in der GUI über
+die Adresse des <strong>Cluster Name Object (CNO)</strong> angesprochen (empfohlen,
+statt eines einzelnen physischen Knotens — sonst fällt die Verwaltung
+beim Ausfall/Failover dieses einen Knotens komplett aus), landet jede
+WinRM-Verbindung bei genau dem Knoten, der die Cluster-Group gerade
+besitzt — je nach Failover-Status kann das <strong>jeder</strong> der Knoten sein. Das
+Zertifikat <strong>jedes einzelnen</strong> Knotens muss deshalb zusätzlich zur eigenen
+Identität auch die CNO-Adresse als Subject Alternative Name (SAN)
+enthalten, sonst schlägt die Verbindung fehl, sobald die Cluster-Group auf
+einen anderen Knoten wechselt. Beispiel: CNO <code>10.93.70.110</code>, Knoten
+<code>10.93.70.111</code>/<code>10.93.70.112</code> — <strong>beide</strong> Knoten-Zertifikate brauchen
+<code>.110</code> zusätzlich zur eigenen Adresse als SAN.</p>
+<p><strong>Stolperstein bei Verbindung per IP-Adresse:</strong>
+<code>New-SelfSignedCertificate -DnsName &lt;ip-literal&gt;</code> schreibt eine IP-Adresse
+als <strong>DNS-Typ</strong>-SAN-Eintrag (<code>DNS:10.93.70.110</code>), nicht als
+<strong>IP-Address-Typ</strong>-Eintrag. Die von dieser App verwendete TLS-Validierung
+(Python/OpenSSL) akzeptiert für eine Verbindung per IP-Adresse aber
+ausschließlich echte <code>IP Address:</code>-Einträge — ein optisch identischer
+<code>DNS:</code>-Eintrag genügt <strong>nicht</strong> und führt zu
+<code>SSLCertVerificationError: IP address mismatch</code>, obwohl die IP scheinbar
+korrekt im Zertifikat steht (live verifiziert). Wird der Cluster in der
+GUI stattdessen per <strong>Hostname</strong> angesprochen, tritt das Problem nicht auf
+— dann genügt <code>New-SelfSignedCertificate -DnsName $hostname, $cnoHostname</code>. Bei Verbindung per IP-Adresse (z.B. weil für den CNO kein
+DNS-Eintrag existiert) muss stattdessen <code>certreq</code> mit einer <code>.inf</code>-Datei
+verwendet werden, die echte <code>ipaddress=</code>-SAN-Einträge erzeugt:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code># Auf JEDEM Knoten einzeln ausfuehren, jeweils mit der eigenen $ownIp:
+$hostname = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
+$ownIp    = "10.93.70.111"   # auf dem jeweils anderen Knoten: 10.93.70.112 usw.
+$cnoIp    = "10.93.70.110"   # IP/Hostname des Cluster Name Object
+
+New-Item -ItemType Directory -Path C:\temp -Force | Out-Null
+$infPath = "C:\temp\winrm-cert.inf"
+$cerPath = "C:\temp\winrm-cert.cer"
+
+@"
+[Version]
+Signature="`$Windows NT`$"
+
+[NewRequest]
+Subject = "CN=$hostname"
+KeySpec = 1
+KeyLength = 2048
+Exportable = TRUE
+MachineKeySet = TRUE
+SMIME = FALSE
+PrivateKeyArchive = FALSE
+UserProtected = FALSE
+UseExistingKeySet = FALSE
+ProviderName = "Microsoft RSA SChannel Cryptographic Provider"
+ProviderType = 12
+RequestType = Cert
+KeyUsage = 0xa0
+ValidityPeriod = Years
+ValidityPeriodUnits = 5
+
+[Extensions]
+2.5.29.17 = "{text}"
+_continue_ = "dns=$hostname&amp;"
+_continue_ = "ipaddress=$ownIp&amp;"
+_continue_ = "ipaddress=$cnoIp&amp;"
+
+[EnhancedKeyUsageExtension]
+OID=1.3.6.1.5.5.7.3.1
+"@ | Set-Content -Path $infPath -Encoding ASCII
+
+certreq -new $infPath $cerPath
+$cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq "CN=$hostname" } |
+    Sort-Object NotBefore -Descending | Select-Object -First 1
+$cert.Thumbprint</code></pre>
+</div>
+<p>(Kein Failover-Cluster, oder Verbindung per Hostname statt IP: einfacher
+via <code>$cert = New-SelfSignedCertificate -DnsName $hostname, $cnoHostname -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)</code>
+— dann direkt mit dem Listener-Schritt unten weitermachen.)</p>
+<p>Von der internen PKI ausgestellte Zertifikate sind gegenüber beiden
+selbstsignierten Varianten vorzuziehen (siehe Kasten weiter unten) —
+solange auch sie sowohl die eigene Knoten-Identität als auch die
+CNO-Adresse als SAN tragen.</p>
+<p><strong>Listener einrichten</strong> — falls bereits einer existiert (z.B. von einem
+vorherigen Versuch mit falschem Zertifikat), erst entfernen:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match "Transport=HTTPS" } |
+    Remove-Item -Recurse -Force
+New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * `
+    -CertificateThumbprint $cert.Thumbprint -Force
+
+# Eingehende WinRM-HTTPS-Verbindungen zulassen
+Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
+New-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow
+
+# Nur noetig, wenn HVNB_WINRM_TRANSPORT=credssp (der in dieser App
+# empfohlene Standard, siehe .env-Beispiel in Abschnitt 5 -- CredSSP
+# vermeidet das klassische WinRM-"Double-Hop"-Problem, falls ein
+# Remote-Befehl seinerseits auf ein weiteres Netzwerkziel zugreifen muss):
+Enable-WSManCredSSP -Role Server</code></pre>
+</div>
+<p><strong>Zertifikat-Vertrauen im Container einrichten:</strong> die App validiert das
+WinRM-Zertifikat bei HTTPS strikt (<code>server_cert_validation=&quot;validate&quot;</code>,
+siehe <code>hyperv_service.py</code>) — der Container kennt eine interne CA oder ein
+selbstsigniertes Zertifikat aber standardmäßig nicht, die Verbindung
+schlägt sonst trotz korrekt eingerichtetem Listener fehl. Lösung:
+<code>HVNB_WINRM_CA_TRUST_PATH</code> auf eine PEM-Datei zeigen lassen, die das
+Zertifikat als zusätzlich vertrauenswürdig hinterlegt (pywinrm
+<code>ca_trust_path</code>, additiv zum normalen System-Truststore).</p>
+<p>Bei einer internen CA reicht es, einmalig nur den CA-ROOT zu exportieren
+— das deckt dann automatisch ALLE damit ausgestellten Knoten-Zertifikate
+ab, statt jeden Knoten einzeln zu pflegen. Bei selbstsignierten
+Zertifikaten muss dagegen <strong>jeder Knoten</strong> sein eigenes (öffentliches!)
+Zertifikat exportieren.</p>
+<p><strong>Stolperstein bei <code>certreq</code>:</strong> <code>$cerPath</code> (die beim <code>certreq -new</code>-Aufruf
+oben angegebene Ausgabedatei) <strong>nicht</strong> direkt für <code>certutil -encode</code>
+verwenden — live beobachtet, dass diese Datei statt des fertigen
+Zertifikats eine unfertige Zertifikatsanforderung (CSR) enthielt, obwohl
+das Zertifikat selbst korrekt im Speicher erzeugt und am Listener
+gebunden wurde. <code>certutil -encode</code> darauf angewendet erzeugt eine
+strukturell gültig aussehende, aber für OpenSSL unlesbare PEM-Datei
+(<code>SSLError: [X509] PEM lib</code>), und zwar erst beim nächsten
+Verbindungsversuch sichtbar, nicht beim Export selbst. Immer stattdessen
+frisch aus dem tatsächlich installierten Zertifikatsobjekt exportieren —
+unabhängig davon, ob es per <code>certreq</code> oder <code>New-SelfSignedCertificate</code>
+erzeugt wurde (<code>$cert</code> kommt aus dem <code>Get-ChildItem</code>-Lookup weiter oben):</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Export-Certificate -Cert $cert -FilePath C:\temp\winrm-host111.cer
+certutil -encode C:\temp\winrm-host111.cer C:\temp\winrm-host111.pem
+
+# Vor dem Uebertragen IMMER lokal verifizieren, dass die Datei ein
+# echtes Zertifikat mit der erwarteten SAN enthaelt -- haette beide
+# oben beschriebenen Fehlerbilder (DNS- statt IP-Typ, kaputte PEM aus
+# certreq) sofort hier erkannt, statt erst beim fehlgeschlagenen
+# Verbindungsversuch:
+certutil -dump C:\temp\winrm-host111.cer | Select-String "10.93.70"</code></pre>
+</div>
+<p>Erwartete Ausgabe: <code>IP Address=10.93.70.111</code> (eigene Adresse) und
+<code>IP Address=10.93.70.110</code> (CNO-Adresse) — als <code>IP Address=</code>, nicht als
+reiner Text im DNS-Feld.</p>
+<p>.pem-Datei(en) per RDP-Dateitransfer o.ae. auf den WSL2-Host übertragen.</p>
+<p><code>/etc/hvnb/certs</code> im Container ist bereits ein <strong>persistentes benanntes
+Volume</strong> (<code>hvnb-certs</code>, dort liegt auch schon das TLS-Zertifikat der GUI)
+— dafür ist also keine zusätzliche Zeile in <code>docker-compose.yml</code> nötig,
+die Datei kann direkt per <code>podman cp</code> in den laufenden Container gelegt
+werden:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code># Auf dem WSL2-Host: Datei(en) z.B. per Windows-Explorer unter
+# \\wsl.localhost\&lt;Distro-Name&gt;\home\&lt;Benutzer&gt;\ ablegen, dann:
+podman cp ~/winrm-ca.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem</code></pre>
+</div>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code># .env, im Projektverzeichnis:
+echo "HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem" &gt;&gt; .env
+systemctl --user restart hvnb-backup.service</code></pre>
+</div>
+<p>Der Container-Betrieb läuft seit Abschnitt 6 über eine Quadlet-Unit, die bei
+jedem <code>restart</code> unbedingt neu erstellt wird (kein <code>--force-recreate</code>-
+Sonderfall mehr nötig, siehe Kasten dort) — <code>.env</code>-Änderungen wie diese
+kommen dadurch zuverlässig an.</p>
+<p>Da <code>hvnb-certs</code> ein benanntes Volume ist, übersteht die Datei den
+Container-Neustart im vorherigen Schritt unabhängig von der Reihenfolge der
+beiden Befehle. Settings &gt; Updates zeigt anschließend unter &quot;WinRM
+CA-Trust-Datei&quot; den konfigurierten Pfad zur Kontrolle an.</p>
+<p><strong>Mehrere Knoten mit jeweils eigenem, selbstsigniertem Zertifikat</strong> (kein
+gemeinsamer CA-Root): <code>HVNB_WINRM_CA_TRUST_PATH</code> zeigt auf genau EINEN
+Pfad — die einzelnen PEMs müssen daher vorher zu einer einzigen
+Bundle-Datei zusammengefügt werden (eine PEM-Datei kann beliebig viele
+aneinandergehängte Zertifikate enthalten, genau wie ein öffentliches
+CA-Bundle). Die obigen Befehle also <strong>nicht</strong> pro Host wiederholen
+(überschreibt sonst jedes Mal die vorherige Datei) — stattdessen einmalig:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code># Alle einzeln uebertragenen Host-PEMs in einem Ordner sammeln, z.B.
+# ~/winrm-certs/host1.pem, host2.pem, ... , dann zu einer Datei
+# zusammenfassen:
+cat ~/winrm-certs/*.pem &gt; ~/winrm-ca-bundle.pem
+podman cp ~/winrm-ca-bundle.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem</code></pre>
+</div>
+<p>Mit einer internen CA reicht dagegen der eine, einmalig exportierte
+CA-Root für alle Knoten — kein Zusammenführen nötig.</p>
+<p><strong>Verifizieren, dass die CNO-Adresse jetzt als echter IP-Address-SAN-Typ
+ausgeliefert wird</strong> (nicht als <code>DNS:</code>-Eintrag, siehe Stolperstein oben) —
+von der WSL2-Distribution aus, gegen die CNO-Adresse selbst:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>openssl s_client -connect 10.93.70.110:5986 -showcerts &lt;/dev/null 2&gt;/dev/null | \
+    openssl x509 -noout -text | grep -A2 "Subject Alternative Name"</code></pre>
+</div>
+<p>Erwartete Ausgabe enthält <code>IP Address:10.93.70.110</code> — erscheint
+stattdessen <code>DNS:10.93.70.110</code>, wurde das Zertifikat auf dem gerade
+antwortenden Knoten noch mit <code>New-SelfSignedCertificate -DnsName &lt;ip-literal&gt;</code> statt der <code>certreq</code>-Methode oben erzeugt.</p>
+<p>Zusätzlich:</p>
+<ul>
+<li>Der verbindende Account (in der GUI beim Hinzufügen des Clusters
+hinterlegt) braucht <strong>lokale Administratorrechte</strong> auf jedem Knoten
+(Details und Begründung im Kasten unten).</li>
+<li><code>HVNB_WINRM_TRANSPORT</code> (Abschnitt 5) muss zum serverseitig aktivierten
+Verfahren passen — <code>credssp</code> erfordert exakt den obigen
+<code>Enable-WSManCredSSP -Role Server</code>-Schritt, <code>ntlm</code> kommt ohne diesen
+Schritt aus (nur Listener + Firewall nötig), unterstützt aber keine
+Double-Hop-Szenarien.</li>
+</ul>
+<h3>Das Cluster-Konto: welche Rechte genau, und keine mehr</h3>
+<p>Der Account, der beim Hinzufügen eines Clusters in der GUI hinterlegt wird,
+sollte <strong>nicht</strong> das eingebaute <code>Administrator</code>-Konto der Domäne sein (in
+Testumgebungen oft bequem der Fall, real angetroffen z. B. als
+<code>HYPERVDEMO\Administrator</code> mit Mitgliedschaft in Domain Admins, Enterprise
+Admins und Schema Admins) — das ist um Größenordnungen mehr Rechteumfang,
+als die App tatsächlich braucht, und macht diesen Server bei Kompromittierung
+zu einem Sprungbrett für die gesamte Domäne bzw. den gesamten Forest.</p>
+<div class="callout">
+<span class="callout-label">Warum lokale Administratorrechte trotzdem nötig sind</span>
+<p>die
+&quot;Hyper-V-Administratoren&quot;-Gruppe, die für reines VM-Management ausreichen
+würde, genügt hier nicht. Die App nutzt über WinRM neben reinen
+Hyper-V-Cmdlets (<code>Get-VM</code>, <code>New-VM</code>, <code>Checkpoint-VM</code>, <code>Add/Remove-VMHardDiskDrive</code>
+usw. — dafür würde Hyper-V-Administratoren reichen) auch
+Disk-/iSCSI-/Partitions-Cmdlets für den Restore-Workflow (<code>Connect-IscsiTarget</code>,
+<code>Mount-VHD</code>/<code>Mount-DiskImage</code>, <code>Set-Disk</code>, <code>Add/Remove-PartitionAccessPath</code>)
+sowie Cluster-Abfragen (<code>Get-ClusterSharedVolume</code>, <code>Get-ClusterNode</code>,
+<code>Add-ClusterVirtualMachineRole</code>). Für die Disk-/iSCSI-Verwaltung gibt es unter
+Windows <strong>keine</strong> eigene, schmalere eingebaute Gruppe (anders als bei
+Hyper-V) — diese Cmdlets verlangen lokale Administratorrechte. Volle
+Cluster-Verwaltung ist davon i. d. R. bereits mit abgedeckt, da Failover
+Clustering lokale Administratoren der Knoten standardmäßig als
+Cluster-Administratoren behandelt; im Zweifel nach Einrichtung mit
+<code>(Get-Cluster).GetAccessAllowed()</code> bzw. in Failover Cluster Manager unter
+&quot;Cluster-Berechtigungen&quot; verifizieren.</p>
+</div>
+<p>Das eigentliche Least-Privilege-Prinzip liegt also nicht darin, lokale
+Adminrechte zu vermeiden (technisch für den Restore-Workflow nicht möglich),
+sondern darin, <strong>denselben Rechteumfang auf den kleinstmöglichen
+Geltungsbereich zu begrenzen</strong> — konkret:</p>
+<ol>
+<li><strong>Dediziertes Konto</strong> anlegen, ausschließlich für diese App, z. B.
+<code>HYPERVDEMO\svc-hvnb-backup</code> — kein Personenkonto, kein für andere Zwecke
+mitgenutztes Konto.</li>
+<li><strong>Keine</strong> Mitgliedschaft in Domain Admins, Enterprise Admins, Schema
+Admins oder einer sonstigen domänenweit privilegierten Gruppe. Das Konto
+ist ein ganz gewöhnliches Domänenkonto ohne besondere AD-Rechte.</li>
+<li>Lokale Administratorrechte <strong>nur</strong> auf den tatsächlich verwalteten
+Maschinen — allen Hyper-V-Clusterknoten sowie dem Restore-Proxy-Host —,
+nicht auf sonstigen Servern oder Arbeitsplätzen. Am saubersten über eine
+Sicherheitsgruppe (z. B. <code>HVNB-Backup-Hosts</code>) mit genau diesen Rechnern
+als Mitglieder, kombiniert mit einer GPO über <strong>Restricted Groups</strong>
+(Computer-Konfiguration → Richtlinien → Sicherheitseinstellungen →
+Restricted Groups → <code>Administratoren</code> → <code>HYPERVDEMO\svc-hvnb-backup</code>
+hinzufügen), die per Sicherheitsfilterung nur auf diese Gruppe wirkt.
+Reine manuelle <code>net localgroup Administratoren /add</code>-Pflege pro Host
+funktioniert ebenso, ist aber bei mehreren Knoten fehleranfälliger.</li>
+<li><strong>Interaktive Anmeldung verweigern</strong>, da das Konto ausschließlich über
+WinRM verwendet wird (GPO: &quot;Anmelden als Batchauftrag verweigern&quot; bzw.
+&quot;Lokal anmelden verweigern&quot; / &quot;Anmelden über Remotedesktopdienste
+verweigern&quot; für dieses Konto auf denselben Zielrechnern) — reduziert den
+Nutzen eines gestohlenen Passworts für alles außer dem WinRM-Zugriff
+selbst, den die App ohnehin schon hat.</li>
+<li><strong>Kein gMSA</strong> (Group Managed Service Account): CredSSP übergibt das
+tatsächliche Passwort zur Delegation, und dieses wird der App selbst aus
+ihrer eigenen, hinterlegten Konfiguration übermittelt — ein gMSA verwaltet
+sein Passwort selbst und macht es nicht in dieser Form auslesbar, ist also
+für dieses Zugriffsmuster nicht geeignet. Stattdessen: starkes, für dieses
+eine Konto einzigartiges Passwort, regelmäßig rotiert.</li>
+<li>Nach Einrichtung verifizieren, dass das Konto tatsächlich <strong>nur</strong> auf den
+vorgesehenen Hosts als Administrator eingetragen ist (<code>net localgroup Administratoren</code> auf jedem Knoten) und in keiner der drei genannten
+Domain-/Enterprise-/Schema-Admin-Gruppen steckt (<code>Get-ADUser svc-hvnb-backup -Properties MemberOf</code>).</li>
+</ol>
+<h3>Firewall auf die IP des Backup-Hosts einschränken (empfohlen)</h3>
+<p>Die oben angelegte Firewall-Regel erlaubt WinRM-HTTPS (5986) bislang von
+<strong>jeder</strong> erreichbaren Adresse aus — dabei braucht diese Verbindung
+niemals mehr als ein einziger Host: der Windows Server, auf dem der
+Container läuft. Eine einzige zusätzliche Zeile pro Knoten schließt diese
+Lücke, ohne die App in irgendeiner Weise einzuschränken:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code># Auf JEDEM Hyper-V-Knoten (und dem Restore-Proxy-Host) ausfuehren --
+# &lt;Backup-Host-IP&gt; durch die tatsaechliche IP-Adresse des Windows Servers
+# ersetzen, auf dem der Container laeuft (nicht die interne WSL2-Guest-IP
+# -- siehe Hinweis unten). Mehrere erlaubte Adressen durch Komma trennen.
+Set-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -RemoteAddress &lt;Backup-Host-IP&gt;</code></pre>
+</div>
+<div class="callout">
+<span class="callout-label">Welche IP-Adresse gehört hier hin</span>
+<p>die IP-Adresse des Windows
+Servers selbst (dieselbe, die z. B. für die GUI unter Abschnitt 8 als
+<code>&lt;Server-IP&gt;</code> verwendet wird) — <strong>nicht</strong> die interne, nur
+WSL2-intern gültige und bei jedem Neustart wechselnde Guest-IP. Für
+ausgehende Verbindungen aus WSL2 heraus (wie hier: der Container baut
+die WinRM-Verbindung zum Hyper-V-Host auf) übersetzt Windows die
+Quelladresse ohnehin auf die physische Server-IP, bevor der Datenverkehr
+das Netzwerk verlässt — unabhängig davon, ob NAT- oder Mirrored-Modus
+aktiv ist (Abschnitt 8). Die Server-IP ist stabil; nur sie eignet sich
+hier als dauerhafte Einschränkung.</p>
+</div>
+<p><strong>Verifizieren:</strong></p>
+<ul>
+<li>Vom Windows Server aus (bzw. aus der WSL2-Distribution heraus, siehe
+Testbefehl weiter unten): Verbindung funktioniert unverändert.</li>
+<li>Von einem beliebigen anderen Host im Netz: <code>Test-NetConnection -ComputerName &lt;Hyper-V-Host-IP&gt; -Port 5986</code> liefert jetzt
+<code>TcpTestSucceeded : False</code> (Firewall blockiert, statt vorher <code>True</code>).</li>
+</ul>
+<p><strong>Bei einem Failover-Cluster</strong> muss dieselbe Einschränkung auf <strong>jedem</strong>
+Knoten einzeln gesetzt werden, nicht nur auf dem gerade aktiven — welcher
+Knoten eine über die CNO-Adresse aufgebaute Verbindung tatsächlich
+bedient, kann jederzeit wechseln (siehe Kasten weiter oben). Die interne
+Cluster-Kommunikation zwischen den Knoten (Heartbeat, CSV, Failover) läuft
+über eigene Ports/Regeln und ist von dieser Einschränkung nicht betroffen.</p>
+<h3>Listener auf das Management-Interface binden (empfohlen)</h3>
+<p>Der Listener wurde oben mit <code>-Address *</code> angelegt — er lauscht damit auf
+<strong>jedem</strong> Netzwerkadapter des Knotens, nicht nur dem für die App
+gedachten Management-Netz. Live auf einem echten Cluster-Knoten geprüft
+(<code>Get-NetAdapter</code> + <code>Get-NetIPAddress</code>): das betrifft in der Praxis
+typischerweise auch das iSCSI-Netz und ggf. das Live-Migration-Netz, die
+jeweils eigene Adapter mit eigener IP haben — WinRM ist dort also
+unnötig erreichbar, obwohl die App nur das Management-Netz braucht.</p>
+<p>Eine einzelne IP-Adresse eignet sich als Bindung dabei <strong>nicht</strong> direkt:
+bei einem Failover-Cluster liegen auf dem Management-Adapter <em>zwei</em>
+Adressen gleichzeitig — die eigene, feste Adresse des Knotens <strong>und</strong>
+(sofern dieser Knoten die Cluster-Group gerade besitzt) die CNO-Adresse
+als zusätzliche IP auf demselben Adapter. <code>-Address</code> unterstützt dafür
+gezielt eine Bindung <strong>per Netzwerkadapter</strong> (per MAC-Adresse) statt per
+einzelner IP — deckt dadurch beide Adressen auf diesem einen Adapter ab,
+und bleibt auch nach einem Failover korrekt, da die CNO-Adresse laut
+Cluster-Netzwerk-Konfiguration immer auf demselben Adapter erscheint:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code># MAC-Adresse des Management-Adapters ermitteln (der Adapter, der sowohl
+# die eigene Knoten-IP als auch -- bei aktivem Besitz -- die CNO-Adresse
+# traegt; live am Beispiel eines echten Clusterknotens: Get-NetAdapter |
+# Get-NetIPAddress zeigte hier "vNIC-MGMT" mit beiden Adressen 10.93.70.101
+# und 10.93.70.100 gleichzeitig, waehrend "iSCSI-1" und "vNIC-LiveMig"
+# eigene, davon getrennte Adressen auf anderen Adaptern trugen):
+Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object Name, MacAddress, ifIndex
+Get-NetIPAddress -AddressFamily IPv4 | Select-Object InterfaceAlias, IPAddress
+
+# Bestehenden Listener entfernen und mit MAC-Bindung neu anlegen (MAC-
+# Adresse aus dem obigen Befehl einsetzen):
+Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match "Transport=HTTPS" } |
+    Remove-Item -Recurse -Force
+New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address 'MAC:00-15-5D-FB-EE-00' `
+    -CertificateThumbprint $cert.Thumbprint -Force</code></pre>
+</div>
+<div class="callout">
+<span class="callout-label">Vor dem Rollout auf allen Knoten einmal gegenprüfen</span>
+<p>die
+MAC-Adressbindung ist nicht Teil dieser Referenzumgebung-Verifikation
+(das Erzeugen/Ersetzen eines produktiven Listeners war hier bewusst
+nicht risikofrei genug für einen Live-Test) — nach dem Anlegen mit
+<code>Get-ChildItem WSMan:\localhost\Listener</code> kontrollieren, dass der
+Listener existiert und mit <code>Test-NetConnection -ComputerName localhost -Port 5986</code> sowie einmal über die CNO-Adresse testen, <strong>bevor</strong> die
+alte <code>-Address *</code>-Regel auf weiteren Knoten ersetzt wird. Schlägt die
+MAC-Syntax fehl, ersatzweise <code>-Address &#39;IP:&lt;eigene-IP&gt;&#39;</code> <strong>und</strong>
+<code>-Address &#39;IP:&lt;CNO-IP&gt;&#39;</code> als zwei separate Listener auf demselben Port
+anlegen (WSMan erlaubt mehrere Listener auf unterschiedlichen
+Adressen) — funktional gleichwertig, nur etwas mehr Pflegeaufwand bei
+einer IP-Änderung.</p>
+</div>
+<p><strong>Verbindung isoliert testen</strong>, bevor der Cluster in der GUI hinzugefügt
+wird — zuerst lokal auf dem Hyper-V-Host selbst:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Test-NetConnection -ComputerName localhost -Port 5986</code></pre>
+</div>
+<p>Danach von der WSL2-Distribution aus (dort, wo der Container läuft), um
+den tatsächlichen Netzwerkpfad zu prüfen:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>timeout 3 bash -c "echo &gt; /dev/tcp/&lt;Hyper-V-Host-IP&gt;/5986" &amp;&amp; echo "erreichbar" || echo "NICHT erreichbar"</code></pre>
+</div>
+<p>Schlägt nur der zweite Test fehl (lokal auf dem Host aber funktioniert es):
+Firewall oder Netzwerksegmentierung (VLAN) zwischen WSL2-Host und
+Hyper-V-Cluster prüfen — genau dieses Muster (Server erreichbar,
+aber durch eine VLAN-Trennung vom App-Host aus nicht) trat bereits beim
+Code-Bezug in der Referenzumgebung auf, siehe Abschnitt 4c.</p>
+<hr>
+<p><strong>Teil 3: Cluster/Storage in der App registrieren</strong></p>
+<div class="callout">
+<p>Ab hier braucht es sowohl Teil 1 (Container läuft auf dem HVNB-Server) als
+auch Teil 2 (WinRM auf den betroffenen Hyper-V-Hosts aktiv) abgeschlossen
+— die folgenden Schritte laufen im Browser gegen die Web-GUI auf dem
+HVNB-Server.</p>
+</div>
+</section>
+<section id="s11">
+<h2><span class="step-num">11</span>Erste Anmeldung</h2>
 <div class="code-block">
 <pre><code>https://&lt;Server-IP-oder-Name&gt;:8443
 Benutzer: admin
-Passwort: &lt;HVNB_INITIAL_ADMIN_PASSWORD aus Schritt 5&gt;</code></pre>
+Passwort: &lt;HVNB_INITIAL_ADMIN_PASSWORD aus Abschnitt 5&gt;</code></pre>
 </div>
 <p>Sofort nach dem ersten Login unter <strong>Settings &gt; Benutzer &amp; Rollen</strong> das
 Admin-Passwort ändern.</p>
@@ -1406,13 +1464,14 @@ Admin-Passwort ändern.</p>
 # {"status":"ok","app":"Hyper-V NetApp Backup"}</code></pre>
 </div>
 </section>
-<section id="s11">
-<h2><span class="step-num">11</span>Nächste Schritte (in der GUI)</h2>
+<section id="s12">
+<h2><span class="step-num">12</span>Nächste Schritte (in der GUI)</h2>
 <p>Die Applikation ist jetzt lauffähig, aber fachlich noch leer. Über die
 Web-GUI folgen (in dieser Reihenfolge sinnvoll):</p>
 <ol>
-<li><strong>Settings &gt; Hyper-V-Hosts</strong> — Hyper-V-Cluster hinzufügen</li>
-<li><strong>Storage &gt; Cluster</strong> — NetApp-Cluster hinzufügen</li>
+<li><strong>Settings &gt; Hyper-V-Hosts</strong> — Hyper-V-Cluster hinzufügen (braucht Teil 2
+auf jedem betroffenen Knoten abgeschlossen)</li>
+<li><strong>Storage &gt; Systeme</strong> — NetApp-Cluster hinzufügen</li>
 <li><strong>Restore &gt; Setup</strong> — Restore-Proxy-Host + iSCSI-Infrastruktur einrichten
 (Voraussetzung für jeden Restore-Vorgang)</li>
 <li><strong>Backup &gt; Policies / Protection Groups / Zeitpläne</strong> — Backup-Regeln
@@ -1423,8 +1482,8 @@ definieren</li>
 <p>Eine funktionale Architekturübersicht ist direkt in der Applikation unter
 dem Dokumentations-Link in der Seitenleiste verlinkt.</p>
 </section>
-<section id="s12">
-<h2><span class="step-num">12</span>Betrieb</h2>
+<section id="s13">
+<h2><span class="step-num">13</span>Betrieb</h2>
 <p><strong>Updates:</strong> bei <code>HVNB_AUTO_UPDATE_ENABLED=true</code> vollautomatisch (siehe
 Abschnitt 4 für die beiden Code-Bezugsmodelle). Manuell erzwingen:</p>
 <div class="code-block">
@@ -1438,9 +1497,8 @@ Abschnitt 4 für die beiden Code-Bezugsmodelle). Manuell erzwingen:</p>
 podman exec hvnb-backup tail -f /var/log/hvnb/uvicorn.log
 podman exec hvnb-backup tail -f /var/log/hvnb/updater.log</code></pre>
 </div>
-<p>Innerhalb der Applikation zusätzlich das <strong>System Log</strong> (Kopfzeile,
-Terminal-Symbol) für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem
-Zeitraum.</p>
+<p>Innerhalb der Applikation zusätzlich das <strong>System Log</strong> (Menü &gt; Monitoring)
+für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.</p>
 <p><strong>Troubleshooting-Kurzreferenz:</strong></p>
 <table>
 <thead>
