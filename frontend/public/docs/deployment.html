@@ -493,13 +493,11 @@ wsl --install --from-file "$env:USERPROFILE\Downloads\Rocky-10-WSL-Base.latest.x
 </div>
 <div class="callout">
 <p>Dieser <code>--from-file</code>-Weg für <code>.wsl</code>-Paketdateien ist neuer als der
-klassische <code>wsl --install -d &lt;Name-aus-dem-Store&gt;</code>-Ein-Zeiler und wurde
-in dieser Form noch nicht live gegen eine echte Windows-Server-2025-
-Instanz verifiziert (nur <code>wsl --install -d</code> selbst, siehe
-<code>INSTALL.md</code>) — bei einem Syntaxfehler hilft <code>wsl --help</code>
-bzw. <code>wsl --install --help</code> für die exakt unterstützte Schreibweise
-dieser WSL-Version, danach bitte kurz Rückmeldung, damit dieser Abschnitt
-bei Bedarf korrigiert werden kann.</p>
+klassische <code>wsl --install -d &lt;Name-aus-dem-Store&gt;</code>-Ein-Zeiler, wurde aber
+live gegen eine echte Windows-Server-2025-Instanz verifiziert (Rocky
+erscheint danach als Standard-Distribution in <code>wsl -l</code>). Läuft der Server
+selbst als VM, zuerst Abschnitt 1 (&quot;verschachtelte Virtualisierung&quot;)
+beachten — sonst scheitert der Befehl mit <code>HCS_E_HYPERV_NOT_INSTALLED</code>.</p>
 </div>
 <p>(Jede andere systemd-fähige, aktuelle Distribution funktioniert
 grundsätzlich ebenso, z.B. per <code>wsl --install -d Ubuntu-22.04</code> — betrifft
