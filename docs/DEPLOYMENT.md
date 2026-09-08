@@ -79,20 +79,35 @@ Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRes
 Restart-Computer
 ```
 
-Nach dem Neustart eine Distribution installieren. Jede systemd-fähige,
-aktuelle Distribution funktioniert — am einfachsten per eingebautem
-Ein-Zeiler:
+Nach dem Neustart eine Distribution installieren. Empfohlen und für den
+Rest dieser Anleitung durchgehend verwendet: **Rocky Linux** (matcht die
+folgenden `dnf`-Befehle direkt, keine Anpassung nötig) — Microsoft stellt
+dafür kein fertiges Store-Paket bereit, das offizielle Rocky-WSL-Basisimage
+kommt stattdessen als `.wsl`-Datei direkt von Rocky:
 
 ```powershell
-wsl --install -d Ubuntu-22.04
+# Rocky-10-WSL-Base.latest.x86_64.wsl vorher von
+# https://dl.rockylinux.org/vault/rocky/10.0/images/x86_64/Rocky-10-WSL-Base.latest.x86_64.wsl
+# herunterladen, z.B. nach %UserProfile%\Downloads:
+wsl --install --from-file "$env:USERPROFILE\Downloads\Rocky-10-WSL-Base.latest.x86_64.wsl"
 ```
 
-(Die real verifizierte Referenzumgebung nutzte Rocky Linux 10.2 statt
-Ubuntu — das betrifft nur den WSL2-**Host**, nicht das Container-Image
-selbst, das unabhängig davon immer auf `rockylinux:9` basiert. Die
-folgenden Befehle sind für Rocky/RHEL-artige Distributionen (`dnf`)
-formuliert; unter Ubuntu/Debian `apt` statt `dnf` und `openssl`/`git`/
-`podman` über die dort üblichen Paketnamen verwenden.)
+> Dieser `--from-file`-Weg für `.wsl`-Paketdateien ist neuer als der
+> klassische `wsl --install -d <Name-aus-dem-Store>`-Ein-Zeiler und wurde
+> in dieser Form noch nicht live gegen eine echte Windows-Server-2025-
+> Instanz verifiziert (nur `wsl --install -d` selbst, siehe
+> [INSTALL.md](INSTALL.md)) — bei einem Syntaxfehler hilft `wsl --help`
+> bzw. `wsl --install --help` für die exakt unterstützte Schreibweise
+> dieser WSL-Version, danach bitte kurz Rückmeldung, damit dieser Abschnitt
+> bei Bedarf korrigiert werden kann.
+
+(Jede andere systemd-fähige, aktuelle Distribution funktioniert
+grundsätzlich ebenso, z.B. per `wsl --install -d Ubuntu-22.04` — betrifft
+nur den WSL2-**Host**, nicht das Container-Image selbst, das unabhängig
+davon immer auf `rockylinux:9` basiert. Bei Ubuntu/Debian dann aber `apt`
+statt `dnf` und `openssl`/`git`/`podman` über die dort üblichen
+Paketnamen verwenden, abweichend von den folgenden Befehlen dieser
+Anleitung.)
 
 **Wichtige Voraussetzung für Abschnitt 9 (Container-Persistenz):** systemd
 muss innerhalb der WSL2-Distribution aktiv sein. Prüfen bzw. aktivieren:
