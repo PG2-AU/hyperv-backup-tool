@@ -232,7 +232,7 @@ Test und Erstklon:
 
 ```bash
 ssh -T git@github-hvnb
-git clone git@github-hvnb:<ORG>/<REPO>.git ~/hyperv-netapp-backup
+git clone git@github-hvnb:PG2-AU/hyperv-backup-tool.git ~/hyperv-netapp-backup
 cd ~/hyperv-netapp-backup
 ```
 
@@ -259,7 +259,7 @@ als eigener, vom Host-SSH-Setup unabhängiger Prozess).
 In der `.env` (Abschnitt 5):
 
 ```bash
-HVNB_GIT_REPO_URL=https://<GITHUB-BENUTZERNAME>:<TOKEN>@github.com/<ORG>/<REPO>.git
+HVNB_GIT_REPO_URL=https://<GITHUB-BENUTZERNAME>:<TOKEN>@github.com/PG2-AU/hyperv-backup-tool.git
 HVNB_GIT_BRANCH=master
 HVNB_AUTO_UPDATE_ENABLED=true
 ```
@@ -382,7 +382,7 @@ HVNB_WINRM_PORT=5986
 # Git-basiertes Deployment (siehe Abschnitt 4) -- Beispiel fuer 4b
 # (HTTPS + Personal Access Token). Bei Modell 4c (Bare-Repo) wird dieser
 # Wert stattdessen automatisch von docker-compose.dev.yml gesetzt.
-HVNB_GIT_REPO_URL=https://<GITHUB-BENUTZERNAME>:<TOKEN>@github.com/<ORG>/<REPO>.git
+HVNB_GIT_REPO_URL=https://<GITHUB-BENUTZERNAME>:<TOKEN>@github.com/PG2-AU/hyperv-backup-tool.git
 HVNB_GIT_BRANCH=master
 HVNB_AUTO_UPDATE_ENABLED=true
 HVNB_AUTO_UPDATE_INTERVAL_MINUTES=15

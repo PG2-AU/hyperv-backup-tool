@@ -605,7 +605,7 @@ Login einer Person zugeordnet ist) oder repo-gebunden als Deploy Key
 <div class="code-block">
 <span class="code-label">Bash</span>
 <pre><code>ssh -T git@github-hvnb
-git clone git@github-hvnb:&lt;ORG&gt;/&lt;REPO&gt;.git ~/hyperv-netapp-backup
+git clone git@github-hvnb:PG2-AU/hyperv-backup-tool.git ~/hyperv-netapp-backup
 cd ~/hyperv-netapp-backup</code></pre>
 </div>
 <p>Dieser Checkout liefert die Compose-/Dockerfile-Dateien, um den Container
@@ -629,7 +629,7 @@ angezeigt).</li>
 <p>In der <code>.env</code> (Abschnitt 5):</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code>HVNB_GIT_REPO_URL=https://&lt;GITHUB-BENUTZERNAME&gt;:&lt;TOKEN&gt;@github.com/&lt;ORG&gt;/&lt;REPO&gt;.git
+<pre><code>HVNB_GIT_REPO_URL=https://&lt;GITHUB-BENUTZERNAME&gt;:&lt;TOKEN&gt;@github.com/PG2-AU/hyperv-backup-tool.git
 HVNB_GIT_BRANCH=master
 HVNB_AUTO_UPDATE_ENABLED=true</code></pre>
 </div>
@@ -739,7 +739,7 @@ HVNB_WINRM_PORT=5986
 # Git-basiertes Deployment (siehe Abschnitt 4) -- Beispiel fuer 4b
 # (HTTPS + Personal Access Token). Bei Modell 4c (Bare-Repo) wird dieser
 # Wert stattdessen automatisch von docker-compose.dev.yml gesetzt.
-HVNB_GIT_REPO_URL=https://&lt;GITHUB-BENUTZERNAME&gt;:&lt;TOKEN&gt;@github.com/&lt;ORG&gt;/&lt;REPO&gt;.git
+HVNB_GIT_REPO_URL=https://&lt;GITHUB-BENUTZERNAME&gt;:&lt;TOKEN&gt;@github.com/PG2-AU/hyperv-backup-tool.git
 HVNB_GIT_BRANCH=master
 HVNB_AUTO_UPDATE_ENABLED=true
 HVNB_AUTO_UPDATE_INTERVAL_MINUTES=15
