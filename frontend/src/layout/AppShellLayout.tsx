@@ -4,7 +4,6 @@ import {
   AppShell,
   Box,
   Burger,
-  Drawer,
   Group,
   Menu,
   NavLink,
@@ -30,7 +29,6 @@ import {
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import logo from "@/assets/logo.png";
-import { LogViewer } from "@/components/LogViewer";
 import { RunningJobsIndicator } from "@/components/RunningJobsIndicator";
 import { VersionFooter } from "@/components/VersionFooter";
 import { NAV_ITEMS } from "@/layout/navConfig";
@@ -39,7 +37,6 @@ import { CONTENT_FONT_SCALE, useDisplayStore } from "@/store/displayStore";
 
 export function AppShellLayout() {
   const [navOpened, { toggle: toggleNav }] = useDisclosure();
-  const [logsOpened, { open: openLogs, close: closeLogs }] = useDisclosure(false);
   const location = useLocation();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
@@ -92,7 +89,7 @@ export function AppShellLayout() {
           <Group wrap="nowrap">
             <RunningJobsIndicator />
             <Tooltip label="System Log">
-              <ActionIcon variant="default" size="lg" onClick={openLogs}>
+              <ActionIcon variant="default" size="lg" component={Link} to="/logs">
                 <IconTerminal2 size={18} />
               </ActionIcon>
             </Tooltip>
@@ -211,16 +208,6 @@ export function AppShellLayout() {
       <AppShell.Main>
         <Outlet />
       </AppShell.Main>
-
-      <Drawer
-        opened={logsOpened}
-        onClose={closeLogs}
-        position="bottom"
-        size="45%"
-        title="System Log"
-      >
-        <LogViewer context={undefined} />
-      </Drawer>
     </AppShell>
   );
 }

@@ -1,5 +1,5 @@
 import {
-  IconAlertTriangle,
+  IconActivity,
   IconDatabase,
   IconDatabaseImport,
   IconLayoutDashboard,
@@ -30,10 +30,14 @@ export const NAV_ITEMS: NavItem[] = [
     path: "/",
   },
   {
-    label: "Alarms",
-    icon: IconAlertTriangle,
-    path: "/alerts",
+    label: "Monitoring",
+    icon: IconActivity,
     searchContext: "alerts",
+    children: [
+      { label: "Alarms", path: "/alerts", searchContext: "alerts" },
+      { label: "Job-Verlauf", path: "/jobs?tab=runs", searchContext: "jobs" },
+      { label: "System Log", path: "/logs", searchContext: "logs" },
+    ],
   },
   {
     label: "Inventory",

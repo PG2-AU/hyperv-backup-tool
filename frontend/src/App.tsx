@@ -10,6 +10,7 @@ import { StoragePage } from "@/pages/StoragePage";
 import { JobsPage } from "@/pages/JobsPage";
 import { RestorePage } from "@/pages/RestorePage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { SystemLogPage } from "@/pages/SystemLogPage";
 import { DocsPage } from "@/pages/DocsPage";
 import { VersionHistoryPage } from "@/pages/VersionHistoryPage";
 
@@ -26,6 +27,7 @@ export default function App() {
       >
         <Route path="/" element={<DashboardPage />} />
         <Route path="/alerts" element={<AlertsPage />} />
+        <Route path="/logs" element={<SystemLogPage />} />
         <Route path="/vms" element={<VmsPage />} />
         <Route path="/storage" element={<StoragePage />} />
         <Route path="/jobs" element={<JobsPage />} />
