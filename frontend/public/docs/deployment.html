@@ -499,6 +499,21 @@ erscheint danach als Standard-Distribution in <code>wsl -l</code>). Läuft der S
 selbst als VM, zuerst Abschnitt 1 (&quot;verschachtelte Virtualisierung&quot;)
 beachten — sonst scheitert der Befehl mit <code>HCS_E_HYPERV_NOT_INSTALLED</code>.</p>
 </div>
+<p>Danach in die Distribution wechseln:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>wsl -d rocky</code></pre>
+</div>
+<p>Beim allerersten Start dieser Art fragt Rocky nach einem Standard-Benutzer
+(muss nicht mit dem Windows-Benutzernamen übereinstimmen, landet automatisch
+in der <code>wheel</code>-Gruppe und kann direkt ohne Passwort <code>sudo</code> nutzen):</p>
+<div class="code-block">
+<pre><code>Please create a default user account. The username does not need to match your Windows username.
+Enter new UNIX username: admin
+Your user has been created, is included in the wheel group, and can use sudo without a password.</code></pre>
+</div>
+<p>Alle folgenden <code>bash</code>-Befehle dieser Anleitung laufen in dieser Shell
+(bzw. bei einem späteren erneuten Login wieder per <code>wsl -d rocky</code>).</p>
 <p>(Jede andere systemd-fähige, aktuelle Distribution funktioniert
 grundsätzlich ebenso, z.B. per <code>wsl --install -d Ubuntu-22.04</code> — betrifft
 nur den WSL2-<strong>Host</strong>, nicht das Container-Image selbst, das unabhängig

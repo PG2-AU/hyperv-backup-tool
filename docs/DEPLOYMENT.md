@@ -114,6 +114,25 @@ wsl --install --from-file "$env:USERPROFILE\Downloads\Rocky-10-WSL-Base.latest.x
 > selbst als VM, zuerst Abschnitt 1 ("verschachtelte Virtualisierung")
 > beachten — sonst scheitert der Befehl mit `HCS_E_HYPERV_NOT_INSTALLED`.
 
+Danach in die Distribution wechseln:
+
+```powershell
+wsl -d rocky
+```
+
+Beim allerersten Start dieser Art fragt Rocky nach einem Standard-Benutzer
+(muss nicht mit dem Windows-Benutzernamen übereinstimmen, landet automatisch
+in der `wheel`-Gruppe und kann direkt ohne Passwort `sudo` nutzen):
+
+```
+Please create a default user account. The username does not need to match your Windows username.
+Enter new UNIX username: admin
+Your user has been created, is included in the wheel group, and can use sudo without a password.
+```
+
+Alle folgenden `bash`-Befehle dieser Anleitung laufen in dieser Shell
+(bzw. bei einem späteren erneuten Login wieder per `wsl -d rocky`).
+
 (Jede andere systemd-fähige, aktuelle Distribution funktioniert
 grundsätzlich ebenso, z.B. per `wsl --install -d Ubuntu-22.04` — betrifft
 nur den WSL2-**Host**, nicht das Container-Image selbst, das unabhängig
