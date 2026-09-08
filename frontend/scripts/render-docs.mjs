@@ -16,7 +16,7 @@
 // Layout-Entscheidungen, die bewusst vom generischen Markdown-Standard
 // abweichen (um dem Look der urspruenglich handgeschriebenen Seite nahe zu
 // bleiben), sind unten bei den jeweiligen Renderer-Overrides kommentiert.
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, cpSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { marked } from "marked";
@@ -25,6 +25,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(__dirname, "../../docs/DEPLOYMENT.md");
 const TEMPLATE = path.resolve(__dirname, "docs-template.html");
 const DEST = path.resolve(__dirname, "../public/docs/deployment.html");
+
+// Begleitskripte (z.B. Update-HvnbPortProxy.ps1), auf die DEPLOYMENT.md per
+// relativem Link verweist -- werden NICHT von marked verarbeitet, muessen
+// aber trotzdem am selben relativen Pfad wie im rohen Markdown neben der
+// gerenderten HTML-Seite liegen, sonst laeuft der Link in der GUI ins
+// Leere (docs/windows/ selbst wird nicht mit ausgeliefert). Einfacher
+// rekursiver Kopiervorgang statt eine zweite Kopie von Hand zu pflegen.
+const WINDOWS_SCRIPTS_SRC = path.resolve(__dirname, "../../docs/windows");
+const WINDOWS_SCRIPTS_DEST = path.resolve(__dirname, "../public/docs/windows");
 
 const LANG_LABELS = { powershell: "PowerShell", bash: "Bash", ini: "systemd Quadlet" };
 
@@ -157,3 +166,8 @@ const output = template
 
 writeFileSync(DEST, output);
 console.log(`[render-docs] ${path.relative(process.cwd(), SRC)} -> ${path.relative(process.cwd(), DEST)} (${sections.filter((s) => !s.divider).length} Abschnitte)`);
+
+if (existsSync(WINDOWS_SCRIPTS_SRC)) {
+  cpSync(WINDOWS_SCRIPTS_SRC, WINDOWS_SCRIPTS_DEST, { recursive: true });
+  console.log(`[render-docs] ${path.relative(process.cwd(), WINDOWS_SCRIPTS_SRC)} -> ${path.relative(process.cwd(), WINDOWS_SCRIPTS_DEST)} kopiert`);
+}
