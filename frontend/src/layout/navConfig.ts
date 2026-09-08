@@ -35,7 +35,6 @@ export const NAV_ITEMS: NavItem[] = [
     searchContext: "alerts",
     children: [
       { label: "Alarms", path: "/alerts", searchContext: "alerts" },
-      { label: "Job-Verlauf", path: "/jobs?tab=runs", searchContext: "jobs" },
       { label: "System Log", path: "/logs", searchContext: "logs" },
     ],
   },
