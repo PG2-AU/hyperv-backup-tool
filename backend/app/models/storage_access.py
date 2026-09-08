@@ -26,4 +26,12 @@ class StorageAccessConfig(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     actions_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Rein clientseitiger Anzeige-Filter (siehe StoragePage.tsx) -- blendet
+    # die von ONTAP bei einer MetroCluster-Konfiguration automatisch
+    # angelegte(n) Metadaten-SVM(s) (Namenskonvention '*-mc', Status nicht
+    # 'running' -- reine Konfigurations-/Sync-Objekte ohne echte Nutzdaten)
+    # samt ihrer Volumes/LUNs/IGroups/etc. aus allen Storage-Tabellen aus.
+    # Kein Sicherheits-Schalter wie actions_enabled, daher bewusst keine
+    # eigene serverseitige Durchsetzung noetig.
+    hide_metrocluster_mirrors: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

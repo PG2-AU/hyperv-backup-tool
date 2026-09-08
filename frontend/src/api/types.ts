@@ -949,4 +949,5 @@ export interface RestoreInfraConfig {
 
 export interface StorageAccess {
   actions_enabled: boolean;
+  hide_metrocluster_mirrors: boolean;
 }

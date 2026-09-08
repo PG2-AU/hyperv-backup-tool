@@ -53,6 +53,7 @@ import {
   useStorageAccess,
   useSvmPeers,
   useSvms,
+  useUpdateStorageAccess,
   useUpdateNetAppCluster,
   useVerifyNetAppCluster,
   useVolumes,
@@ -548,6 +549,7 @@ export function StoragePage() {
   // in diesem kurzen Zwischenzustand, erst eine explizite false-Antwort
   // sperrt.
   const { data: storageAccess } = useStorageAccess();
+  const updateStorageAccess = useUpdateStorageAccess();
   const locked = storageAccess?.actions_enabled === false;
   const [policyFormOpen, setPolicyFormOpen] = useState(false);
   const [policyEditOpen, setPolicyEditOpen] = useState(false);
@@ -563,13 +565,44 @@ export function StoragePage() {
   const [snapmirrorSearch, setSnapmirrorSearch] = useState("");
   const [platformSearch, setPlatformSearch] = useState("");
   const [aggregateSearch, setAggregateSearch] = useState("");
-  const filteredSvms = (svms ?? []).filter((s) => matchesAllColumns(s, svmSearch));
-  const filteredVolumes = (volumes ?? []).filter((v) => matchesAllColumns(v, volumeSearch));
-  const filteredLuns = (luns ?? []).filter((l) => matchesAllColumns(l, lunSearch));
-  const filteredIgroups = (igroups ?? []).filter((ig) => matchesAllColumns(ig, igroupSearch));
+  // MetroCluster legt automatisch eine Metadaten-/Sync-SVM je Cluster an
+  // (Namenskonvention '*-mc', Status nicht 'running' -- reine Konfigurations-
+  // replikation ohne echte Nutzdaten). Bei aktiviertem Schalter (Storage >
+  // MetroCluster) werden diese SVMs samt aller ihrer Objekte aus JEDER
+  // Storage-Tabelle ausgeblendet -- rein clientseitiger Anzeige-Filter,
+  // siehe StorageAccessConfig.hide_metrocluster_mirrors. SnapMirror-
+  // Beziehungen tragen keine eigene svm_name-Spalte, ONTAP-Pfade haben aber
+  // immer das Format 'svm:volume' -- SVM-Name daher aus dem Pfad-Praefix
+  // extrahiert.
+  const hiddenSvmNames = new Set(
+    storageAccess?.hide_metrocluster_mirrors
+      ? (svms ?? [])
+          .filter((s) => s.name.endsWith("-mc") && (s.state ?? "").toLowerCase() !== "running")
+          .map((s) => s.name)
+      : [],
+  );
+  const svmOfPath = (path?: string | null) => (path ? path.split(":")[0] : undefined);
+  const visibleSvms = (svms ?? []).filter((s) => !hiddenSvmNames.has(s.name));
+  const visibleVolumes = (volumes ?? []).filter((v) => !v.svm_name || !hiddenSvmNames.has(v.svm_name));
+  const visibleLuns = (luns ?? []).filter((l) => !l.svm_name || !hiddenSvmNames.has(l.svm_name));
+  const visibleIgroups = (igroups ?? []).filter((ig) => !ig.svm_name || !hiddenSvmNames.has(ig.svm_name));
+  const visibleSvmPeers = (svmPeers ?? []).filter(
+    (p) => !(p.svm_name && hiddenSvmNames.has(p.svm_name)) && !(p.peer_svm_name && hiddenSvmNames.has(p.peer_svm_name)),
+  );
+  const visibleRelationships = (relationships ?? []).filter((r) => {
+    const src = svmOfPath(r.source_path);
+    const dst = svmOfPath(r.destination_path);
+    return !(src && hiddenSvmNames.has(src)) && !(dst && hiddenSvmNames.has(dst));
+  });
+  const visibleNetappPolicies = (netappPolicies ?? []).filter((p) => !p.svm_name || !hiddenSvmNames.has(p.svm_name));
+  const visibleNetappSchedules = (netappSchedules ?? []).filter((s) => !s.svm_name || !hiddenSvmNames.has(s.svm_name));
+  const filteredSvms = visibleSvms.filter((s) => matchesAllColumns(s, svmSearch));
+  const filteredVolumes = visibleVolumes.filter((v) => matchesAllColumns(v, volumeSearch));
+  const filteredLuns = visibleLuns.filter((l) => matchesAllColumns(l, lunSearch));
+  const filteredIgroups = visibleIgroups.filter((ig) => matchesAllColumns(ig, igroupSearch));
   const filteredClusterPeers = (clusterPeers ?? []).filter((p) => matchesAllColumns(p, clusterPeerSearch));
-  const filteredSvmPeers = (svmPeers ?? []).filter((p) => matchesAllColumns(p, svmPeerSearch));
-  const filteredRelationships = (relationships ?? []).filter((r) => matchesAllColumns(r, snapmirrorSearch));
+  const filteredSvmPeers = visibleSvmPeers.filter((p) => matchesAllColumns(p, svmPeerSearch));
+  const filteredRelationships = visibleRelationships.filter((r) => matchesAllColumns(r, snapmirrorSearch));
   const filteredPlatforms = (platforms ?? []).filter((p) => matchesAllColumns(p, platformSearch));
   const filteredAggregates = (aggregates ?? []).filter((a) => matchesAllColumns(a, aggregateSearch));
   const [peerDetail, setPeerDetail] = useState<NetAppClusterPeer | null>(null);
@@ -757,7 +790,7 @@ export function StoragePage() {
           <Paper p="md">
           <Title order={5} mb="sm">Storage Virtual Machines</Title>
           <StatRibbon>
-            <StatCard label="Anzahl SVMs" value={svms?.length ?? 0} />
+            <StatCard label="Anzahl SVMs" value={visibleSvms.length} />
           </StatRibbon>
           <Group justify="flex-start" mb="xs">
             <SearchInput value={svmSearch} onChange={setSvmSearch} />
@@ -795,7 +828,7 @@ export function StoragePage() {
               Noch keine SVMs erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
-          {(svms?.length ?? 0) > 0 && filteredSvms.length === 0 && (
+          {visibleSvms.length > 0 && filteredSvms.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Keine SVM passt zur Suche „{svmSearch}".
             </Text>
@@ -807,7 +840,7 @@ export function StoragePage() {
           <Paper p="md">
           <Title order={5} mb="sm">Volumes</Title>
           <StatRibbon>
-            <StatCard label="Anzahl Volumes" value={volumes?.length ?? 0} />
+            <StatCard label="Anzahl Volumes" value={visibleVolumes.length} />
             <CapacityBarCard label="Kapazität" used={volumeStats.totalUsed} total={volumeStats.totalSize} formatValue={formatBytes} />
             <DistributionCard label="Security Style" items={volumeStats.securityStyles} />
           </StatRibbon>
@@ -948,7 +981,7 @@ export function StoragePage() {
               Noch keine Volumes erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
-          {(volumes?.length ?? 0) > 0 && filteredVolumes.length === 0 && (
+          {visibleVolumes.length > 0 && filteredVolumes.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Kein Volume passt zur Suche „{volumeSearch}".
             </Text>
@@ -960,7 +993,7 @@ export function StoragePage() {
           <Paper p="md">
           <Title order={5} mb="sm">LUNs</Title>
           <StatRibbon>
-            <StatCard label="Anzahl LUNs" value={luns?.length ?? 0} />
+            <StatCard label="Anzahl LUNs" value={visibleLuns.length} />
             <StatCard label="Provisioniert" value={formatBytes(lunStats.totalSize)} />
             <DistributionCard label="OS-Type" items={lunStats.osTypes} />
           </StatRibbon>
@@ -1066,7 +1099,7 @@ export function StoragePage() {
               Noch keine LUNs erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
-          {(luns?.length ?? 0) > 0 && filteredLuns.length === 0 && (
+          {visibleLuns.length > 0 && filteredLuns.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Keine LUN passt zur Suche „{lunSearch}".
             </Text>
@@ -1078,7 +1111,7 @@ export function StoragePage() {
           <Paper p="md">
           <Title order={5} mb="sm">IGroups</Title>
           <StatRibbon>
-            <StatCard label="Anzahl IGroups" value={igroups?.length ?? 0} />
+            <StatCard label="Anzahl IGroups" value={visibleIgroups.length} />
             <DistributionCard label="OS-Type" items={igroupStats.osTypes} />
             <DistributionCard label="Protocol" items={igroupStats.protocols} />
           </StatRibbon>
@@ -1117,7 +1150,7 @@ export function StoragePage() {
               Noch keine Initiator-Gruppen erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
-          {(igroups?.length ?? 0) > 0 && filteredIgroups.length === 0 && (
+          {visibleIgroups.length > 0 && filteredIgroups.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Keine IGroup passt zur Suche „{igroupSearch}".
             </Text>
@@ -1186,7 +1219,7 @@ export function StoragePage() {
           <Paper p="md">
           <Title order={5} mb="sm">SVM Peer</Title>
           <StatRibbon>
-            <StatCard label="Anzahl SVM Peer" value={svmPeers?.length ?? 0} />
+            <StatCard label="Anzahl SVM Peer" value={visibleSvmPeers.length} />
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={svmPeerSearch} onChange={setSvmPeerSearch} />
@@ -1227,7 +1260,7 @@ export function StoragePage() {
               Noch keine SVM-Peer-Beziehungen erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
-          {(svmPeers?.length ?? 0) > 0 && filteredSvmPeers.length === 0 && (
+          {visibleSvmPeers.length > 0 && filteredSvmPeers.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Kein SVM Peer passt zur Suche „{svmPeerSearch}".
             </Text>
@@ -1239,7 +1272,7 @@ export function StoragePage() {
           <Paper p="md">
           <Title order={5} mb="sm">SnapMirror-Beziehungen</Title>
           <StatRibbon>
-            <StatCard label="Anzahl Beziehungen" value={relationships?.length ?? 0} />
+            <StatCard label="Anzahl Beziehungen" value={visibleRelationships.length} />
             <DistributionCard label="Status" items={snapmirrorStats.states} />
             <DistributionCard
               label="Healthy"
@@ -1345,7 +1378,7 @@ export function StoragePage() {
               Noch keine SnapMirror-Beziehungen erkannt. Führe eine Discovery unter System aus.
             </Text>
           )}
-          {(relationships?.length ?? 0) > 0 && filteredRelationships.length === 0 && (
+          {visibleRelationships.length > 0 && filteredRelationships.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Keine Beziehung passt zur Suche „{snapmirrorSearch}".
             </Text>
@@ -1501,7 +1534,7 @@ export function StoragePage() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {netappPolicies?.map((p) => (
+                {visibleNetappPolicies.map((p) => (
                   <Table.Tr key={p.id}>
                     <Table.Td>{p.cluster_name}</Table.Td>
                     <Table.Td>{p.svm_name ?? "-"}</Table.Td>
@@ -1532,7 +1565,7 @@ export function StoragePage() {
                 ))}
               </Table.Tbody>
             </Table>
-            {netappPolicies?.length === 0 && (
+            {visibleNetappPolicies.length === 0 && (
               <Text c="dimmed" size="sm" ta="center" py="md">
                 Noch keine SnapMirror-Policies erkannt. Führe eine Discovery unter System aus.
               </Text>
@@ -1581,7 +1614,7 @@ export function StoragePage() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {netappSchedules?.map((s) => (
+                {visibleNetappSchedules.map((s) => (
                   <Table.Tr key={s.id}>
                     <Table.Td>{s.cluster_name}</Table.Td>
                     <Table.Td>{s.svm_name ?? "cluster-weit"}</Table.Td>
@@ -1594,7 +1627,7 @@ export function StoragePage() {
                 ))}
               </Table.Tbody>
             </Table>
-            {netappSchedules?.length === 0 && (
+            {visibleNetappSchedules.length === 0 && (
               <Text c="dimmed" size="sm" ta="center" py="md">
                 Noch keine Schedules erkannt. Führe eine Discovery unter System aus.
               </Text>
@@ -1632,6 +1665,19 @@ export function StoragePage() {
                 </Badge>
               </Group>
             </Stack>
+            <Switch
+              mt="lg"
+              label="MetroCluster-Spiegelobjekte (*-mc) in der gesamten Storage-Ansicht ausblenden"
+              description="Blendet die von ONTAP automatisch angelegte(n) Metadaten-SVM(s) (Name endet auf '-mc', Status nicht 'running') samt aller ihrer Volumes/LUNs/IGroups/Policies/Schedules/SnapMirror-Beziehungen aus -- reine Konfigurationsreplikation ohne echte Nutzdaten."
+              checked={storageAccess?.hide_metrocluster_mirrors ?? false}
+              onChange={(e) =>
+                updateStorageAccess.mutate({
+                  actions_enabled: storageAccess?.actions_enabled ?? true,
+                  hide_metrocluster_mirrors: e.currentTarget.checked,
+                })
+              }
+              disabled={updateStorageAccess.isPending}
+            />
           </Paper>
         </Tabs.Panel>
       </Tabs>

@@ -46,6 +46,7 @@ def update_storage_access(
 ) -> StorageAccessConfig:
     config = _get_or_create(db)
     config.actions_enabled = payload.actions_enabled
+    config.hide_metrocluster_mirrors = payload.hide_metrocluster_mirrors
     config.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(config)

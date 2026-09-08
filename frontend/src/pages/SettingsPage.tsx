@@ -448,7 +448,7 @@ export function SettingsPage() {
               checked={storageAccess?.actions_enabled ?? true}
               onChange={(e) =>
                 updateStorageAccess.mutate(
-                  { actions_enabled: e.currentTarget.checked },
+                  { actions_enabled: e.currentTarget.checked, hide_metrocluster_mirrors: storageAccess?.hide_metrocluster_mirrors ?? false },
                   {
                     onSuccess: (c) =>
                       notifications.show({

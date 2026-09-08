@@ -308,6 +308,10 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     _add_missing_columns(engine, "netapp_aggregates", {"efficiency_ratio_wo_snapshots_flexclones": "FLOAT"})
     _add_missing_columns(engine, "netapp_clusters", {"system_type": "VARCHAR(20)"})
+    _add_missing_columns(engine, "storage_access_config", {"hide_metrocluster_mirrors": "BOOLEAN"})
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE storage_access_config SET hide_metrocluster_mirrors = 0 WHERE hide_metrocluster_mirrors IS NULL"))
+        conn.commit()
     with engine.connect() as conn:
         # Wie bei alert_config.scope oben: SQLAlchemys Enum-Spalte speichert
         # per Default den Enum-NAMEN (CLUSTER), nicht den .value-String
