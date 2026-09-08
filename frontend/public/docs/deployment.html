@@ -1275,15 +1275,23 @@ zeigt die Standard-Distribution). <code>-ExecutionTimeLimit 0</code> verhindert,
 Windows die Aufgabe nach der sonst üblichen Standard-Laufzeit (3 Tage)
 automatisch beendet; <code>-RestartCount</code>/<code>-RestartInterval</code> starten sie neu,
 falls der <code>sleep infinity</code>-Prozess doch einmal enden sollte.</p>
-<p><strong>Verifizieren</strong> (auf dem Windows Server bzw. per WSL-Interop):</p>
+<p><strong>Verifizieren -- PFLICHTSCHRITT, nicht überspringen</strong> (live beobachtet:
+<code>Register-ScheduledTask</code> legt die Aufgabe nur an, startet sie aber NICHT --
+ohne den folgenden Check bleibt unbemerkt, dass <code>Start-ScheduledTask</code> am
+Ende des Registrierungsblocks oben vergessen/übersprungen wurde und der
+Task bis zum nächsten Windows-Neustart schlicht nie läuft):</p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Get-ScheduledTask -TaskName "HVNB-WSL-KeepAlive" | Select-Object State
 Get-CimInstance Win32_Process -Filter "Name='wsl.exe'" | Select-Object CommandLine</code></pre>
 </div>
-<p>Ein <code>wsl.exe -d rocky -e sleep infinity</code>-Prozess muss dauerhaft in der
-Liste erscheinen — verschwindet er (z. B. nach einem manuellen <code>wsl --shutdown</code>), startet ihn <code>RestartCount</code>/der nächste Windows-Start
-automatisch neu.</p>
+<p>Ein <code>wsl.exe -d rocky -e sleep infinity</code>-Prozess (mit genau diesem
+Kommandozeilen-Argument, nicht nur ein beliebiger <code>wsl.exe</code>-Prozess -- ein
+interaktives WSL-Terminal erzeugt ebenfalls einen <code>wsl.exe</code>-Eintrag ohne
+<code>-e sleep infinity</code>, der leicht damit verwechselt wird) muss dauerhaft in
+der Liste erscheinen. Fehlt er, hilft <code>Start-ScheduledTask -TaskName &quot;HVNB-WSL-KeepAlive&quot;</code> sofort nach; verschwindet er später wieder (z. B.
+nach einem manuellen <code>wsl --shutdown</code>), startet ihn <code>RestartCount</code>/der
+nächste Windows-Start automatisch neu.</p>
 <p><strong>Zusätzlich, als zweite Absicherungsebene</strong> (schadet nicht, auch wenn die
 Aufgabe oben bereits verhindert, dass die VM je als inaktiv gilt): in
 <code>%UserProfile%\.wslconfig</code> (auf dem Windows Server, NICHT innerhalb von
@@ -1329,6 +1337,25 @@ unabhängig von einer aktiven Login-Session existiert:</p>
 <pre><code># Einmalig, in der WSL2-Distribution:
 sudo loginctl enable-linger &lt;benutzername&gt;</code></pre>
 </div>
+<p><strong>Verifizieren -- PFLICHTSCHRITT, nicht überspringen</strong> (live beobachtet:
+dieser Schritt wird leicht vergessen, weil die App zu diesem Zeitpunkt
+bereits laeuft und alles funktionierend aussieht -- der Fehler zeigt sich
+erst bei der naechsten Ab-/Anmeldung):</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>loginctl show-user &lt;benutzername&gt; --property=Linger   # muss 'Linger=yes' zeigen</code></pre>
+</div>
+<p>Steht dort <code>Linger=no</code>, bleibt die <code>systemd --user</code>-Instanz (und damit der
+Container) nur so lange am Leben, wie eine aktive Anmeldesitzung dieses
+Benutzers besteht -- meldet er sich ab, wird die gesamte Instanz beendet,
+bei der naechsten Anmeldung startet der Container komplett neu (erkennbar
+an &quot;Kein bestehendes Repository gefunden, klone...&quot; im Log, obwohl <code>/opt/app</code>
+vorher schon lief -- ein kompletter Neu-Klon+Build ist NICHT normal fuer
+einen einfachen Neustart des laufenden Containers, siehe Troubleshooting-
+Tabelle unten). Das ist unabhaengig vom WSL-Keep-Alive-Task oben: selbst
+wenn die WSL2-VM selbst durchgehend laeuft, faengt das den fehlenden
+Linger-Schalter NICHT auf, da es ein rein Linux-internes systemd-/logind-
+Verhalten ist.</p>
 <p><strong>Live verifiziert</strong> (2026-09-03): Container per <code>podman kill hvnb-backup</code>
 hart beendet (simuliert einen Absturz) — systemd hat ihn ohne manuelles
 Eingreifen innerhalb weniger Sekunden neu erstellt (<code>systemctl --user status hvnb-backup.service</code> zeigte zwischenzeitlich <code>activating</code>, danach
@@ -1410,7 +1437,12 @@ Zeitraum.</p>
 </thead>
 <tbody><tr>
 <td>GUI sofort nach Abmelden vom Server nicht mehr erreichbar, nach Anmeldung nach ~1min wieder da</td>
-<td><code>HVNB-WSL-KeepAlive</code>-Systemaufgabe fehlt oder laeuft (faelschlich) als SYSTEM statt per S4U -- WSL2 faehrt die ganze VM beim Trennen der letzten Verbindung herunter</td>
+<td><code>HVNB-WSL-KeepAlive</code>-Systemaufgabe fehlt, laeuft (faelschlich) als SYSTEM statt per S4U, oder wurde nach <code>Register-ScheduledTask</code> nie per <code>Start-ScheduledTask</code> tatsaechlich gestartet -- WSL2 faehrt die ganze VM beim Trennen der letzten Verbindung herunter</td>
+<td>9</td>
+</tr>
+<tr>
+<td>GUI nach Abmelden weg, OBWOHL der <code>HVNB-WSL-KeepAlive</code>-Task nachweislich laeuft (<code>wsl.exe ... -e sleep infinity</code>-Prozess vorhanden) -- Log zeigt nach der naechsten Anmeldung einen kompletten Neu-Klon (&quot;Kein bestehendes Repository gefunden&quot;) statt eines einfachen Neustarts</td>
+<td><code>loginctl enable-linger &lt;benutzername&gt;</code> fehlt -- die <code>systemd --user</code>-Instanz (und damit der Container) endet trotz laufender WSL2-VM beim Abmelden, weil sie an die Login-Sitzung gebunden ist. Mit <code>loginctl show-user &lt;benutzername&gt; --property=Linger</code> pruefen (muss <code>Linger=yes</code> zeigen)</td>
 <td>9</td>
 </tr>
 <tr>
