@@ -1051,6 +1051,21 @@ interaktives WSL-Terminal erzeugt ebenfalls einen <code>wsl.exe</code>-Eintrag o
 der Liste erscheinen. Fehlt er, hilft <code>Start-ScheduledTask -TaskName &quot;HVNB-WSL-KeepAlive&quot;</code> sofort nach; verschwindet er später wieder (z. B.
 nach einem manuellen <code>wsl --shutdown</code>), startet ihn <code>RestartCount</code>/der
 nächste Windows-Start automatisch neu.</p>
+<div class="callout warn">
+<span class="callout-label">Stolperstein, live beobachtet</span>
+<p>ein manuelles <code>Start-ScheduledTask</code>
+direkt nach der Registrierung (ohne zwischenzeitlichen Neustart) reicht
+<strong>nicht</strong> zuverlässig aus, damit die GUI ein anschließendes Abmelden
+übersteht — obwohl der <code>wsl.exe -e sleep infinity</code>-Prozess laut obigem
+Check bereits läuft, kann die GUI trotzdem sofort nach dem Logout
+verschwinden. Ursache nicht abschließend geklärt (vermutlich eine noch
+an die interaktive Sitzung gebundene Restzuordnung der WSL2-VM). Erst
+nach einem echten <code>Restart-Computer</code> (siehe Praxistest am Ende dieses
+Abschnitts) greift der <code>AtStartup</code>-Trigger unabhängig von jeder
+Anmeldesitzung und die GUI bleibt zuverlässig nach dem Abmelden
+erreichbar — ein Logout-Test direkt nach <code>Start-ScheduledTask</code>, ohne
+vorherigen Neustart, kann also fälschlich wie ein Fehlschlag aussehen.</p>
+</div>
 <p><strong>Zusätzlich, als zweite Absicherungsebene</strong> (schadet nicht, auch wenn die
 Aufgabe oben bereits verhindert, dass die VM je als inaktiv gilt): in
 <code>%UserProfile%\.wslconfig</code> (auf dem Windows Server, NICHT innerhalb von

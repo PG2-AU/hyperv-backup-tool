@@ -725,6 +725,19 @@ der Liste erscheinen. Fehlt er, hilft `Start-ScheduledTask -TaskName
 nach einem manuellen `wsl --shutdown`), startet ihn `RestartCount`/der
 nächste Windows-Start automatisch neu.
 
+> **Stolperstein, live beobachtet:** ein manuelles `Start-ScheduledTask`
+> direkt nach der Registrierung (ohne zwischenzeitlichen Neustart) reicht
+> **nicht** zuverlässig aus, damit die GUI ein anschließendes Abmelden
+> übersteht — obwohl der `wsl.exe -e sleep infinity`-Prozess laut obigem
+> Check bereits läuft, kann die GUI trotzdem sofort nach dem Logout
+> verschwinden. Ursache nicht abschließend geklärt (vermutlich eine noch
+> an die interaktive Sitzung gebundene Restzuordnung der WSL2-VM). Erst
+> nach einem echten `Restart-Computer` (siehe Praxistest am Ende dieses
+> Abschnitts) greift der `AtStartup`-Trigger unabhängig von jeder
+> Anmeldesitzung und die GUI bleibt zuverlässig nach dem Abmelden
+> erreichbar — ein Logout-Test direkt nach `Start-ScheduledTask`, ohne
+> vorherigen Neustart, kann also fälschlich wie ein Fehlschlag aussehen.
+
 **Zusätzlich, als zweite Absicherungsebene** (schadet nicht, auch wenn die
 Aufgabe oben bereits verhindert, dass die VM je als inaktiv gilt): in
 `%UserProfile%\.wslconfig` (auf dem Windows Server, NICHT innerhalb von
