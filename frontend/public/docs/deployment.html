@@ -473,6 +473,7 @@ auf einem Hyper-V-Clusterknoten (dafür siehe Teil 2).</p>
 <section id="s2">
 <h2><span class="step-num">2</span>WSL2 aktivieren und Linux-Distribution einrichten</h2>
 <p>PowerShell als Administrator:</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
@@ -484,6 +485,7 @@ Rest dieser Anleitung durchgehend verwendet: <strong>Rocky Linux</strong> (match
 folgenden <code>dnf</code>-Befehle direkt, keine Anpassung nötig) — Microsoft stellt
 dafür kein fertiges Store-Paket bereit, das offizielle Rocky-WSL-Basisimage
 kommt stattdessen als <code>.wsl</code>-Datei direkt von Rocky:</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code># Rocky-10-WSL-Base.latest.x86_64.wsl vorher von
@@ -500,6 +502,7 @@ selbst als VM, zuerst Abschnitt 1 (&quot;verschachtelte Virtualisierung&quot;)
 beachten — sonst scheitert der Befehl mit <code>HCS_E_HYPERV_NOT_INSTALLED</code>.</p>
 </div>
 <p>Danach in die Distribution wechseln:</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>wsl -d rocky</code></pre>
@@ -902,6 +905,7 @@ systemctl --user restart hvnb-backup.service</code></pre>
 <p>Der Container ist dann direkt unter der Windows-Host-IP erreichbar, ganz
 ohne Portweiterleitung. <code>.wslconfig</code> im Windows-Benutzerprofil anlegen, in
 PowerShell (kein Administrator nötig):</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>@"
@@ -915,6 +919,7 @@ networkingMode=mirrored
 <code>[wsl2]</code>-Sektion/Zeile <code>networkingMode=mirrored</code> von Hand ergänzen.</p>
 </div>
 <p>Danach:</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>wsl --shutdown</code></pre>
@@ -940,6 +945,7 @@ found&quot; fehl):</p>
 ip route get 1.1.1.1 | awk '{print $7; exit}'</code></pre>
 </div>
 <p>Damit dann die Portweiterleitung einrichten:</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>New-NetFirewallRule -DisplayName "HVNB HTTPS (8443)" -Direction Inbound -Protocol TCP -LocalPort 8443 -Profile Domain,Private,Public -Action Allow
@@ -949,6 +955,7 @@ netsh interface portproxy add v4tov4 listenport=8443 listenaddress=0.0.0.0 conne
 Skript, das die Regel automatisch aktuell hält:
 <a href="windows/Update-HvnbPortProxy.ps1"><code>docs/windows/Update-HvnbPortProxy.ps1</code></a>.
 Als wiederkehrende Aufgabe registrieren (PowerShell als Administrator):</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>$scriptPath = "C:\hvnb\Update-HvnbPortProxy.ps1"  # Skript vorher dorthin kopieren
@@ -983,6 +990,7 @@ einmal manuell ausführen und mit <code>netsh interface portproxy show v4tov4</c
 kontrollieren.</p>
 </div>
 <p>Verifizieren von einem externen Host:</p>
+<p><strong>Host: ein beliebiger anderer Rechner im Netz (Kontrollzugriff)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Test-NetConnection -ComputerName &lt;Server-IP&gt; -Port 8443</code></pre>
@@ -1013,6 +1021,7 @@ scheinbar, ohne dass jemals ein Prozess in der VM startete) — stattdessen
 <code>LogonType S4U</code> mit dem tatsächlichen Windows-Benutzerkonto: läuft ebenso
 ohne aktive Anmeldung und ohne gespeichertes Passwort, aber mit Zugriff auf
 dessen registrierte WSL-Distribution.</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>$action = New-ScheduledTaskAction -Execute "wsl.exe" -Argument "-d rocky -e sleep infinity"
@@ -1039,6 +1048,7 @@ falls der <code>sleep infinity</code>-Prozess doch einmal enden sollte.</p>
 ohne den folgenden Check bleibt unbemerkt, dass <code>Start-ScheduledTask</code> am
 Ende des Registrierungsblocks oben vergessen/übersprungen wurde und der
 Task bis zum nächsten Windows-Neustart schlicht nie läuft):</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Get-ScheduledTask -TaskName "HVNB-WSL-KeepAlive" | Select-Object State
@@ -1071,6 +1081,7 @@ Aufgabe oben bereits verhindert, dass die VM je als inaktiv gilt): in
 <code>%UserProfile%\.wslconfig</code> (auf dem Windows Server, NICHT innerhalb von
 WSL) das automatische Herunterfahren bei Inaktivität ebenfalls explizit
 deaktivieren, in PowerShell:</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>@"
@@ -1168,6 +1179,7 @@ Windows-Neustart hinweg — genau diese Kombination war beim ersten
 Kunden-Deployment die eigentliche Fehlerquelle (Task registriert, aber nie
 gestartet; <code>enable-linger</code> vergessen), obwohl jeder Einzel-Check für sich
 unauffällig aussah. Einmal real durchspielen:</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Restart-Computer</code></pre>
@@ -1176,11 +1188,13 @@ unauffällig aussah. Einmal real durchspielen:</p>
 <code>Test-NetConnection</code>/Browser von einem anderen Rechner aus) — die GUI muss
 innerhalb weniger Minuten von selbst wieder erreichbar sein, ganz ohne
 manuelles Eingreifen (kein <code>wsl -d rocky</code>, kein <code>systemctl --user start</code>):</p>
+<p><strong>Host: ein beliebiger anderer Rechner im Netz (Kontrollzugriff)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Test-NetConnection -ComputerName &lt;Server-IP&gt; -Port 8443</code></pre>
 </div>
 <p>Erst danach am Server anmelden und zur Kontrolle:</p>
+<p><strong>Host: HVNB-Server (Windows-Host mit WSL2)</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Get-CimInstance Win32_Process -Filter "Name='wsl.exe'" | Select-Object CommandLine</code></pre>
@@ -1197,9 +1211,14 @@ bestehendes Repository gefunden, klone...&quot; (das wäre ein Hinweis, dass
 <hr>
 <p><strong>Teil 2: Auf jedem Hyper-V-Clusterknoten</strong></p>
 <div class="callout">
-<p>Maschine: der jeweilige Hyper-V-Host — alle Befehle in diesem Teil laufen
-lokal auf dem Cluster-Knoten selbst (PowerShell als Administrator),
-<strong>nicht</strong> auf dem HVNB-Server aus Teil 1.</p>
+<p>Maschine: der jeweilige Hyper-V-Host — alle <strong>PowerShell</strong>-Befehle in
+diesem Teil laufen lokal auf dem Cluster-Knoten selbst (als
+Administrator), <strong>nicht</strong> auf dem HVNB-Server aus Teil 1 — jeder
+PowerShell-Codeblock trägt dafür zusätzlich eine eigene
+<strong>Host:</strong>-Markierung direkt darüber. Eine Ausnahme: der Unterabschnitt
+„Zertifikat-Vertrauen im Container einrichten&quot; weiter unten läuft
+(Bash-Blöcke, ebenfalls markiert) wieder auf dem HVNB-Server, da dort
+der Container selbst konfiguriert wird.</p>
 </div>
 </section>
 <section id="s10">
@@ -1215,6 +1234,7 @@ Fehler dabei: <code>Host &#39;&lt;IP&gt;&#39; ist auf Port 5986 nicht erreichbar
 oder Netzwerkpfad/VLAN-Trennung).</p>
 <p><strong>Auf JEDEM Clusterknoten</strong> (nicht nur einem — welcher Knoten gerade den
 Cluster Name Object (CNO) besitzt, kann wechseln), als Administrator:</p>
+<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code># WinRM-Dienst aktivieren (meist bereits per Default aktiv)
@@ -1251,6 +1271,7 @@ GUI stattdessen per <strong>Hostname</strong> angesprochen, tritt das Problem ni
 — dann genügt <code>New-SelfSignedCertificate -DnsName $hostname, $cnoHostname</code>. Bei Verbindung per IP-Adresse (z.B. weil für den CNO kein
 DNS-Eintrag existiert) muss stattdessen <code>certreq</code> mit einer <code>.inf</code>-Datei
 verwendet werden, die echte <code>ipaddress=</code>-SAN-Einträge erzeugt:</p>
+<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code># Auf JEDEM Knoten einzeln ausfuehren, jeweils mit der eigenen $ownIp:
@@ -1307,6 +1328,7 @@ solange auch sie sowohl die eigene Knoten-Identität als auch die
 CNO-Adresse als SAN tragen.</p>
 <p><strong>Listener einrichten</strong> — falls bereits einer existiert (z.B. von einem
 vorherigen Versuch mit falschem Zertifikat), erst entfernen:</p>
+<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match "Transport=HTTPS" } |
@@ -1323,6 +1345,14 @@ New-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -Direction Inbound -Protoc
 # vermeidet das klassische WinRM-"Double-Hop"-Problem, falls ein
 # Remote-Befehl seinerseits auf ein weiteres Netzwerkziel zugreifen muss):
 Enable-WSManCredSSP -Role Server</code></pre>
+</div>
+<div class="callout">
+<span class="callout-label">Host-Wechsel: ab hier zurück auf dem HVNB-Server</span>
+<p>(Windows-Host mit
+WSL2, Teil 1) — nicht mehr auf dem Hyper-V-Host. Die folgenden
+Bash-Blöcke laufen in der <code>rocky</code>-Shell des HVNB-Servers, da hier der
+Backup-Container selbst konfiguriert wird (nicht der Hyper-V-Host). Nach
+diesem Unterabschnitt geht es unten wieder auf dem Hyper-V-Host weiter.</p>
 </div>
 <p><strong>Zertifikat-Vertrauen im Container einrichten:</strong> die App validiert das
 WinRM-Zertifikat bei HTTPS strikt (<code>server_cert_validation=&quot;validate&quot;</code>,
@@ -1349,6 +1379,7 @@ Verbindungsversuch sichtbar, nicht beim Export selbst. Immer stattdessen
 frisch aus dem tatsächlich installierten Zertifikatsobjekt exportieren —
 unabhängig davon, ob es per <code>certreq</code> oder <code>New-SelfSignedCertificate</code>
 erzeugt wurde (<code>$cert</code> kommt aus dem <code>Get-ChildItem</code>-Lookup weiter oben):</p>
+<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Export-Certificate -Cert $cert -FilePath C:\temp\winrm-host111.cer
@@ -1499,6 +1530,7 @@ Domain-/Enterprise-/Schema-Admin-Gruppen steckt (<code>Get-ADUser svc-hvnb-backu
 niemals mehr als ein einziger Host: der Windows Server, auf dem der
 Container läuft. Eine einzige zusätzliche Zeile pro Knoten schließt diese
 Lücke, ohne die App in irgendeiner Weise einzuschränken:</p>
+<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code># Auf JEDEM Hyper-V-Knoten (und dem Restore-Proxy-Host) ausfuehren --
@@ -1550,6 +1582,7 @@ gezielt eine Bindung <strong>per Netzwerkadapter</strong> (per MAC-Adresse) stat
 einzelner IP — deckt dadurch beide Adressen auf diesem einen Adapter ab,
 und bleibt auch nach einem Failover korrekt, da die CNO-Adresse laut
 Cluster-Netzwerk-Konfiguration immer auf demselben Adapter erscheint:</p>
+<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code># MAC-Adresse des Management-Adapters ermitteln (der Adapter, der sowohl
@@ -1585,6 +1618,7 @@ einer IP-Änderung.</p>
 </div>
 <p><strong>Verbindung isoliert testen</strong>, bevor der Cluster in der GUI hinzugefügt
 wird — zuerst lokal auf dem Hyper-V-Host selbst:</p>
+<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Test-NetConnection -ComputerName localhost -Port 5986</code></pre>
