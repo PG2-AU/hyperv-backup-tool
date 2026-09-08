@@ -1146,6 +1146,39 @@ podman logs --tail 50 hvnb-backup</code></pre>
 kann parallel bestehen bleiben, ist aber für <code>hvnb-backup</code> selbst
 überflüssig geworden — die Quadlet-Unit deckt denselben Fall zusätzlich mit
 ab und startet den Container außerdem bei jedem anderen Stopp-Grund neu.</p>
+<p><strong>Abschließender Praxistest — PFLICHTSCHRITT, nicht überspringen:</strong> die
+drei Absicherungen oben (Task, <code>vmIdleTimeout</code>, <code>enable-linger</code>) wurden
+bisher nur einzeln geprüft, nie im Zusammenspiel über einen echten
+Windows-Neustart hinweg — genau diese Kombination war beim ersten
+Kunden-Deployment die eigentliche Fehlerquelle (Task registriert, aber nie
+gestartet; <code>enable-linger</code> vergessen), obwohl jeder Einzel-Check für sich
+unauffällig aussah. Einmal real durchspielen:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Restart-Computer</code></pre>
+</div>
+<p>Nach dem Hochfahren, <strong>ohne</strong> dich am Server anzumelden (z. B. per
+<code>Test-NetConnection</code>/Browser von einem anderen Rechner aus) — die GUI muss
+innerhalb weniger Minuten von selbst wieder erreichbar sein, ganz ohne
+manuelles Eingreifen (kein <code>wsl -d rocky</code>, kein <code>systemctl --user start</code>):</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Test-NetConnection -ComputerName &lt;Server-IP&gt; -Port 8443</code></pre>
+</div>
+<p>Erst danach am Server anmelden und zur Kontrolle:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Get-CimInstance Win32_Process -Filter "Name='wsl.exe'" | Select-Object CommandLine</code></pre>
+</div>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>podman logs --tail 30 hvnb-backup</code></pre>
+</div>
+<p>Erwartet: der <code>wsl.exe -d rocky -e sleep infinity</code>-Prozess läuft bereits
+(vom <code>AtStartup</code>-Trigger des Tasks), und die Container-Logs zeigen einen
+normalen Neustart des bereits geklonten Repos — <strong>kein</strong> erneutes „Kein
+bestehendes Repository gefunden, klone...&quot; (das wäre ein Hinweis, dass
+<code>enable-linger</code> doch nicht griff).</p>
 <hr>
 <p><strong>Teil 2: Auf jedem Hyper-V-Clusterknoten</strong></p>
 <div class="callout">

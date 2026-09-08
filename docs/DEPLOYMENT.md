@@ -830,6 +830,43 @@ kann parallel bestehen bleiben, ist aber für `hvnb-backup` selbst
 überflüssig geworden — die Quadlet-Unit deckt denselben Fall zusätzlich mit
 ab und startet den Container außerdem bei jedem anderen Stopp-Grund neu.
 
+**Abschließender Praxistest — PFLICHTSCHRITT, nicht überspringen:** die
+drei Absicherungen oben (Task, `vmIdleTimeout`, `enable-linger`) wurden
+bisher nur einzeln geprüft, nie im Zusammenspiel über einen echten
+Windows-Neustart hinweg — genau diese Kombination war beim ersten
+Kunden-Deployment die eigentliche Fehlerquelle (Task registriert, aber nie
+gestartet; `enable-linger` vergessen), obwohl jeder Einzel-Check für sich
+unauffällig aussah. Einmal real durchspielen:
+
+```powershell
+Restart-Computer
+```
+
+Nach dem Hochfahren, **ohne** dich am Server anzumelden (z. B. per
+`Test-NetConnection`/Browser von einem anderen Rechner aus) — die GUI muss
+innerhalb weniger Minuten von selbst wieder erreichbar sein, ganz ohne
+manuelles Eingreifen (kein `wsl -d rocky`, kein `systemctl --user start`):
+
+```powershell
+Test-NetConnection -ComputerName <Server-IP> -Port 8443
+```
+
+Erst danach am Server anmelden und zur Kontrolle:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='wsl.exe'" | Select-Object CommandLine
+```
+
+```bash
+podman logs --tail 30 hvnb-backup
+```
+
+Erwartet: der `wsl.exe -d rocky -e sleep infinity`-Prozess läuft bereits
+(vom `AtStartup`-Trigger des Tasks), und die Container-Logs zeigen einen
+normalen Neustart des bereits geklonten Repos — **kein** erneutes „Kein
+bestehendes Repository gefunden, klone..." (das wäre ein Hinweis, dass
+`enable-linger` doch nicht griff).
+
 ---
 
 **Teil 2: Auf jedem Hyper-V-Clusterknoten**
