@@ -610,11 +610,30 @@ export function StoragePage() {
   // verschiedener Systeme in der Anzeige (z.B. Volumes von System A und B
   // durcheinander statt geblockt). Gilt fuer JEDE Tabelle im Storage-
   // Bereich, nicht nur einzelne.
-  const byClusterThen = <T extends { cluster_name: string }>(items: T[], secondary: (item: T) => string): T[] =>
-    [...items].sort((a, b) => a.cluster_name.localeCompare(b.cluster_name) || secondary(a).localeCompare(secondary(b)));
+  // Variadic: beliebig viele nachgeordnete Sortierschluessel, z.B. bei
+  // Volumes/LUNs zusaetzlich nach SVM VOR dem Objektnamen selbst (Nutzer-
+  // Praezisierung).
+  const byClusterThen = <T extends { cluster_name: string }>(items: T[], ...keys: ((item: T) => string)[]): T[] =>
+    [...items].sort((a, b) => {
+      const cmp = a.cluster_name.localeCompare(b.cluster_name);
+      if (cmp !== 0) return cmp;
+      for (const key of keys) {
+        const c = key(a).localeCompare(key(b));
+        if (c !== 0) return c;
+      }
+      return 0;
+    });
   const filteredSvms = byClusterThen(visibleSvms.filter((s) => matchesAllColumns(s, svmSearch)), (s) => s.name);
-  const filteredVolumes = byClusterThen(visibleVolumes.filter((v) => matchesAllColumns(v, volumeSearch)), (v) => v.name);
-  const filteredLuns = byClusterThen(visibleLuns.filter((l) => matchesAllColumns(l, lunSearch)), (l) => l.name);
+  const filteredVolumes = byClusterThen(
+    visibleVolumes.filter((v) => matchesAllColumns(v, volumeSearch)),
+    (v) => v.svm_name ?? "",
+    (v) => v.name,
+  );
+  const filteredLuns = byClusterThen(
+    visibleLuns.filter((l) => matchesAllColumns(l, lunSearch)),
+    (l) => l.svm_name ?? "",
+    (l) => l.name,
+  );
   const filteredIgroups = byClusterThen(visibleIgroups.filter((ig) => matchesAllColumns(ig, igroupSearch)), (ig) => ig.name);
   const filteredClusterPeers = byClusterThen(
     (clusterPeers ?? []).filter((p) => matchesAllColumns(p, clusterPeerSearch)),
