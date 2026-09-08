@@ -817,9 +817,10 @@ Compose-Container zur Kontrolle, die tatsächlichen Namen anzeigen:</p>
 <code>podman-compose build</code> erzeugt nur das Image, noch keine Volumes. Diese
 legt Podman automatisch unter genau den Namen an, die in der
 Quadlet-Datei stehen, sobald die Unit zum ersten Mal startet.</p>
-<p>Modell 4c braucht zusätzlich den Bare-Repo-Mount und die drei
-Umgebungsvariablen aus <code>docker-compose.dev.yml</code> — im <code>[Container]</code>-Block
-ergänzen:</p>
+<p><strong>Nur bei Modell 4c relevant — bei Modell 4b diesen Block überspringen:</strong>
+zusätzlich den Bare-Repo-Mount und die drei Umgebungsvariablen aus
+<code>docker-compose.dev.yml</code> im <code>[Container]</code>-Block der bereits angelegten
+Quadlet-Datei ergänzen:</p>
 <div class="code-block">
 <span class="code-label">systemd Quadlet</span>
 <pre><code>Volume=%h/hyperv-repo.git:/srv/git/hyperv-netapp-backup.git:ro

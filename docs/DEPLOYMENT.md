@@ -469,9 +469,10 @@ Ein leeres Ergebnis ist bei einer frischen Installation völlig normal —
 legt Podman automatisch unter genau den Namen an, die in der
 Quadlet-Datei stehen, sobald die Unit zum ersten Mal startet.
 
-Modell 4c braucht zusätzlich den Bare-Repo-Mount und die drei
-Umgebungsvariablen aus `docker-compose.dev.yml` — im `[Container]`-Block
-ergänzen:
+**Nur bei Modell 4c relevant — bei Modell 4b diesen Block überspringen:**
+zusätzlich den Bare-Repo-Mount und die drei Umgebungsvariablen aus
+`docker-compose.dev.yml` im `[Container]`-Block der bereits angelegten
+Quadlet-Datei ergänzen:
 
 ```ini
 Volume=%h/hyperv-repo.git:/srv/git/hyperv-netapp-backup.git:ro
