@@ -561,18 +561,33 @@ Zwei WSL2-Netzwerkmodi kommen infrage:
 ### Mirrored Networking (falls auf der Plattform unterstützt)
 
 Der Container ist dann direkt unter der Windows-Host-IP erreichbar, ganz
-ohne Portweiterleitung. `.wslconfig` im Windows-Benutzerprofil:
+ohne Portweiterleitung. `.wslconfig` im Windows-Benutzerprofil anlegen, in
+PowerShell (kein Administrator nötig):
 
-```ini
+```powershell
+@"
 [wsl2]
 networkingMode=mirrored
+"@ | Set-Content -Path "$env:USERPROFILE\.wslconfig" -Encoding ascii
 ```
 
-Danach `wsl --shutdown` und neu starten. **Bekannte Einschränkung:** auf
-manchen Windows-Server-2025-Builds schlägt die Aktivierung mit
-`CreateInstance/CreateVm/ConfigureNetworking/0x803b0015` fehl und WSL2 fällt
-komplett netzwerklos zurück (`networkingMode=None`) — in diesem Fall
-`.wslconfig` wieder entfernen und den NAT-Modus (unten) verwenden.
+> Überschreibt die Datei komplett. Existiert dort bereits eine
+> `.wslconfig` mit anderen Einstellungen (`Get-Content
+> "$env:USERPROFILE\.wslconfig"` vorher prüfen), stattdessen nur die
+> `[wsl2]`-Sektion/Zeile `networkingMode=mirrored` von Hand ergänzen.
+
+Danach:
+
+```powershell
+wsl --shutdown
+```
+
+...und die Distro einmal neu öffnen, damit die Änderung greift. **Bekannte
+Einschränkung:** auf manchen Windows-Server-2025-Builds schlägt die
+Aktivierung mit `CreateInstance/CreateVm/ConfigureNetworking/0x803b0015`
+fehl und WSL2 fällt komplett netzwerklos zurück (`networkingMode=None`) —
+in diesem Fall `.wslconfig` wieder entfernen und den NAT-Modus (unten)
+verwenden.
 
 ### NAT-Modus (Standard, funktioniert immer)
 

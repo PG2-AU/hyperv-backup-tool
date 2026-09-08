@@ -900,17 +900,31 @@ systemctl --user restart hvnb-backup.service</code></pre>
 <p>Zwei WSL2-Netzwerkmodi kommen infrage:</p>
 <h3>Mirrored Networking (falls auf der Plattform unterstützt)</h3>
 <p>Der Container ist dann direkt unter der Windows-Host-IP erreichbar, ganz
-ohne Portweiterleitung. <code>.wslconfig</code> im Windows-Benutzerprofil:</p>
+ohne Portweiterleitung. <code>.wslconfig</code> im Windows-Benutzerprofil anlegen, in
+PowerShell (kein Administrator nötig):</p>
 <div class="code-block">
-<span class="code-label">systemd Quadlet</span>
-<pre><code>[wsl2]
-networkingMode=mirrored</code></pre>
+<span class="code-label">PowerShell</span>
+<pre><code>@"
+[wsl2]
+networkingMode=mirrored
+"@ | Set-Content -Path "$env:USERPROFILE\.wslconfig" -Encoding ascii</code></pre>
 </div>
-<p>Danach <code>wsl --shutdown</code> und neu starten. <strong>Bekannte Einschränkung:</strong> auf
-manchen Windows-Server-2025-Builds schlägt die Aktivierung mit
-<code>CreateInstance/CreateVm/ConfigureNetworking/0x803b0015</code> fehl und WSL2 fällt
-komplett netzwerklos zurück (<code>networkingMode=None</code>) — in diesem Fall
-<code>.wslconfig</code> wieder entfernen und den NAT-Modus (unten) verwenden.</p>
+<div class="callout">
+<p>Überschreibt die Datei komplett. Existiert dort bereits eine
+<code>.wslconfig</code> mit anderen Einstellungen (<code>Get-Content &quot;$env:USERPROFILE\.wslconfig&quot;</code> vorher prüfen), stattdessen nur die
+<code>[wsl2]</code>-Sektion/Zeile <code>networkingMode=mirrored</code> von Hand ergänzen.</p>
+</div>
+<p>Danach:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>wsl --shutdown</code></pre>
+</div>
+<p>...und die Distro einmal neu öffnen, damit die Änderung greift. <strong>Bekannte
+Einschränkung:</strong> auf manchen Windows-Server-2025-Builds schlägt die
+Aktivierung mit <code>CreateInstance/CreateVm/ConfigureNetworking/0x803b0015</code>
+fehl und WSL2 fällt komplett netzwerklos zurück (<code>networkingMode=None</code>) —
+in diesem Fall <code>.wslconfig</code> wieder entfernen und den NAT-Modus (unten)
+verwenden.</p>
 <h3>NAT-Modus (Standard, funktioniert immer)</h3>
 <p>Im Standard-NAT-Modus bekommt die WSL2-Distribution eine eigene, nur
 Windows-intern erreichbare IP, die sich bei jedem <code>wsl --shutdown</code> oder
