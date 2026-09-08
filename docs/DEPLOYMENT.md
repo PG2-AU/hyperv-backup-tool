@@ -627,13 +627,19 @@ $action = New-ScheduledTaskAction -Execute "powershell.exe" `
 $atStartup = New-ScheduledTaskTrigger -AtStartup
 $atStartup.Delay = "PT2M"   # WSL2-Netzwerk braucht nach dem Boot etwas Zeit
 $periodic = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-    -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration ([TimeSpan]::MaxValue)
+    -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
 Register-ScheduledTask -TaskName "HVNB-PortProxy-Refresh" `
     -Action $action -Trigger $atStartup, $periodic -Principal $principal `
     -Description "Haelt die netsh-Portweiterleitung fuer den HVNB-Container synchron mit der WSL2-Guest-IP."
 ```
+
+> **Stolperstein:** `[TimeSpan]::MaxValue` (statt der obigen begrenzten
+> 10-Jahres-Dauer) scheitert bei `Register-ScheduledTask` mit "The task
+> XML contains a value which is incorrectly formatted or out of range"
+> (`P99999999DT23H59M59S` liegt außerhalb des von der Task-Scheduler-XML
+> akzeptierten Bereichs) — live beim Rocky-VM-Deployment aufgetreten.
 
 Die wiederkehrende 15-Minuten-Ausführung fängt auch den Fall ab, dass jemand
 `wsl --shutdown` ausführt, ohne den Windows-Server neu zu starten.
