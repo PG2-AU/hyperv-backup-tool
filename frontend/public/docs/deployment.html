@@ -1103,7 +1103,10 @@ Stopps. Zusätzlich nötig, damit die <code>systemd --user</code>-Instanz überh
 unabhängig von einer aktiven Login-Session existiert:</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code># Einmalig, in der WSL2-Distribution:
+<pre><code># Einmalig, in der WSL2-Distribution -- &lt;benutzername&gt; ist der LINUX-
+# Benutzer INNERHALB der Distribution (aus Abschnitt 2, "whoami" zeigt
+# ihn), NICHT das Windows-Konto aus Schritt 1 oben (dort z.B.
+# "Administrator")!
 sudo loginctl enable-linger &lt;benutzername&gt;</code></pre>
 </div>
 <p><strong>Verifizieren -- PFLICHTSCHRITT, nicht überspringen</strong> (live beobachtet:

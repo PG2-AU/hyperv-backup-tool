@@ -780,7 +780,10 @@ Stopps. Zusätzlich nötig, damit die `systemd --user`-Instanz überhaupt
 unabhängig von einer aktiven Login-Session existiert:
 
 ```bash
-# Einmalig, in der WSL2-Distribution:
+# Einmalig, in der WSL2-Distribution -- <benutzername> ist der LINUX-
+# Benutzer INNERHALB der Distribution (aus Abschnitt 2, "whoami" zeigt
+# ihn), NICHT das Windows-Konto aus Schritt 1 oben (dort z.B.
+# "Administrator")!
 sudo loginctl enable-linger <benutzername>
 ```
 
