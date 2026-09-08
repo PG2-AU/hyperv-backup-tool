@@ -1026,7 +1026,11 @@ Register-ScheduledTask -TaskName "HVNB-WSL-KeepAlive" -Action $action -Trigger $
 Start-ScheduledTask -TaskName "HVNB-WSL-KeepAlive"</code></pre>
 </div>
 <p><code>-d rocky</code> an den tatsächlichen Distributionsnamen anpassen (<code>wsl --status</code>
-zeigt die Standard-Distribution). <code>-ExecutionTimeLimit 0</code> verhindert, dass
+zeigt die Standard-Distribution). <strong><code>-UserId &quot;Administrator&quot;</code> auf das
+tatsächliche, interaktiv angemeldete Windows-Benutzerkonto anpassen</strong> —
+<code>LogonType S4U</code> funktioniert nur für genau das Konto, unter dem die
+WSL-Distribution registriert wurde (<code>whoami</code> in PowerShell zeigt den
+aktuellen Benutzer). <code>-ExecutionTimeLimit 0</code> verhindert, dass
 Windows die Aufgabe nach der sonst üblichen Standard-Laufzeit (3 Tage)
 automatisch beendet; <code>-RestartCount</code>/<code>-RestartInterval</code> starten sie neu,
 falls der <code>sleep infinity</code>-Prozess doch einmal enden sollte.</p>
@@ -1051,13 +1055,23 @@ nächste Windows-Start automatisch neu.</p>
 Aufgabe oben bereits verhindert, dass die VM je als inaktiv gilt): in
 <code>%UserProfile%\.wslconfig</code> (auf dem Windows Server, NICHT innerhalb von
 WSL) das automatische Herunterfahren bei Inaktivität ebenfalls explizit
-deaktivieren:</p>
+deaktivieren, in PowerShell:</p>
 <div class="code-block">
-<span class="code-label">systemd Quadlet</span>
-<pre><code>[wsl2]
-vmIdleTimeout=-1</code></pre>
+<span class="code-label">PowerShell</span>
+<pre><code>@"
+[wsl2]
+vmIdleTimeout=-1
+"@ | Set-Content -Path "$env:USERPROFILE\.wslconfig" -Encoding ascii
+
+wsl --shutdown</code></pre>
 </div>
-<p>Wird erst nach einem <code>wsl --shutdown</code> wirksam (WSL liest <code>.wslconfig</code> nur
+<div class="callout">
+<p>Überschreibt die Datei komplett (gleiches Vorgehen wie beim
+Mirrored-Networking-Setup in Abschnitt 8). Existiert dort bereits eine
+<code>.wslconfig</code> mit anderen Einstellungen — <code>Get-Content &quot;$env:USERPROFILE\.wslconfig&quot;</code> vorher prüfen — stattdessen nur die Zeile
+<code>vmIdleTimeout=-1</code> unter der bestehenden <code>[wsl2]</code>-Sektion ergänzen.</p>
+</div>
+<p>Wird erst nach dem <code>wsl --shutdown</code> wirksam (WSL liest <code>.wslconfig</code> nur
 beim Start einer neuen VM-Instanz) — das beendet kurzzeitig auch den
 Container; die obige Systemaufgabe fängt den Neustart automatisch wieder
 auf.</p>

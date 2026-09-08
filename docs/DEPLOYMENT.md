@@ -696,7 +696,11 @@ Start-ScheduledTask -TaskName "HVNB-WSL-KeepAlive"
 ```
 
 `-d rocky` an den tatsächlichen Distributionsnamen anpassen (`wsl --status`
-zeigt die Standard-Distribution). `-ExecutionTimeLimit 0` verhindert, dass
+zeigt die Standard-Distribution). **`-UserId "Administrator"` auf das
+tatsächliche, interaktiv angemeldete Windows-Benutzerkonto anpassen** —
+`LogonType S4U` funktioniert nur für genau das Konto, unter dem die
+WSL-Distribution registriert wurde (`whoami` in PowerShell zeigt den
+aktuellen Benutzer). `-ExecutionTimeLimit 0` verhindert, dass
 Windows die Aufgabe nach der sonst üblichen Standard-Laufzeit (3 Tage)
 automatisch beendet; `-RestartCount`/`-RestartInterval` starten sie neu,
 falls der `sleep infinity`-Prozess doch einmal enden sollte.
@@ -725,14 +729,24 @@ nächste Windows-Start automatisch neu.
 Aufgabe oben bereits verhindert, dass die VM je als inaktiv gilt): in
 `%UserProfile%\.wslconfig` (auf dem Windows Server, NICHT innerhalb von
 WSL) das automatische Herunterfahren bei Inaktivität ebenfalls explizit
-deaktivieren:
+deaktivieren, in PowerShell:
 
-```ini
+```powershell
+@"
 [wsl2]
 vmIdleTimeout=-1
+"@ | Set-Content -Path "$env:USERPROFILE\.wslconfig" -Encoding ascii
+
+wsl --shutdown
 ```
 
-Wird erst nach einem `wsl --shutdown` wirksam (WSL liest `.wslconfig` nur
+> Überschreibt die Datei komplett (gleiches Vorgehen wie beim
+> Mirrored-Networking-Setup in Abschnitt 8). Existiert dort bereits eine
+> `.wslconfig` mit anderen Einstellungen — `Get-Content
+> "$env:USERPROFILE\.wslconfig"` vorher prüfen — stattdessen nur die Zeile
+> `vmIdleTimeout=-1` unter der bestehenden `[wsl2]`-Sektion ergänzen.
+
+Wird erst nach dem `wsl --shutdown` wirksam (WSL liest `.wslconfig` nur
 beim Start einer neuen VM-Instanz) — das beendet kurzzeitig auch den
 Container; die obige Systemaufgabe fängt den Neustart automatisch wieder
 auf.
