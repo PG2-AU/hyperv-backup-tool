@@ -57,6 +57,7 @@ from app.schemas.netapp_write import (
     VolumeUpdate,
 )
 from app.models.storage_access import StorageAccessConfig
+from app.models.system_log import SystemLogEvent
 from app.models.user import User
 from app.services.netapp_service import DiscoveryData, NetAppConnectionError, NetAppOntapService
 
@@ -283,6 +284,28 @@ def _refresh_status(db: Session, cluster: NetAppCluster) -> NetAppCluster:
     return cluster
 
 
+def _log_storage_action(db: Session, user: User, message: str, level: str = "INFO") -> None:
+    """Persistiert eine manuelle, manipulierende Storage-Aktion im System Log
+    (siehe app.models.system_log.SystemLogEvent) -- Backlog-Punkt 14: bisher
+    schrieben nur die periodischen Hintergrundjobs (app.core.scheduler._log)
+    ins System Log, manuelle GUI-Aktionen auf Storage-Objekten (Cluster/SVM/
+    Volume/LUN/IGroup/SnapMirror-CRUD) dagegen gar nicht. Wird IMMER erst
+    NACH einer erfolgreichen Aktion aufgerufen, nie vor einem moeglichen
+    Fehlschlag (analog zum bestehenden _log() in scheduler.py) -- ein
+    fehlgeschlagener Versuch soll nicht wie eine durchgefuehrte Aenderung
+    aussehen."""
+    actor = user.display_name or user.username
+    db.add(SystemLogEvent(level=level, source="storage", message=f"{message} (durch {actor})"))
+    db.commit()
+
+
+def _format_gb(size_bytes: int | None) -> str:
+    if size_bytes is None:
+        return "?"
+    gb = size_bytes / (1024**3)
+    return f"{gb:.0f} GB" if gb == int(gb) else f"{gb:.1f} GB"
+
+
 @router.get("", response_model=list[NetAppClusterRead])
 def list_clusters(db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW))) -> list[NetAppCluster]:
     return db.query(NetAppCluster).order_by(NetAppCluster.name).all()
@@ -328,6 +351,7 @@ def create_cluster(
     db.add(cluster)
     db.commit()
     db.refresh(cluster)
+    _log_storage_action(db, user, f"System '{cluster.name}' hinzugefügt ({cluster.management_lif})")
     return cluster
 
 
@@ -376,6 +400,7 @@ def update_cluster(
     cluster.last_checked_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(cluster)
+    _log_storage_action(db, user, f"System '{cluster.name}' bearbeitet (Verbindungsdaten aktualisiert)")
     return cluster
 
 
@@ -429,6 +454,7 @@ def enroll_certificate(
             detail=f"Zertifikat wurde installiert, Anmeldung damit schlug aber fehl: {error}. "
             "Zurueckgestuft auf Kennwort-Authentifizierung.",
         )
+    _log_storage_action(db, user, f"System '{cluster.name}': auf Zertifikats-Authentifizierung umgestellt")
     return cluster
 
 
@@ -445,6 +471,7 @@ def delete_cluster(
     cluster_id: str, db: Session = Depends(get_db), user=Depends(require_storage_unlocked),
 ) -> None:
     cluster = _get_cluster_or_404(db, cluster_id)
+    cluster_name = cluster.name
     # Discovery-Kindtabellen sind zwar mit ForeignKey(..., ondelete="CASCADE")
     # deklariert, aber SQLite erzwingt das nur, wenn PRAGMA foreign_keys=ON
     # pro Verbindung gesetzt wird -- das passiert in dieser App nirgends,
@@ -463,6 +490,7 @@ def delete_cluster(
         db.query(model).filter(model.cluster_id == cluster_id).delete()
     db.delete(cluster)
     db.commit()
+    _log_storage_action(db, user, f"System '{cluster_name}' entfernt")
 
 
 @router.post("/{cluster_id}/igroups", status_code=status.HTTP_201_CREATED)
@@ -481,6 +509,7 @@ def create_igroup(
         service.create_igroup(payload.svm_name, payload.name, payload.os_type, payload.protocol, payload.initiators)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _log_storage_action(db, user, f"IGroup '{payload.name}' auf SVM '{payload.svm_name}' angelegt (System '{cluster.name}')")
     return {"status": "created"}
 
 
@@ -498,6 +527,10 @@ def create_volume(
         )
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _log_storage_action(
+        db, user,
+        f"Volume '{payload.name}' auf SVM '{payload.svm_name}' angelegt ({_format_gb(payload.size_bytes)}, Aggregat '{payload.aggregate_name}')",
+    )
     return {"status": "created"}
 
 
@@ -512,6 +545,14 @@ def update_volume(
         service.update_volume(volume_uuid, size_bytes=payload.size_bytes, state=payload.state)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    vol = db.query(NetAppVolume).filter(NetAppVolume.uuid == volume_uuid).first()
+    vol_label = vol.name if vol else volume_uuid
+    changes = []
+    if payload.size_bytes is not None:
+        changes.append(f"Größe auf {_format_gb(payload.size_bytes)} angepasst")
+    if payload.state is not None:
+        changes.append(f"Status auf '{payload.state}' gesetzt")
+    _log_storage_action(db, user, f"Volume '{vol_label}': {', '.join(changes) or 'aktualisiert'}")
     return {"status": "updated"}
 
 
@@ -522,10 +563,13 @@ def delete_volume(
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
+    vol = db.query(NetAppVolume).filter(NetAppVolume.uuid == volume_uuid).first()
+    vol_label = vol.name if vol else volume_uuid
     try:
         service.delete_volume(volume_uuid)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _log_storage_action(db, user, f"Volume '{vol_label}' gelöscht (System '{cluster.name}')")
     return {"status": "deleted"}
 
 
@@ -547,6 +591,10 @@ def create_lun(
         )
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _log_storage_action(
+        db, user,
+        f"LUN '{payload.lun_name}' im Volume '{payload.volume_name}' auf SVM '{payload.svm_name}' angelegt ({_format_gb(payload.size_bytes)})",
+    )
     return {"status": "created"}
 
 
@@ -561,6 +609,14 @@ def update_lun(
         service.update_lun(lun_uuid, size_bytes=payload.size_bytes, enabled=payload.enabled)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    lun = db.query(NetAppLun).filter(NetAppLun.uuid == lun_uuid).first()
+    lun_label = lun.name if lun else lun_uuid
+    changes = []
+    if payload.size_bytes is not None:
+        changes.append(f"Größe auf {_format_gb(payload.size_bytes)} angepasst")
+    if payload.enabled is not None:
+        changes.append("aktiviert" if payload.enabled else "deaktiviert")
+    _log_storage_action(db, user, f"LUN '{lun_label}': {', '.join(changes) or 'aktualisiert'}")
     return {"status": "updated"}
 
 
@@ -571,10 +627,13 @@ def delete_lun(
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
+    lun = db.query(NetAppLun).filter(NetAppLun.uuid == lun_uuid).first()
+    lun_label = lun.name if lun else lun_uuid
     try:
         service.delete_lun(lun_uuid)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _log_storage_action(db, user, f"LUN '{lun_label}' gelöscht (System '{cluster.name}')")
     return {"status": "deleted"}
 
 
@@ -589,6 +648,7 @@ def create_lun_map(
         service.create_lun_map(payload.svm_name, payload.lun_name, payload.igroup_name)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _log_storage_action(db, user, f"LUN '{payload.lun_name}' der IGroup '{payload.igroup_name}' zugeordnet (SVM '{payload.svm_name}')")
     return {"status": "created"}
 
 
@@ -599,10 +659,13 @@ def delete_lun_map(
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
+    lun = db.query(NetAppLun).filter(NetAppLun.uuid == lun_uuid).first()
+    lun_label = lun.name if lun else lun_uuid
     try:
         service.delete_lun_map(lun_uuid, igroup_name, svm_name)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _log_storage_action(db, user, f"LUN-Zuordnung von '{lun_label}' zu IGroup '{igroup_name}' entfernt (SVM '{svm_name}')")
     return {"status": "deleted"}
 
 
@@ -619,6 +682,7 @@ def create_snapmirror_policy(
         )
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _log_storage_action(db, user, f"SnapMirror-Policy '{payload.name}' auf SVM '{payload.svm_name}' angelegt (Typ {payload.vault_type})")
     return {"status": "created"}
 
 
@@ -633,6 +697,9 @@ def update_snapmirror_policy(
         service.update_snapmirror_policy(policy_uuid, [r.model_dump() for r in payload.rules])
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    policy = db.query(NetAppSnapMirrorPolicy).filter(NetAppSnapMirrorPolicy.uuid == policy_uuid).first()
+    policy_label = policy.name if policy else policy_uuid
+    _log_storage_action(db, user, f"SnapMirror-Policy '{policy_label}': Regeln aktualisiert")
     return {"status": "updated"}
 
 
@@ -647,6 +714,7 @@ def create_schedule(
         service.create_schedule(payload.name, payload.svm_name, payload.minutes, payload.hours, payload.days, payload.weekdays)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _log_storage_action(db, user, f"Schedule '{payload.name}' angelegt (SVM '{payload.svm_name or 'cluster-weit'}')")
     return {"status": "created"}
 
 
@@ -673,6 +741,11 @@ def create_snapmirror_relationship(
         )
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _log_storage_action(
+        db, user,
+        f"SnapMirror-Beziehung angelegt: {payload.source_svm_name}:{payload.source_volume_name} -> "
+        f"{payload.destination_svm_name}:{payload.destination_volume_name} (Policy '{payload.policy_name}')",
+    )
     return {"status": "created", "uuid": uuid}
 
 
@@ -687,6 +760,14 @@ def update_snapmirror_relationship(
         service.update_snapmirror_relationship(relationship_uuid, policy_name=payload.policy_name, schedule_name=payload.schedule_name)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    rel = db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.uuid == relationship_uuid).first()
+    rel_label = rel.destination_path if rel else relationship_uuid
+    changes = []
+    if payload.policy_name is not None:
+        changes.append(f"Policy auf '{payload.policy_name}' geändert")
+    if payload.schedule_name is not None:
+        changes.append(f"Schedule auf '{payload.schedule_name}' geändert")
+    _log_storage_action(db, user, f"SnapMirror-Beziehung '{rel_label}': {', '.join(changes) or 'aktualisiert'}")
     return {"status": "updated"}
 
 
@@ -701,6 +782,9 @@ def initialize_snapmirror_relationship(
         service.initialize_snapmirror_relationship(relationship_uuid)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    rel = db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.uuid == relationship_uuid).first()
+    rel_label = rel.destination_path if rel else relationship_uuid
+    _log_storage_action(db, user, f"SnapMirror-Beziehung '{rel_label}': Erstinitialisierung angestoßen")
     return {"status": "initialized"}
 
 
@@ -727,6 +811,7 @@ def create_cluster_peer(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     _discover_and_persist(db, cluster_a)
     _discover_and_persist(db, cluster_b)
+    _log_storage_action(db, user, f"Cluster Peer zwischen System '{cluster_a.name}' und '{cluster_b.name}' erstellt")
     return {"status": "peered"}
 
 
@@ -757,4 +842,9 @@ def create_svm_peer(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     _discover_and_persist(db, cluster_local)
     _discover_and_persist(db, cluster_remote)
+    _log_storage_action(
+        db, user,
+        f"SVM Peer erstellt: '{payload.local_svm_name}' (System '{cluster_local.name}') <-> "
+        f"'{payload.peer_svm_name}' (System '{cluster_remote.name}')",
+    )
     return {"status": "peered"}
