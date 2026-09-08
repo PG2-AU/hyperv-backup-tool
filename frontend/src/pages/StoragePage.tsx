@@ -574,13 +574,21 @@ export function StoragePage() {
   // Beziehungen tragen keine eigene svm_name-Spalte, ONTAP-Pfade haben aber
   // immer das Format 'svm:volume' -- SVM-Name daher aus dem Pfad-Praefix
   // extrahiert.
-  const hiddenSvmNames = new Set(
-    storageAccess?.hide_metrocluster_mirrors
-      ? (svms ?? [])
-          .filter((s) => s.name.endsWith("-mc") && (s.state ?? "").toLowerCase() !== "running")
-          .map((s) => s.name)
-      : [],
+  // Erkennung selbst ist IMMER aktiv (unabhaengig vom Anzeige-Schalter
+  // unten) -- Anlage-Dialoge (IgroupFormModal/LunFormModal/VolumeFormModal)
+  // sollen diese SVMs grundsaetzlich nie zur Auswahl anbieten, das ergibt
+  // nie Sinn (reine Konfigurationsreplikation, keine Nutzdaten-SVM).
+  const mcMirrorSvmNames = new Set(
+    (svms ?? [])
+      .filter((s) => s.name.endsWith("-mc") && (s.state ?? "").toLowerCase() !== "running")
+      .map((s) => s.name),
   );
+  const selectableSvms = (svms ?? []).filter((s) => !mcMirrorSvmNames.has(s.name));
+  // Anzeige-Filter fuer die Storage-Tabellen -- nur aktiv, wenn der Schalter
+  // in Storage > MetroCluster eingeschaltet ist (siehe
+  // StorageAccessConfig.hide_metrocluster_mirrors), im Gegensatz zu
+  // mcMirrorSvmNames oben.
+  const hiddenSvmNames = storageAccess?.hide_metrocluster_mirrors ? mcMirrorSvmNames : new Set<string>();
   const svmOfPath = (path?: string | null) => (path ? path.split(":")[0] : undefined);
   const visibleSvms = (svms ?? []).filter((s) => !hiddenSvmNames.has(s.name));
   const visibleVolumes = (volumes ?? []).filter((v) => !v.svm_name || !hiddenSvmNames.has(v.svm_name));
@@ -1682,12 +1690,12 @@ export function StoragePage() {
         </Tabs.Panel>
       </Tabs>
 
-      <IgroupFormModal opened={igroupFormOpen} onClose={() => setIgroupFormOpen(false)} clusters={clusters} svms={svms} />
+      <IgroupFormModal opened={igroupFormOpen} onClose={() => setIgroupFormOpen(false)} clusters={clusters} svms={selectableSvms} />
       <LunFormModal
         opened={lunFormOpen}
         onClose={() => setLunFormOpen(false)}
         clusters={clusters}
-        svms={svms}
+        svms={selectableSvms}
         volumes={volumes}
         aggregates={aggregates}
         igroups={igroups}
@@ -1700,7 +1708,7 @@ export function StoragePage() {
         opened={volumeFormOpen}
         onClose={() => setVolumeFormOpen(false)}
         clusters={clusters}
-        svms={svms}
+        svms={selectableSvms}
         aggregates={aggregates}
         onSubmitPlan={(plan) => {
           setVolumeFormOpen(false);
