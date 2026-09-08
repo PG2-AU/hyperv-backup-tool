@@ -604,15 +604,31 @@ export function StoragePage() {
   });
   const visibleNetappPolicies = (netappPolicies ?? []).filter((p) => !p.svm_name || !hiddenSvmNames.has(p.svm_name));
   const visibleNetappSchedules = (netappSchedules ?? []).filter((s) => !s.svm_name || !hiddenSvmNames.has(s.svm_name));
-  const filteredSvms = visibleSvms.filter((s) => matchesAllColumns(s, svmSearch));
-  const filteredVolumes = visibleVolumes.filter((v) => matchesAllColumns(v, volumeSearch));
-  const filteredLuns = visibleLuns.filter((l) => matchesAllColumns(l, lunSearch));
-  const filteredIgroups = visibleIgroups.filter((ig) => matchesAllColumns(ig, igroupSearch));
-  const filteredClusterPeers = (clusterPeers ?? []).filter((p) => matchesAllColumns(p, clusterPeerSearch));
-  const filteredSvmPeers = visibleSvmPeers.filter((p) => matchesAllColumns(p, svmPeerSearch));
-  const filteredRelationships = visibleRelationships.filter((r) => matchesAllColumns(r, snapmirrorSearch));
-  const filteredPlatforms = (platforms ?? []).filter((p) => matchesAllColumns(p, platformSearch));
-  const filteredAggregates = (aggregates ?? []).filter((a) => matchesAllColumns(a, aggregateSearch));
+  // Nutzer-Vorgabe: bei mehreren registrierten Systemen sollen alle
+  // Storage-Tabellen zuerst nach System, erst innerhalb eines Systems nach
+  // dem Objekt selbst sortiert sein -- sonst mischen sich Objekte
+  // verschiedener Systeme in der Anzeige (z.B. Volumes von System A und B
+  // durcheinander statt geblockt). Gilt fuer JEDE Tabelle im Storage-
+  // Bereich, nicht nur einzelne.
+  const byClusterThen = <T extends { cluster_name: string }>(items: T[], secondary: (item: T) => string): T[] =>
+    [...items].sort((a, b) => a.cluster_name.localeCompare(b.cluster_name) || secondary(a).localeCompare(secondary(b)));
+  const filteredSvms = byClusterThen(visibleSvms.filter((s) => matchesAllColumns(s, svmSearch)), (s) => s.name);
+  const filteredVolumes = byClusterThen(visibleVolumes.filter((v) => matchesAllColumns(v, volumeSearch)), (v) => v.name);
+  const filteredLuns = byClusterThen(visibleLuns.filter((l) => matchesAllColumns(l, lunSearch)), (l) => l.name);
+  const filteredIgroups = byClusterThen(visibleIgroups.filter((ig) => matchesAllColumns(ig, igroupSearch)), (ig) => ig.name);
+  const filteredClusterPeers = byClusterThen(
+    (clusterPeers ?? []).filter((p) => matchesAllColumns(p, clusterPeerSearch)),
+    (p) => p.name ?? "",
+  );
+  const filteredSvmPeers = byClusterThen(visibleSvmPeers.filter((p) => matchesAllColumns(p, svmPeerSearch)), (p) => p.svm_name ?? "");
+  const filteredRelationships = byClusterThen(
+    visibleRelationships.filter((r) => matchesAllColumns(r, snapmirrorSearch)),
+    (r) => r.source_path ?? "",
+  );
+  const filteredPlatforms = byClusterThen((platforms ?? []).filter((p) => matchesAllColumns(p, platformSearch)), (p) => p.node_name);
+  const filteredAggregates = byClusterThen((aggregates ?? []).filter((a) => matchesAllColumns(a, aggregateSearch)), (a) => a.name);
+  const sortedNetappPolicies = byClusterThen(visibleNetappPolicies, (p) => p.name);
+  const sortedNetappSchedules = byClusterThen(visibleNetappSchedules, (s) => s.name);
   const [peerDetail, setPeerDetail] = useState<NetAppClusterPeer | null>(null);
   const [igroupFormOpen, setIgroupFormOpen] = useState(false);
   const [lunFormOpen, setLunFormOpen] = useState(false);
@@ -1542,7 +1558,7 @@ export function StoragePage() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {visibleNetappPolicies.map((p) => (
+                {sortedNetappPolicies.map((p) => (
                   <Table.Tr key={p.id}>
                     <Table.Td>{p.cluster_name}</Table.Td>
                     <Table.Td>{p.svm_name ?? "-"}</Table.Td>
@@ -1573,7 +1589,7 @@ export function StoragePage() {
                 ))}
               </Table.Tbody>
             </Table>
-            {visibleNetappPolicies.length === 0 && (
+            {sortedNetappPolicies.length === 0 && (
               <Text c="dimmed" size="sm" ta="center" py="md">
                 Noch keine SnapMirror-Policies erkannt. Führe eine Discovery unter System aus.
               </Text>
@@ -1622,7 +1638,7 @@ export function StoragePage() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {visibleNetappSchedules.map((s) => (
+                {sortedNetappSchedules.map((s) => (
                   <Table.Tr key={s.id}>
                     <Table.Td>{s.cluster_name}</Table.Td>
                     <Table.Td>{s.svm_name ?? "cluster-weit"}</Table.Td>
@@ -1635,7 +1651,7 @@ export function StoragePage() {
                 ))}
               </Table.Tbody>
             </Table>
-            {visibleNetappSchedules.length === 0 && (
+            {sortedNetappSchedules.length === 0 && (
               <Text c="dimmed" size="sm" ta="center" py="md">
                 Noch keine Schedules erkannt. Führe eine Discovery unter System aus.
               </Text>
