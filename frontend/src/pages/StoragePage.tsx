@@ -634,7 +634,11 @@ export function StoragePage() {
     (l) => l.svm_name ?? "",
     (l) => l.name,
   );
-  const filteredIgroups = byClusterThen(visibleIgroups.filter((ig) => matchesAllColumns(ig, igroupSearch)), (ig) => ig.name);
+  const filteredIgroups = byClusterThen(
+    visibleIgroups.filter((ig) => matchesAllColumns(ig, igroupSearch)),
+    (ig) => ig.svm_name ?? "",
+    (ig) => ig.name,
+  );
   const filteredClusterPeers = byClusterThen(
     (clusterPeers ?? []).filter((p) => matchesAllColumns(p, clusterPeerSearch)),
     (p) => p.name ?? "",
@@ -646,8 +650,8 @@ export function StoragePage() {
   );
   const filteredPlatforms = byClusterThen((platforms ?? []).filter((p) => matchesAllColumns(p, platformSearch)), (p) => p.node_name);
   const filteredAggregates = byClusterThen((aggregates ?? []).filter((a) => matchesAllColumns(a, aggregateSearch)), (a) => a.name);
-  const sortedNetappPolicies = byClusterThen(visibleNetappPolicies, (p) => p.name);
-  const sortedNetappSchedules = byClusterThen(visibleNetappSchedules, (s) => s.name);
+  const sortedNetappPolicies = byClusterThen(visibleNetappPolicies, (p) => p.svm_name ?? "", (p) => p.name);
+  const sortedNetappSchedules = byClusterThen(visibleNetappSchedules, (s) => s.svm_name ?? "", (s) => s.name);
   const [peerDetail, setPeerDetail] = useState<NetAppClusterPeer | null>(null);
   const [igroupFormOpen, setIgroupFormOpen] = useState(false);
   const [lunFormOpen, setLunFormOpen] = useState(false);
