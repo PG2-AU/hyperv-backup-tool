@@ -428,8 +428,9 @@ podman-compose -f docker-compose.yml -f docker-compose.dev.yml build
 Portmapping, Volume-Namen) exakt aus `docker-compose.yml` übernommen, da
 Quadlet die Compose-Datei selbst nicht einliest:
 
-```ini
-# ~/.config/containers/systemd/hvnb-backup.container
+```bash
+mkdir -p ~/.config/containers/systemd
+cat > ~/.config/containers/systemd/hvnb-backup.container << 'EOF'
 [Unit]
 Description=Hyper-V NetApp Backup Tool
 After=network-online.target
@@ -450,6 +451,7 @@ TimeoutStartSec=900
 
 [Install]
 WantedBy=default.target
+EOF
 ```
 
 Die beiden Volume-Namen sind **projekt-präfigiert** (podman-compose hängt

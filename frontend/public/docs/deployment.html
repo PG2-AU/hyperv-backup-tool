@@ -779,8 +779,9 @@ greift dafür nicht zuverlässig).</p>
 Portmapping, Volume-Namen) exakt aus <code>docker-compose.yml</code> übernommen, da
 Quadlet die Compose-Datei selbst nicht einliest:</p>
 <div class="code-block">
-<span class="code-label">systemd Quadlet</span>
-<pre><code># ~/.config/containers/systemd/hvnb-backup.container
+<span class="code-label">Bash</span>
+<pre><code>mkdir -p ~/.config/containers/systemd
+cat &gt; ~/.config/containers/systemd/hvnb-backup.container &lt;&lt; 'EOF'
 [Unit]
 Description=Hyper-V NetApp Backup Tool
 After=network-online.target
@@ -800,7 +801,8 @@ Restart=always
 TimeoutStartSec=900
 
 [Install]
-WantedBy=default.target</code></pre>
+WantedBy=default.target
+EOF</code></pre>
 </div>
 <p>Die beiden Volume-Namen sind <strong>projekt-präfigiert</strong> (podman-compose hängt
 den Projektnamen — den Namen des Projektverzeichnisses — vor den in
