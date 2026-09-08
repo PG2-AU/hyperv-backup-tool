@@ -844,6 +844,18 @@ podman logs --tail 50 hvnb-backup</code></pre>
 <p>Erwartet: <code>uvicorn</code>, <code>nginx</code> (und bei aktiviertem Auto-Update <code>updater</code>)
 laufen ohne Fehlermeldungen. Der erste Start dauert spürbar länger (Klonen
 des Repos, <code>npm ci</code>, Frontend-Build).</p>
+<p>Abschließender Funktionscheck, sobald <code>podman logs</code> alle drei Prozesse als
+<code>RUNNING</code> zeigt:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>curl -sk https://127.0.0.1:8443/api/health</code></pre>
+</div>
+<p>Erwartet: <code>{&quot;status&quot;:&quot;ok&quot;,&quot;app&quot;:&quot;Hyper-V NetApp Backup&quot;}</code>. Bewusst
+<code>127.0.0.1</code> statt <code>localhost</code> — <code>localhost</code> löst auf vielen Systemen
+zuerst zu IPv6 (<code>::1</code>) auf, <code>podman port</code> mapped den Port aber nur auf
+IPv4 (<code>0.0.0.0:8443</code>), sodass der Verbindungsversuch über <code>localhost</code>
+scheitern kann, obwohl der Container einwandfrei läuft (siehe auch die
+Troubleshooting-Tabelle in Abschnitt 13).</p>
 <div class="callout">
 <span class="callout-label">Für jede spätere <code>.env</code>-Änderung (oder Änderung an der Quadlet-Datei
 selbst, z. B. Zertifikats-Volume in Abschnitt 7) gilt</span>

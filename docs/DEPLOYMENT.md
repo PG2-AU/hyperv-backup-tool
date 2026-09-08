@@ -501,6 +501,20 @@ Erwartet: `uvicorn`, `nginx` (und bei aktiviertem Auto-Update `updater`)
 laufen ohne Fehlermeldungen. Der erste Start dauert spürbar länger (Klonen
 des Repos, `npm ci`, Frontend-Build).
 
+Abschließender Funktionscheck, sobald `podman logs` alle drei Prozesse als
+`RUNNING` zeigt:
+
+```bash
+curl -sk https://127.0.0.1:8443/api/health
+```
+
+Erwartet: `{"status":"ok","app":"Hyper-V NetApp Backup"}`. Bewusst
+`127.0.0.1` statt `localhost` — `localhost` löst auf vielen Systemen
+zuerst zu IPv6 (`::1`) auf, `podman port` mapped den Port aber nur auf
+IPv4 (`0.0.0.0:8443`), sodass der Verbindungsversuch über `localhost`
+scheitern kann, obwohl der Container einwandfrei läuft (siehe auch die
+Troubleshooting-Tabelle in Abschnitt 13).
+
 > **Für jede spätere `.env`-Änderung (oder Änderung an der Quadlet-Datei
 > selbst, z. B. Zertifikats-Volume in Abschnitt 7) gilt:** anders als beim
 > vorherigen `podman-compose up -d` (das eine reine `.env`-Änderung nicht
