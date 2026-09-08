@@ -813,6 +813,10 @@ Compose-Container zur Kontrolle, die tatsächlichen Namen anzeigen:</p>
 <span class="code-label">Bash</span>
 <pre><code>podman volume ls --filter name=hvnb</code></pre>
 </div>
+<p>Ein leeres Ergebnis ist bei einer frischen Installation völlig normal —
+<code>podman-compose build</code> erzeugt nur das Image, noch keine Volumes. Diese
+legt Podman automatisch unter genau den Namen an, die in der
+Quadlet-Datei stehen, sobald die Unit zum ersten Mal startet.</p>
 <p>Modell 4c braucht zusätzlich den Bare-Repo-Mount und die drei
 Umgebungsvariablen aus <code>docker-compose.dev.yml</code> — im <code>[Container]</code>-Block
 ergänzen:</p>
