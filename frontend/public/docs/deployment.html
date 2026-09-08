@@ -394,6 +394,23 @@ Host spricht — WSL2 bringt beides auf eine Maschine.</p>
 <ul>
 <li><input disabled="" type="checkbox"> Windows Server 2025, Mitglied der Domäne, lokale Administratorrechte
 auf dem Server</li>
+<li><input disabled="" type="checkbox"> <strong>Läuft dieser Server selbst als VM</strong> (z. B. auf Hyper-V, VMware oder
+einem anderen Hypervisor): verschachtelte Virtualisierung
+(nested virtualization) muss auf Host-Ebene freigeschaltet sein —
+WSL2 startet selbst wieder eine VM darin (die Linux-Distribution) und
+scheitert sonst mit <code>HCS_E_HYPERV_NOT_INSTALLED</code>, live beim
+Rocky-VM-Deployment aufgetreten. Je nach Hypervisor, <strong>VM vorher
+ausschalten</strong>:<ul>
+<li><strong>Hyper-V:</strong> auf dem Hyper-V-<strong>Host</strong> (nicht in der VM selbst):
+<code>Set-VMProcessor -VMName &lt;VMName&gt; -ExposeVirtualizationExtensions $true</code></li>
+<li><strong>VMware:</strong> vSphere Client/vCenter → VM auswählen → Edit Settings → CPU
+→ Häkchen bei &quot;Expose hardware assisted virtualization to the guest OS&quot;
+(teils auch &quot;Virtualize Intel VT-x/EPT or AMD-V/RVI&quot; benannt)</li>
+<li><strong>Physische Maschine ohne Hypervisor darunter:</strong> betrifft das nicht —
+dann stattdessen Virtualisierung (VT-x/AMD-V) im BIOS/UEFI aktivieren,
+falls dort noch deaktiviert</li>
+</ul>
+</li>
 <li><input disabled="" type="checkbox"> Ausgehender Netzwerkzugriff von diesem Server zu:<ul>
 <li>dem NetApp-ONTAP-Cluster-Management-LIF (TCP 443, HTTPS/REST)</li>
 <li>allen zu verwaltenden Hyper-V-Clusterknoten sowie dem geplanten
@@ -1533,6 +1550,11 @@ für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.</p>
 <td>GUI nach Abmelden weg, OBWOHL der <code>HVNB-WSL-KeepAlive</code>-Task nachweislich laeuft (<code>wsl.exe ... -e sleep infinity</code>-Prozess vorhanden) -- Log zeigt nach der naechsten Anmeldung einen kompletten Neu-Klon (&quot;Kein bestehendes Repository gefunden&quot;) statt eines einfachen Neustarts</td>
 <td><code>loginctl enable-linger &lt;benutzername&gt;</code> fehlt -- die <code>systemd --user</code>-Instanz (und damit der Container) endet trotz laufender WSL2-VM beim Abmelden, weil sie an die Login-Sitzung gebunden ist. Mit <code>loginctl show-user &lt;benutzername&gt; --property=Linger</code> pruefen (muss <code>Linger=yes</code> zeigen)</td>
 <td>9</td>
+</tr>
+<tr>
+<td><code>wsl --install ...</code> (auch <code>--from-file</code>) scheitert mit <code>HCS_E_HYPERV_NOT_INSTALLED</code> / &quot;WSL2 is unable to start since virtualization is not enabled on this machine&quot;</td>
+<td>Der HVNB-Server läuft selbst als VM, und deren Hypervisor exponiert keine verschachtelte Virtualisierung an den Gast. Bei Hyper-V: <code>Set-VMProcessor -VMName &lt;VMName&gt; -ExposeVirtualizationExtensions $true</code> auf dem <strong>Host</strong> (VM vorher ausschalten). Bei VMware: Edit Settings → CPU → &quot;Expose hardware assisted virtualization to the guest OS&quot; (VM vorher ausschalten)</td>
+<td>1, 2</td>
 </tr>
 <tr>
 <td>GUI von aussen nicht erreichbar, Container läuft</td>

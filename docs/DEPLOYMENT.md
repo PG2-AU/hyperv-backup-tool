@@ -32,6 +32,21 @@ Host spricht — WSL2 bringt beides auf eine Maschine.
 
 - [ ] Windows Server 2025, Mitglied der Domäne, lokale Administratorrechte
       auf dem Server
+- [ ] **Läuft dieser Server selbst als VM** (z. B. auf Hyper-V, VMware oder
+      einem anderen Hypervisor): verschachtelte Virtualisierung
+      (nested virtualization) muss auf Host-Ebene freigeschaltet sein —
+      WSL2 startet selbst wieder eine VM darin (die Linux-Distribution) und
+      scheitert sonst mit `HCS_E_HYPERV_NOT_INSTALLED`, live beim
+      Rocky-VM-Deployment aufgetreten. Je nach Hypervisor, **VM vorher
+      ausschalten**:
+  - **Hyper-V:** auf dem Hyper-V-**Host** (nicht in der VM selbst):
+    `Set-VMProcessor -VMName <VMName> -ExposeVirtualizationExtensions $true`
+  - **VMware:** vSphere Client/vCenter → VM auswählen → Edit Settings → CPU
+    → Häkchen bei "Expose hardware assisted virtualization to the guest OS"
+    (teils auch "Virtualize Intel VT-x/EPT or AMD-V/RVI" benannt)
+  - **Physische Maschine ohne Hypervisor darunter:** betrifft das nicht —
+    dann stattdessen Virtualisierung (VT-x/AMD-V) im BIOS/UEFI aktivieren,
+    falls dort noch deaktiviert
 - [ ] Ausgehender Netzwerkzugriff von diesem Server zu:
   - dem NetApp-ONTAP-Cluster-Management-LIF (TCP 443, HTTPS/REST)
   - allen zu verwaltenden Hyper-V-Clusterknoten sowie dem geplanten
@@ -1237,6 +1252,7 @@ für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.
 |---|---|---|
 | GUI sofort nach Abmelden vom Server nicht mehr erreichbar, nach Anmeldung nach ~1min wieder da | `HVNB-WSL-KeepAlive`-Systemaufgabe fehlt, laeuft (faelschlich) als SYSTEM statt per S4U, oder wurde nach `Register-ScheduledTask` nie per `Start-ScheduledTask` tatsaechlich gestartet -- WSL2 faehrt die ganze VM beim Trennen der letzten Verbindung herunter | 9 |
 | GUI nach Abmelden weg, OBWOHL der `HVNB-WSL-KeepAlive`-Task nachweislich laeuft (`wsl.exe ... -e sleep infinity`-Prozess vorhanden) -- Log zeigt nach der naechsten Anmeldung einen kompletten Neu-Klon ("Kein bestehendes Repository gefunden") statt eines einfachen Neustarts | `loginctl enable-linger <benutzername>` fehlt -- die `systemd --user`-Instanz (und damit der Container) endet trotz laufender WSL2-VM beim Abmelden, weil sie an die Login-Sitzung gebunden ist. Mit `loginctl show-user <benutzername> --property=Linger` pruefen (muss `Linger=yes` zeigen) | 9 |
+| `wsl --install ...` (auch `--from-file`) scheitert mit `HCS_E_HYPERV_NOT_INSTALLED` / "WSL2 is unable to start since virtualization is not enabled on this machine" | Der HVNB-Server läuft selbst als VM, und deren Hypervisor exponiert keine verschachtelte Virtualisierung an den Gast. Bei Hyper-V: `Set-VMProcessor -VMName <VMName> -ExposeVirtualizationExtensions $true` auf dem **Host** (VM vorher ausschalten). Bei VMware: Edit Settings → CPU → "Expose hardware assisted virtualization to the guest OS" (VM vorher ausschalten) | 1, 2 |
 | GUI von aussen nicht erreichbar, Container läuft | WSL2-Guest-IP hat sich geändert, Portproxy zeigt ins Leere | 8 |
 | Container nach Server-Neustart als `Exited`/gar nicht gestartet | `loginctl enable-linger` fehlt, oder die Quadlet-Datei fehlt/wurde nicht per `daemon-reload` eingelesen | 6, 9 |
 | Container stoppt/stürzt ab und kommt nicht von selbst wieder hoch | Betrieb läuft noch über `podman-compose up -d` statt der Quadlet-Unit (kein Dauer-Daemon in rootless Podman) | 6, 9 |
