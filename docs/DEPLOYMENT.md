@@ -707,6 +707,12 @@ einem manuellen `systemctl --user restart hvnb-backup.service`.
 
 ## 5. Konfiguration (`.env`)
 
+`.env` ist eine **Dotfile** (Dateiname beginnt mit einem Punkt) und landet
+im Repository-Wurzelverzeichnis (`~/hyperv-netapp-backup/.env`, neben
+`docker-compose.yml`) -- ein normales `ls` zeigt sie **nicht** an, dafür
+`ls -la` verwenden. Das sorgt sonst leicht für den Eindruck, die Datei
+fehle, obwohl der folgende Befehl sie bereits erfolgreich angelegt hat.
+
 ```bash
 cat > .env << 'EOF'
 HVNB_ENVIRONMENT=production
@@ -905,7 +911,20 @@ komplett netzwerklos zurück (`networkingMode=None`) — in diesem Fall
 Im Standard-NAT-Modus bekommt die WSL2-Distribution eine eigene, nur
 Windows-intern erreichbare IP, die sich bei jedem `wsl --shutdown` oder
 Windows-Neustart **ändert**. Eine Portweiterleitung von der Windows-
-Server-IP auf die jeweils aktuelle WSL2-Guest-IP ist nötig:
+Server-IP auf die jeweils aktuelle WSL2-Guest-IP ist nötig.
+
+Aktuelle WSL2-Guest-IP ermitteln (in der WSL2-Shell -- **nicht** `hostname
+-I` verwenden, das Paket `hostname` ist auf manchen Minimal-Distributionen
+wie RockyLinux nicht installiert und der Befehl schlägt mit "command not
+found" fehl):
+
+```bash
+ip -4 addr show eth0
+# Interface-unabhaengige Alternative, falls die Schnittstelle nicht eth0 heisst:
+ip route get 1.1.1.1 | awk '{print $7; exit}'
+```
+
+Damit dann die Portweiterleitung einrichten:
 
 ```powershell
 New-NetFirewallRule -DisplayName "HVNB HTTPS (8443)" -Direction Inbound -Protocol TCP -LocalPort 8443 -Profile Domain,Private,Public -Action Allow

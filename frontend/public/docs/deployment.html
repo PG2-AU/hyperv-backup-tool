@@ -1011,6 +1011,11 @@ einem manuellen <code>systemctl --user restart hvnb-backup.service</code>.</p>
 </section>
 <section id="s5">
 <h2><span class="step-num">5</span>Konfiguration (<code>.env</code>)</h2>
+<p><code>.env</code> ist eine <strong>Dotfile</strong> (Dateiname beginnt mit einem Punkt) und landet
+im Repository-Wurzelverzeichnis (<code>~/hyperv-netapp-backup/.env</code>, neben
+<code>docker-compose.yml</code>) -- ein normales <code>ls</code> zeigt sie <strong>nicht</strong> an, dafür
+<code>ls -la</code> verwenden. Das sorgt sonst leicht für den Eindruck, die Datei
+fehle, obwohl der folgende Befehl sie bereits erfolgreich angelegt hat.</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
 <pre><code>cat &gt; .env &lt;&lt; 'EOF'
@@ -1192,7 +1197,17 @@ komplett netzwerklos zurück (<code>networkingMode=None</code>) — in diesem Fa
 <p>Im Standard-NAT-Modus bekommt die WSL2-Distribution eine eigene, nur
 Windows-intern erreichbare IP, die sich bei jedem <code>wsl --shutdown</code> oder
 Windows-Neustart <strong>ändert</strong>. Eine Portweiterleitung von der Windows-
-Server-IP auf die jeweils aktuelle WSL2-Guest-IP ist nötig:</p>
+Server-IP auf die jeweils aktuelle WSL2-Guest-IP ist nötig.</p>
+<p>Aktuelle WSL2-Guest-IP ermitteln (in der WSL2-Shell -- <strong>nicht</strong> <code>hostname -I</code> verwenden, das Paket <code>hostname</code> ist auf manchen Minimal-Distributionen
+wie RockyLinux nicht installiert und der Befehl schlägt mit &quot;command not
+found&quot; fehl):</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>ip -4 addr show eth0
+# Interface-unabhaengige Alternative, falls die Schnittstelle nicht eth0 heisst:
+ip route get 1.1.1.1 | awk '{print $7; exit}'</code></pre>
+</div>
+<p>Damit dann die Portweiterleitung einrichten:</p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>New-NetFirewallRule -DisplayName "HVNB HTTPS (8443)" -Direction Inbound -Protocol TCP -LocalPort 8443 -Profile Domain,Private,Public -Action Allow
