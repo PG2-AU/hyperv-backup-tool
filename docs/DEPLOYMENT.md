@@ -194,6 +194,16 @@ Zwei Ebenen sind hier zu unterscheiden, die leicht durcheinandergeraten:
   4b), da dafür kein SSH-Schlüsselmaterial in den Container gemountet werden
   muss.
 
+**4a und 4b sind kein Entweder-Oder, sondern werden im Normalfall
+(Netzwerkzugriff zum Git-Server vorhanden) beide durchgeführt** — sie
+decken unterschiedliche Ebenen ab: 4a liefert den Checkout, der in
+Abschnitt 6 zum Bauen des Containers gebraucht wird, 4b konfiguriert, wovon
+der bereits laufende Container später selbst pullt (ohne 4b kein
+Auto-Update). **4c** ist nur bei abgeschottetem Netz relevant und ersetzt
+dann **beide** zusammen — der initiale Checkout kommt dort ebenfalls aus
+dem lokalen Bare-Repo, dessen `file://`-URL tritt an die Stelle der
+HTTPS/Token-URL aus 4b.
+
 ### 4a. SSH-Zugriff für interaktive Nutzung auf dem Server einrichten
 
 Auf dem Windows-Server, in der WSL2-Distribution:

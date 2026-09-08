@@ -571,6 +571,15 @@ privaten Repository <strong>HTTPS mit einem Personal Access Token</strong> (Absc
 4b), da dafür kein SSH-Schlüsselmaterial in den Container gemountet werden
 muss.</li>
 </ul>
+<p><strong>4a und 4b sind kein Entweder-Oder, sondern werden im Normalfall
+(Netzwerkzugriff zum Git-Server vorhanden) beide durchgeführt</strong> — sie
+decken unterschiedliche Ebenen ab: 4a liefert den Checkout, der in
+Abschnitt 6 zum Bauen des Containers gebraucht wird, 4b konfiguriert, wovon
+der bereits laufende Container später selbst pullt (ohne 4b kein
+Auto-Update). <strong>4c</strong> ist nur bei abgeschottetem Netz relevant und ersetzt
+dann <strong>beide</strong> zusammen — der initiale Checkout kommt dort ebenfalls aus
+dem lokalen Bare-Repo, dessen <code>file://</code>-URL tritt an die Stelle der
+HTTPS/Token-URL aus 4b.</p>
 <h3>4a. SSH-Zugriff für interaktive Nutzung auf dem Server einrichten</h3>
 <p>Auf dem Windows-Server, in der WSL2-Distribution:</p>
 <div class="code-block">
