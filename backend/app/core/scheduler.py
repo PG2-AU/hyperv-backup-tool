@@ -828,21 +828,37 @@ def run_alert_check() -> None:
                     continue  # noch innerhalb der Karenzzeit -- vermutlich ein normaler, noch laufender Backup-Checkpoint
                 key = cp["id"]
                 seen_keys.add((AlertType.HYPERV_ORPHAN_CHECKPOINT, key))
-                if (AlertType.HYPERV_ORPHAN_CHECKPOINT, key) not in active_by_key:
-                    is_app_created = cp["name"].startswith("hvnb_")
-                    origin = "vermutlich von einem abgebrochenen Backup-Lauf" if is_app_created else "manuell erstellt"
-                    age_minutes = int((now - created_at).total_seconds() // 60)
+                is_app_created = cp["name"].startswith("hvnb_")
+                origin = "vermutlich von einem abgebrochenen Backup-Lauf" if is_app_created else "manuell erstellt"
+                created_utc = created_at.astimezone(timezone.utc)
+                age_h, age_m = divmod(max(0, int((now - created_utc).total_seconds()) // 60), 60)
+                age_str = f"{age_h} h {age_m} min" if age_h else f"{age_m} min"
+                # Absolute Erstellzeit als stabiler Anker PLUS relative
+                # Angabe, die bei JEDEM Lauf frisch gesetzt wird. Frueher
+                # stand nur "seit N Minuten", einmalig bei Erst-Erkennung
+                # berechnet und nie aktualisiert -- dadurch zeigten mehrere
+                # Stunden auseinander liegende Checkpoints alle denselben
+                # eingefrorenen Wert (Nutzer-Rueckmeldung: "beide melden seit
+                # 244 Minuten, obwohl der eine von 8:00, der andere von 12:00
+                # ist"). Grund fuer die immer gleichen 244: Karenzzeit
+                # (Default 60min) + bis zu ein volles Discovery-Intervall
+                # (Default 240min) bis zur Erst-Erkennung.
+                message = (
+                    f"Checkpoint '{cp['name']}' existiert seit {created_utc:%d.%m.%Y %H:%M} UTC "
+                    f"(vor {age_str}), {origin}, Cluster {hyperv_cluster_names.get(vm.cluster_id, '?')}"
+                )
+                existing = active_by_key.get((AlertType.HYPERV_ORPHAN_CHECKPOINT, key))
+                if existing is None:
                     _trigger(
                         AlertType.HYPERV_ORPHAN_CHECKPOINT, key,
                         object_name=f"{vm.name} / {cp['name']}",
                         hyperv_cluster_id=vm.cluster_id,
                         vm_name=vm.name,
                         checkpoint_id=cp["id"],
-                        message=(
-                            f"Checkpoint '{cp['name']}' seit {age_minutes} Minuten vorhanden ({origin}), "
-                            f"Cluster {hyperv_cluster_names.get(vm.cluster_id, '?')}"
-                        ),
+                        message=message,
                     )
+                elif existing.message != message:
+                    existing.message = message  # relative Altersangabe aktuell halten
 
         for (alert_type, key), alert in active_by_key.items():
             if alert_type == AlertType.BACKUP_MISSED:
