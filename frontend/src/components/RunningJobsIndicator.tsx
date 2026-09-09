@@ -70,7 +70,7 @@ function CancelJobButton({ runId, jobName }: { runId: string; jobName: string })
       message:
         `'${jobName}' wirklich abbrechen? Wird nach dem aktuellen Schritt gestoppt (kann je nach Schritt bis zu ` +
         "ca. 1 Minute dauern), bereits erstellte Checkpoints werden aufgeräumt. Bereits erstellte Snapshots bleiben gültig.",
-      confirmLabel: "Abbrechen",
+      confirmLabel: "Job abbrechen",
       color: "red",
       onConfirm: () =>
         cancelRun.mutate(runId, {
@@ -83,7 +83,7 @@ function CancelJobButton({ runId, jobName }: { runId: string; jobName: string })
 
   return (
     <Button size="xs" variant="subtle" color="red" ml={20} onClick={handleCancel} loading={cancelRun.isPending} style={{ alignSelf: "flex-start" }}>
-      Abbrechen
+      Job abbrechen
     </Button>
   );
 }

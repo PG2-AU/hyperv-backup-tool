@@ -173,7 +173,7 @@ export function JobsPage() {
       message:
         `'${run.job_name}' wirklich abbrechen? Wird nach dem aktuellen Schritt gestoppt (kann je nach Schritt bis zu ` +
         "ca. 1 Minute dauern), bereits erstellte Checkpoints werden aufgeräumt. Bereits erstellte Snapshots bleiben gültig.",
-      confirmLabel: "Abbrechen",
+      confirmLabel: "Job abbrechen",
       color: "red",
       onConfirm: () =>
         cancelRun.mutate(run.id, {
@@ -540,18 +540,26 @@ export function JobsPage() {
                   </Table.Td>
                   <Table.Td>{run.job_name}</Table.Td>
                   <Table.Td>
-                    <Group gap={4} wrap="nowrap">
-                      <Badge color={STATUS_COLOR[run.status]} variant="light">
+                    <Stack gap={4} align="flex-start">
+                      <Badge
+                        color={STATUS_COLOR[run.status]}
+                        variant="light"
+                        styles={{ label: { overflow: "visible", textOverflow: "unset" } }}
+                      >
                         {run.status}
                       </Badge>
                       {run.cancel_requested_at && run.status === "running" && (
                         <Tooltip label="Wird nach dem aktuellen Schritt gestoppt">
-                          <Badge color="orange" variant="light">
+                          <Badge
+                            color="orange"
+                            variant="light"
+                            styles={{ label: { overflow: "visible", textOverflow: "unset" } }}
+                          >
                             Abbruch angefordert
                           </Badge>
                         </Tooltip>
                       )}
-                    </Group>
+                    </Stack>
                   </Table.Td>
                   <Table.Td>{new Date(run.started_at).toLocaleString("de-DE")}</Table.Td>
                   <Table.Td>{run.finished_at ? new Date(run.finished_at).toLocaleString("de-DE") : "-"}</Table.Td>
@@ -572,7 +580,7 @@ export function JobsPage() {
                           leftSection={<IconX size={14} />}
                           onClick={() => cancelJob(run)}
                         >
-                          Abbrechen
+                          Job abbrechen
                         </Button>
                       )}
                     </Group>

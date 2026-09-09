@@ -336,8 +336,10 @@ export function AlertsPage() {
             <Table.Tr>
               <Table.Th style={{ whiteSpace: "nowrap" }}>Typ</Table.Th>
               <Table.Th>Objekt</Table.Th>
-              <Table.Th>Meldung</Table.Th>
-              <Table.Th>Status</Table.Th>
+              {/* Meldung nimmt die Breiten-Reserve auf und darf umbrechen,
+                  damit die Badge-Spalten Typ/Status nicht gestaucht werden. */}
+              <Table.Th style={{ minWidth: 320 }}>Meldung</Table.Th>
+              <Table.Th style={{ whiteSpace: "nowrap" }}>Status</Table.Th>
               <Table.Th>Aufgetreten</Table.Th>
               <Table.Th>Behoben</Table.Th>
               <Table.Th>Aktion</Table.Th>
@@ -365,9 +367,13 @@ export function AlertsPage() {
                   </Badge>
                 </Table.Td>
                 <Table.Td>{alert.object_name}</Table.Td>
-                <Table.Td>{alert.message}</Table.Td>
-                <Table.Td>
-                  <Badge color={alert.status === "active" ? "red" : "green"} variant="light">
+                <Table.Td style={{ minWidth: 320, whiteSpace: "normal" }}>{alert.message}</Table.Td>
+                <Table.Td style={{ whiteSpace: "nowrap" }}>
+                  <Badge
+                    color={alert.status === "active" ? "red" : "green"}
+                    variant="light"
+                    styles={{ label: { overflow: "visible", textOverflow: "unset" } }}
+                  >
                     {alert.status === "active" ? "Aktiv" : "Aufgelöst"}
                   </Badge>
                 </Table.Td>
