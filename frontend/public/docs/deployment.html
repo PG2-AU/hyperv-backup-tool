@@ -1233,7 +1233,25 @@ Fehler dabei: <code>Host &#39;&lt;IP&gt;&#39; ist auf Port 5986 nicht erreichbar
 überhaupt Zugangsdaten geprüft werden (Listener fehlt, Firewall blockiert,
 oder Netzwerkpfad/VLAN-Trennung).</p>
 <p><strong>Auf JEDEM Clusterknoten</strong> (nicht nur einem — welcher Knoten gerade den
-Cluster Name Object (CNO) besitzt, kann wechseln), als Administrator:</p>
+Cluster Name Object (CNO) besitzt, kann wechseln), als Administrator. Die
+folgenden vier Schritte wurden live gegen einen echten produktiven Cluster
+(Verbindung per Hostname, selbstsigniertes Zertifikat) durchgespielt —
+nach jedem Schritt einmal verifizieren, bevor der nächste beginnt, und den
+ganzen Ablauf danach für jeden weiteren Knoten wiederholen.</p>
+<p><strong>Wichtig bei einem Failover-Cluster:</strong> Wird der Cluster in der GUI über
+die Adresse des <strong>Cluster Name Object (CNO)</strong> angesprochen (empfohlen,
+statt eines einzelnen physischen Knotens — sonst fällt die Verwaltung
+beim Ausfall/Failover dieses einen Knotens komplett aus), landet jede
+WinRM-Verbindung bei genau dem Knoten, der die Cluster-Group gerade
+besitzt — je nach Failover-Status kann das <strong>jeder</strong> der Knoten sein. Das
+Zertifikat <strong>jedes einzelnen</strong> Knotens muss deshalb zusätzlich zur eigenen
+Identität auch die CNO-Adresse als Subject Alternative Name (SAN)
+enthalten, sonst schlägt die Verbindung fehl, sobald die Cluster-Group auf
+einen anderen Knoten wechselt. Beispiel: CNO <code>svhvclu01.rvm.local</code>, Knoten
+<code>svhvhost01.rvm.local</code>/<code>svhvhost02.rvm.local</code> — <strong>beide</strong>
+Knoten-Zertifikate brauchen den CNO-Namen zusätzlich zur eigenen Adresse
+als SAN.</p>
+<h3>Schritt 1: WinRM aktivieren, vorhandene Zertifikate prüfen</h3>
 <p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
@@ -1245,32 +1263,66 @@ Get-ChildItem -Path Cert:\LocalMachine\My</code></pre>
 <p>Ein Failover-Cluster legt dort bereits automatisch erzeugte Zertifikate an
 (z.B. <code>CN=&lt;GUID&gt;.TLS</code> oder <code>CN=CLIUSR</code>) — die sind <strong>nicht</strong> geeignet, das
 sind interne Cluster-Kommunikations-/Dienstkonto-Zertifikate, keine
-Host-Zertifikate für einen WinRM-Listener.</p>
-<p><strong>Wichtig bei einem Failover-Cluster:</strong> Wird der Cluster in der GUI über
-die Adresse des <strong>Cluster Name Object (CNO)</strong> angesprochen (empfohlen,
-statt eines einzelnen physischen Knotens — sonst fällt die Verwaltung
-beim Ausfall/Failover dieses einen Knotens komplett aus), landet jede
-WinRM-Verbindung bei genau dem Knoten, der die Cluster-Group gerade
-besitzt — je nach Failover-Status kann das <strong>jeder</strong> der Knoten sein. Das
-Zertifikat <strong>jedes einzelnen</strong> Knotens muss deshalb zusätzlich zur eigenen
-Identität auch die CNO-Adresse als Subject Alternative Name (SAN)
-enthalten, sonst schlägt die Verbindung fehl, sobald die Cluster-Group auf
-einen anderen Knoten wechselt. Beispiel: CNO <code>10.93.70.110</code>, Knoten
-<code>10.93.70.111</code>/<code>10.93.70.112</code> — <strong>beide</strong> Knoten-Zertifikate brauchen
-<code>.110</code> zusätzlich zur eigenen Adresse als SAN.</p>
-<p><strong>Stolperstein bei Verbindung per IP-Adresse:</strong>
-<code>New-SelfSignedCertificate -DnsName &lt;ip-literal&gt;</code> schreibt eine IP-Adresse
-als <strong>DNS-Typ</strong>-SAN-Eintrag (<code>DNS:10.93.70.110</code>), nicht als
+Host-Zertifikate für einen WinRM-Listener. Zertifikate mit dem eigenen
+Hostnamen als <code>CN</code> (z. B. von einer früheren WinRM-Quick-Config oder
+internen PKI) können dagegen bereits brauchbar sein — vor dem Erzeugen
+eines neuen Zertifikats lohnt sich ein Blick auf Aussteller, Gültigkeit
+und vor allem die SAN-Einträge jedes Kandidaten:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object { $_.Subject -match $env:COMPUTERNAME } |
+    Format-List Subject, Issuer, NotBefore, NotAfter, Thumbprint
+
+# Fuer jeden gefundenen Thumbprint die SAN-Eintraege pruefen:
+$candidate = Get-Item Cert:\LocalMachine\My\&lt;Thumbprint&gt;
+$candidate.Extensions | Where-Object { $_.Oid.FriendlyName -eq "Subject Alternative Name" } |
+    ForEach-Object { $_.Format($true) }</code></pre>
+</div>
+<p>Trägt keines der vorhandenen Zertifikate sowohl den eigenen Hostnamen als
+auch den CNO-Namen als SAN (live beobachtet: selbst ein frisches,
+selbstsigniertes <code>CN=&lt;hostname&gt;</code>-Zertifikat hatte nur den eigenen
+Hostnamen als SAN, kein zweites ganz ohne SAN-Erweiterung — beide
+ungeeignet), weiter mit Schritt 2.</p>
+<h3>Schritt 2: Zertifikat erzeugen</h3>
+<p>Voraussetzung bei Verbindung per Hostname: der CNO-Name muss per DNS
+auflösbar sein —</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Resolve-DnsName &lt;CNO-Hostname&gt;</code></pre>
+</div>
+<p>— liefert eine Adresse. Ist das nicht der Fall (kein DNS-Eintrag für den
+CNO), stattdessen den <code>certreq</code>-Weg per IP-Adresse weiter unten verwenden.</p>
+<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>$hostname = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
+$cnoHostname = "&lt;CNO-Hostname, z.B. svhvclu01.rvm.local&gt;"
+
+$cert = New-SelfSignedCertificate -DnsName $hostname, $cnoHostname `
+    -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)
+$cert.Thumbprint</code></pre>
+</div>
+<p><strong>Verifizieren</strong> — beide Namen müssen als SAN erscheinen:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>$cert.Extensions | Where-Object { $_.Oid.FriendlyName -eq "Subject Alternative Name" } |
+    ForEach-Object { $_.Format($true) }</code></pre>
+</div>
+<p>Erwartete Ausgabe: <code>DNS Name=&lt;eigener Hostname&gt;</code> <strong>und</strong>
+<code>DNS Name=&lt;CNO-Hostname&gt;</code>, je eine Zeile.</p>
+<p>Von der internen PKI ausgestellte Zertifikate sind gegenüber einem
+selbstsignierten vorzuziehen (siehe Kasten weiter unten) — solange auch
+sie beide Namen als SAN tragen.</p>
+<p><strong>Alternative bei Verbindung per IP-Adresse</strong> (kein DNS-Eintrag für den
+CNO): <code>New-SelfSignedCertificate -DnsName &lt;ip-literal&gt;</code> schreibt eine
+IP-Adresse als <strong>DNS-Typ</strong>-SAN-Eintrag (<code>DNS:10.93.70.110</code>), nicht als
 <strong>IP-Address-Typ</strong>-Eintrag. Die von dieser App verwendete TLS-Validierung
 (Python/OpenSSL) akzeptiert für eine Verbindung per IP-Adresse aber
 ausschließlich echte <code>IP Address:</code>-Einträge — ein optisch identischer
 <code>DNS:</code>-Eintrag genügt <strong>nicht</strong> und führt zu
 <code>SSLCertVerificationError: IP address mismatch</code>, obwohl die IP scheinbar
-korrekt im Zertifikat steht (live verifiziert). Wird der Cluster in der
-GUI stattdessen per <strong>Hostname</strong> angesprochen, tritt das Problem nicht auf
-— dann genügt <code>New-SelfSignedCertificate -DnsName $hostname, $cnoHostname</code>. Bei Verbindung per IP-Adresse (z.B. weil für den CNO kein
-DNS-Eintrag existiert) muss stattdessen <code>certreq</code> mit einer <code>.inf</code>-Datei
-verwendet werden, die echte <code>ipaddress=</code>-SAN-Einträge erzeugt:</p>
+korrekt im Zertifikat steht (live verifiziert). Stattdessen <code>certreq</code> mit
+einer <code>.inf</code>-Datei verwenden, die echte <code>ipaddress=</code>-SAN-Einträge erzeugt:</p>
 <p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
@@ -1319,33 +1371,75 @@ $cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq "CN=
     Sort-Object NotBefore -Descending | Select-Object -First 1
 $cert.Thumbprint</code></pre>
 </div>
-<p>(Kein Failover-Cluster, oder Verbindung per Hostname statt IP: einfacher
-via <code>$cert = New-SelfSignedCertificate -DnsName $hostname, $cnoHostname -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)</code>
-— dann direkt mit dem Listener-Schritt unten weitermachen.)</p>
-<p>Von der internen PKI ausgestellte Zertifikate sind gegenüber beiden
-selbstsignierten Varianten vorzuziehen (siehe Kasten weiter unten) —
-solange auch sie sowohl die eigene Knoten-Identität als auch die
-CNO-Adresse als SAN tragen.</p>
-<p><strong>Listener einrichten</strong> — falls bereits einer existiert (z.B. von einem
-vorherigen Versuch mit falschem Zertifikat), erst entfernen:</p>
+<h3>Schritt 3: HTTPS-Listener anlegen</h3>
 <p><strong>Host: Hyper-V-Clusterknoten</strong></p>
+<p>Erst prüfen, ob bereits ein HTTPS-Listener existiert (z. B. von einem
+vorherigen Versuch mit falschem Zertifikat):</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Get-ChildItem WSMan:\localhost\Listener | Format-List Keys, Address, Transport</code></pre>
+</div>
+<p>Existiert bereits einer (<code>Transport=HTTPS</code>), erst entfernen:</p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code>Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match "Transport=HTTPS" } |
-    Remove-Item -Recurse -Force
-New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * `
-    -CertificateThumbprint $cert.Thumbprint -Force
-
-# Eingehende WinRM-HTTPS-Verbindungen zulassen
-Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
-New-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow
-
-# Nur noetig, wenn HVNB_WINRM_TRANSPORT=credssp (der in dieser App
-# empfohlene Standard, siehe .env-Beispiel in Abschnitt 5 -- CredSSP
-# vermeidet das klassische WinRM-"Double-Hop"-Problem, falls ein
-# Remote-Befehl seinerseits auf ein weiteres Netzwerkziel zugreifen muss):
-Enable-WSManCredSSP -Role Server</code></pre>
+    Remove-Item -Recurse -Force</code></pre>
 </div>
+<p>Neu anlegen:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * `
+    -CertificateThumbprint $cert.Thumbprint -Force</code></pre>
+</div>
+<p><strong>Verifizieren</strong> — die kompakte <code>Get-ChildItem</code>-Ansicht zeigt das
+gebundene Zertifikat nicht zuverlässig an, deshalb stattdessen:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>winrm enumerate winrm/config/listener</code></pre>
+</div>
+<p>Beim <code>Transport = HTTPS</code>-Eintrag muss <code>CertificateThumbprint</code> genau dem
+in Schritt 2 erzeugten Wert entsprechen.</p>
+<h3>Schritt 4: Firewall + CredSSP</h3>
+<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
+New-NetFirewallRule -DisplayName "WinRM HTTPS (5986)" -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow</code></pre>
+</div>
+<p><strong>Verifizieren:</strong></p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Get-NetFirewallRule -DisplayName "WinRM HTTPS (5986)"   # Enabled: True erwartet</code></pre>
+</div>
+<div class="callout warn">
+<span class="callout-label">Stolperstein</span>
+<p>ein lokaler <code>Test-NetConnection -ComputerName localhost -Port 5986</code> beweist <strong>nicht</strong> zuverlässig, dass die
+Firewall-Regel für externe Verbindungen tatsächlich greift —
+Loopback-Verkehr (<code>::1</code>/<code>127.0.0.1</code>) wird von eingehenden
+Windows-Firewall-Regeln in aller Regel gar nicht gefiltert, live
+beobachtet. Immer zusätzlich <code>Get-NetFirewallRule</code> selbst kontrollieren,
+oder von einem anderen Rechner im Netz aus testen.</p>
+</div>
+<p>CredSSP nur nötig, wenn <code>HVNB_WINRM_TRANSPORT=credssp</code> (der in dieser App
+empfohlene Standard, siehe <code>.env</code>-Beispiel in Abschnitt 5 — CredSSP
+vermeidet das klassische WinRM-„Double-Hop&quot;-Problem, falls ein
+Remote-Befehl seinerseits auf ein weiteres Netzwerkziel zugreifen muss).
+<strong>Erst prüfen, ob es nicht schon aktiv ist</strong>, bevor der Schritt erneut
+ausgeführt wird:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Get-WSManCredSSP</code></pre>
+</div>
+<p>Steht dort bereits „This computer is configured to receive credentials
+from a remote client computer&quot;, ist dieser Schritt schon erledigt und
+kann übersprungen werden. Andernfalls:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Enable-WSManCredSSP -Role Server</code></pre>
+</div>
+<p><strong>Damit ist dieser Knoten fertig.</strong> Schritt 1–4 für JEDEN weiteren
+Clusterknoten wiederholen — jeweils mit dessen eigenem Hostnamen, aber
+demselben CNO-Namen als zweitem SAN-Eintrag.</p>
 <div class="callout">
 <span class="callout-label">Host-Wechsel: ab hier zurück auf dem HVNB-Server</span>
 <p>(Windows-Host mit
