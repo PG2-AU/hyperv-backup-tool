@@ -30,6 +30,7 @@ const TYPE_LABEL: Record<AlertType, string> = {
   backup_missed: "Backup verpasst",
   schedule_collision: "Zeitplan-Kollision",
   hyperv_orphan_checkpoint: "Verwaister Checkpoint",
+  hyperv_vm_multi_csv: "VM auf mehreren CSVs",
   backup_failed: "Backup fehlgeschlagen",
 };
 
@@ -44,6 +45,7 @@ const TYPE_COLOR: Record<AlertType, string> = {
   backup_missed: "red",
   schedule_collision: "yellow",
   hyperv_orphan_checkpoint: "orange",
+  hyperv_vm_multi_csv: "orange",
   backup_failed: "red",
 };
 
@@ -135,6 +137,18 @@ function AlertAction({ alert }: { alert: Alert }) {
         {alert.hyperv_cluster_id && alert.vm_name && alert.checkpoint_id && (
           <DeleteOrphanCheckpointButton clusterId={alert.hyperv_cluster_id} vmName={alert.vm_name} checkpointId={alert.checkpoint_id} />
         )}
+        <DismissAlertButton alertId={alert.id} />
+      </Group>
+    );
+  }
+  if (alert.alert_type === "hyperv_vm_multi_csv") {
+    return (
+      <Group gap="xs" wrap="nowrap">
+        <Tooltip label="Zum Inventar">
+          <ActionIcon component={Link} to="/vms?tab=vms" variant="subtle">
+            <IconExternalLink size={16} />
+          </ActionIcon>
+        </Tooltip>
         <DismissAlertButton alertId={alert.id} />
       </Group>
     );

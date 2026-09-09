@@ -32,6 +32,7 @@ class AlertType(str, enum.Enum):
     BACKUP_MISSED = "backup_missed"
     SCHEDULE_COLLISION = "schedule_collision"
     HYPERV_ORPHAN_CHECKPOINT = "hyperv_orphan_checkpoint"
+    HYPERV_VM_MULTI_CSV = "hyperv_vm_multi_csv"
 
 
 class AlertScope(str, enum.Enum):
@@ -76,7 +77,8 @@ class Alert(Base):
     # wieder manuell zusammensuchen muss.
     resource_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     policy_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    # Nur bei hyperv_orphan_checkpoint gesetzt -- Grundlage fuer den
+    # vm_name: bei hyperv_orphan_checkpoint UND hyperv_vm_multi_csv gesetzt.
+    # Bei hyperv_orphan_checkpoint zusaetzlich Grundlage fuer den
     # "Checkpoint löschen"-Button (siehe app.api.routes.alerts), der denselben
     # Endpunkt wie die Inventory-Aktion aufruft (POST /api/vms/{cluster}/
     # {vm}/checkpoints/{checkpoint}/delete, siehe app.api.routes.vms).

@@ -466,6 +466,26 @@ export function VmsPage() {
                           </Badge>
                         </Tooltip>
                       )}
+                      {vm.csv_paths.length > 1 && (
+                        <Tooltip
+                          multiline
+                          w={280}
+                          label={
+                            <Stack gap={2}>
+                              <Text size="xs">Festplatten verteilt auf:</Text>
+                              {vm.csv_paths.map((p) => (
+                                <Text key={p} size="xs">
+                                  {p.split(/[\\/]/).pop()}
+                                </Text>
+                              ))}
+                            </Stack>
+                          }
+                        >
+                          <Badge color="orange" variant="filled" leftSection={<IconAlertTriangle size={12} />}>
+                            {vm.csv_paths.length} CSVs
+                          </Badge>
+                        </Tooltip>
+                      )}
                     </Group>
                   </Table.Td>
                   <Table.Td>{vm.host}</Table.Td>

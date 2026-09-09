@@ -544,6 +544,7 @@ export type AlertType =
   | "backup_missed"
   | "schedule_collision"
   | "hyperv_orphan_checkpoint"
+  | "hyperv_vm_multi_csv"
   | "backup_failed";
 
 export interface Alert {
@@ -564,7 +565,8 @@ export interface Alert {
   run_id?: string | null;
   resource_group_id?: string | null;
   policy_id?: string | null;
-  // Nur bei hyperv_orphan_checkpoint gesetzt -- Grundlage fuer den
+  // vm_name: bei hyperv_orphan_checkpoint UND hyperv_vm_multi_csv gesetzt.
+  // Bei hyperv_orphan_checkpoint zusaetzlich Grundlage fuer den
   // "Checkpoint löschen"-Button.
   vm_name?: string | null;
   checkpoint_id?: string | null;

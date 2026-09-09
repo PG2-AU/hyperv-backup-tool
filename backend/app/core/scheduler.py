@@ -40,7 +40,7 @@ from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapsho
 from app.models.email_config import EmailConfig
 from app.models.file_restore_run import FileRestoreRun
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
-from app.models.hyperv_discovery import HyperVCsv, HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink
@@ -594,7 +594,9 @@ def run_alert_check() -> None:
     Hyper-V-Checkpoints (HYPERV_ORPHAN_CHECKPOINT, IST Teil der
     automatischen Aufloesung -- verschwindet der Checkpoint, egal ob durch
     Loeschen ueber die GUI oder anderweitig, aus der naechsten Discovery,
-    loest sich der Alarm von selbst)."""
+    loest sich der Alarm von selbst) sowie VMs, deren VHDX ueber mehrere
+    CSVs verteilt liegen (HYPERV_VM_MULTI_CSV, ebenfalls Teil der
+    automatischen Aufloesung, bewusst ohne Karenzzeit)."""
     db = SessionLocal()
     try:
         # Bewusst KEIN "Task gestartet"-Log hier (anders als Health-Check/
@@ -894,6 +896,45 @@ def run_alert_check() -> None:
                     )
                 elif existing.message != message:
                     existing.message = message  # relative Altersangabe aktuell halten
+
+        # VM mit VHDX auf mehreren CSVs verteilt (Nutzer-Vorgabe 2026-09-09,
+        # Backlog-Punkt 35): eine CSV-scope Protection Group deckt nur EIN
+        # CSV ab -- verteilt eine VM ihre Disks ueber mehrere, schuetzt eine
+        # einzelne CSV-Policy dann nur einen Teil dieser VM. Rein aus den
+        # bereits discoverten HyperVVhd-Zeilen abgeleitet (kein WinRM-Aufruf
+        # hier), pro VM eindeutig ueber die stabile Hyper-V-VM-GUID
+        # (vm_uuid) -- KEIN Cluster-Praefix im object_key noetig (anders als
+        # z.B. bei CSV-/VM-Namen, siehe _csv_index in jobs.py), da diese GUID
+        # bereits global eindeutig ist. Bewusst OHNE Karenzzeit (anders als
+        # beim Checkpoint-Alarm, Nutzer-Entscheidung): eine kurze,
+        # tatsaechliche Storage-Live-Migration einer einzelnen VHDX zwischen
+        # zwei CSVs loest den Alarm beim naechsten Discovery-Lauf ohnehin von
+        # selbst wieder auf.
+        csv_names_by_vm: dict[str, set[str]] = defaultdict(set)
+        vm_name_by_uuid: dict[str, str] = {}
+        cluster_by_uuid: dict[str, str] = {}
+        for vhd in db.query(HyperVVhd).filter(HyperVVhd.vm_uuid.isnot(None), HyperVVhd.csv_name.isnot(None)).all():
+            csv_names_by_vm[vhd.vm_uuid].add(vhd.csv_name)
+            vm_name_by_uuid[vhd.vm_uuid] = vhd.vm_name
+            cluster_by_uuid[vhd.vm_uuid] = vhd.cluster_id
+        for vm_uuid, csv_names in csv_names_by_vm.items():
+            if len(csv_names) < 2:
+                continue
+            seen_keys.add((AlertType.HYPERV_VM_MULTI_CSV, vm_uuid))
+            vm_name = vm_name_by_uuid.get(vm_uuid, "?")
+            sorted_csvs = sorted(csv_names)
+            message = f"VM verteilt ihre Festplatten auf {len(sorted_csvs)} CSVs: {', '.join(sorted_csvs)}"
+            existing = active_by_key.get((AlertType.HYPERV_VM_MULTI_CSV, vm_uuid))
+            if existing is None:
+                _trigger(
+                    AlertType.HYPERV_VM_MULTI_CSV, vm_uuid,
+                    object_name=vm_name,
+                    hyperv_cluster_id=cluster_by_uuid.get(vm_uuid),
+                    vm_name=vm_name,
+                    message=message,
+                )
+            elif existing.message != message:
+                existing.message = message
 
         for (alert_type, key), alert in active_by_key.items():
             if alert_type == AlertType.BACKUP_MISSED:
