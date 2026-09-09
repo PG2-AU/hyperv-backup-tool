@@ -21,12 +21,12 @@ import {
 } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useCsvs, useDeleteVmCheckpoint, useVms } from "@/api/hooks";
+import { useCsvs, useDeleteVmCheckpoint, useResourceGroups, useVms } from "@/api/hooks";
 import { BackupsModal } from "@/components/BackupsModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
-import type { BackupScope, Csv, PolicySummary, Vm } from "@/api/types";
+import type { BackupScope, Csv, ResourceGroup, Vm } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
@@ -321,7 +321,8 @@ export function VmsPage() {
   const filteredVms = (vms ?? []).filter((vm) => matchesAllColumns(vm, vmSearch));
   const [csvSearch, setCsvSearch] = useState("");
   const filteredCsvs = (csvs ?? []).filter((csv) => matchesAllColumns(csv, csvSearch));
-  const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
+  const { runOrPickForGroups, pickerPolicies, closePicker, pickPolicy } = useRunPolicy();
+  const { data: resourceGroups } = useResourceGroups();
   const deleteCheckpoint = useDeleteVmCheckpoint();
 
   function showBackups(scope: BackupScope, name: string, clusterId: string | null | undefined) {
@@ -381,16 +382,22 @@ export function VmsPage() {
     setSelectedCsv((prev) => (prev && csvIdentity(prev) === csvIdentity(csv) ? null : csv));
   }
 
-  function policiesOf(names: string[], ids: string[]): PolicySummary[] {
-    return ids.map((id, i) => ({ id, name: names[i] }));
+  // Eine VM/ein CSV kann gleichzeitig in mehreren Protection Groups
+  // enthalten sein (Nutzer-Vorgabe 2026-09-09) -- resource_group_names ist
+  // global eindeutig (ResourceGroup.name hat einen unique-Constraint),
+  // daher reicht ein Namensabgleich gegen die vollen ResourceGroup-Objekte
+  // (liefert dadurch group.id UND group.policies direkt, siehe
+  // runOrPickForGroups in utils/runPolicy.ts).
+  function protectingGroupsOf(names: string[]): ResourceGroup[] {
+    return (resourceGroups ?? []).filter((g) => names.includes(g.name));
   }
 
   function runBackupNow(vm: Vm) {
-    runOrPick(policiesOf(vm.policy_names, vm.policy_ids));
+    runOrPickForGroups(protectingGroupsOf(vm.resource_group_names));
   }
 
   function runBackupNowForCsv(csv: Csv) {
-    runOrPick(policiesOf(csv.policy_names, csv.policy_ids));
+    runOrPickForGroups(protectingGroupsOf(csv.resource_group_names));
   }
 
   return (
@@ -696,7 +703,7 @@ export function VmsPage() {
         initialSnapshotId={restoreWizardTarget?.snapshotId}
       />
 
-      <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={runPolicy} />
+      <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={pickPolicy} />
     </Stack>
   );
 }
