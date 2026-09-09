@@ -1234,23 +1234,52 @@ Fehler dabei: <code>Host &#39;&lt;IP&gt;&#39; ist auf Port 5986 nicht erreichbar
 oder Netzwerkpfad/VLAN-Trennung).</p>
 <p><strong>Auf JEDEM Clusterknoten</strong> (nicht nur einem — welcher Knoten gerade den
 Cluster Name Object (CNO) besitzt, kann wechseln), als Administrator. Die
-folgenden vier Schritte wurden live gegen einen echten produktiven Cluster
-(Verbindung per Hostname, selbstsigniertes Zertifikat) durchgespielt —
-nach jedem Schritt einmal verifizieren, bevor der nächste beginnt, und den
-ganzen Ablauf danach für jeden weiteren Knoten wiederholen.</p>
+folgenden vier Schritte wurden live gegen einen echten produktiven
+6-Knoten-Cluster durchgespielt — nach jedem Schritt einmal verifizieren,
+bevor der nächste beginnt, und den ganzen Ablauf danach für jeden weiteren
+Knoten wiederholen.</p>
+<div class="callout warn">
+<span class="callout-label">Wichtiger Fund, live an einem echten Cluster gemacht</span>
+<p>die App
+verbindet sich zum CNO zwar mit der Adresse, die beim Hinzufügen des
+Clusters in der GUI eingetragen wurde (Hostname <strong>oder</strong> IP) — für
+<strong>jede tatsächliche VM-Operation</strong> (Discovery, Checkpoints, VHD-Abfragen)
+verbindet sie sich aber zusätzlich <strong>direkt zu jedem einzelnen Knoten,
+und zwar bewusst über dessen Management-IP-Adresse, nie über dessen
+Hostnamen</strong> (<code>HyperVService._node_management_ips</code>/<code>run_discovery</code> in
+<code>backend/app/services/hyperv_service.py</code> — Knotennamen sind vom
+Container aus oft nicht auflösbar, die Management-IPs aus
+<code>Get-ClusterNetworkInterface</code> dagegen schon). Das gilt <strong>unabhängig</strong>
+davon, ob der Cluster in der GUI per Hostname oder IP angesprochen
+wurde. Live beobachtet: die CNO-Verbindung per Hostname funktionierte
+einwandfrei (Cluster-Übersicht zeigte &quot;Healthy 6/6&quot;), aber die
+zusätzliche proaktive Erreichbarkeitsprüfung pro Knoten schlug für
+<strong>alle</strong> Knoten mit <code>SSLCertVerificationError: IP address mismatch, certificate is not valid for &#39;&lt;Knoten-IP&gt;&#39;</code>
+fehl — weil die zuvor rein hostnamenbasierten Zertifikate keine
+IP-Address-SAN-Einträge enthielten. Konsequenz: <strong>jedes</strong> Knoten-
+Zertifikat braucht immer eine echte IP-Address-SAN für die eigene
+Management-IP, egal welcher Verbindungsweg für den CNO gewählt wird —
+der reine Hostname-Pfad unten ist deshalb nur für einen <strong>einzelnen,
+nicht geclusterten</strong> Hyper-V-Host ausreichend (dort gibt es kein
+Pro-Knoten-Fan-out). Für jeden Failover-Cluster gilt Schritt 2 in der
+<code>certreq</code>-Variante als Standard, nicht als Sonderfall.</p>
+</div>
 <p><strong>Wichtig bei einem Failover-Cluster:</strong> Wird der Cluster in der GUI über
 die Adresse des <strong>Cluster Name Object (CNO)</strong> angesprochen (empfohlen,
 statt eines einzelnen physischen Knotens — sonst fällt die Verwaltung
 beim Ausfall/Failover dieses einen Knotens komplett aus), landet jede
-WinRM-Verbindung bei genau dem Knoten, der die Cluster-Group gerade
-besitzt — je nach Failover-Status kann das <strong>jeder</strong> der Knoten sein. Das
-Zertifikat <strong>jedes einzelnen</strong> Knotens muss deshalb zusätzlich zur eigenen
-Identität auch die CNO-Adresse als Subject Alternative Name (SAN)
-enthalten, sonst schlägt die Verbindung fehl, sobald die Cluster-Group auf
-einen anderen Knoten wechselt. Beispiel: CNO <code>svhvclu01.rvm.local</code>, Knoten
-<code>svhvhost01.rvm.local</code>/<code>svhvhost02.rvm.local</code> — <strong>beide</strong>
-Knoten-Zertifikate brauchen den CNO-Namen zusätzlich zur eigenen Adresse
-als SAN.</p>
+WinRM-Verbindung zum CNO bei genau dem Knoten, der die Cluster-Group
+gerade besitzt — je nach Failover-Status kann das <strong>jeder</strong> der Knoten
+sein. Das Zertifikat <strong>jedes einzelnen</strong> Knotens muss deshalb zusätzlich
+zur eigenen Identität auch die CNO-Adresse als Subject Alternative Name
+(SAN) enthalten, sonst schlägt die CNO-Verbindung fehl, sobald die
+Cluster-Group auf einen anderen Knoten wechselt. Beispiel: CNO
+<code>svhvclu01.rvm.local</code>/<code>10.10.2.10</code>, Knoten
+<code>svhvhost01.rvm.local</code>/<code>10.10.2.11</code>,
+<code>svhvhost02.rvm.local</code>/<code>10.10.2.12</code>, usw. — <strong>jedes einzelne</strong>
+Knoten-Zertifikat braucht sowohl den CNO-Namen als auch die
+CNO-IP-Adresse zusätzlich zur eigenen Identität (Hostname <strong>und</strong>
+Management-IP) als SAN.</p>
 <h3>Schritt 1: WinRM aktivieren, vorhandene Zertifikate prüfen</h3>
 <p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <div class="code-block">
@@ -1284,52 +1313,32 @@ selbstsigniertes <code>CN=&lt;hostname&gt;</code>-Zertifikat hatte nur den eigen
 Hostnamen als SAN, kein zweites ganz ohne SAN-Erweiterung — beide
 ungeeignet), weiter mit Schritt 2.</p>
 <h3>Schritt 2: Zertifikat erzeugen</h3>
-<p>Voraussetzung bei Verbindung per Hostname: der CNO-Name muss per DNS
-auflösbar sein —</p>
+<p><strong>Standardweg für einen Failover-Cluster</strong> (jeder Knoten braucht sowohl
+Hostname als auch Management-IP als SAN, siehe Fund oben) — Management-IP
+und CNO-IP vorher ermitteln:</p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
-<pre><code>Resolve-DnsName &lt;CNO-Hostname&gt;</code></pre>
+<pre><code># Eigene Management-IP (im 'ClusterAndClient'-Netz):
+Get-ClusterNetworkInterface | Where-Object { $_.Network.Role -eq 'ClusterAndClient' -and $_.Node -eq $env:COMPUTERNAME } |
+    Select-Object Node, Address
+# CNO-IP:
+Resolve-DnsName &lt;CNO-Hostname&gt;   # oder direkt (Get-ClusterResource -Name "Cluster Name" | Get-ClusterParameter -Name Address).Value</code></pre>
 </div>
-<p>— liefert eine Adresse. Ist das nicht der Fall (kein DNS-Eintrag für den
-CNO), stattdessen den <code>certreq</code>-Weg per IP-Adresse weiter unten verwenden.</p>
-<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
-<div class="code-block">
-<span class="code-label">PowerShell</span>
-<pre><code>$hostname = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
-$cnoHostname = "&lt;CNO-Hostname, z.B. svhvclu01.rvm.local&gt;"
-
-$cert = New-SelfSignedCertificate -DnsName $hostname, $cnoHostname `
-    -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)
-$cert.Thumbprint</code></pre>
-</div>
-<p><strong>Verifizieren</strong> — beide Namen müssen als SAN erscheinen:</p>
-<div class="code-block">
-<span class="code-label">PowerShell</span>
-<pre><code>$cert.Extensions | Where-Object { $_.Oid.FriendlyName -eq "Subject Alternative Name" } |
-    ForEach-Object { $_.Format($true) }</code></pre>
-</div>
-<p>Erwartete Ausgabe: <code>DNS Name=&lt;eigener Hostname&gt;</code> <strong>und</strong>
-<code>DNS Name=&lt;CNO-Hostname&gt;</code>, je eine Zeile.</p>
-<p>Von der internen PKI ausgestellte Zertifikate sind gegenüber einem
-selbstsignierten vorzuziehen (siehe Kasten weiter unten) — solange auch
-sie beide Namen als SAN tragen.</p>
-<p><strong>Alternative bei Verbindung per IP-Adresse</strong> (kein DNS-Eintrag für den
-CNO): <code>New-SelfSignedCertificate -DnsName &lt;ip-literal&gt;</code> schreibt eine
-IP-Adresse als <strong>DNS-Typ</strong>-SAN-Eintrag (<code>DNS:10.93.70.110</code>), nicht als
-<strong>IP-Address-Typ</strong>-Eintrag. Die von dieser App verwendete TLS-Validierung
-(Python/OpenSSL) akzeptiert für eine Verbindung per IP-Adresse aber
-ausschließlich echte <code>IP Address:</code>-Einträge — ein optisch identischer
-<code>DNS:</code>-Eintrag genügt <strong>nicht</strong> und führt zu
-<code>SSLCertVerificationError: IP address mismatch</code>, obwohl die IP scheinbar
-korrekt im Zertifikat steht (live verifiziert). Stattdessen <code>certreq</code> mit
-einer <code>.inf</code>-Datei verwenden, die echte <code>ipaddress=</code>-SAN-Einträge erzeugt:</p>
-<p><strong>Host: Hyper-V-Clusterknoten</strong></p>
+<p><strong>Host: Hyper-V-Clusterknoten</strong>, <code>certreq</code> mit einer <code>.inf</code>-Datei, die
+echte <code>ipaddress=</code>-SAN-Einträge erzeugt (<code>New-SelfSignedCertificate</code>
+schreibt IP-Adressen als <strong>DNS-Typ</strong>-SAN, z. B. <code>DNS:10.10.2.11</code>, nicht
+als <strong>IP-Address-Typ</strong> — die von dieser App verwendete TLS-Validierung
+(Python/OpenSSL) akzeptiert für eine Verbindung per IP aber ausschließlich
+echte <code>IP Address:</code>-Einträge, ein optisch identischer <code>DNS:</code>-Eintrag
+genügt <strong>nicht</strong> und führt zu <code>SSLCertVerificationError: IP address mismatch</code>, obwohl die IP scheinbar korrekt im Zertifikat steht — live
+zweimal in zwei unterschiedlichen Kundenumgebungen verifiziert):</p>
 <div class="code-block">
 <span class="code-label">PowerShell</span>
 <pre><code># Auf JEDEM Knoten einzeln ausfuehren, jeweils mit der eigenen $ownIp:
-$hostname = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
-$ownIp    = "10.93.70.111"   # auf dem jeweils anderen Knoten: 10.93.70.112 usw.
-$cnoIp    = "10.93.70.110"   # IP/Hostname des Cluster Name Object
+$hostname    = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
+$cnoHostname = "&lt;CNO-Hostname, z.B. svhvclu01.rvm.local&gt;"
+$ownIp       = "&lt;eigene Management-IP, z.B. 10.10.2.11&gt;"   # je Knoten unterschiedlich
+$cnoIp       = "&lt;CNO-IP, z.B. 10.10.2.10&gt;"                 # bei allen Knoten gleich
 
 New-Item -ItemType Directory -Path C:\temp -Force | Out-Null
 $infPath = "C:\temp\winrm-cert.inf"
@@ -1359,6 +1368,7 @@ ValidityPeriodUnits = 5
 [Extensions]
 2.5.29.17 = "{text}"
 _continue_ = "dns=$hostname&amp;"
+_continue_ = "dns=$cnoHostname&amp;"
 _continue_ = "ipaddress=$ownIp&amp;"
 _continue_ = "ipaddress=$cnoIp&amp;"
 
@@ -1371,6 +1381,32 @@ $cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq "CN=
     Sort-Object NotBefore -Descending | Select-Object -First 1
 $cert.Thumbprint</code></pre>
 </div>
+<p><strong>Verifizieren</strong> — <code>certreq -new</code> gibt die erzeugten SANs direkt in der
+<code>Installed Certificate</code>-Ausgabe aus (<code>Subject: CN=... (DNS Name=..., DNS Name=..., IP Address=..., IP Address=...)</code>), zusätzlich zur Kontrolle
+per <code>certutil</code>:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>Export-Certificate -Cert $cert -FilePath C:\temp\winrm-$($env:COMPUTERNAME).cer
+certutil -dump C:\temp\winrm-$($env:COMPUTERNAME).cer | Select-String "IP Address"</code></pre>
+</div>
+<p>Erwartete Ausgabe: <strong>zwei</strong> <code>IP Address=</code>-Zeilen (eigene Management-IP und
+CNO-IP) — nicht als reiner Text im DNS-Feld, sondern als echter
+IP-Address-SAN-Typ.</p>
+<p><strong>Sonderfall: ein einzelner, nicht geclusterter Hyper-V-Host</strong> (kein
+Failover-Cluster, kein Pro-Knoten-Fan-out über
+<code>_node_management_ips</code>/<code>run_discovery</code> — der Fund oben betrifft nur echte
+Cluster). Hier reicht der einfachere Weg per Hostname, sofern der Host in
+der GUI ebenfalls per Hostname angesprochen wird:</p>
+<div class="code-block">
+<span class="code-label">PowerShell</span>
+<pre><code>$hostname = [System.Net.Dns]::GetHostByName($env:COMPUTERNAME).HostName
+$cert = New-SelfSignedCertificate -DnsName $hostname `
+    -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(5)
+$cert.Thumbprint</code></pre>
+</div>
+<p>Von der internen PKI ausgestellte Zertifikate sind gegenüber einem
+selbstsignierten vorzuziehen (siehe Kasten weiter unten) — solange auch
+sie die jeweils benötigten SANs tragen (Hostname/IP je nach Szenario oben).</p>
 <h3>Schritt 3: HTTPS-Listener anlegen</h3>
 <p><strong>Host: Hyper-V-Clusterknoten</strong></p>
 <p>Erst prüfen, ob bereits ein HTTPS-Listener existiert (z. B. von einem
