@@ -394,26 +394,31 @@ export function VmsPage() {
   }
 
   return (
-    <Stack>
+    <Stack style={{ height: "calc(100vh - 112px)" }} gap="md">
       <Title order={3}>Inventory</Title>
 
       {selectedVm && <VmChainHeader vm={selectedVm} csvs={csvs} onClose={() => setSelectedVm(null)} />}
       {selectedCsv && <CsvChainHeader csv={selectedCsv} vms={vms} onClose={() => setSelectedCsv(null)} />}
 
-      <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "vms" })}>
+      <Tabs
+        value={activeTab}
+        onChange={(v) => setParams({ tab: v ?? "vms" })}
+        style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+      >
         <Tabs.List>
           <Tabs.Tab value="vms">Virtuelle Maschinen</Tabs.Tab>
           <Tabs.Tab value="csv">Cluster Shared Volumes</Tabs.Tab>
         </Tabs.List>
 
-        <Tabs.Panel value="vms" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="vms" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <Title order={5} mb="sm">Virtuelle Maschinen</Title>
             <Group justify="flex-start" mb="sm">
               <SearchInput value={vmSearch} onChange={setVmSearch} placeholder="VM-Name suchen…" />
             </Group>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             <Table striped highlightOnHover>
-            <Table.Thead>
+            <Table.Thead style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--mantine-color-body)" }}>
               <Table.Tr>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Status</Table.Th>
@@ -517,19 +522,21 @@ export function VmsPage() {
                 Keine VM passt zur Suche „{vmSearch}“.
               </Text>
             )}
+            </div>
           </Paper>
         </Tabs.Panel>
 
-        <Tabs.Panel value="csv" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="csv" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <Title order={5} mb="sm">
               Cluster Shared Volumes
             </Title>
             <Group justify="flex-start" mb="sm">
               <SearchInput value={csvSearch} onChange={setCsvSearch} />
             </Group>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             <Table striped highlightOnHover>
-            <Table.Thead>
+            <Table.Thead style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--mantine-color-body)" }}>
               <Table.Tr>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Owner-Node</Table.Th>
@@ -622,6 +629,7 @@ export function VmsPage() {
               Kein CSV passt zur Suche „{csvSearch}".
             </Text>
           )}
+          </div>
           </Paper>
         </Tabs.Panel>
       </Tabs>
