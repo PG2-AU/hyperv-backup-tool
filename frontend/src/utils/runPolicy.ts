@@ -4,7 +4,6 @@ import { notifications } from "@mantine/notifications";
 import { useResourceGroups, useTriggerJobRun } from "@/api/hooks";
 import type { PolicySummary, ResourceGroup } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
-import { formatSchedule } from "@/utils/format";
 
 /** Startet eine Backup-Policy direkt, wenn genau eine (Gruppe, Policy)-
  * Kombination zur Auswahl steht; bei mehreren wird ein Auswahl-Dialog
@@ -153,10 +152,10 @@ export function useRunPolicy() {
       if (candidate) runPolicy(candidate.policy, candidate.resourceGroupId);
     },
     // Zweistufiger Dialog (runOrPickForGroups): Schritt 1 = Protection
-    // Group, Schritt 2 = Policy dieser Gruppe (Zeitplan mit im Label).
+    // Group, Schritt 2 = Policy dieser Gruppe (reiner Policy-Name, ohne
+    // Zeitplan -- Nutzer-Feedback 2026-09-09).
     step1GroupChoices: groupChoices?.map((g) => ({ id: g.id, name: g.name })) ?? null,
-    step2PolicyChoices:
-      chosenGroup?.policy_links.map((l) => ({ id: l.policy_id, name: `${l.policy_name} (${formatSchedule(l.schedule)})` })) ?? null,
+    step2PolicyChoices: chosenGroup?.policy_links.map((l) => ({ id: l.policy_id, name: l.policy_name })) ?? null,
     pickStep1Group: (picked: PolicySummary) => pickStep1Group(picked.id),
     pickStep2Policy: (picked: PolicySummary) => pickStep2Policy(picked.id),
     closeStep1,
