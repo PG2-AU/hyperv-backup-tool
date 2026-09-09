@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Anchor, Badge, Grid, Group, Paper, ScrollArea, SegmentedControl, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
+import { Anchor, Badge, Grid, Group, Paper, Progress, ScrollArea, SegmentedControl, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -80,6 +80,7 @@ function StatCard({
   sub,
   color,
   to,
+  progressPercent,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -87,11 +88,14 @@ function StatCard({
   sub?: string;
   color?: string;
   to?: string;
+  // Optionaler Fortschrittsbalken unter dem Wert (Backlog-Punkt 37, z.B.
+  // Anteil geschuetzter VMs) -- 0-100, nur gerendert wenn gesetzt.
+  progressPercent?: number;
 }) {
   return (
     <Paper p="sm" component={to ? Link : undefined} to={to as string} style={to ? { cursor: "pointer" } : undefined}>
       <Group justify="space-between" align="flex-start" wrap="nowrap">
-        <div style={{ overflow: "hidden" }}>
+        <div style={{ overflow: "hidden", flex: 1 }}>
           <Text size="xs" c="dimmed" tt="uppercase" fw={700} truncate>
             {label}
           </Text>
@@ -103,6 +107,14 @@ function StatCard({
               {sub}
             </Text>
           ) : null}
+          {progressPercent != null && (
+            <Progress
+              value={progressPercent}
+              size={6}
+              mt={6}
+              color={progressPercent >= 90 ? "green" : progressPercent >= 50 ? "yellow" : "red"}
+            />
+          )}
         </div>
         {icon}
       </Group>
@@ -204,6 +216,7 @@ export function DashboardPage() {
           label="Geschuetzte VMs"
           value={String(protectedVms)}
           sub={vms ? `von ${vms.length} gesamt` : undefined}
+          progressPercent={vms && vms.length > 0 ? Math.round((protectedVms / vms.length) * 100) : undefined}
         />
         <StatCard
           icon={<IconClockHour4 size={24} />}
