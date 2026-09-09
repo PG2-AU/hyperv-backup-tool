@@ -1,4 +1,4 @@
-import { createTheme, MantineColorsTuple } from "@mantine/core";
+import { Badge, createTheme, MantineColorsTuple } from "@mantine/core";
 
 const brand: MantineColorsTuple = [
   "#eef4ff",
@@ -24,5 +24,21 @@ export const theme = createTheme({
     Paper: {
       defaultProps: { withBorder: true },
     },
+    // Mantine's Badge schneidet seinen Text per eingebautem
+    // overflow:hidden/text-overflow:ellipsis ab, sobald er in einem engeren
+    // Flex-/Tabellen-Kontext landet (z.B. schmale Dashboard-Spalten) --
+    // live als "APP-K...", "PR...", "SUCCE..." beobachtet. Zentral hier
+    // abgeschaltet statt an jeder einzelnen Badge-Stelle im Code, da kein
+    // einziges Badge im Projekt eine eigene Breiten-Beschraenkung setzt
+    // (gepreuft) -- Badges zeigen jetzt immer ihren vollstaendigen Text,
+    // draengen ihren Container bei Bedarf stattdessen weiter auf (die
+    // jeweilige Tabelle/ScrollArea faengt das ueber horizontales Scrollen
+    // auf, wo vorhanden).
+    Badge: Badge.extend({
+      styles: {
+        root: { overflow: "visible", flexShrink: 0 },
+        label: { overflow: "visible", textOverflow: "unset", whiteSpace: "nowrap" },
+      },
+    }),
   },
 });
