@@ -72,7 +72,7 @@ export function JobsPage() {
 
   const { data: policies } = usePolicies();
   const { data: runs } = useJobRuns();
-  const { runOrPick, runPolicy, pickerPolicies, closePicker } = useRunPolicy();
+  const { runOrPick, runPolicy, pickerPolicies, closePicker, pickPolicy } = useRunPolicy();
   const triggerRun = useTriggerJobRun();
   const cancelRun = useCancelJobRun();
   const [groupPickerPolicy, setGroupPickerPolicy] = useState<BackupPolicy | null>(null);
@@ -174,7 +174,11 @@ export function JobsPage() {
   }
 
   function runGroupNow(group: ResourceGroup) {
-    runOrPick(group.policies);
+    // group.id explizit mitgeben (siehe useRunPolicy) -- sonst wuerde bei
+    // einer Policy, die an MEHRERE Protection Groups gehaengt ist, faelschlich
+    // fuer alle verknuepften Gruppen ein Lauf gestartet statt nur fuer diese
+    // eine, von der aus der Button geklickt wurde (live gefunden 2026-09-09).
+    runOrPick(group.policies, group.id);
   }
 
   function showSnapshots(run: BackupJobRun) {
@@ -712,7 +716,7 @@ export function JobsPage() {
         schedule={editingSchedule}
         duplicateFrom={duplicateFromSchedule}
       />
-      <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={runPolicy} />
+      <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={pickPolicy} />
       <ResourceGroupPickerModal
         opened={!!groupPickerPolicy}
         onClose={() => setGroupPickerPolicy(null)}
