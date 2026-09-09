@@ -50,6 +50,16 @@ class Settings(BaseSettings):
     # Container als vertrauenswuerdig erkannt wird. Leer = nur der
     # Standard-System-Truststore (siehe DEPLOYMENT.md Abschnitt 1).
     winrm_ca_trust_path: str = ""
+    # Hartes Wall-Clock-Zeitlimit fuer EINEN einzelnen PowerShell-/WinRM-
+    # Aufruf im Backup-Pfad (Checkpoint erstellen/entfernen, Owner-Node
+    # aufloesen). pywinrm pollt einen langlaufenden Befehl sonst unbegrenzt
+    # weiter -- ein haengendes Get-VHD/Remove-VMSnapshot (z.B. auf einer noch
+    # mergenden AVHDX-Kette) fror bisher den ganzen Backup-Lauf ein. Bei
+    # Ueberschreitung wird der Schritt als Fehler gewertet (Lauf endet FAILED
+    # statt zu haengen, siehe HyperVCommandTimeout). Bewusst NICHT im
+    # Restore-Pfad gesetzt -- dort sind grosse Copy-Item-Aufrufe legitim
+    # langlaufend.
+    winrm_backup_step_timeout_seconds: int = 180
 
     # --- Periodischer Hintergrundabgleich (app.core.scheduler) ---
     healthcheck_interval_minutes: int = 15

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -135,6 +136,21 @@ class HyperVConnectionError(Exception):
     """Verbindungsaufbau oder Cluster-Abfrage per WinRM fehlgeschlagen."""
 
 
+class HyperVCommandTimeout(RuntimeError):
+    """Ein EINZELNER PowerShell-/WinRM-Aufruf hat das gesetzte harte
+    Zeitlimit ueberschritten. pywinrm pollt einen langlaufenden Befehl sonst
+    unbegrenzt weiter (read_timeout_sec/operation_timeout_sec greifen nur bei
+    voelligem Stillstand, nicht bei einem langsam arbeitenden Befehl), wodurch
+    z.B. ein auf einer noch mergenden AVHDX-Kette blockierendes Get-VHD /
+    Remove-VMSnapshot den ganzen Backup-Lauf einfrieren konnte. Wird nur bei
+    Instanzen mit ps_timeout_sec geworfen -- aktuell ausschliesslich der
+    Backup-Pfad (app.api.routes.jobs._execute_job_run), NICHT der Restore-Pfad
+    (dort sind grosse Copy-Item-Aufrufe legitim langlaufend). Subklasse von
+    RuntimeError, damit die bestehenden 'except Exception'-Zweige den Schritt
+    als fehlgeschlagen vermerken und der Lauf terminiert (FAILED) statt zu
+    haengen."""
+
+
 def check_reachability(host: str, port: int, timeout_sec: float = 5.0) -> None:
     """Schneller TCP-Connect-Test auf den WinRM-Port, bevor der volle
     WinRM/PowerShell-Handshake versucht wird. pywinrm's eigener Timeout
@@ -151,16 +167,28 @@ def check_reachability(host: str, port: int, timeout_sec: float = 5.0) -> None:
 
 
 class HyperVService:
-    def __init__(self, settings: Settings, target_host: str, use_https: bool | None = None):
+    def __init__(
+        self, settings: Settings, target_host: str, use_https: bool | None = None,
+        *, ps_timeout_sec: int | None = None,
+    ):
         """'use_https' ist ein Pro-Cluster-Override (Standard: globale
         Einstellung 'winrm_use_https'). Der Port wird daraus abgeleitet
         (Standard-WinRM-Ports 5986/HTTPS bzw. 5985/HTTP), nicht aus der
         globalen 'winrm_port'-Einstellung -- so koennen einzelne Cluster ohne
         eigenes Zertifikat per HTTP angebunden werden, waehrend andere
-        HTTPS nutzen."""
+        HTTPS nutzen.
+
+        'ps_timeout_sec' (optional): hartes Wall-Clock-Zeitlimit fuer JEDEN
+        einzelnen _run_ps-Aufruf dieser Instanz. Bei Ueberschreitung wird
+        HyperVCommandTimeout geworfen (der haengende pywinrm-Aufruf laeuft im
+        Hintergrund-Thread aus). None = kein Zeitlimit (bisheriges Verhalten;
+        so bleibt u.a. der Restore-Pfad mit legitimen Langlaeufer-Copy-Item
+        unberuehrt). Gesetzt wird es aktuell nur im Backup-Pfad, siehe
+        app.api.routes.jobs._execute_job_run."""
         self._settings = settings
         self._target_host = target_host
         self._use_https = settings.winrm_use_https if use_https is None else use_https
+        self._ps_timeout_sec = ps_timeout_sec
 
     @property
     def port(self) -> int:
@@ -191,12 +219,39 @@ class HyperVService:
         return self._session(username, password, read_timeout_sec=read_timeout_sec, operation_timeout_sec=operation_timeout_sec)
 
     def _run_ps(self, session: winrm.Session, script: str) -> CommandResult:
-        result = session.run_ps(script)
+        result = session.run_ps(script) if self._ps_timeout_sec is None else self._run_ps_guarded(session, script)
         return CommandResult(
             success=result.status_code == 0,
             output=result.std_out.decode("utf-8", errors="replace"),
             error=result.std_err.decode("utf-8", errors="replace"),
         )
+
+    def _run_ps_guarded(self, session: winrm.Session, script: str):
+        """session.run_ps in einem Daemon-Thread mit hartem join(timeout).
+        Kehrt der Aufruf nicht rechtzeitig zurueck, wird HyperVCommandTimeout
+        geworfen -- der Thread laeuft weiter aus (pywinrm kann einen
+        laufenden Befehl nicht von aussen abbrechen), blockiert als Daemon
+        aber weder den Aufrufer noch den Prozess-Shutdown."""
+        box: dict = {}
+
+        def _worker() -> None:
+            try:
+                box["result"] = session.run_ps(script)
+            except BaseException as exc:  # noqa: BLE001 -- im Worker gefangen, unten unveraendert re-raised
+                box["error"] = exc
+
+        thread = threading.Thread(target=_worker, name="winrm-run-ps", daemon=True)
+        thread.start()
+        thread.join(self._ps_timeout_sec)
+        if thread.is_alive():
+            raise HyperVCommandTimeout(
+                f"PowerShell-/WinRM-Aufruf auf '{self._target_host}' ueberschritt "
+                f"{self._ps_timeout_sec}s und wurde abgebrochen (der Aufruf haengt -- z.B. "
+                "Get-VHD/Remove-VMSnapshot auf einer noch mergenden AVHDX-Kette)."
+            )
+        if "error" in box:
+            raise box["error"]
+        return box["result"]
 
     def get_cluster_summary(self, username: str, password: str) -> HyperVClusterSummary:
         """Verbindungstest + Basisinfo (Cluster-Name, Knoten-Status). Wird

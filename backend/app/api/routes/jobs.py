@@ -975,12 +975,23 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                     continue
                 try:
                     with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
-                        hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
+                        # ps_timeout_sec: hartes Wall-Clock-Limit je WinRM-
+                        # Aufruf -- ein haengendes Get-VHD/Remove-VMSnapshot
+                        # (mergende AVHDX-Kette) laesst sonst den ganzen Lauf
+                        # einfrieren. Nur hier im Backup-Pfad gesetzt.
+                        step_timeout = settings.winrm_backup_step_timeout_seconds
+                        hv_service = HyperVService(
+                            settings, hv_cluster.management_address,
+                            use_https=hv_cluster.use_https, ps_timeout_sec=step_timeout,
+                        )
                         hv_password = decrypt_secret(hv_cluster.encrypted_password)
                         cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
                         owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or hv_vm.host_name
                         node_address = hv_service.resolve_node_address(cno_session, owner_node)
-                        node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
+                        node_service = HyperVService(
+                            settings, node_address,
+                            use_https=hv_cluster.use_https, ps_timeout_sec=step_timeout,
+                        )
                         node_session = node_service.connect(hv_cluster.username, hv_password)
                         node_service.create_checkpoint(node_session, vm_name, checkpoint_name, policy.consistency)
                         active_checkpoints.append((node_service, node_session, vm_name))
