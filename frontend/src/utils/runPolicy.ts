@@ -126,8 +126,18 @@ export function useRunPolicy() {
     setChosenGroup(null);
   }
 
-  function closeGroupPicker() {
+  // ZWEI getrennte Close-Handler statt einem gemeinsamen: PolicyPickerModal
+  // ruft bei jeder Auswahl intern IMMER onPick gefolgt von onClose auf
+  // (siehe PolicyPickerModal.tsx). Ein gemeinsamer Handler, der bei JEDEM
+  // onClose beide States loescht, hat live beobachtet den gerade erst von
+  // pickStep1Group() gesetzten chosenGroup (Uebergang zu Schritt 2) im
+  // selben Klick sofort wieder auf null gesetzt, bevor Schritt 2 ueberhaupt
+  // sichtbar wurde -- Schritt 1 schloss sich, Schritt 2 oeffnete sich nie.
+  function closeStep1() {
     setGroupChoices(null);
+  }
+
+  function closeStep2() {
     setChosenGroup(null);
   }
 
@@ -149,6 +159,7 @@ export function useRunPolicy() {
       chosenGroup?.policy_links.map((l) => ({ id: l.policy_id, name: `${l.policy_name} (${formatSchedule(l.schedule)})` })) ?? null,
     pickStep1Group: (picked: PolicySummary) => pickStep1Group(picked.id),
     pickStep2Policy: (picked: PolicySummary) => pickStep2Policy(picked.id),
-    closeGroupPicker,
+    closeStep1,
+    closeStep2,
   };
 }
