@@ -606,6 +606,8 @@ export interface SchedulerConfig {
   discovery_interval_minutes: number;
   snapshot_reconcile_hour: number;
   retention_cleanup_hour: number;
+  backup_cancel_force_timeout_minutes: number;
+  backup_run_max_duration_minutes: number;
   updated_at?: string | null;
 }
 
@@ -614,6 +616,8 @@ export interface SchedulerConfigWritePayload {
   discovery_interval_minutes: number;
   snapshot_reconcile_hour: number;
   retention_cleanup_hour: number;
+  backup_cancel_force_timeout_minutes: number;
+  backup_run_max_duration_minutes: number;
 }
 
 export interface EmailConfig {

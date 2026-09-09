@@ -36,7 +36,7 @@ from app.db.session import SessionLocal
 from app.models.alert import Alert, AlertConfig, AlertScope, AlertStatus, AlertType
 from app.models.allowed_schedule_collision import AllowedScheduleCollision
 from app.models.backup_policy import BackupPolicy, RetentionType
-from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapshotDestination, JobStatus
+from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapshotDestination, BackupRunStep, JobStatus
 from app.models.email_config import EmailConfig
 from app.models.file_restore_run import FileRestoreRun
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
@@ -44,7 +44,7 @@ from app.models.hyperv_discovery import HyperVCsv, HyperVVm
 from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink
-from app.models.restore_run import RestoreRun, RestoreStatus
+from app.models.restore_run import RestoreRun, RestoreStatus, RestoreStepStatus
 from app.models.schedule import ScheduleType
 from app.models.scheduler_config import SchedulerConfig
 from app.models.scheduler_status import SchedulerStatus
@@ -1137,6 +1137,108 @@ def run_scheduled_backups() -> None:
         db.close()
 
 
+def force_cancel_timed_out_runs() -> None:
+    """Zeitlimit-Watchdog fuer Backup-Laeufe. Deckt zwei Faelle ab, beide
+    GUI-konfigurierbar (Settings > Hintergrundjobs, scheduler_config):
+
+    1. Abbruch angefordert, reagiert aber nicht
+       (backup_cancel_force_timeout_minutes, Default 10). POST
+       /jobs/runs/{id}/cancel setzt nur cancel_requested_at;
+       _execute_job_run (app.api.routes.jobs) prueft das Feld
+       ausschliesslich ZWISCHEN den Schritten. Haengt ein einzelner
+       WinRM-/NetApp-Aufruf laenger als sein eigenes Timeout (oder
+       ueberhaupt -- z.B. eine TCP-Verbindung, die weder ankommt noch
+       abgewiesen wird), bliebe der Lauf sonst beliebig lange als 'laeuft /
+       Abbruch angefordert' stehen.
+
+    2. Gesamtlaufzeit ueberschritten (backup_run_max_duration_minutes,
+       Default 0 = aus). Harte Obergrenze fuer JEDEN laufenden Lauf, auch
+       ohne Abbruch-Anforderung -- fuer den Fall, dass ein Lauf haengt,
+       ohne dass jemand ihn manuell abbricht.
+
+    In beiden Faellen blockiert die verwaiste 'laeuft'-Zeile sonst ueber
+    den "laeuft bereits"-Schutz (_start_job_run) dauerhaft jeden kuenftigen
+    Lauf derselben Resource Group + Policy.
+
+    Laeuft minuetlich als EIGENER APScheduler-Job -- bewusst nicht als Teil
+    von run_scheduled_backups, dessen synchroner _execute_job_run-Aufruf ja
+    selbst der Haenger sein kann (max_instances=1 wuerde diesen Watchdog
+    dann mitblockieren). Der ggf. noch haengende Worker-Thread erkennt beim
+    spaeteren Zuruecklaufen an finished_at != None, dass er sein Ergebnis
+    verwerfen muss, statt den erzwungenen Abbruch zu ueberschreiben (siehe
+    _execute_job_run).
+
+    Etwaige zu diesem Zeitpunkt auf einem Hyper-V-Knoten noch offene
+    Applikationskonsistenz-Checkpoints kann dieser DB-only-Job NICHT
+    aufraeumen (der haengende Thread haelt die einzige WinRM-Session, ein
+    Neustart hat sie ganz verloren) -- sie fallen in die separate
+    Verwaiste-Checkpoint-Erkennung (run_alert_check) inkl. Loesch-Aktion in
+    Inventar/Alarmen."""
+    db = SessionLocal()
+    try:
+        config = db.query(SchedulerConfig).first()
+        cancel_timeout = config.backup_cancel_force_timeout_minutes if config else 10
+        max_duration = config.backup_run_max_duration_minutes if config else 0
+        now = datetime.now(timezone.utc)
+
+        # run_id -> (BackupRun, Begruendungstext). setdefault(): steht ein
+        # Lauf wegen beider Kriterien an, gewinnt der Abbruch-Grund (zuerst
+        # eingetragen) -- er ist die konkretere Erklaerung.
+        stuck: dict[str, tuple[BackupRun, str]] = {}
+
+        if cancel_timeout and cancel_timeout > 0:
+            for run in (
+                db.query(BackupRun)
+                .filter(
+                    BackupRun.status == JobStatus.RUNNING,
+                    BackupRun.cancel_requested_at.isnot(None),
+                    BackupRun.cancel_requested_at < now - timedelta(minutes=cancel_timeout),
+                )
+                .all()
+            ):
+                stuck[run.id] = (
+                    run,
+                    f"Abbruch nach Zeitlimit erzwungen ({cancel_timeout} min nach der Abbruch-Anforderung "
+                    "noch immer aktiv -- ein Schritt reagierte nicht)",
+                )
+
+        if max_duration and max_duration > 0:
+            for run in (
+                db.query(BackupRun)
+                .filter(
+                    BackupRun.status == JobStatus.RUNNING,
+                    BackupRun.started_at < now - timedelta(minutes=max_duration),
+                )
+                .all()
+            ):
+                stuck.setdefault(
+                    run.id,
+                    (run, f"Hart abgebrochen: Gesamtlaufzeit-Limit von {max_duration} min ueberschritten"),
+                )
+
+        for run, note in stuck.values():
+            run.status = JobStatus.CANCELLED
+            run.finished_at = datetime.now(timezone.utc)
+            run.error_message = f"{note}; {run.error_message}" if run.error_message else note
+            db.add(
+                BackupRunStep(
+                    run_id=run.id, step="run-finished",
+                    label="Backup abgebrochen (Zeitlimit erzwungen)",
+                    message=note, status=RestoreStepStatus.SKIPPED,
+                )
+            )
+            _log(
+                db,
+                f"Backup-Lauf '{run.policy_name}' (Lauf {run.id}) hart abgeschlossen: {note}. "
+                "Etwaige offene Hyper-V-Checkpoints raeumt die Verwaiste-Checkpoint-Erkennung auf.",
+                level="WARNING",
+            )
+        if stuck:
+            db.commit()
+    finally:
+        db.close()
+
+
 def start_scheduler() -> BackgroundScheduler:
     global _scheduler
     settings = get_settings()
@@ -1183,6 +1285,10 @@ def start_scheduler() -> BackgroundScheduler:
         id="scheduled-backups", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
+        force_cancel_timed_out_runs, CronTrigger(minute="*"),
+        id="force-cancel-timed-out-runs", replace_existing=True, max_instances=1,
+    )
+    scheduler.add_job(
         run_file_restore_expiry, IntervalTrigger(hours=1, start_date=INTERVAL_ANCHOR),
         id="file-restore-expiry", replace_existing=True, max_instances=1,
     )
@@ -1213,6 +1319,7 @@ def start_scheduler() -> BackgroundScheduler:
             f"Snapshot-Abgleich taeglich um {snapshot_hour:02d}:00 UTC, "
             f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
             f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone}, "
+            "haengende abgebrochene Backup-Laeufe minuetlich per Zeitlimit-Watchdog beendet, "
             f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h), "
             f"E-Mail-Tageszusammenfassung alle 15min geprueft, "
             f"Warnungs-Check (Kapazitaet/Cluster/SnapMirror) alle {alert_check_interval}min)",

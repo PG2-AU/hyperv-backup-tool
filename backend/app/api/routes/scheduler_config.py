@@ -48,6 +48,10 @@ def update_scheduler_config(
     config.discovery_interval_minutes = payload.discovery_interval_minutes
     config.snapshot_reconcile_hour = payload.snapshot_reconcile_hour
     config.retention_cleanup_hour = payload.retention_cleanup_hour
+    # Kein reschedule_job() noetig: force_cancel_timed_out_runs laeuft mit
+    # festem Minuten-Trigger und liest diese Felder bei jedem Lauf frisch.
+    config.backup_cancel_force_timeout_minutes = payload.backup_cancel_force_timeout_minutes
+    config.backup_run_max_duration_minutes = payload.backup_run_max_duration_minutes
     config.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(config)

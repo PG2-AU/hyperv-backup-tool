@@ -16,6 +16,8 @@ export function SchedulerConfigTab() {
   const [discoveryMinutes, setDiscoveryMinutes] = useState<number | string>(240);
   const [snapshotHour, setSnapshotHour] = useState("2");
   const [retentionHour, setRetentionHour] = useState("2");
+  const [cancelForceTimeoutMinutes, setCancelForceTimeoutMinutes] = useState<number | string>(10);
+  const [runMaxDurationMinutes, setRunMaxDurationMinutes] = useState<number | string>(0);
 
   useEffect(() => {
     if (!config) return;
@@ -23,6 +25,8 @@ export function SchedulerConfigTab() {
     setDiscoveryMinutes(config.discovery_interval_minutes);
     setSnapshotHour(String(config.snapshot_reconcile_hour));
     setRetentionHour(String(config.retention_cleanup_hour));
+    setCancelForceTimeoutMinutes(config.backup_cancel_force_timeout_minutes);
+    setRunMaxDurationMinutes(config.backup_run_max_duration_minutes);
   }, [config]);
 
   function handleSave() {
@@ -31,6 +35,8 @@ export function SchedulerConfigTab() {
       discovery_interval_minutes: Number(discoveryMinutes),
       snapshot_reconcile_hour: Number(snapshotHour),
       retention_cleanup_hour: Number(retentionHour),
+      backup_cancel_force_timeout_minutes: Number(cancelForceTimeoutMinutes),
+      backup_run_max_duration_minutes: Number(runMaxDurationMinutes),
     };
     updateConfig
       .mutateAsync(payload)
@@ -83,6 +89,30 @@ export function SchedulerConfigTab() {
           value={retentionHour}
           onChange={(v) => v && setRetentionHour(v)}
           allowDeselect={false}
+        />
+        <NumberInput
+          label="Abbruch-Zeitlimit (Watchdog)"
+          description={
+            "Reagiert ein Backup-Lauf so lange nicht auf 'Job abbrechen' (ein Schritt hängt), wird er hart abgeschlossen, damit " +
+            "die 'läuft'-Zeile nicht dauerhaft künftige Läufe derselben Gruppe blockiert. 0 = aus."
+          }
+          min={0}
+          max={180}
+          value={cancelForceTimeoutMinutes}
+          onChange={setCancelForceTimeoutMinutes}
+          suffix=" min"
+        />
+        <NumberInput
+          label="Maximale Laufzeit je Backup-Lauf"
+          description={
+            "Harte Obergrenze für die Gesamtdauer JEDES Backup-Laufs, auch ohne manuellen Abbruch. Großzügig wählen, damit ein " +
+            "echter Großlauf nicht abgeschnitten wird. 0 = keine Obergrenze."
+          }
+          min={0}
+          max={1440}
+          value={runMaxDurationMinutes}
+          onChange={setRunMaxDurationMinutes}
+          suffix=" min"
         />
         <Group justify="flex-end">
           <Button onClick={handleSave} loading={updateConfig.isPending}>

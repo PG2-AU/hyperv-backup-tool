@@ -26,4 +26,15 @@ class SchedulerConfig(Base):
     # siehe start_scheduler in app.core.scheduler).
     snapshot_reconcile_hour: Mapped[int] = mapped_column(Integer, default=2)
     retention_cleanup_hour: Mapped[int] = mapped_column(Integer, default=2)
+    # Zeitlimit-Watchdog fuer den kooperativen Backup-Abbruch: ein Lauf, der
+    # so viele Minuten nach der Abbruch-Anforderung noch 'laeuft', wird von
+    # force_cancel_timed_out_runs (app.core.scheduler) hart abgeschlossen --
+    # sonst blockiert ein in einem WinRM-/NetApp-Aufruf haengender Thread
+    # ueber den "laeuft bereits"-Schutz dauerhaft kuenftige Laeufe. 0 = aus.
+    backup_cancel_force_timeout_minutes: Mapped[int] = mapped_column(Integer, default=10)
+    # Harte Obergrenze fuer die Gesamtlaufzeit JEDES Backup-Laufs (auch ohne
+    # Abbruch-Anforderung) -- derselbe Watchdog schliesst einen laenger
+    # laufenden Lauf hart ab. 0 = aus (Default), da die sinnvolle Grenze
+    # stark von der Umgebungsgroesse abhaengt.
+    backup_run_max_duration_minutes: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

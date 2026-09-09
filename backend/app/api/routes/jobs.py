@@ -299,8 +299,14 @@ def cancel_job_run(
     naechsten Schritt; ein bereits laufender einzelner WinRM-/NetApp-Aufruf
     kann nicht sofort unterbrochen werden (Python-Threads lassen sich nicht
     sicher von aussen abbrechen), laeuft aber wegen eigener Timeouts
-    ohnehin in maximal ~10-50s aus. Bereits erstellte Hyper-V-Checkpoints
-    werden in jedem Fall entfernt, unabhaengig vom Abbruch."""
+    ueblicherweise in ~10-50s aus. Bereits erstellte Hyper-V-Checkpoints
+    werden in jedem Fall entfernt, unabhaengig vom Abbruch.
+
+    Reagiert der Lauf trotzdem nicht (Schritt haengt dauerhaft, z.B. eine
+    TCP-Verbindung, die weder ankommt noch abgewiesen wird), schliesst der
+    Zeitlimit-Watchdog force_cancel_timed_out_runs (app.core.scheduler) die
+    Zeile nach scheduler_config.backup_cancel_force_timeout_minutes hart ab,
+    damit sie nicht dauerhaft den "laeuft bereits"-Schutz blockiert."""
     run = db.get(BackupRun, run_id)
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lauf nicht gefunden")
@@ -1117,6 +1123,17 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                 else:
                     hv_vm.checkpoints = [c for c in (hv_vm.checkpoints or []) if c.get("name") != checkpoint_name]
 
+        # Wurde dieser Lauf zwischenzeitlich vom Zeitlimit-Watchdog
+        # (force_cancel_timed_out_runs in app.core.scheduler) hart
+        # abgeschlossen, weil ein Schritt oben laenger als
+        # scheduler_config.backup_cancel_force_timeout_minutes hing? Dann
+        # steht in der DB bereits finished_at + Status CANCELLED + ein
+        # run-finished-Schritt. Das (verspaetete) Ergebnis dieses Threads
+        # verwerfen, statt beides zu ueberschreiben -- die bis hierhin noch
+        # nicht persistierten Snapshot-Zeilen aber trotzdem sichern.
+        if db.query(BackupRun.finished_at).filter(BackupRun.id == run.id).scalar() is not None:
+            db.commit()
+            return
         run.finished_at = datetime.now(timezone.utc)
         if was_cancelled:
             run.status = JobStatus.CANCELLED
@@ -1145,6 +1162,12 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
     except Exception as exc:
         run = db.get(BackupRun, run_id)
         if run is not None:
+            # Siehe Kommentar im Erfolgs-/Abbruch-Pfad oben: ein bereits vom
+            # Zeitlimit-Watchdog hart abgeschlossener Lauf darf hier nicht
+            # erneut ueberschrieben werden (doppelte run-finished-Zeile,
+            # Status faelschlich FAILED statt CANCELLED).
+            if db.query(BackupRun.finished_at).filter(BackupRun.id == run_id).scalar() is not None:
+                return
             run.status = JobStatus.FAILED
             run.error_message = str(exc)[:2000]
             run.finished_at = datetime.now(timezone.utc)

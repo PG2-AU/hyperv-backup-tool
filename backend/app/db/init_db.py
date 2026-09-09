@@ -305,6 +305,18 @@ def init_db(db: Session) -> None:
         engine, "backup_runs",
         {"resource_group_id": "VARCHAR(36)", "alert_dismissed_at": "DATETIME", "cancel_requested_at": "DATETIME"},
     )
+    _add_missing_columns(
+        engine, "scheduler_config",
+        {"backup_cancel_force_timeout_minutes": "INTEGER", "backup_run_max_duration_minutes": "INTEGER"},
+    )
+    with engine.connect() as conn:
+        conn.execute(
+            text("UPDATE scheduler_config SET backup_cancel_force_timeout_minutes = 10 WHERE backup_cancel_force_timeout_minutes IS NULL")
+        )
+        conn.execute(
+            text("UPDATE scheduler_config SET backup_run_max_duration_minutes = 0 WHERE backup_run_max_duration_minutes IS NULL")
+        )
+        conn.commit()
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     _add_missing_columns(engine, "netapp_aggregates", {"efficiency_ratio_wo_snapshots_flexclones": "FLOAT"})
     _add_missing_columns(engine, "netapp_clusters", {"system_type": "VARCHAR(20)"})
