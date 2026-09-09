@@ -263,6 +263,33 @@ def _service_for(cluster: NetAppCluster) -> NetAppOntapService:
     )
 
 
+def _service_for_snapmirror_destination(db: Session, rel: NetAppSnapMirrorRelationship, fallback: NetAppCluster) -> NetAppOntapService:
+    """SnapMirror-Beziehungen sind ONTAP-seitig Objekte des ZIEL-Clusters --
+    update()/initialize() (PATCH state=...) muessen deshalb gegen den
+    Ziel-Cluster ausgefuehrt werden, nicht den Cluster, unter dem die
+    Beziehung discovert wurde (das ist ueblicherweise der QUELL-Cluster,
+    siehe NetAppSnapMirrorRelationship.cluster_id). Bei einer Intra-Cluster-
+    Beziehung (Quelle+Ziel dieselbe physische ONTAP-Instanz, z.B. in
+    Testumgebungen) fiel die fehlende Unterscheidung nie auf, da beide
+    "Cluster"-Verbindungen dann ohnehin dasselbe System ansprechen -- live
+    gefunden bei einer echten Cross-Cluster-Beziehung (Ziel-SVM auf
+    komplett anderem physischen Cluster): der bisherige Aufruf ueber den
+    Quell-Cluster schlug mit einem verwirrenden ONTAP-Fehler ueber eine
+    (aus Quell-Cluster-Sicht nicht existente) SVM fehl. Ist der Ziel-
+    Cluster nicht in dieser App registriert, Fallback auf `fallback`
+    (funktioniert dann nur bei einer Intra-Cluster-Beziehung), statt hart
+    zu scheitern."""
+    if rel.destination_cluster_name:
+        dest_cluster = (
+            db.query(NetAppCluster)
+            .filter((NetAppCluster.name == rel.destination_cluster_name) | (NetAppCluster.ontap_cluster_name == rel.destination_cluster_name))
+            .first()
+        )
+        if dest_cluster is not None:
+            return _service_for(dest_cluster)
+    return _service_for(fallback)
+
+
 def _refresh_status(db: Session, cluster: NetAppCluster) -> NetAppCluster:
     service = _service_for(cluster)
     try:
@@ -755,12 +782,12 @@ def update_snapmirror_relationship(
     user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
-    service = _service_for(cluster)
+    rel = db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.uuid == relationship_uuid).first()
+    service = _service_for_snapmirror_destination(db, rel, cluster) if rel else _service_for(cluster)
     try:
         service.update_snapmirror_relationship(relationship_uuid, policy_name=payload.policy_name, schedule_name=payload.schedule_name)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    rel = db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.uuid == relationship_uuid).first()
     rel_label = rel.destination_path if rel else relationship_uuid
     changes = []
     if payload.policy_name is not None:
@@ -777,15 +804,39 @@ def initialize_snapmirror_relationship(
     user=Depends(require_storage_unlocked),
 ) -> dict:
     cluster = _get_cluster_or_404(db, cluster_id)
-    service = _service_for(cluster)
+    rel = db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.uuid == relationship_uuid).first()
+    service = _service_for_snapmirror_destination(db, rel, cluster) if rel else _service_for(cluster)
     try:
         service.initialize_snapmirror_relationship(relationship_uuid)
     except NetAppConnectionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    rel = db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.uuid == relationship_uuid).first()
     rel_label = rel.destination_path if rel else relationship_uuid
     _log_storage_action(db, user, f"SnapMirror-Beziehung '{rel_label}': Erstinitialisierung angestoßen")
     return {"status": "initialized"}
+
+
+@router.post("/{cluster_id}/snapmirror-relationships/{relationship_uuid}/update", status_code=status.HTTP_202_ACCEPTED)
+def trigger_snapmirror_relationship_update(
+    cluster_id: str, relationship_uuid: str, db: Session = Depends(get_db),
+    user=Depends(require_storage_unlocked),
+) -> dict:
+    """Manueller 'SnapMirror-Update erzwingen'-Button in Storage >
+    SnapMirror-Beziehungen (StoragePage.tsx) -- war bislang ein reiner
+    Frontend-Stub ohne jeden Backend-Aufruf (zeigte nur eine Erfolgs-
+    Meldung an, loeste auf dem Storage tatsaechlich nichts aus, live vom
+    Nutzer entdeckt). Wiederverwendet HyperVService.trigger_snapmirror_update
+    (bereits fuer den automatischen Trigger nach einem Backup-Snapshot in
+    jobs.py im Einsatz) sowie dieselbe Ziel-Cluster-Aufloesung wie
+    update()/initialize() oben."""
+    cluster = _get_cluster_or_404(db, cluster_id)
+    rel = db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.uuid == relationship_uuid).first()
+    service = _service_for_snapmirror_destination(db, rel, cluster) if rel else _service_for(cluster)
+    result = service.trigger_snapmirror_update(relationship_uuid)
+    if not result.success:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result.message)
+    rel_label = rel.destination_path if rel else relationship_uuid
+    _log_storage_action(db, user, f"SnapMirror-Beziehung '{rel_label}': Update manuell ausgelöst")
+    return {"status": "update-triggered"}
 
 
 @router.post("/{cluster_id}/cluster-peers", status_code=status.HTTP_201_CREATED)

@@ -53,6 +53,7 @@ import {
   useStorageAccess,
   useSvmPeers,
   useSvms,
+  useTriggerSnapmirrorUpdate,
   useUpdateStorageAccess,
   useUpdateNetAppCluster,
   useVerifyNetAppCluster,
@@ -754,12 +755,26 @@ export function StoragePage() {
     [igroups],
   );
 
+  const triggerSnapmirrorUpdate = useTriggerSnapmirrorUpdate();
+
   function triggerUpdate(rel: SnapMirrorRelationship) {
-    notifications.show({
-      title: "SnapMirror-Update ausgeloest",
-      message: `${rel.source_path} -> ${rel.destination_path}`,
-      color: "blue",
-    });
+    triggerSnapmirrorUpdate.mutate(
+      { clusterId: rel.cluster_id, relationshipUuid: rel.uuid ?? "" },
+      {
+        onSuccess: () =>
+          notifications.show({
+            title: "SnapMirror-Update ausgelöst",
+            message: `${rel.source_path} -> ${rel.destination_path}`,
+            color: "blue",
+          }),
+        onError: (err) =>
+          notifications.show({
+            title: "SnapMirror-Update fehlgeschlagen",
+            message: apiErrorMessage(err, "Unbekannter Fehler."),
+            color: "red",
+          }),
+      },
+    );
   }
 
   function handleDeleteVolume(vol: NetAppVolume) {
@@ -1410,7 +1425,12 @@ export function StoragePage() {
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="SnapMirror-Update erzwingen">
-                        <ActionIcon variant="light" disabled={locked} onClick={() => triggerUpdate(rel)}>
+                        <ActionIcon
+                          variant="light"
+                          disabled={locked}
+                          loading={triggerSnapmirrorUpdate.isPending}
+                          onClick={() => triggerUpdate(rel)}
+                        >
                           <IconRefresh size={16} />
                         </ActionIcon>
                       </Tooltip>

@@ -161,6 +161,20 @@ export function useSnapMirrorRelationships() {
   });
 }
 
+// "SnapMirror-Update erzwingen"-Button in Storage > SnapMirror-Beziehungen --
+// war bislang ein reiner Frontend-Stub ohne Backend-Aufruf (live vom Nutzer
+// entdeckt: zeigte nur eine Erfolgsmeldung, loeste auf dem Storage
+// tatsaechlich nichts aus).
+export function useTriggerSnapmirrorUpdate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clusterId, relationshipUuid }: { clusterId: string; relationshipUuid: string }) => {
+      await apiClient.post(`/netapp/clusters/${clusterId}/snapmirror-relationships/${relationshipUuid}/update`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["snapmirror"] }),
+  });
+}
+
 export function useNetworkInterfaces() {
   return useQuery({
     queryKey: ["network-interfaces"],
