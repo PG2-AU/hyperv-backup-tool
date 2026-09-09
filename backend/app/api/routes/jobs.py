@@ -926,6 +926,15 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         resource_group_ids = {run.resource_group_id} if run.resource_group_id else None
         targets, _ = _resolve_targets(db, policy, resource_group_ids)
         clusters_by_id = {c.id: c for c in db.query(NetAppCluster).all()}
+        # Fuer die Aufloesung des SnapMirror-Ziel-Clusters unten (Beziehungen
+        # sind ONTAP-seitig Objekte des Ziel-Clusters, siehe dort) -- beide
+        # Namensformen registrieren wie beim analogen Muster in
+        # cluster_ids_by_name weiter oben.
+        clusters_by_name: dict[str, NetAppCluster] = {}
+        for c in clusters_by_id.values():
+            clusters_by_name[c.name] = c
+            if c.ontap_cluster_name:
+                clusters_by_name[c.ontap_cluster_name] = c
         volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
         snapshot_suffix = run.started_at.strftime("%Y%m%d%H%M%S")
         slug = _slugify(policy.name)
@@ -1079,7 +1088,35 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                             ctx.row.status = RestoreStepStatus.SKIPPED
                             ctx.row.message = msg
                         else:
-                            sm_result = service.trigger_snapmirror_update(rel.uuid)
+                            # SnapMirror-Beziehungen sind ONTAP-seitig Objekte
+                            # des ZIEL-Clusters (der Update-Trigger, PATCH
+                            # state=snapmirrored, muss dort ausgefuehrt
+                            # werden) -- bislang wurde dafuer dieselbe
+                            # Verbindung wie fuer den Snapshot (Quell-Cluster)
+                            # wiederverwendet. Faellt bei einer Intra-Cluster-
+                            # Beziehung (Quelle+Ziel dieselbe physische ONTAP-
+                            # Instanz, z.B. in Testumgebungen) nicht auf, da
+                            # beide "Cluster"-Verbindungen dann ohnehin
+                            # dasselbe System ansprechen. Live gefunden bei
+                            # einer echten Cross-Cluster-Beziehung (Produktiv-
+                            # umgebung, Ziel-SVM auf komplett anderem
+                            # physischem Cluster): der Trigger ueber die
+                            # Quell-Cluster-Verbindung schlug mit einem
+                            # verwirrenden ONTAP-Fehler ueber eine (aus
+                            # Quell-Cluster-Sicht nicht existente) SVM fehl.
+                            dest_cluster = (
+                                clusters_by_name.get(rel.destination_cluster_name) if rel.destination_cluster_name else None
+                            )
+                            if dest_cluster is not None:
+                                target_service = _netapp_service_for(dest_cluster)
+                            else:
+                                # Ziel-Cluster nicht in dieser App registriert
+                                # (oder Discovery kennt den Namen noch nicht)
+                                # -- letzter Ausweg ueber die Quell-Cluster-
+                                # Verbindung, funktioniert nur bei einer
+                                # Intra-Cluster-Beziehung.
+                                target_service = service
+                            sm_result = target_service.trigger_snapmirror_update(rel.uuid)
                             if not sm_result.success:
                                 raise RuntimeError(sm_result.message)
                             ctx.row.message = f"Update fuer Beziehung {rel.source_path} -> {rel.destination_path} ausgeloest"
