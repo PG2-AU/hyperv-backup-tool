@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.api.routes.hyperv_clusters import _resolve_csv_name
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
@@ -453,9 +454,14 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                     used_secondary = True
 
                 if not (svm_name and volume_name and lun_path and netapp_cluster_id):
-                    csv = db.query(HyperVCsv).filter(
-                        HyperVCsv.cluster_id == run.hyperv_cluster_id, HyperVCsv.name == csv_name,
-                    ).first()
+                    # csv_name ist der aus dem VHD-Pfad geparste Mount-
+                    # Ordnername (z.B. "Volume20"), NICHT zwingend der
+                    # tatsaechliche CSV-Name -- beide koennen auseinanderlaufen,
+                    # sobald die CSV in Failover Cluster Manager umbenannt
+                    # wurde (live gefunden, siehe _resolve_csv_name).
+                    cluster_csvs = db.query(HyperVCsv).filter(HyperVCsv.cluster_id == run.hyperv_cluster_id).all()
+                    resolved_csv_name = _resolve_csv_name(csv_name, cluster_csvs)
+                    csv = next((c for c in cluster_csvs if c.name == resolved_csv_name), None)
                     if csv is None or not csv.disk_serial_number:
                         raise RuntimeError(f"CSV '{csv_name}' hat keine Disk-Seriennummer (Hyper-V-Discovery prüfen)")
                     # LIVE ueber die Seriennummer aufloesen, nicht ueber die bei

@@ -35,6 +35,41 @@ def _parse_csv_name(vhd_path: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _folder_name_from_csv_path(csv_path: str | None) -> str | None:
+    """Letztes Pfadsegment aus dem CSV-Mount-Pfad (z.B.
+    'C:\\ClusterStorage\\Volume20' -> 'Volume20')."""
+    if not csv_path:
+        return None
+    return csv_path.rstrip("\\/").rsplit("\\", 1)[-1] or None
+
+
+def _resolve_csv_name(folder_name: str | None, csvs) -> str | None:
+    """Loest den von _parse_csv_name() aus einem VHD-Pfad ermittelten
+    MOUNT-ORDNERNAMEN (z.B. 'Volume20') zum tatsaechlichen CSV-
+    Ressourcennamen auf (z.B. 'CSV03'). Live gefunden: Windows unterscheidet
+    zwischen dem CSV-Ressourcennamen (frei umbenennbar in Failover Cluster
+    Manager, taucht als HyperVCsv.name/Get-ClusterSharedVolume.Name auf)
+    und dem Mount-Ordnernamen unter C:\\ClusterStorage\\ (bleibt beim
+    Umbenennen der CSV ueblicherweise unveraendert) -- landete bislang der
+    rohe Ordnername direkt in HyperVVhd.csv_name, schlug JEDER Vergleich
+    gegen HyperVCsv.name fehl, sobald eine CSV umbenannt wurde (in der
+    Praxis haeufig): Speicherkette in der GUI zeigte 'CSV-Details nicht
+    verfuegbar' fuer ausnahmslos jede VM, CSV-/VM-scope Resource Groups
+    fanden keine Ziele, und die Restore-Live-Aufloesung schlug fehl.
+    `csvs` ist ein Iterable von Objekten mit .name und .path bzw.
+    .volume_path (akzeptiert sowohl HyperVCsv-Zeilen als auch
+    ClusterSharedVolumeInfo aus einer laufenden Discovery). Kein Treffer
+    (z.B. CSV-Discovery lief noch nie) -> der Ordnername selbst als
+    Fallback, wie im bisherigen (fehlerhaften) Verhalten."""
+    if not folder_name:
+        return None
+    for csv in csvs:
+        path = getattr(csv, "path", None) or getattr(csv, "volume_path", None)
+        if _folder_name_from_csv_path(path) == folder_name:
+            return csv.name
+    return folder_name
+
+
 def _get_cluster_or_404(db: Session, cluster_id: str) -> HyperVCluster:
     cluster = db.get(HyperVCluster, cluster_id)
     if cluster is None:
@@ -225,6 +260,10 @@ def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
         now = datetime.now(timezone.utc)
         db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster.id).delete()
         db.query(HyperVVm).filter(HyperVVm.cluster_id == cluster.id).delete()
+        # data.csvs stammt aus demselben Discovery-Lauf -- ermoeglicht, den
+        # von _parse_csv_name() aus dem VHD-Pfad ermittelten Mount-
+        # Ordnernamen sofort auf den tatsaechlichen (ggf. umbenannten)
+        # CSV-Namen aufzuloesen (siehe _resolve_csv_name).
         for vm in data.vms:
             db.add(
                 HyperVVm(
@@ -244,7 +283,8 @@ def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
                 db.add(
                     HyperVVhd(
                         cluster_id=cluster.id, vm_uuid=vm.id, vm_name=vm.name, path=vhd.path,
-                        csv_name=_parse_csv_name(vhd.path), size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
+                        csv_name=_resolve_csv_name(_parse_csv_name(vhd.path), data.csvs),
+                        size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
                         last_seen_at=now,
                     )
                 )

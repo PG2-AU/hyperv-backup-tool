@@ -553,14 +553,32 @@ class HyperVService:
         # explizit stringifiziert werden, sonst liefert ConvertTo-Json die
         # rohe Ganzzahl (siehe get_cluster_summary fuer den identischen Bug
         # bei ClusterNodeState).
+        # STOLPERSTEIN, live gefunden: der Partitions-Match lief frueher
+        # ueber '$_.AccessPaths -like (*'+$friendlyPath+'*')' -- ein reiner
+        # Substring-Wildcard-Vergleich, kein exakter Pfadabgleich. Windows'
+        # Standard-CSV-Benennung 'C:\ClusterStorage\VolumeN\' kollidiert
+        # damit systematisch bei numerischen Praefixen (z.B. ist
+        # 'Volume3' als Text ein Praefix von 'Volume33') -- eine CSV mit
+        # Pfad 'Volume3' matchte dadurch faelschlich AUCH die Partition von
+        # 'Volume33' und uebernahm (je nach zufaelliger Get-Partition-
+        # Reihenfolge) deren Disk-Seriennummer, womit sie faelschlich dem
+        # NetApp-LUN/-Volume der anderen CSV zugeordnet wurde -- betrifft
+        # damit auch, welches NetApp-Volume ein Backup-Lauf fuer diese CSV
+        # tatsaechlich snapshotet (siehe _csv_volume_key in jobs.py). Fix:
+        # exakter Abgleich (nach Trimmen eines etwaigen trailing Backslash
+        # auf beiden Seiten) gegen die einzelnen AccessPaths-Eintraege
+        # statt eines gemeinsam verketteten Strings mit Wildcard-Suche.
         script = (
             "$disks = Get-Disk | Select-Object Number, SerialNumber; "
             "$partitions = Get-Partition | Where-Object { $_.AccessPaths } | "
-            "Select-Object DiskNumber, @{N='AccessPaths';E={$_.AccessPaths -join '|'}}; "
+            "Select-Object DiskNumber, AccessPaths; "
             "Get-ClusterSharedVolume | ForEach-Object { "
             "$info = $_.SharedVolumeInfo; "
             "$friendlyPath = $info.FriendlyVolumeName; "
-            "$part = $partitions | Where-Object { $_.AccessPaths -like ('*' + $friendlyPath + '*') } | Select-Object -First 1; "
+            "$friendlyNorm = $friendlyPath.TrimEnd('\\'); "
+            "$part = $partitions | Where-Object { "
+            "($_.AccessPaths | ForEach-Object { $_.TrimEnd('\\') }) -contains $friendlyNorm "
+            "} | Select-Object -First 1; "
             "$disk = $null; "
             "if ($part) { $disk = $disks | Where-Object { $_.Number -eq $part.DiskNumber } | Select-Object -First 1 }; "
             "[PSCustomObject]@{ "

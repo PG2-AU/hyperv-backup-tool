@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.hyperv_clusters import _parse_csv_name
+from app.api.routes.hyperv_clusters import _parse_csv_name, _resolve_csv_name
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
@@ -268,11 +268,18 @@ def delete_vm_checkpoint(
         vm.checkpoints = [{"name": c.name, "id": c.id, "creation_time": c.creation_time} for c in refreshed_vm.checkpoints]
         db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_uuid == vm.vm_uuid).delete()
         now = datetime.now(timezone.utc)
+        # Kein frischer CSV-Discovery-Lauf hier (nur ein Einzel-VM-Refresh
+        # nach Checkpoint-Loeschung) -- die bereits gespeicherten HyperVCsv-
+        # Zeilen aus der letzten vollen Discovery reichen zur Aufloesung des
+        # Mount-Ordnernamens auf den tatsaechlichen CSV-Namen (siehe
+        # _resolve_csv_name).
+        existing_csvs = db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).all()
         for vhd in refreshed_vm.vhds:
             db.add(
                 HyperVVhd(
                     cluster_id=cluster_id, vm_uuid=vm.vm_uuid, vm_name=vm.name, path=vhd.path,
-                    csv_name=_parse_csv_name(vhd.path), size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
+                    csv_name=_resolve_csv_name(_parse_csv_name(vhd.path), existing_csvs),
+                    size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
                     last_seen_at=now,
                 )
             )
