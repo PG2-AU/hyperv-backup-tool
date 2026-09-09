@@ -29,6 +29,7 @@ import {
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import logo from "@/assets/logo.png";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { RunningJobsIndicator } from "@/components/RunningJobsIndicator";
 import { VersionFooter } from "@/components/VersionFooter";
 import { NAV_ITEMS } from "@/layout/navConfig";
@@ -206,7 +207,9 @@ export function AppShellLayout() {
       </AppShell.Navbar>
 
       <AppShell.Main>
-        <Outlet />
+        <ErrorBoundary key={location.pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </AppShell.Main>
     </AppShell>
   );

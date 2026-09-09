@@ -264,7 +264,20 @@ def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
         # von _parse_csv_name() aus dem VHD-Pfad ermittelten Mount-
         # Ordnernamen sofort auf den tatsaechlichen (ggf. umbenannten)
         # CSV-Namen aufzuloesen (siehe _resolve_csv_name).
-        for vm in data.vms:
+        #
+        # Dedupe nach der stabilen Hyper-V-VM-GUID (vm.id), letztes
+        # Vorkommen gewinnt: laeuft die Discovery waehrend einer aktiven
+        # Live-Migration, kann dieselbe VM kurzzeitig auf ZWEI Knoten
+        # gleichzeitig als lokal gemeldet werden (jeder Knoten wird per
+        # list_vms() einzeln abgefragt, siehe HyperVService.run_discovery)
+        # -- ohne Dedup entstehen zwei HyperVVm-Zeilen mit identischem
+        # (cluster_id, name). Live gefunden: landet ein solcher Duplikat-
+        # Name ungefiltert in einer Mantine-Select-Optionsliste (z.B. der
+        # Objektauswahl beim Anlegen einer Protection Group), wirft Mantine
+        # einen harten, von keinem Error Boundary abgefangenen Rendering-
+        # Fehler -- das gesamte Fenster wurde weiss.
+        deduped_vms = list({vm.id: vm for vm in data.vms}.values())
+        for vm in deduped_vms:
             db.add(
                 HyperVVm(
                     cluster_id=cluster.id, vm_uuid=vm.id, name=vm.name, state=vm.state, host_name=vm.host, last_seen_at=now,

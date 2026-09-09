@@ -19,6 +19,7 @@ import type { BackupScope, ResourceGroup } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatSchedule } from "@/utils/format";
 import { makeMemberKey } from "@/utils/resourceGroupMember";
+import { dedupeOptions } from "@/utils/selectOptions";
 
 const SCOPE_OPTIONS: { value: BackupScope; label: string }[] = [
   { value: "vm", label: "Virtuelle Maschinen" },
@@ -104,7 +105,12 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
     return counts;
   }
 
-  const memberOptions =
+  // dedupeOptions als Absicherung gegen doppelte value-Eintraege (z.B. eine
+  // waehrend einer Live-Migration doppelt discoverte VM, siehe
+  // hyperv_clusters.py) -- Mantine wirft sonst einen harten, von keinem
+  // Error Boundary abgefangenen Rendering-Fehler und reisst die gesamte
+  // Seite mit (live beobachtet).
+  const memberOptions = dedupeOptions(
     scope === "vm"
       ? (() => {
           const nameCounts = countByName(vms ?? []);
@@ -123,7 +129,8 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
               value: makeMemberKey(c.cluster_id!, c.name),
               label: (nameCounts.get(c.name) ?? 0) > 1 && c.hyperv_cluster_name ? `${c.name} (${c.hyperv_cluster_name})` : c.name,
             }));
-        })();
+        })(),
+  );
 
   function handleScopeChange(value: string | null) {
     if (!value) return;
