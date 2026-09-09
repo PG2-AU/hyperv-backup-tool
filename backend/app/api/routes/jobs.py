@@ -40,7 +40,6 @@ from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import SessionLocal, get_db
 from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
-from app.api.routes.hyperv_clusters import _parse_csv_name
 from app.api.routes.restore import _StepCtx
 from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunStep, BackupRunVmConfig, JobStatus
 from app.models.hyperv_cluster import HyperVCluster
@@ -1087,41 +1086,29 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                 errors.append(f"VM '{vm_name}': Checkpoint-Entfernung fehlgeschlagen: {exc}")
                 continue
 
-            # Discovery-Snapshot dieser einen VM sofort auffrischen (dasselbe
-            # Muster wie delete_vm_checkpoint in vms.py) -- sonst bleibt
-            # HyperVVm.checkpoints bis zur naechsten VOLLEN Discovery (Default
-            # alle 240min) faelschlich auf dem soeben entfernten Checkpoint
-            # stehen. Realer, live gemeldeter Fall (2026-09-08): eine
-            # periodische Discovery lief zufaellig WAEHREND der wenigen
-            # Sekunden, in denen dieser Checkpoint bestand, und "fror" ihn im
-            # DB-Snapshot ein -- run_alert_check meldete danach faelschlich
-            # 'verwaister Checkpoint', obwohl er auf der echten VM laengst
-            # wieder weg war. Best-effort: schlaegt nur diese Nachfrage fehl
-            # (der Checkpoint ist ja bereits entfernt), wird wenigstens der
-            # soeben entfernte Checkpoint lokal herausgefiltert statt auf die
-            # naechste volle Discovery zu warten.
+            # Den soeben entfernten Checkpoint SOFORT lokal aus
+            # HyperVVm.checkpoints herausfiltern -- sonst meldet
+            # run_alert_check ihn bis zur naechsten VOLLEN Discovery (Default
+            # 240min) faelschlich als 'verwaisten Checkpoint' (realer Fall
+            # 2026-09-08).
+            #
+            # Frueher (Commit 17a3895) wurde dafuer die VM per get_vm()
+            # komplett neu discovert. Das rief aber Get-VHD auf der gerade
+            # entfernten AVHDX auf, die bei einer LAUFENDEN VM noch im
+            # Hintergrund-Merge steckt -- Get-VHD blockiert darauf, und da
+            # pywinrm einen langlaufenden Aufruf unbegrenzt weiterpollt (die
+            # read/operation-Timeouts greifen nur bei voelligem Stillstand,
+            # nicht bei einem langsam arbeitenden Befehl), blieb der GANZE
+            # Backup-Lauf haengen -- danach blockierte die 'laeuft bereits'-
+            # Zeile jeden Folgelauf derselben Resource Group (live 2026-09-09:
+            # Silver_Hourly / Silver_CSV01, VM win10client01, direkt nach
+            # 'checkpoint-remove-RestoreTestVM_PG2'). Der reine lokale Filter
+            # deckt die Alarm-Korrektheit ab; VHD-Groessen frischt die
+            # naechste regulaere Discovery auf (unkritisch, nur fuer
+            # Kapazitaetsschaetzungen).
             hv_vm = hyperv_vms_by_name.get(vm_name)
-            if hv_vm is not None:
-                try:
-                    refreshed_vm = node_service.get_vm(node_session, vm_name)
-                except Exception:
-                    refreshed_vm = None
-                if refreshed_vm is not None:
-                    hv_vm.checkpoints = [
-                        {"name": c.name, "id": c.id, "creation_time": c.creation_time} for c in refreshed_vm.checkpoints
-                    ]
-                    db.query(HyperVVhd).filter(HyperVVhd.cluster_id == hv_vm.cluster_id, HyperVVhd.vm_uuid == hv_vm.vm_uuid).delete()
-                    now = datetime.now(timezone.utc)
-                    for vhd in refreshed_vm.vhds:
-                        db.add(
-                            HyperVVhd(
-                                cluster_id=hv_vm.cluster_id, vm_uuid=hv_vm.vm_uuid, vm_name=hv_vm.name, path=vhd.path,
-                                csv_name=_parse_csv_name(vhd.path), size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
-                                last_seen_at=now,
-                            )
-                        )
-                else:
-                    hv_vm.checkpoints = [c for c in (hv_vm.checkpoints or []) if c.get("name") != checkpoint_name]
+            if hv_vm is not None and hv_vm.checkpoints:
+                hv_vm.checkpoints = [c for c in hv_vm.checkpoints if c.get("name") != checkpoint_name]
 
         # Wurde dieser Lauf zwischenzeitlich vom Zeitlimit-Watchdog
         # (force_cancel_timed_out_runs in app.core.scheduler) hart
