@@ -3,6 +3,7 @@ import { ActionIcon, Badge, Box, Group, Paper, Progress, Stack, Table, Tabs, Tex
 import { notifications } from "@mantine/notifications";
 import {
   IconAlertTriangle,
+  IconBolt,
   IconChevronsRight,
   IconCpu,
   IconDatabase,
@@ -11,7 +12,6 @@ import {
   IconHistory,
   IconInfoCircle,
   IconNetwork,
-  IconPlayerPlay,
   IconServer,
   IconServer2,
   IconServerCog,
@@ -510,7 +510,7 @@ export function VmsPage() {
                     <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
                       <Tooltip label="Backup jetzt starten">
                         <ActionIcon variant="light" onClick={() => runBackupNow(vm)}>
-                          <IconPlayerPlay size={16} />
+                          <IconBolt size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Details anzeigen">
@@ -624,7 +624,7 @@ export function VmsPage() {
                       <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
                         <Tooltip label="Backup jetzt starten (CSV-Scope)">
                           <ActionIcon variant="light" onClick={() => runBackupNowForCsv(csv)}>
-                            <IconPlayerPlay size={16} />
+                            <IconBolt size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Details anzeigen">

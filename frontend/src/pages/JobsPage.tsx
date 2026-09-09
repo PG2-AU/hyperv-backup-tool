@@ -3,6 +3,7 @@ import { ActionIcon, Badge, Button, Drawer, Group, Paper, Stack, Table, Tabs, Te
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import {
+  IconBolt,
   IconCopy,
   IconEdit,
   IconPlayerPause,
@@ -360,7 +361,7 @@ export function JobsPage() {
                       <Group gap="xs" wrap="nowrap">
                         <Tooltip label="Jetzt ausführen">
                           <ActionIcon variant="light" onClick={() => runNow(policy)}>
-                            <IconPlayerPlay size={16} />
+                            <IconBolt size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Bearbeiten">
@@ -459,7 +460,7 @@ export function JobsPage() {
                       <Group gap="xs" wrap="nowrap">
                         <Tooltip label="Jetzt ausführen">
                           <ActionIcon variant="light" onClick={() => runGroupNow(group)}>
-                            <IconPlayerPlay size={16} />
+                            <IconBolt size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label={group.paused ? "Backup fortsetzen" : "Backup pausieren"}>
