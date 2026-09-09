@@ -681,6 +681,8 @@ export interface ResourceGroup {
   // app.models.resource_group.ResourceGroupPolicyLink).
   policy_links: ResourceGroupPolicyLink[];
   created_at: string;
+  paused: boolean;
+  paused_since?: string | null;
 }
 
 export interface BackupRunSnapshot {

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Enum, ForeignKey, JSON, String
+from sqlalchemy import Boolean, Enum, ForeignKey, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -97,6 +97,23 @@ class ResourceGroup(Base):
     scope: Mapped[BackupScope] = mapped_column(Enum(BackupScope))
     members: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # Backups temporaer pausieren (Backlog-Punkt 36, Nutzer-Vorgabe
+    # 2026-09-09): rein manuell, kein automatisches Enddatum -- `paused`
+    # ist der massgebliche Schalter fuer run_scheduled_backups
+    # (app.core.scheduler), faellige Verknuepfungen dieser Gruppe werden
+    # uebersprungen, solange er True ist. `paused_since`/`paused_until`
+    # dienen NICHT der GUI-Anzeige, sondern ausschliesslich dazu, der
+    # backup_missed-Erkennung (ebenfalls scheduler.py) rueckwirkend zu
+    # zeigen, welcher Zeitraum bewusst pausiert war -- ohne das wuerde ein
+    # "Fortsetzen" sofort eine Flut falscher 'verpasst'-Alarme fuer jedes
+    # waehrend der Pause ausgelassene Vorkommen ausloesen. `paused_until`
+    # bleibt waehrend einer laufenden Pause leer und wird erst beim
+    # Fortsetzen auf den aktuellen Zeitpunkt gesetzt (paused_since bleibt
+    # dabei bewusst stehen, keine Historie noetig -- nur das jeweils letzte
+    # Pausenfenster wird gebraucht).
+    paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    paused_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    paused_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Fuer den einfachen Lesezugriff (welche Policies sind verknuepft) --
     # viewonly, da das Schreiben ueber policy_links laeuft (traegt den

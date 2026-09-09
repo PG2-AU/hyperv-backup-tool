@@ -300,6 +300,12 @@ def init_db(db: Session) -> None:
     )
     _add_missing_columns(engine, "backup_policies", {"email_alert_on_failure": "BOOLEAN"})
     _add_missing_columns(engine, "resource_groups", {"schedule_id": "VARCHAR(36)"})
+    _add_missing_columns(
+        engine, "resource_groups", {"paused": "BOOLEAN", "paused_since": "DATETIME", "paused_until": "DATETIME"},
+    )
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE resource_groups SET paused = 0 WHERE paused IS NULL"))
+        conn.commit()
     _add_missing_columns(engine, "resource_group_policies", {"schedule_id": "VARCHAR(36)"})
     _add_missing_columns(
         engine, "backup_runs",

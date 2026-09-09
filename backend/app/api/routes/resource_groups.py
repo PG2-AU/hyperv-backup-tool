@@ -3,6 +3,8 @@ buendeln VMs oder CSVs zu einer benannten Gruppe (z.B. 'Bronze'), die mit
 einer oder mehreren Backup-Policies verknuepft wird. Protection Group +
 Policy zusammen ergeben die Backup-Definition."""
 
+from datetime import datetime, timezone
+
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -96,6 +98,44 @@ def update_resource_group(
     group.policy_links.clear()
     db.flush()
     group.policy_links = new_links
+    db.commit()
+    db.refresh(group)
+    return group
+
+
+@router.post("/{group_id}/pause", response_model=ResourceGroupRead)
+def pause_resource_group(
+    group_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> ResourceGroup:
+    """Backups fuer diese Protection Group temporaer aussetzen (Backlog-Punkt
+    36, Nutzer-Vorgabe 2026-09-09) -- rein manuell, kein Enddatum.
+    run_scheduled_backups (app.core.scheduler) ueberspringt faellige
+    Verknuepfungen dieser Gruppe, solange `paused` gesetzt ist."""
+    group = db.get(ResourceGroup, group_id)
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Protection Group nicht gefunden")
+    group.paused = True
+    group.paused_since = datetime.now(timezone.utc)
+    group.paused_until = None
+    db.commit()
+    db.refresh(group)
+    return group
+
+
+@router.post("/{group_id}/resume", response_model=ResourceGroupRead)
+def resume_resource_group(
+    group_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> ResourceGroup:
+    """Setzt `paused_until` auf JETZT statt paused_since/paused_until zu
+    leeren -- die backup_missed-Erkennung (scheduler.py) braucht dieses
+    Zeitfenster noch, um waehrend der Pause ausgelassene Vorkommen weiterhin
+    korrekt als 'bewusst uebersprungen', nicht als 'verpasst' zu erkennen."""
+    group = db.get(ResourceGroup, group_id)
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Protection Group nicht gefunden")
+    group.paused = False
+    if group.paused_since is not None:
+        group.paused_until = datetime.now(timezone.utc)
     db.commit()
     db.refresh(group)
     return group

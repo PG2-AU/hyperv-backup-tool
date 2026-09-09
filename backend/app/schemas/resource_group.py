@@ -49,3 +49,5 @@ class ResourceGroupRead(BaseModel):
     policies: list[PolicySummary]
     policy_links: list[ResourceGroupPolicyLinkRead]
     created_at: datetime
+    paused: bool = False
+    paused_since: datetime | None = None

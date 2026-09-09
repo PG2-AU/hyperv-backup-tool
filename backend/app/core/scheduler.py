@@ -783,6 +783,17 @@ def run_alert_check() -> None:
                 if occurrence_local > cutoff_local:
                     continue  # noch innerhalb der Karenzzeit -- normale Verzoegerung, kein Fehlalarm
                 occurrence_utc = occurrence_local.astimezone(timezone.utc)
+                # Backlog-Punkt 36 (Nutzer-Vorgabe 2026-09-09): waehrend
+                # einer (ggf. inzwischen beendeten) Pause der Protection
+                # Group ausgelassene Vorkommen sind bewusst uebersprungen,
+                # nicht verpasst -- paused_until bleibt waehrend einer noch
+                # laufenden Pause leer (Fenster reicht dann bis "jetzt").
+                if (
+                    group.paused_since is not None
+                    and occurrence_utc >= group.paused_since
+                    and (group.paused_until is None or occurrence_utc <= group.paused_until)
+                ):
+                    continue
                 # ResourceGroupPolicyLink hat keinen eigenen Primärschluessel
                 # (zusammengesetzt aus resource_group_id+policy_id) -- beide
                 # zusammen identifizieren die Verknuepfung eindeutig.
@@ -1203,6 +1214,22 @@ def run_scheduled_backups() -> None:
 
         # Phase 2: jetzt erst ausfuehren.
         for link, schedule, policy, group, occurrence in due:
+            if group.paused:
+                # Backlog-Punkt 36 (Nutzer-Vorgabe 2026-09-09): rein manuell
+                # pausierte Protection Group -- faelliges Vorkommen bewusst
+                # NICHT ausfuehren, aber auch nicht als Fehler loggen. Der
+                # Checkpoint (status_row.last_scheduled_backup_check_at) ist
+                # bereits VOR dieser Schleife committet, dieses Vorkommen wird
+                # also nicht beim naechsten Tick nachgeholt. Die
+                # backup_missed-Erkennung unten kennt paused_since/
+                # paused_until und meldet es deshalb ebenfalls nicht als
+                # verpasst.
+                _log(
+                    db,
+                    f"Geplanter Backup-Lauf uebersprungen (Protection Group pausiert): '{group.name}' / "
+                    f"Policy '{policy.name}' (Zeitplan '{schedule.name}', faellig {occurrence.strftime('%Y-%m-%d %H:%M')})",
+                )
+                continue
             try:
                 # _execute_job_run laeuft hier bewusst synchron (nicht als
                 # Hintergrund-Task wie beim manuellen "Jetzt ausfuehren",

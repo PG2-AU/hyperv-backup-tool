@@ -2,7 +2,17 @@ import { useState } from "react";
 import { ActionIcon, Badge, Button, Drawer, Group, Paper, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconCopy, IconEdit, IconPlayerPlay, IconPlus, IconStack2, IconTerminal2, IconTrash, IconX } from "@tabler/icons-react";
+import {
+  IconCopy,
+  IconEdit,
+  IconPlayerPause,
+  IconPlayerPlay,
+  IconPlus,
+  IconStack2,
+  IconTerminal2,
+  IconTrash,
+  IconX,
+} from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -10,9 +20,11 @@ import {
   useDeleteResourceGroup,
   useDeleteSchedule,
   useJobRuns,
+  usePauseResourceGroup,
   usePolicies,
   useCancelJobRun,
   useResourceGroups,
+  useResumeResourceGroup,
   useSchedules,
   useTriggerJobRun,
 } from "@/api/hooks";
@@ -75,6 +87,8 @@ export function JobsPage() {
 
   const { data: groups } = useResourceGroups();
   const deleteGroup = useDeleteResourceGroup();
+  const pauseGroup = usePauseResourceGroup();
+  const resumeGroup = useResumeResourceGroup();
   const [groupFormOpen, setGroupFormOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ResourceGroup | null>(null);
   const [duplicateFromGroup, setDuplicateFromGroup] = useState<ResourceGroup | null>(null);
@@ -254,6 +268,24 @@ export function JobsPage() {
     });
   }
 
+  function toggleGroupPause(group: ResourceGroup) {
+    const mutation = group.paused ? resumeGroup : pauseGroup;
+    mutation.mutate(group.id, {
+      onSuccess: () =>
+        notifications.show({
+          title: group.paused ? "Protection Group fortgesetzt" : "Protection Group pausiert",
+          message: group.name,
+          color: "blue",
+        }),
+      onError: (err) =>
+        notifications.show({
+          title: "Fehler",
+          message: apiErrorMessage(err, "Status konnte nicht geändert werden."),
+          color: "red",
+        }),
+    });
+  }
+
   return (
     <Stack>
       <Title order={3}>Backup</Title>
@@ -373,6 +405,7 @@ export function JobsPage() {
                 <Table.Tr>
                   <Table.Th>Name</Table.Th>
                   <Table.Th style={{ whiteSpace: "nowrap" }}>Typ</Table.Th>
+                  <Table.Th>Status</Table.Th>
                   <Table.Th>Anzahl</Table.Th>
                   <Table.Th>Objekte</Table.Th>
                   <Table.Th>Verknüpfte Policies (Zeitplan)</Table.Th>
@@ -387,6 +420,19 @@ export function JobsPage() {
                       <Badge variant="light" color="blue" styles={{ label: { overflow: "visible", textOverflow: "unset" } }}>
                         {SCOPE_LABEL[group.scope] ?? group.scope}
                       </Badge>
+                    </Table.Td>
+                    <Table.Td style={{ whiteSpace: "nowrap" }}>
+                      {group.paused ? (
+                        <Tooltip label={group.paused_since ? `Pausiert seit ${new Date(group.paused_since).toLocaleString("de-DE")}` : "Pausiert"}>
+                          <Badge variant="light" color="gray">
+                            Pausiert
+                          </Badge>
+                        </Tooltip>
+                      ) : (
+                        <Badge variant="light" color="green">
+                          Aktiv
+                        </Badge>
+                      )}
                     </Table.Td>
                     <Table.Td>
                       <Badge variant="filled" color="gray">
@@ -414,6 +460,11 @@ export function JobsPage() {
                         <Tooltip label="Jetzt ausführen">
                           <ActionIcon variant="light" onClick={() => runGroupNow(group)}>
                             <IconPlayerPlay size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label={group.paused ? "Backup fortsetzen" : "Backup pausieren"}>
+                          <ActionIcon variant="light" color={group.paused ? "green" : "gray"} onClick={() => toggleGroupPause(group)}>
+                            {group.paused ? <IconPlayerPlay size={16} /> : <IconPlayerPause size={16} />}
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Bearbeiten">

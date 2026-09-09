@@ -497,6 +497,24 @@ export function useUpdateResourceGroup() {
   });
 }
 
+// Backups temporaer pausieren (Backlog-Punkt 36) -- rein manuell, kein
+// Enddatum, siehe app.api.routes.resource_groups.
+export function usePauseResourceGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<ResourceGroup>(`/resource-groups/${id}/pause`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["resource-groups"] }),
+  });
+}
+
+export function useResumeResourceGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<ResourceGroup>(`/resource-groups/${id}/resume`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["resource-groups"] }),
+  });
+}
+
 export function useCheckSnapMirror() {
   return useMutation({
     mutationFn: async (groups: SnapMirrorCheckGroup[]) =>
