@@ -120,9 +120,44 @@ def run_health_checks() -> None:
         db.close()
 
 
-def run_discovery() -> None:
+# Wie oft eine faellige Discovery maximal um je 5min verschoben wird, wenn
+# gerade ein Backup-Lauf aktiv ist (siehe run_discovery). Danach laeuft die
+# Discovery trotzdem, damit das Inventory (u.a. Grundlage der Kapazitaets-
+# Alarme) nicht beliebig lange veraltet -- ein Backup, das laenger als
+# ~25min laeuft, ist ohnehin ein Fall fuer force_cancel_timed_out_runs.
+_DISCOVERY_MAX_DEFERRALS = 5
+
+
+def run_discovery(deferred: int = 0) -> None:
     db = SessionLocal()
     try:
+        # Discovery und ein laufender Backup-Lauf duerfen sich NICHT
+        # ueberschneiden: beide fahren pro VM dieselben schweren WinRM-
+        # Aufrufe (Get-VHD ueber die gesamte AVHDX-Kette). Live 2026-09-09
+        # beobachtet: eine :00-Discovery lief zeitgleich mit dem stuendlichen
+        # :00-Backup, beide auf Get-VHD derselben -- durch einen laufenden
+        # Checkpoint-Merge gesperrten -- Kette; der Backup-Lauf blieb daran
+        # haengen (pywinrm pollt einen langlaufenden Aufruf unbegrenzt
+        # weiter). Statt starrem Takt: laeuft gerade ein Backup, diese
+        # Discovery-Runde ueberspringen und in 5min erneut versuchen (bis
+        # _DISCOVERY_MAX_DEFERRALS, danach trotzdem laufen).
+        if deferred < _DISCOVERY_MAX_DEFERRALS and db.query(BackupRun.id).filter(
+            BackupRun.status == JobStatus.RUNNING
+        ).first():
+            _log(
+                db,
+                f"Discovery verschoben -- Backup-Lauf aktiv, neuer Versuch in 5min "
+                f"(Verschiebung {deferred + 1}/{_DISCOVERY_MAX_DEFERRALS})",
+            )
+            scheduler = get_scheduler()
+            if scheduler is not None:
+                scheduler.add_job(
+                    run_discovery, "date",
+                    run_date=datetime.now(timezone.utc) + timedelta(minutes=5),
+                    args=[deferred + 1],
+                    id="discovery-deferred", replace_existing=True, max_instances=1,
+                )
+            return
         _log(db, "Task gestartet: Discovery")
         for cluster in db.query(HyperVCluster).all():
             try:
