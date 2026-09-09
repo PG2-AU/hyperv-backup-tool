@@ -321,7 +321,7 @@ export function VmsPage() {
   const filteredVms = (vms ?? []).filter((vm) => matchesAllColumns(vm, vmSearch));
   const [csvSearch, setCsvSearch] = useState("");
   const filteredCsvs = (csvs ?? []).filter((csv) => matchesAllColumns(csv, csvSearch));
-  const { runOrPickForGroups, pickerPolicies, closePicker, pickPolicy } = useRunPolicy();
+  const { runOrPickForGroups, step1GroupChoices, step2PolicyChoices, pickStep1Group, pickStep2Policy, closeGroupPicker } = useRunPolicy();
   const { data: resourceGroups } = useResourceGroups();
   const deleteCheckpoint = useDeleteVmCheckpoint();
 
@@ -703,7 +703,20 @@ export function VmsPage() {
         initialSnapshotId={restoreWizardTarget?.snapshotId}
       />
 
-      <PolicyPickerModal opened={!!pickerPolicies} onClose={closePicker} policies={pickerPolicies ?? []} onPick={pickPolicy} />
+      <PolicyPickerModal
+        opened={!!step1GroupChoices}
+        onClose={closeGroupPicker}
+        policies={step1GroupChoices ?? []}
+        onPick={pickStep1Group}
+        title="Protection Group auswählen"
+        description="Mehreren Protection Groups zugeordnet — für welche soll jetzt ein Backup gestartet werden?"
+      />
+      <PolicyPickerModal
+        opened={!!step2PolicyChoices}
+        onClose={closeGroupPicker}
+        policies={step2PolicyChoices ?? []}
+        onPick={pickStep2Policy}
+      />
     </Stack>
   );
 }

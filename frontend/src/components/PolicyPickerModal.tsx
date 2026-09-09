@@ -7,14 +7,23 @@ interface PolicyPickerModalProps {
   onClose: () => void;
   policies: PolicySummary[];
   onPick: (policy: PolicySummary) => void;
+  title?: string;
+  description?: string;
 }
 
-export function PolicyPickerModal({ opened, onClose, policies, onPick }: PolicyPickerModalProps) {
+export function PolicyPickerModal({
+  opened,
+  onClose,
+  policies,
+  onPick,
+  title = "Policy auswählen",
+  description = "Mehrere Backup-Policies zugeordnet — welche soll jetzt ausgeführt werden?",
+}: PolicyPickerModalProps) {
   return (
-    <Modal opened={opened} onClose={onClose} title="Policy auswählen">
+    <Modal opened={opened} onClose={onClose} title={title}>
       <Stack>
         <Text size="sm" c="dimmed">
-          Mehrere Backup-Policies zugeordnet — welche soll jetzt ausgeführt werden?
+          {description}
         </Text>
         {policies.map((p) => (
           <Button
