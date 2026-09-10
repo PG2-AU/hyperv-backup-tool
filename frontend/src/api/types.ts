@@ -610,6 +610,7 @@ export interface SchedulerConfig {
   retention_cleanup_hour: number;
   backup_cancel_force_timeout_minutes: number;
   backup_run_max_duration_minutes: number;
+  backup_checkpoint_parallelism: number;
   updated_at?: string | null;
 }
 
@@ -620,6 +621,7 @@ export interface SchedulerConfigWritePayload {
   retention_cleanup_hour: number;
   backup_cancel_force_timeout_minutes: number;
   backup_run_max_duration_minutes: number;
+  backup_checkpoint_parallelism: number;
 }
 
 export interface EmailConfig {

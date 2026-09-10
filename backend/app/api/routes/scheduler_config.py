@@ -52,6 +52,8 @@ def update_scheduler_config(
     # festem Minuten-Trigger und liest diese Felder bei jedem Lauf frisch.
     config.backup_cancel_force_timeout_minutes = payload.backup_cancel_force_timeout_minutes
     config.backup_run_max_duration_minutes = payload.backup_run_max_duration_minutes
+    # Kein reschedule_job(): _execute_job_run liest das Feld pro Lauf frisch.
+    config.backup_checkpoint_parallelism = payload.backup_checkpoint_parallelism
     config.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(config)

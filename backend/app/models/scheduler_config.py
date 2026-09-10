@@ -37,4 +37,14 @@ class SchedulerConfig(Base):
     # laufenden Lauf hart ab. 0 = aus (Default), da die sinnvolle Grenze
     # stark von der Umgebungsgroesse abhaengt.
     backup_run_max_duration_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    # Parallelitaet der Checkpoint-Erstellung eines Backup-Laufs (Phase 1 in
+    # _execute_job_run). Parallelisiert wird IMMER nur ueber die Hyper-V-
+    # Knoten hinweg -- pro Knoten laeuft nie mehr als ein Checkpoint
+    # gleichzeitig (ein Future je Owner-Node, dessen VMs seriell).
+    #   0 = automatisch: je beteiligtem Knoten 1, ueber die Knoten hinweg
+    #       unbegrenzt parallel (Default)
+    #   1 = alles nacheinander wie vor dieser Funktion (sofortiger
+    #       Rueckfallweg ueber die GUI, ohne Deploy)
+    #   N>=2 = hoechstens N Knoten gleichzeitig (pro Knoten weiterhin 1)
+    backup_checkpoint_parallelism: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

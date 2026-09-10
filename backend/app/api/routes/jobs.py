@@ -26,6 +26,7 @@ abzubrechen -- Best-Effort pro VM, analog zum Rest dieser Funktion."""
 
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from ntpath import basename as win_basename
@@ -50,6 +51,7 @@ from app.models.resource_group import ResourceGroupPolicyLink, parse_member_key,
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_run import RestoreStepStatus
 from app.models.schedule import Schedule, ScheduleType
+from app.models.scheduler_config import SchedulerConfig
 from app.models.snapmirror_label import SnapMirrorLabel
 from app.services.email_service import notify_backup_failure
 from app.schemas.backup import (
@@ -877,6 +879,67 @@ def _cancel_requested(db: Session, run_id: str) -> bool:
     return db.query(BackupRun.cancel_requested_at).filter(BackupRun.id == run_id).scalar() is not None
 
 
+@dataclass
+class _CheckpointResult:
+    vm_name: str
+    cluster_id: str | None
+    node_address: str
+    ok: bool
+    node_service: HyperVService | None = None
+    node_session: object | None = None
+    message: str = ""
+    error: str = ""
+
+
+@dataclass
+class _NodeCheckpointJob:
+    """Alle VMs EINES Owner-Knotens plus die noetigen Verbindungsdaten --
+    ein Eintrag = ein Future in der parallelen Checkpoint-Phase. Enthaelt
+    bewusst KEIN ORM-Objekt und keine DB-Session (Worker laufen in
+    eigenen Threads)."""
+
+    node_address: str
+    use_https: bool
+    username: str
+    password: str
+    vms: list[tuple[str, str]]  # (vm_name, cluster_id)
+
+
+def _run_node_checkpoints(
+    settings, job: _NodeCheckpointJob, checkpoint_name: str, consistency: ConsistencyType
+) -> list[_CheckpointResult]:
+    """Erstellt fuer die VMs EINES Knotens nacheinander je einen Checkpoint.
+    Laeuft im Worker-Thread -- kein DB-Zugriff, nur WinRM. Parallelitaet
+    entsteht ausschliesslich dadurch, dass mehrere dieser Aufrufe (je einer
+    pro Knoten) gleichzeitig laufen; INNERHALB eines Knotens bleibt es
+    seriell (Nutzer-Vorgabe: pro Host nie mehr als ein Checkpoint)."""
+    results: list[_CheckpointResult] = []
+    step_timeout = settings.winrm_backup_step_timeout_seconds
+    try:
+        node_service = HyperVService(
+            settings, job.node_address, use_https=job.use_https, ps_timeout_sec=step_timeout
+        )
+        node_session = node_service.connect(job.username, job.password)
+    except Exception as exc:  # noqa: BLE001 -- Knoten unerreichbar: alle seine VMs crash-konsistent
+        return [
+            _CheckpointResult(vm, cid, job.node_address, ok=False, error=f"Knoten nicht erreichbar ({exc})")
+            for vm, cid in job.vms
+        ]
+    for vm_name, cluster_id in job.vms:
+        try:
+            node_service.create_checkpoint(node_session, vm_name, checkpoint_name, consistency)
+            results.append(
+                _CheckpointResult(
+                    vm_name, cluster_id, job.node_address, ok=True,
+                    node_service=node_service, node_session=node_session,
+                    message=f"Checkpoint '{checkpoint_name}' auf Knoten '{job.node_address}' erstellt",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 -- eine VM scheitert, die anderen des Knotens laufen weiter
+            results.append(_CheckpointResult(vm_name, cluster_id, job.node_address, ok=False, error=str(exc)))
+    return results
+
+
 def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
     """Fuehrt den eigentlichen, potenziell langwierigen Teil eines Backup-
     Laufs aus (Checkpoints, Snapshots, SnapMirror-Update, Checkpoint-
@@ -990,45 +1053,99 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         active_checkpoints: list[tuple[HyperVService, object, str, str | None]] = []
         if policy.consistency == ConsistencyType.APPLICATION_CONSISTENT and vm_names_in_run:
             settings = get_settings()
+            sched_cfg = db.query(SchedulerConfig).first()
+            # 0 = automatisch (je Knoten 1, ueber Knoten hinweg parallel),
+            # 1 = alles nacheinander, N = hoechstens N Knoten gleichzeitig.
+            max_parallel = sched_cfg.backup_checkpoint_parallelism if sched_cfg else 0
             hyperv_clusters_by_id = {c.id: c for c in db.query(HyperVCluster).all()}
-            for vm_name in vm_names_in_run:
-                if _cancel_requested(db, run.id):
-                    was_cancelled = True
-                    break
-                meta = hyperv_vm_meta.get(vm_name)
-                hv_cluster = hyperv_clusters_by_id.get(meta["cluster_id"]) if meta else None
-                if meta is None or hv_cluster is None:
-                    msg = "Hyper-V-Cluster nicht gefunden, Checkpoint uebersprungen (Backup laeuft crash-konsistent weiter)"
-                    errors.append(f"VM '{vm_name}': {msg}")
-                    with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
-                        ctx.row.status = RestoreStepStatus.SKIPPED
-                        ctx.row.message = msg
-                    continue
-                try:
-                    with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
-                        # ps_timeout_sec: hartes Wall-Clock-Limit je WinRM-
-                        # Aufruf -- ein haengendes Get-VHD/Remove-VMSnapshot
-                        # (mergende AVHDX-Kette) laesst sonst den ganzen Lauf
-                        # einfrieren. Nur hier im Backup-Pfad gesetzt.
-                        step_timeout = settings.winrm_backup_step_timeout_seconds
-                        hv_service = HyperVService(
+
+            if _cancel_requested(db, run.id):
+                was_cancelled = True
+
+            # --- Vorab (Haupt-Thread): je Hyper-V-Cluster EINMAL die Owner-
+            # Knoten aller VMs (ein Get-ClusterGroup) und die Knoten->
+            # Management-IP-Abbildung (ein Get-ClusterNetworkInterface)
+            # aufloesen, statt je VM einen eigenen CNO-Roundtrip. Ergebnis:
+            # VMs nach Ziel-Knotenadresse gruppiert (ein _NodeCheckpointJob
+            # je Knoten).
+            vms_by_node: dict[str, _NodeCheckpointJob] = {}
+            skipped_vms: list[tuple[str, str]] = []  # (vm_name, grund)
+            if not was_cancelled:
+                vms_by_cluster: dict[str, list[str]] = defaultdict(list)
+                for vm_name in vm_names_in_run:
+                    meta = hyperv_vm_meta.get(vm_name)
+                    if meta is None or hyperv_clusters_by_id.get(meta["cluster_id"]) is None:
+                        skipped_vms.append((vm_name, "Hyper-V-Cluster nicht gefunden"))
+                        continue
+                    vms_by_cluster[meta["cluster_id"]].append(vm_name)
+
+                for cluster_id, cluster_vms in vms_by_cluster.items():
+                    hv_cluster = hyperv_clusters_by_id[cluster_id]
+                    hv_password = decrypt_secret(hv_cluster.encrypted_password)
+                    try:
+                        cno_service = HyperVService(
                             settings, hv_cluster.management_address,
-                            use_https=hv_cluster.use_https, ps_timeout_sec=step_timeout,
+                            use_https=hv_cluster.use_https,
+                            ps_timeout_sec=settings.winrm_backup_step_timeout_seconds,
                         )
-                        hv_password = decrypt_secret(hv_cluster.encrypted_password)
-                        cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
-                        owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or (meta["host_name"] if meta else None)
-                        node_address = hv_service.resolve_node_address(cno_session, owner_node)
-                        node_service = HyperVService(
-                            settings, node_address,
-                            use_https=hv_cluster.use_https, ps_timeout_sec=step_timeout,
+                        cno_session = cno_service.connect(
+                            hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10
                         )
-                        node_session = node_service.connect(hv_cluster.username, hv_password)
-                        node_service.create_checkpoint(node_session, vm_name, checkpoint_name, policy.consistency)
-                        active_checkpoints.append((node_service, node_session, vm_name, meta["cluster_id"] if meta else None))
-                        ctx.row.message = f"Checkpoint '{checkpoint_name}' auf Knoten '{node_address}' erstellt"
-                except Exception as exc:
-                    errors.append(f"VM '{vm_name}': Checkpoint konnte nicht erstellt werden ({exc}) -- Backup laeuft crash-konsistent weiter")
+                        node_ips = cno_service.node_address_map(cno_session)
+                        owners = cno_service.get_vm_owner_nodes(cno_session, cluster_vms)
+                    except Exception as exc:  # noqa: BLE001 -- CNO weg: alle VMs des Clusters crash-konsistent
+                        for vm_name in cluster_vms:
+                            skipped_vms.append((vm_name, f"CNO nicht erreichbar ({exc})"))
+                        continue
+                    for vm_name in cluster_vms:
+                        owner = owners.get(vm_name) or hyperv_vm_meta[vm_name]["host_name"]
+                        if not owner:
+                            skipped_vms.append((vm_name, "Owner-Knoten nicht ermittelbar"))
+                            continue
+                        node_address = node_ips.get(owner.lower(), owner)
+                        job = vms_by_node.get(node_address)
+                        if job is None:
+                            job = _NodeCheckpointJob(
+                                node_address=node_address, use_https=hv_cluster.use_https,
+                                username=hv_cluster.username, password=hv_password, vms=[],
+                            )
+                            vms_by_node[node_address] = job
+                        job.vms.append((vm_name, cluster_id))
+
+            # --- Parallel: ein Future je Knoten (VMs darin seriell -- pro
+            # Host nie mehr als ein Checkpoint gleichzeitig). Kein DB-Zugriff
+            # in den Workern. ---
+            results: list[_CheckpointResult] = []
+            if vms_by_node:
+                node_count = len(vms_by_node)
+                workers = node_count if max_parallel == 0 else max(1, min(max_parallel, node_count))
+                with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="checkpoint") as ex:
+                    futures = [
+                        ex.submit(_run_node_checkpoints, settings, job, checkpoint_name, policy.consistency)
+                        for job in vms_by_node.values()
+                    ]
+                    for fut in futures:
+                        results.extend(fut.result())
+
+            # --- Nachbereitung (Haupt-Thread): Schritte schreiben +
+            # active_checkpoints aufbauen, deterministisch nach VM-Name. ---
+            for vm_name, reason in sorted(skipped_vms):
+                msg = f"{reason}, Checkpoint uebersprungen (Backup laeuft crash-konsistent weiter)"
+                errors.append(f"VM '{vm_name}': {msg}")
+                with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
+                    ctx.row.status = RestoreStepStatus.SKIPPED
+                    ctx.row.message = msg
+            for res in sorted(results, key=lambda r: r.vm_name):
+                with _StepCtx(db, run.id, f"checkpoint-create-{res.vm_name}", f"Checkpoint erstellen: {res.vm_name}", step_model=BackupRunStep) as ctx:
+                    if res.ok:
+                        ctx.row.message = res.message
+                        active_checkpoints.append((res.node_service, res.node_session, res.vm_name, res.cluster_id))
+                    else:
+                        ctx.row.status = RestoreStepStatus.ERROR
+                        ctx.row.message = res.error
+                        errors.append(
+                            f"VM '{res.vm_name}': Checkpoint konnte nicht erstellt werden ({res.error}) -- Backup laeuft crash-konsistent weiter"
+                        )
 
         for target in targets:
             if was_cancelled:

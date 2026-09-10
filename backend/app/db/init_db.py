@@ -314,7 +314,11 @@ def init_db(db: Session) -> None:
     )
     _add_missing_columns(
         engine, "scheduler_config",
-        {"backup_cancel_force_timeout_minutes": "INTEGER", "backup_run_max_duration_minutes": "INTEGER"},
+        {
+            "backup_cancel_force_timeout_minutes": "INTEGER",
+            "backup_run_max_duration_minutes": "INTEGER",
+            "backup_checkpoint_parallelism": "INTEGER",
+        },
     )
     with engine.connect() as conn:
         conn.execute(
@@ -322,6 +326,9 @@ def init_db(db: Session) -> None:
         )
         conn.execute(
             text("UPDATE scheduler_config SET backup_run_max_duration_minutes = 0 WHERE backup_run_max_duration_minutes IS NULL")
+        )
+        conn.execute(
+            text("UPDATE scheduler_config SET backup_checkpoint_parallelism = 0 WHERE backup_checkpoint_parallelism IS NULL")
         )
         conn.commit()
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})

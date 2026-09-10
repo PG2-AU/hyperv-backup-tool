@@ -461,6 +461,35 @@ class HyperVService:
             return None
         return result.output.strip() or None
 
+    def get_vm_owner_nodes(self, session: winrm.Session, vm_names: list[str]) -> dict[str, str | None]:
+        """Wie get_vm_owner_node, aber fuer viele VMs in EINEM Aufruf gegen
+        den CNO -- fuer die parallele Checkpoint-Phase in
+        _execute_job_run, damit nicht je VM ein eigener CNO-Roundtrip
+        anfaellt. Liefert {vm_name: owner_node | None}; ein Name ohne eigene
+        VirtualMachine-Cluster-Gruppe fehlt im Ergebnis bzw. ist None."""
+        result = self._run_ps(
+            session,
+            "Get-ClusterGroup | Where-Object { $_.GroupType -eq 'VirtualMachine' } "
+            "| Select-Object Name, @{N='Owner';E={$_.OwnerNode.Name}} | ConvertTo-Json -Depth 3",
+        )
+        if not result.success:
+            return {name: None for name in vm_names}
+        try:
+            raw = json.loads(result.output or "[]")
+        except json.JSONDecodeError:
+            return {name: None for name in vm_names}
+        entries = raw if isinstance(raw, list) else [raw]
+        by_name = {e["Name"]: (e.get("Owner") or None) for e in entries if e.get("Name")}
+        return {name: by_name.get(name) for name in vm_names}
+
+    def node_address_map(self, session: winrm.Session) -> dict[str, str]:
+        """Oeffentlicher Zugriff auf die (kleingeschriebene) Knoten->
+        Management-IP-Abbildung -- siehe _node_management_ips. Aufrufer
+        ausserhalb dieser Klasse loesen damit mehrere Knotennamen auf, ohne
+        die Abfrage (Get-ClusterNetworkInterface) je Name zu wiederholen wie
+        bei resolve_node_address."""
+        return self._node_management_ips(session)
+
     def _node_management_ips(self, session: winrm.Session) -> dict[str, str]:
         """Liefert je Knoten die IP-Adresse im 'ClusterAndClient'-Netzwerk
         (dem Management-Netz, auf dem auch der CNO selbst erreichbar ist).

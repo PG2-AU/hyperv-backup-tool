@@ -18,6 +18,7 @@ export function SchedulerConfigTab() {
   const [retentionHour, setRetentionHour] = useState("2");
   const [cancelForceTimeoutMinutes, setCancelForceTimeoutMinutes] = useState<number | string>(10);
   const [runMaxDurationMinutes, setRunMaxDurationMinutes] = useState<number | string>(0);
+  const [checkpointParallelism, setCheckpointParallelism] = useState<number | string>(0);
 
   useEffect(() => {
     if (!config) return;
@@ -27,6 +28,7 @@ export function SchedulerConfigTab() {
     setRetentionHour(String(config.retention_cleanup_hour));
     setCancelForceTimeoutMinutes(config.backup_cancel_force_timeout_minutes);
     setRunMaxDurationMinutes(config.backup_run_max_duration_minutes);
+    setCheckpointParallelism(config.backup_checkpoint_parallelism);
   }, [config]);
 
   function handleSave() {
@@ -37,6 +39,7 @@ export function SchedulerConfigTab() {
       retention_cleanup_hour: Number(retentionHour),
       backup_cancel_force_timeout_minutes: Number(cancelForceTimeoutMinutes),
       backup_run_max_duration_minutes: Number(runMaxDurationMinutes),
+      backup_checkpoint_parallelism: Number(checkpointParallelism),
     };
     updateConfig
       .mutateAsync(payload)
@@ -113,6 +116,18 @@ export function SchedulerConfigTab() {
           value={runMaxDurationMinutes}
           onChange={setRunMaxDurationMinutes}
           suffix=" min"
+        />
+        <NumberInput
+          label="Checkpoint-Parallelität"
+          description={
+            "Wie viele Hyper-V-Hosts gleichzeitig einen Checkpoint erstellen dürfen (Phase vor den Storage-Snapshots). " +
+            "Pro Host läuft immer nur einer. 0 = automatisch (alle beteiligten Hosts parallel) · 1 = nacheinander · " +
+            "N = höchstens N Hosts gleichzeitig."
+          }
+          min={0}
+          max={64}
+          value={checkpointParallelism}
+          onChange={setCheckpointParallelism}
         />
         <Group justify="flex-end">
           <Button onClick={handleSave} loading={updateConfig.isPending}>
