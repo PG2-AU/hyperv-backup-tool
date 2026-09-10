@@ -24,7 +24,7 @@ from app.db.session import get_db
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_proxy_host import RestoreProxyHost
-from app.services.hyperv_service import HyperVConnectionError, HyperVService
+from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppConnectionError, NetAppOntapService, tcp_port_open
 from app.core.crypto import decrypt_secret, encrypt_secret
 
@@ -181,8 +181,8 @@ def get_proxy_host_addresses(
     service, session = _proxy_service_and_session(db)
     try:
         return [ProxyIpAddress(**a) for a in service.list_ip_addresses(session)]
-    except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 -- WinRM/pywinrm/requests-Fehler sauber als 400 melden, nicht als 500
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Proxy-Host nicht erreichbar: {exc}") from exc
 
 
 @router.get("/initiator", response_model=InitiatorInfo)
@@ -195,11 +195,11 @@ def get_initiator(db: Session = Depends(get_db), user=Depends(require_permission
         iqn = service.get_initiator_iqn(session)
     except HTTPException as exc:
         return InitiatorInfo(configured=False, error=exc.detail)
-    except (HyperVConnectionError, RuntimeError) as exc:
+    except Exception as exc:  # noqa: BLE001 -- inkl. requests.ConnectionError, wenn der Proxy erst beim Kommando abweist
         return InitiatorInfo(configured=False, error=str(exc))
     try:
         file_restore_available = service.check_vhd_mount_available(session)
-    except (HyperVConnectionError, RuntimeError):
+    except Exception:  # noqa: BLE001
         file_restore_available = False
     return InitiatorInfo(configured=True, iqn=iqn, file_restore_available=file_restore_available)
 
@@ -356,8 +356,8 @@ def check_config(
         reachable, detail = service.test_tcp(
             session, config.iscsi_lif_address, config.iscsi_lif_port, config.initiator_portal_address
         )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 -- WinRM/pywinrm/requests-Fehler sauber als 400 melden
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Proxy-Host nicht erreichbar: {exc}") from exc
     return InfraCheckResult(
         reachable=reachable, detail=detail,
         source_address=config.initiator_portal_address,
