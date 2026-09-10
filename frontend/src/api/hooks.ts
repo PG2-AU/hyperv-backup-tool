@@ -61,6 +61,8 @@ import type {
   SchedulerConfig,
   SchedulerConfigWritePayload,
   StorageAccess,
+  WinrmCertsOverview,
+  WinrmSetupScriptRequest,
   SvmPeerCreate,
   UpcomingJob,
   Vm,
@@ -1061,5 +1063,52 @@ export function useUpdateStorageAccess() {
   return useMutation({
     mutationFn: async (payload: StorageAccess) => (await apiClient.put<StorageAccess>("/storage-access", payload)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["storage-access"] }),
+  });
+}
+
+// Settings > WinRM-Zertifikate: Assistent (PS-Skript), Upload der pro
+// Hyper-V-Knoten exportierten WinRM-HTTPS-Zertifikate, Erzeugen des
+// CA-Trust-Bundles. Alles nur mit SETTINGS_MANAGE.
+export function useWinrmCerts() {
+  return useQuery({
+    queryKey: ["winrm-certs"],
+    queryFn: async () => (await apiClient.get<WinrmCertsOverview>("/winrm-certs")).data,
+  });
+}
+
+export function useUploadWinrmCert() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ file, label, hostAddress }: { file: File; label?: string; hostAddress?: string }) => {
+      const form = new FormData();
+      form.append("file", file);
+      if (label) form.append("label", label);
+      if (hostAddress) form.append("host_address", hostAddress);
+      return (await apiClient.post<WinrmCertsOverview>("/winrm-certs", form)).data;
+    },
+    onSuccess: (data) => queryClient.setQueryData(["winrm-certs"], data),
+  });
+}
+
+export function useDeleteWinrmCert() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (certId: string) => (await apiClient.delete<WinrmCertsOverview>(`/winrm-certs/${certId}`)).data,
+    onSuccess: (data) => queryClient.setQueryData(["winrm-certs"], data),
+  });
+}
+
+export function useBuildWinrmBundle() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await apiClient.post<WinrmCertsOverview>("/winrm-certs/build-bundle")).data,
+    onSuccess: (data) => queryClient.setQueryData(["winrm-certs"], data),
+  });
+}
+
+export function useGenerateWinrmSetupScript() {
+  return useMutation({
+    mutationFn: async (payload: WinrmSetupScriptRequest) =>
+      (await apiClient.post<{ script: string }>("/winrm-certs/setup-script", payload)).data.script,
   });
 }

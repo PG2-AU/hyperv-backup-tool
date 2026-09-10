@@ -18,6 +18,7 @@ from enum import StrEnum
 import winrm
 
 from app.core.config import Settings
+from app.core.winrm_trust import resolved_trust_path
 
 
 class ConsistencyType(StrEnum):
@@ -202,12 +203,12 @@ class HyperVService:
             auth=(username, password),
             transport=self._settings.winrm_transport,
             server_cert_validation="validate" if self._use_https else "ignore",
-            # 'legacy_requests' ist pywinrms eigener Default (nur der
-            # System-Truststore) -- HVNB_WINRM_CA_TRUST_PATH erlaubt
-            # zusaetzlich eine interne CA/ein selbstsigniertes Zertifikat
-            # explizit als vertrauenswuerdig zu hinterlegen, siehe
-            # DEPLOYMENT.md Abschnitt 1.
-            ca_trust_path=self._settings.winrm_ca_trust_path or "legacy_requests",
+            # Explizites HVNB_WINRM_CA_TRUST_PATH zuerst, sonst das ueber
+            # "Settings > WinRM-Zertifikate" verwaltete Bundle (sofern
+            # vorhanden), sonst der pywinrm-Default (nur System-Truststore) --
+            # siehe app.core.winrm_trust.resolved_trust_path und
+            # DEPLOYMENT.md Kapitel 10.
+            ca_trust_path=resolved_trust_path(self._settings),
             read_timeout_sec=read_timeout_sec,
             operation_timeout_sec=operation_timeout_sec,
         )

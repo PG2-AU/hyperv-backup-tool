@@ -37,6 +37,7 @@ import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { AlertSettingsTab } from "@/components/AlertSettingsTab";
 import { EmailSettingsTab } from "@/components/EmailSettingsTab";
 import { SchedulerConfigTab } from "@/components/SchedulerConfigTab";
+import { WinrmCertsTab } from "@/components/WinrmCertsTab";
 import { HyperVClusterFormModal } from "@/components/HyperVClusterFormModal";
 import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
 import { SnapMirrorLabelFormModal } from "@/components/SnapMirrorLabelFormModal";
@@ -285,6 +286,7 @@ export function SettingsPage() {
           <Tabs.Tab value="snapmirror-labels">SnapMirror-Labels</Tabs.Tab>
           <Tabs.Tab value="ad">Active Directory</Tabs.Tab>
           <Tabs.Tab value="hyperv">Hyper-V-Hosts</Tabs.Tab>
+          <Tabs.Tab value="winrm-certs">WinRM-Zertifikate</Tabs.Tab>
           <Tabs.Tab value="storage">Storage</Tabs.Tab>
           <Tabs.Tab value="email">E-Mail</Tabs.Tab>
           <Tabs.Tab value="scheduler">Hintergrundjobs</Tabs.Tab>
@@ -642,6 +644,10 @@ export function SettingsPage() {
               </Stack>
             </Paper>
           </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="winrm-certs" pt="md">
+          <WinrmCertsTab />
         </Tabs.Panel>
 
         <Tabs.Panel value="email" pt="md">

@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # Container als vertrauenswuerdig erkannt wird. Leer = nur der
     # Standard-System-Truststore (siehe DEPLOYMENT.md Abschnitt 1).
     winrm_ca_trust_path: str = ""
+    # Verzeichnis, in das die GUI-Sektion "Settings > WinRM-Zertifikate" das
+    # aus den hochgeladenen Host-Zertifikaten erzeugte Bundle schreibt
+    # (<winrm_trust_dir>/bundle.pem). Ist 'winrm_ca_trust_path' leer, nimmt
+    # der WinRM-Code dieses Bundle automatisch (siehe
+    # app.core.winrm_trust.resolved_trust_path) -- kein .env-Eintrag/Neustart
+    # noetig. Liegt auf demselben persistenten /data-Volume wie
+    # 'netapp_cert_dir'.
+    winrm_trust_dir: str = "/data/winrm-trust"
     # Hartes Wall-Clock-Zeitlimit fuer EINEN einzelnen PowerShell-/WinRM-
     # Aufruf im Backup-Pfad (Checkpoint erstellen/entfernen, Owner-Node
     # aufloesen). pywinrm pollt einen langlaufenden Befehl sonst unbegrenzt

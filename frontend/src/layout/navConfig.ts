@@ -97,6 +97,7 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "SnapMirror-Labels", path: "/settings?tab=snapmirror-labels" },
       { label: "Active-Directory-Integration", path: "/settings?tab=ad" },
       { label: "Hyper-V-Hosts", path: "/settings?tab=hyperv" },
+      { label: "WinRM-Zertifikate", path: "/settings?tab=winrm-certs" },
       { label: "Storage", path: "/settings?tab=storage" },
       { label: "E-Mail", path: "/settings?tab=email" },
       { label: "Hintergrundjobs", path: "/settings?tab=scheduler" },

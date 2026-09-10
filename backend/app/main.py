@@ -24,6 +24,7 @@ from app.api.routes import (
     storage_access,
     users,
     vms,
+    winrm_certs,
 )
 from app.core.config import get_settings
 from app.core.scheduler import shutdown_scheduler, start_scheduler
@@ -77,6 +78,7 @@ app.include_router(email_config.router)
 app.include_router(scheduler_config.router)
 app.include_router(alerts.router)
 app.include_router(storage_access.router)
+app.include_router(winrm_certs.router)
 
 
 @app.get("/api/health")

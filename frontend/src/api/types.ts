@@ -959,3 +959,41 @@ export interface StorageAccess {
   actions_enabled: boolean;
   hide_metrocluster_mirrors: boolean;
 }
+
+// --- Settings > WinRM-Zertifikate ---
+
+export interface WinrmHostCertificate {
+  id: string;
+  label: string;
+  host_address?: string | null;
+  fingerprint_sha256: string;
+  subject_cn?: string | null;
+  sans: string[];
+  not_before?: string | null;
+  not_after?: string | null;
+  uploaded_at: string;
+  uploaded_by?: string | null;
+}
+
+export interface WinrmTrustState {
+  last_bundle_built_at?: string | null;
+  bundle_path?: string | null;
+  bundle_cert_count: number;
+  updated_by?: string | null;
+}
+
+export interface WinrmCertsOverview {
+  certificates: WinrmHostCertificate[];
+  trust_state: WinrmTrustState;
+  active_trust_path: string;
+  bundle_outdated: boolean;
+}
+
+export type WinrmClusterType = "failover_cluster" | "single_host";
+
+export interface WinrmSetupScriptRequest {
+  cluster_type: WinrmClusterType;
+  cno_hostname?: string | null;
+  cno_ip?: string | null;
+  own_ip?: string | null;
+}

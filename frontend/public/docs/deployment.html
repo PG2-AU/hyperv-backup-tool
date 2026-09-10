@@ -1492,6 +1492,21 @@ schlägt sonst trotz korrekt eingerichtetem Listener fehl. Lösung:
 <code>HVNB_WINRM_CA_TRUST_PATH</code> auf eine PEM-Datei zeigen lassen, die das
 Zertifikat als zusätzlich vertrauenswürdig hinterlegt (pywinrm
 <code>ca_trust_path</code>, additiv zum normalen System-Truststore).</p>
+<div class="callout">
+<span class="callout-label">Komfortweg über die GUI (empfohlen)</span>
+<p>unter <strong>Settings →
+WinRM-Zertifikate</strong> gibt es einen Assistenten, der das PowerShell-Skript
+aus Schritt 2–4 erzeugt, die pro Knoten exportierten <code>.pem</code>-Dateien per
+Upload entgegennimmt und daraus per Knopfdruck das Bundle schreibt — ohne
+<code>podman cp</code>, ohne <code>.env</code>-Eintrag und ohne Neustart (das Bundle landet
+unter <code>/data/winrm-trust/bundle.pem</code> und wird sofort übernommen, sofern
+<code>HVNB_WINRM_CA_TRUST_PATH</code> leer ist). Nutzbar bereits bei einer
+Erstinstallation, bevor der erste Cluster hinzugefügt wird. Der manuelle
+Weg unten bleibt als Fallback und ist für eine <strong>interne CA</strong> weiterhin
+der einfachere (nur den CA-Root einmalig hinterlegen, statt jeden Knoten
+einzeln hochzuladen). Ist <code>HVNB_WINRM_CA_TRUST_PATH</code> bereits gesetzt,
+schreibt der GUI-Button in genau diese Datei.</p>
+</div>
 <p>Bei einer internen CA reicht es, einmalig nur den CA-ROOT zu exportieren
 — das deckt dann automatisch ALLE damit ausgestellten Knoten-Zertifikate
 ab, statt jeden Knoten einzeln zu pflegen. Bei selbstsignierten

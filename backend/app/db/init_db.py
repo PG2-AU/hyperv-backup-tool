@@ -19,6 +19,7 @@ from app.models.role import Role, RoleAssignment
 from app.models.scheduler_config import SchedulerConfig
 from app.models.snapmirror_label import DEFAULT_SNAPMIRROR_LABELS, SnapMirrorLabel
 from app.models.user import User, UserSource
+from app.models.winrm_cert import WinrmHostCertificate, WinrmTrustState  # noqa: F401  (nur fuer create_all)
 
 
 def _migrate_resource_group_policy_link_schedules(db: Session) -> None:
