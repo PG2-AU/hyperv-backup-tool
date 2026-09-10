@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
+from app.models.backup_run import BackupRun, JobStatus
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppCluster
@@ -339,4 +340,17 @@ def discover_cluster(
     cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_MANAGE)),
 ):
     cluster = _get_cluster_or_404(db, cluster_id)
+    # Discovery und ein laufender Backup-Lauf duerfen sich nicht
+    # ueberschneiden: die volle Discovery loescht/legt HyperVVm-Zeilen neu
+    # an (der Backup-Lauf haelt sie -- ObjectDeletedError, siehe
+    # _execute_job_run) UND fuehrt Get-VHD ueber die (waehrend eines
+    # Backup-Checkpoint-Merges gesperrte) AVHDX-Kette aus (Hang). Die
+    # periodische Discovery verschiebt sich in diesem Fall selbst (siehe
+    # run_discovery/_DISCOVERY_MAX_DEFERRALS in app.core.scheduler) -- der
+    # manuelle Button hatte diesen Schutz bisher nicht.
+    if db.query(BackupRun.id).filter(BackupRun.status == JobStatus.RUNNING).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ein Backup-Lauf ist gerade aktiv -- Discovery wuerde damit kollidieren. Bitte nach dessen Abschluss erneut versuchen.",
+        )
     return _run_discovery(db, cluster)
