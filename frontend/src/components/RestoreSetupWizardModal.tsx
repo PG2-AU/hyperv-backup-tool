@@ -170,11 +170,17 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
           <Stack mt="md">
             <Alert icon={<IconAlertTriangle size={16} />} color="blue" variant="light" title="Anforderungen an den Restore-Proxy-Host">
               <List size="sm" spacing={2}>
-                <List.Item>Dedizierter Windows Server, per WinRM vom Backup-Server aus erreichbar (Port 5985/5986)</List.Item>
+                <List.Item>Dedizierter Windows Server, WinRM aktiviert (<Text component="span" ff="monospace" size="sm">Enable-PSRemoting -Force</Text>)</List.Item>
+                <List.Item>
+                  Ein WinRM-Listener vom Backup-Server aus erreichbar: bei HTTPS (5986, Default unten) ein Listener mit Zertifikat,
+                  das dem Container vertraut wird – Zertifikat wie bei einem Hyper-V-Host erzeugen (Settings → WinRM-Zertifikate,
+                  Typ „Einzelner Host", Host-IP eintragen) und das <Text component="span" ff="monospace" size="sm">.pem</Text> ins
+                  Bundle aufnehmen. Alternativ HTTP (5985): unten „WinRM über HTTPS" abwählen – dann kein Zertifikat nötig.
+                </List.Item>
+                <List.Item>Lokale Administratorrechte für das hier hinterlegte Konto (Disk-/iSCSI-Cmdlets)</List.Item>
                 <List.Item>Microsoft-iSCSI-Initiator-Dienst (MSiSCSI) gestartet – die App startet ihn beim Setup automatisch und stellt ihn auf „Automatisch"</List.Item>
                 <List.Item>Eine IP-Adresse im iSCSI-Netz der Ziel-SVM(s); wird bei „Einrichten" pro SVM ausgewählt</List.Item>
                 <List.Item>Netzwerkzugriff auf Port 3260 (iSCSI) der SVM sowie Port 445 (SMB) eines Hyper-V-Knotens</List.Item>
-                <List.Item>Lokale Administratorrechte für das hier hinterlegte Konto (Disk-/iSCSI-Cmdlets)</List.Item>
                 <List.Item>Für datei-basierten Restore zusätzlich das Cmdlet <Text component="span" ff="monospace" size="sm">Mount-DiskImage</Text> (Windows-Storage-Modul, ab Server 2012 vorhanden)</List.Item>
               </List>
             </Alert>

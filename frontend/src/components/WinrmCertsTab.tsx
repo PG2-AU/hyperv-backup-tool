@@ -37,7 +37,16 @@ function fmtDate(value?: string | null): string {
   return value ? new Date(value).toLocaleString("de-DE") : "–";
 }
 
-export function WinrmCertsTab() {
+interface WinrmCertsTabProps {
+  // Vorbelegung des Assistenten -- z.B. wenn die Sektion auf Restore >
+  // Setup fuer den (immer einzelnen) Restore-Proxy-Host eingebettet wird.
+  defaultClusterType?: WinrmClusterType;
+  defaultOwnIp?: string;
+  /** Erklaertext oben ausblenden (wenn schon Kontext drumherum steht). */
+  hideIntro?: boolean;
+}
+
+export function WinrmCertsTab({ defaultClusterType, defaultOwnIp, hideIntro }: WinrmCertsTabProps = {}) {
   const { data: overview } = useWinrmCerts();
   const generateScript = useGenerateWinrmSetupScript();
   const uploadCert = useUploadWinrmCert();
@@ -45,10 +54,10 @@ export function WinrmCertsTab() {
   const buildBundle = useBuildWinrmBundle();
 
   // Block 1 -- Assistent
-  const [clusterType, setClusterType] = useState<WinrmClusterType>("failover_cluster");
+  const [clusterType, setClusterType] = useState<WinrmClusterType>(defaultClusterType ?? "failover_cluster");
   const [cnoHostname, setCnoHostname] = useState("");
   const [cnoIp, setCnoIp] = useState("");
-  const [ownIp, setOwnIp] = useState("");
+  const [ownIp, setOwnIp] = useState(defaultOwnIp ?? "");
   const [script, setScript] = useState<string | null>(null);
 
   // Block 3 -- Upload
@@ -123,11 +132,14 @@ export function WinrmCertsTab() {
 
   return (
     <Stack maw={860}>
-      <Text size="sm" c="dimmed">
-        Damit der Container den WinRM-HTTPS-Zertifikaten der Hyper-V-Hosts vertraut, muss ein CA-Trust-Bundle hinterlegt sein. Diese
-        Sektion ersetzt den manuellen Weg (Zertifikate von Hand bündeln, per <Code>podman cp</Code> kopieren, <Code>.env</Code>{" "}
-        anpassen, Neustart) – der Ablauf funktioniert auch bei einer Erstinstallation, bevor der erste Cluster hinzugefügt wird.
-      </Text>
+      {!hideIntro && (
+        <Text size="sm" c="dimmed">
+          Damit der Container den WinRM-HTTPS-Zertifikaten der Hyper-V-Hosts vertraut, muss ein CA-Trust-Bundle hinterlegt sein.
+          Diese Sektion ersetzt den manuellen Weg (Zertifikate von Hand bündeln, per <Code>podman cp</Code> kopieren,{" "}
+          <Code>.env</Code> anpassen, Neustart) – der Ablauf funktioniert auch bei einer Erstinstallation, bevor der erste Cluster
+          hinzugefügt wird. Dasselbe Bundle gilt für <strong>alle</strong> WinRM-HTTPS-Verbindungen, auch den Restore-Proxy-Host.
+        </Text>
+      )}
 
       {/* -------------------------------------------------- 1 -------------- */}
       <Paper p="md" withBorder>

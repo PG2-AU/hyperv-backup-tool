@@ -1217,6 +1217,19 @@ schlägt sonst trotz korrekt eingerichtetem Listener fehl. Lösung:
 Zertifikat als zusätzlich vertrauenswürdig hinterlegt (pywinrm
 `ca_trust_path`, additiv zum normalen System-Truststore).
 
+> **Der Restore-Proxy-Host braucht dieselbe WinRM-Einrichtung** wie ein
+> Cluster-Knoten (die App spricht ihn per WinRM an, siehe Abschnitt 12,
+> Schritt 3): WinRM aktiviert, und je nach `use_https`-Einstellung in der
+> GUI entweder ein HTTPS-Listener (5986) mit einem Zertifikat, dessen
+> `.pem` in **dasselbe** CA-Trust-Bundle wandert (die Bundle-Datei bzw.
+> die GUI-Sektion „WinRM-Zertifikate" gilt für **alle**
+> WinRM-HTTPS-Verbindungen, nicht nur die Hyper-V-Hosts), oder — einfacher
+> — ein HTTP-Listener (5985) und in der GUI „WinRM über HTTPS" abgewählt,
+> dann ist gar kein Zertifikat nötig. Der Proxy ist ein einzelner Host
+> ohne CNO/Failover, sein Zertifikat braucht daher nur den einen
+> Namen/die eine IP als SAN (Skript-Assistent: Typ „Einzelner Host"),
+> und CredSSP wird für ihn nicht benötigt.
+
 > **Komfortweg über die GUI (empfohlen):** unter **Settings →
 > WinRM-Zertifikate** gibt es einen Assistenten, der das PowerShell-Skript
 > aus Schritt 2–4 erzeugt, die pro Knoten exportierten `.pem`-Dateien per

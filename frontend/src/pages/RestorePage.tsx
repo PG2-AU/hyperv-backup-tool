@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ActionIcon, Alert, Badge, Button, Group, List, Paper, Stack, Table, Tabs, Text, Title } from "@mantine/core";
+import { Accordion, ActionIcon, Alert, Badge, Button, Group, List, Paper, Stack, Table, Tabs, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconDatabaseImport, IconInfoCircle, IconPlugConnected, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
@@ -18,6 +18,7 @@ import {
 } from "@/api/hooks";
 import { FileRestoreSessionModal } from "@/components/FileRestoreSessionModal";
 import { RestoreSetupWizardModal } from "@/components/RestoreSetupWizardModal";
+import { WinrmCertsTab } from "@/components/WinrmCertsTab";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
 import { VmRecreateWizardModal } from "@/components/VmRecreateWizardModal";
@@ -48,6 +49,7 @@ export function RestorePage() {
   const deleteRestoreConfig = useDeleteRestoreInfraConfig();
   const checkRestoreConfig = useCheckRestoreInfraConfig();
   const clusterNameById = new Map((netappClusters ?? []).map((c) => [c.id, c.name]));
+  const proxyIsIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(proxyHost?.address ?? "");
   const [restoreWizardOpen, setRestoreWizardOpen] = useState(false);
 
   function runConfigCheck(id: string, svm: string) {
@@ -310,13 +312,42 @@ export function RestorePage() {
               auf dem Restore-Proxy-Host bei der NetApp-SVM an, um die wiederhergestellte VHDX per SMB auf die
               Ziel-CSV zu kopieren. Der Proxy-Host braucht:
               <List size="sm" spacing={2} mt={4}>
-                <List.Item>per WinRM vom Backup-Server aus erreichbar (Port 5985/5986), Konto mit lokalen Adminrechten</List.Item>
+                <List.Item>
+                  WinRM aktiviert (<Text component="span" ff="monospace" size="sm">Enable-PSRemoting -Force</Text>) und ein Listener vom
+                  Backup-Server aus erreichbar: HTTPS/5986 (Default) braucht einen HTTPS-Listener mit Zertifikat, das dem Container
+                  vertraut wird – Zertifikat wie bei einem Hyper-V-Host erzeugen (Settings → WinRM-Zertifikate, Typ „Einzelner Host",
+                  Host-IP eintragen) und das <Text component="span" ff="monospace" size="sm">.pem</Text> dort mit ins Bundle nehmen.
+                  Alternativ HTTP/5985: im Wizard „WinRM über HTTPS" abwählen – dann kein Zertifikat nötig. CredSSP wird für den
+                  Proxy nicht gebraucht.
+                </List.Item>
+                <List.Item>Konto mit lokalen Administratorrechten auf dem Proxy (Disk-/iSCSI-Cmdlets)</List.Item>
                 <List.Item>Microsoft-iSCSI-Initiator-Dienst (MSiSCSI) gestartet – wird beim Setup automatisch gestartet und auf „Automatisch" gestellt</List.Item>
                 <List.Item>eine IP-Adresse im iSCSI-Netz jeder Ziel-SVM – pro SVM in der Tabelle unten als Quell-IP wählbar</List.Item>
                 <List.Item>Netzwerkzugriff auf Port 3260 (iSCSI) der SVM und Port 445 (SMB) eines Hyper-V-Knotens</List.Item>
                 <List.Item>für datei-basierten Restore zusätzlich das Cmdlet <Text component="span" ff="monospace" size="sm">Mount-DiskImage</Text></List.Item>
               </List>
             </Alert>
+
+            <Accordion variant="contained">
+              <Accordion.Item value="proxy-cert">
+                <Accordion.Control>WinRM-Zertifikat für den Restore-Proxy-Host erzeugen &amp; importieren (nur bei HTTPS / Port 5986)</Accordion.Control>
+                <Accordion.Panel>
+                  <Text size="sm" c="dimmed" mb="sm">
+                    Wird der Proxy-Host per HTTPS angebunden (Standard), braucht er einen WinRM-HTTPS-Listener mit einem Zertifikat,
+                    dem der Container vertraut. Der Assistent unten erzeugt das passende PowerShell-Skript (Typ „Einzelner Host"),
+                    danach das erzeugte <Text component="span" ff="monospace" size="sm">.pem</Text> hochladen und das Bundle neu
+                    schreiben – dasselbe Bundle wie für die Hyper-V-Hosts. Alternativ im Setup-Wizard „WinRM über HTTPS" abwählen
+                    (Port 5985), dann ist kein Zertifikat nötig.
+                  </Text>
+                  <WinrmCertsTab
+                    hideIntro
+                    defaultClusterType="single_host"
+                    defaultOwnIp={proxyIsIpv4 ? (proxyHost?.address ?? "") : ""}
+                  />
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
+
             <Paper p="md">
               <Group justify="space-between" mb="sm">
                 <div>
