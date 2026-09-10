@@ -950,7 +950,26 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             else None
         )
         vm_names_in_run = sorted({vm for t in targets for vm in t.vm_names})
-        hyperv_vms_by_name = {v.name: v for v in db.query(HyperVVm).filter(HyperVVm.name.in_(vm_names_in_run)).all()}
+        # HyperVVm-Zeilen NICHT als ORM-Instanzen ueber die vielen
+        # db.commit() dieses Laufs (und die minutenlangen WinRM-Aufrufe)
+        # hinweg halten: laeuft zwischenzeitlich eine Discovery (manuell
+        # angestossen, oder die nach _DISCOVERY_MAX_DEFERRALS doch nicht
+        # mehr weiter verschobene periodische), loescht sie diese Zeilen und
+        # legt sie mit neuer PK neu an. Ein Attributzugriff auf die dann
+        # veraltete Instanz loest einen Refresh-SELECT aus, der ins Leere
+        # laeuft ("Instance '<HyperVVm ...>' has been deleted, or its row is
+        # otherwise not present") und den Lauf abbricht -- NACHDEM Checkpoints
+        # erstellt, aber BEVOR sie wieder entfernt wurden, also mit
+        # verwaisten Checkpoints als Folge (live 2026-09-10: Silver_Hourly /
+        # win10client01, zwei Orphan-Checkpoints). Stattdessen hier nur die
+        # tatsaechlich benoetigten Skalarwerte kopieren (Row-Tupel, kein
+        # ORM-Refresh).
+        hyperv_vm_meta = {
+            name: {"cluster_id": cluster_id, "host_name": host_name}
+            for name, cluster_id, host_name in db.query(HyperVVm.name, HyperVVm.cluster_id, HyperVVm.host_name)
+            .filter(HyperVVm.name.in_(vm_names_in_run))
+            .all()
+        }
 
         errors: list[str] = list(initial_warnings)
         was_cancelled = False
@@ -965,7 +984,10 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         # das vermerkt, die VM wird aber trotzdem (crash-konsistent) gesichert
         # statt den ganzen Lauf abzubrechen.
         checkpoint_name = f"hvnb_{slug}_{snapshot_suffix}"
-        active_checkpoints: list[tuple[HyperVService, object, str]] = []
+        # 4. Tupel-Element: Cluster-ID der VM -- fuer den defensiven
+        # Re-Query beim lokalen Checkpoint-Filter unten (statt eines
+        # veralteten ORM-Objekts).
+        active_checkpoints: list[tuple[HyperVService, object, str, str | None]] = []
         if policy.consistency == ConsistencyType.APPLICATION_CONSISTENT and vm_names_in_run:
             settings = get_settings()
             hyperv_clusters_by_id = {c.id: c for c in db.query(HyperVCluster).all()}
@@ -973,9 +995,9 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                 if _cancel_requested(db, run.id):
                     was_cancelled = True
                     break
-                hv_vm = hyperv_vms_by_name.get(vm_name)
-                hv_cluster = hyperv_clusters_by_id.get(hv_vm.cluster_id) if hv_vm else None
-                if hv_vm is None or hv_cluster is None:
+                meta = hyperv_vm_meta.get(vm_name)
+                hv_cluster = hyperv_clusters_by_id.get(meta["cluster_id"]) if meta else None
+                if meta is None or hv_cluster is None:
                     msg = "Hyper-V-Cluster nicht gefunden, Checkpoint uebersprungen (Backup laeuft crash-konsistent weiter)"
                     errors.append(f"VM '{vm_name}': {msg}")
                     with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
@@ -995,7 +1017,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                         )
                         hv_password = decrypt_secret(hv_cluster.encrypted_password)
                         cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
-                        owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or hv_vm.host_name
+                        owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or (meta["host_name"] if meta else None)
                         node_address = hv_service.resolve_node_address(cno_session, owner_node)
                         node_service = HyperVService(
                             settings, node_address,
@@ -1003,7 +1025,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                         )
                         node_session = node_service.connect(hv_cluster.username, hv_password)
                         node_service.create_checkpoint(node_session, vm_name, checkpoint_name, policy.consistency)
-                        active_checkpoints.append((node_service, node_session, vm_name))
+                        active_checkpoints.append((node_service, node_session, vm_name, meta["cluster_id"] if meta else None))
                         ctx.row.message = f"Checkpoint '{checkpoint_name}' auf Knoten '{node_address}' erstellt"
                 except Exception as exc:
                     errors.append(f"VM '{vm_name}': Checkpoint konnte nicht erstellt werden ({exc}) -- Backup laeuft crash-konsistent weiter")
@@ -1123,7 +1145,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                 except Exception as exc:
                     errors.append(f"{target.volume_name}: SnapMirror-Update fehlgeschlagen ({exc})")
 
-        for node_service, node_session, vm_name in active_checkpoints:
+        for node_service, node_session, vm_name, vm_cluster_id in active_checkpoints:
             try:
                 with _StepCtx(db, run.id, f"checkpoint-remove-{vm_name}", f"Checkpoint entfernen: {vm_name}", step_model=BackupRunStep) as ctx:
                     result = node_service.remove_checkpoint(node_session, vm_name, checkpoint_name)
@@ -1154,9 +1176,21 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             # deckt die Alarm-Korrektheit ab; VHD-Groessen frischt die
             # naechste regulaere Discovery auf (unkritisch, nur fuer
             # Kapazitaetsschaetzungen).
-            hv_vm = hyperv_vms_by_name.get(vm_name)
-            if hv_vm is not None and hv_vm.checkpoints:
-                hv_vm.checkpoints = [c for c in hv_vm.checkpoints if c.get("name") != checkpoint_name]
+            # Frisch nachladen statt ein ueber den ganzen Lauf gehaltenes
+            # (und ggf. von einer zwischenzeitlichen Discovery geloeschtes)
+            # ORM-Objekt zu verwenden -- siehe hyperv_vm_meta oben. Rein
+            # best-effort: existiert die Zeile nicht mehr, hat die Discovery
+            # die Checkpoint-Liste ohnehin bereits frisch gesetzt.
+            try:
+                hv_vm_fresh = (
+                    db.query(HyperVVm).filter(HyperVVm.name == vm_name, HyperVVm.cluster_id == vm_cluster_id).first()
+                    if vm_cluster_id
+                    else None
+                )
+                if hv_vm_fresh is not None and hv_vm_fresh.checkpoints:
+                    hv_vm_fresh.checkpoints = [c for c in hv_vm_fresh.checkpoints if c.get("name") != checkpoint_name]
+            except Exception:
+                pass
 
         # Wurde dieser Lauf zwischenzeitlich vom Zeitlimit-Watchdog
         # (force_cancel_timed_out_runs in app.core.scheduler) hart
