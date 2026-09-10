@@ -41,12 +41,27 @@ import { formatBytes } from "@/utils/format";
 
 type RestoreKind = RestoreMode | "files" | "clone";
 
-// Backend-Konvention (siehe restore.py/_execute_restore, _execute_vm_recreate):
-// ein VHDX-Pfad hat immer die Form "...ClusterStorage\<CSV-Name>\...".
-function csvNameFromPath(path: string | undefined | null): string | null {
+// Ein VHDX-Pfad hat die Form "...ClusterStorage\<MOUNT-ORDNER>\...". Der
+// Mount-Ordner ist NICHT zwingend der CSV-Ressourcenname -- ein CSV kann
+// frei umbenannt werden (z.B. Ordner "Volume25", CSV-Name
+// "HVX1_Bronze_01"). Deshalb liefert das hier nur den Ordner; die
+// Zuordnung zum echten CSV macht resolveCsvForVhdPath() weiter unten
+// ueber HyperVCsv.volume_path (analog zu _resolve_csv_name im Backend,
+// Commit e149eee).
+function csvMountFolderFromVhdPath(path: string | undefined | null): string | null {
   if (!path) return null;
   const m = path.match(/ClusterStorage\\([^\\]+)\\/i);
   return m ? m[1] : null;
+}
+
+// Letztes Pfadsegment (ohne abschliessende Trenner). csv.volume_path ist
+// z.B. "C:\ClusterStorage\Volume25" -- ohne Sub-Pfad und ohne
+// abschliessenden Backslash, csvMountFolderFromVhdPath greift darauf also
+// nicht.
+function lastPathSegment(path: string | undefined | null): string | null {
+  if (!path) return null;
+  const parts = path.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return parts.length ? parts[parts.length - 1] || null : null;
 }
 
 interface CapacityEstimate {
@@ -188,41 +203,52 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
   // entweder auf die gewaehlte Ziel-CSV gesammelt oder -- ohne Auswahl --
   // pro urspruenglicher CSV wie im Original. "files" hat keine dauerhafte
   // CSV-Auswirkung, daher leer.
-  const findCsv = (name: string) => (csvs ?? []).find((c) => c.name === name && c.hyperv_cluster_name === vm?.cluster);
+  const findCsvByName = (name: string) => clusterCsvs.find((c) => c.name === name);
+  // Loest einen VHDX-Pfad zum echten CSV auf: zuerst ueber den Mount-Ordner
+  // (letztes Segment von csv.volume_path), dann als Fallback ueber den
+  // CSV-Namen selbst. Deckt umbenannte CSVs ab (Ordner != Ressourcenname),
+  // spiegelt _resolve_csv_name im Backend.
+  const resolveCsvForVhdPath = (vhdPath: string | undefined | null) => {
+    const folder = csvMountFolderFromVhdPath(vhdPath);
+    if (!folder) return undefined;
+    const lc = folder.toLowerCase();
+    return (
+      clusterCsvs.find((c) => lastPathSegment(c.volume_path)?.toLowerCase() === lc) ??
+      clusterCsvs.find((c) => c.name.toLowerCase() === lc)
+    );
+  };
   const liveSizeByVhdName = new Map((vmFull?.vhds ?? []).map((v) => [v.name, occupiedBytes(v)]));
 
   let capacityEstimates: CapacityEstimate[] = [];
   if (restoreKind === "clone") {
     const totalAdded = (selectedSnapshot?.vhds ?? []).reduce((sum, v) => sum + occupiedBytes(v), 0);
     if (cloneDestinationCsv) {
-      const csv = findCsv(cloneDestinationCsv);
+      const csv = findCsvByName(cloneDestinationCsv);
       capacityEstimates = csv ? [{ csv, addedBytes: totalAdded, removedBytes: 0 }] : [];
     } else {
-      const byCsv = new Map<string, number>();
+      const byCsv = new Map<string, CapacityEstimate>();
       for (const v of selectedSnapshot?.vhds ?? []) {
-        const name = csvNameFromPath(v.path);
-        if (!name) continue;
-        byCsv.set(name, (byCsv.get(name) ?? 0) + occupiedBytes(v));
+        const csv = resolveCsvForVhdPath(v.path);
+        if (!csv) continue;
+        const entry = byCsv.get(csv.name) ?? { csv, addedBytes: 0, removedBytes: 0 };
+        entry.addedBytes += occupiedBytes(v);
+        byCsv.set(csv.name, entry);
       }
-      capacityEstimates = Array.from(byCsv.entries())
-        .map(([name, addedBytes]) => ({ csv: findCsv(name), addedBytes, removedBytes: 0 }))
-        .filter((e): e is CapacityEstimate => !!e.csv);
+      capacityEstimates = Array.from(byCsv.values());
     }
   } else if (restoreKind === "add" || restoreKind === "replace") {
-    const byCsv = new Map<string, { addedBytes: number; removedBytes: number }>();
+    const byCsv = new Map<string, CapacityEstimate>();
     for (const path of selectedVhdPaths) {
       const vhd = vhdOptions.find((v) => v.path === path);
       if (!vhd) continue;
-      const name = csvNameFromPath(path);
-      if (!name) continue;
-      const entry = byCsv.get(name) ?? { addedBytes: 0, removedBytes: 0 };
+      const csv = resolveCsvForVhdPath(path);
+      if (!csv) continue;
+      const entry = byCsv.get(csv.name) ?? { csv, addedBytes: 0, removedBytes: 0 };
       entry.addedBytes += occupiedBytes(vhd);
       if (restoreKind === "replace") entry.removedBytes += liveSizeByVhdName.get(vhd.name) ?? 0;
-      byCsv.set(name, entry);
+      byCsv.set(csv.name, entry);
     }
-    capacityEstimates = Array.from(byCsv.entries())
-      .map(([name, sums]) => ({ csv: findCsv(name), ...sums }))
-      .filter((e): e is CapacityEstimate => !!e.csv);
+    capacityEstimates = Array.from(byCsv.values());
   }
 
   useEffect(() => {
