@@ -24,6 +24,7 @@ einzelne VM, wird das als Fehler vermerkt, das Backup laeuft fuer diese VM
 aber trotzdem (crash-konsistent) weiter, statt den gesamten Lauf
 abzubrechen -- Best-Effort pro VM, analog zum Rest dieser Funktion."""
 
+import queue
 import re
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -906,14 +907,24 @@ class _NodeCheckpointJob:
 
 
 def _run_node_checkpoints(
-    settings, job: _NodeCheckpointJob, checkpoint_name: str, consistency: ConsistencyType
-) -> list[_CheckpointResult]:
+    settings,
+    job: _NodeCheckpointJob,
+    checkpoint_name: str,
+    consistency: ConsistencyType,
+    progress: "queue.Queue",
+) -> None:
     """Erstellt fuer die VMs EINES Knotens nacheinander je einen Checkpoint.
     Laeuft im Worker-Thread -- kein DB-Zugriff, nur WinRM. Parallelitaet
     entsteht ausschliesslich dadurch, dass mehrere dieser Aufrufe (je einer
     pro Knoten) gleichzeitig laufen; INNERHALB eines Knotens bleibt es
-    seriell (Nutzer-Vorgabe: pro Host nie mehr als ein Checkpoint)."""
-    results: list[_CheckpointResult] = []
+    seriell (Nutzer-Vorgabe: pro Host nie mehr als ein Checkpoint).
+
+    Fortschritt wird ueber `progress` an den Haupt-Thread gemeldet (der die
+    BackupRunStep-Zeilen live schreibt -- der Worker fasst die DB nicht an):
+    ("start", (vm_name, node_address)) direkt vor create_checkpoint,
+    ("done", _CheckpointResult) danach. Fuer JEDE VM des Knotens kommt
+    genau ein "done" -- der Haupt-Thread zaehlt darueber, wann alles fertig
+    ist."""
     step_timeout = settings.winrm_backup_step_timeout_seconds
     try:
         node_service = HyperVService(
@@ -921,23 +932,23 @@ def _run_node_checkpoints(
         )
         node_session = node_service.connect(job.username, job.password)
     except Exception as exc:  # noqa: BLE001 -- Knoten unerreichbar: alle seine VMs crash-konsistent
-        return [
-            _CheckpointResult(vm, cid, job.node_address, ok=False, error=f"Knoten nicht erreichbar ({exc})")
-            for vm, cid in job.vms
-        ]
+        for vm, cid in job.vms:
+            progress.put(("done", _CheckpointResult(vm, cid, job.node_address, ok=False, error=f"Knoten nicht erreichbar ({exc})")))
+        return
     for vm_name, cluster_id in job.vms:
+        progress.put(("start", (vm_name, job.node_address)))
         try:
             node_service.create_checkpoint(node_session, vm_name, checkpoint_name, consistency)
-            results.append(
+            progress.put((
+                "done",
                 _CheckpointResult(
                     vm_name, cluster_id, job.node_address, ok=True,
                     node_service=node_service, node_session=node_session,
                     message=f"Checkpoint '{checkpoint_name}' auf Knoten '{job.node_address}' erstellt",
-                )
-            )
+                ),
+            ))
         except Exception as exc:  # noqa: BLE001 -- eine VM scheitert, die anderen des Knotens laufen weiter
-            results.append(_CheckpointResult(vm_name, cluster_id, job.node_address, ok=False, error=str(exc)))
-    return results
+            progress.put(("done", _CheckpointResult(vm_name, cluster_id, job.node_address, ok=False, error=str(exc))))
 
 
 def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
@@ -1112,40 +1123,80 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                             vms_by_node[node_address] = job
                         job.vms.append((vm_name, cluster_id))
 
-            # --- Parallel: ein Future je Knoten (VMs darin seriell -- pro
-            # Host nie mehr als ein Checkpoint gleichzeitig). Kein DB-Zugriff
-            # in den Workern. ---
-            results: list[_CheckpointResult] = []
-            if vms_by_node:
-                node_count = len(vms_by_node)
-                workers = node_count if max_parallel == 0 else max(1, min(max_parallel, node_count))
-                with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="checkpoint") as ex:
-                    futures = [
-                        ex.submit(_run_node_checkpoints, settings, job, checkpoint_name, policy.consistency)
-                        for job in vms_by_node.values()
-                    ]
-                    for fut in futures:
-                        results.extend(fut.result())
-
-            # --- Nachbereitung (Haupt-Thread): Schritte schreiben +
-            # active_checkpoints aufbauen, deterministisch nach VM-Name. ---
+            # VMs, die schon vor dem Submit feststehen (kein Cluster/kein
+            # Owner-Knoten) -- direkt als uebersprungen protokollieren.
             for vm_name, reason in sorted(skipped_vms):
                 msg = f"{reason}, Checkpoint uebersprungen (Backup laeuft crash-konsistent weiter)"
                 errors.append(f"VM '{vm_name}': {msg}")
                 with _StepCtx(db, run.id, f"checkpoint-create-{vm_name}", f"Checkpoint erstellen: {vm_name}", step_model=BackupRunStep) as ctx:
                     ctx.row.status = RestoreStepStatus.SKIPPED
                     ctx.row.message = msg
-            for res in sorted(results, key=lambda r: r.vm_name):
-                with _StepCtx(db, run.id, f"checkpoint-create-{res.vm_name}", f"Checkpoint erstellen: {res.vm_name}", step_model=BackupRunStep) as ctx:
-                    if res.ok:
-                        ctx.row.message = res.message
-                        active_checkpoints.append((res.node_service, res.node_session, res.vm_name, res.cluster_id))
-                    else:
-                        ctx.row.status = RestoreStepStatus.ERROR
-                        ctx.row.message = res.error
-                        errors.append(
-                            f"VM '{res.vm_name}': Checkpoint konnte nicht erstellt werden ({res.error}) -- Backup laeuft crash-konsistent weiter"
-                        )
+
+            # --- Parallel: ein Future je Knoten (VMs darin seriell -- pro
+            # Host nie mehr als ein Checkpoint gleichzeitig). Die Worker
+            # fassen die DB NICHT an, sondern melden Start/Ende je VM ueber
+            # eine Queue -- der Haupt-Thread schreibt daraus die
+            # BackupRunStep-Zeilen LIVE (Status RUNNING -> SUCCESS/ERROR),
+            # damit die Job-Anzeige weiterhin zeigt, welcher Checkpoint
+            # gerade laeuft bzw. schon fertig ist (auch mehrere gleichzeitig).
+            if vms_by_node:
+                node_count = len(vms_by_node)
+                workers = node_count if max_parallel == 0 else max(1, min(max_parallel, node_count))
+                outstanding = sum(len(j.vms) for j in vms_by_node.values())
+                progress: queue.Queue = queue.Queue()
+                running_rows: dict[str, BackupRunStep] = {}
+                with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="checkpoint") as ex:
+                    futures = [
+                        ex.submit(_run_node_checkpoints, settings, job, checkpoint_name, policy.consistency, progress)
+                        for job in vms_by_node.values()
+                    ]
+                    while outstanding > 0:
+                        try:
+                            kind, payload = progress.get(timeout=1.0)
+                        except queue.Empty:
+                            # Sollte nicht vorkommen (jeder Worker meldet je VM
+                            # ein "done") -- als Sicherheitsnetz gegen ein
+                            # Endlos-Warten, falls ein Future doch anders
+                            # endet.
+                            if all(f.done() for f in futures):
+                                break
+                            continue
+                        if kind == "start":
+                            vm_name, node_address = payload
+                            row = BackupRunStep(
+                                run_id=run.id, step=f"checkpoint-create-{vm_name}",
+                                label=f"Checkpoint erstellen: {vm_name}", status=RestoreStepStatus.RUNNING,
+                            )
+                            db.add(row)
+                            db.commit()
+                            running_rows[vm_name] = row
+                            continue
+                        # kind == "done"
+                        res: _CheckpointResult = payload
+                        outstanding -= 1
+                        row = running_rows.pop(res.vm_name, None)
+                        if row is None:
+                            row = BackupRunStep(
+                                run_id=run.id, step=f"checkpoint-create-{res.vm_name}",
+                                label=f"Checkpoint erstellen: {res.vm_name}", status=RestoreStepStatus.RUNNING,
+                            )
+                            db.add(row)
+                        if res.ok:
+                            row.status = RestoreStepStatus.SUCCESS
+                            row.message = res.message
+                            active_checkpoints.append((res.node_service, res.node_session, res.vm_name, res.cluster_id))
+                        else:
+                            row.status = RestoreStepStatus.ERROR
+                            row.message = res.error
+                            errors.append(
+                                f"VM '{res.vm_name}': Checkpoint konnte nicht erstellt werden ({res.error}) -- Backup laeuft crash-konsistent weiter"
+                            )
+                        db.commit()
+                    # Etwaige Worker-Exception (sollte nicht auftreten --
+                    # _run_node_checkpoints faengt alles selbst) hier
+                    # sichtbar machen.
+                    for fut in futures:
+                        fut.result()
 
         for target in targets:
             if was_cancelled:
