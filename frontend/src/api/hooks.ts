@@ -30,12 +30,14 @@ import type {
   ResourceGroup,
   RestoreBroadcastDomain,
   RestoreCreateLifPayload,
+  RestoreInfraCheckResult,
   RestoreInfraConfig,
   RestoreInfraSetupPayload,
   RestoreInitiatorInfo,
   RestoreLifCandidate,
   RestoreProxyHostConfig,
   RestoreProxyHostWrite,
+  RestoreProxyIpAddress,
   RestoreRun,
   TriggerRestorePayload,
   CopyFileRestoreSelectionPayload,
@@ -736,7 +738,24 @@ export function useSaveRestoreProxyHost() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["restore-proxy-host"] });
       queryClient.invalidateQueries({ queryKey: ["restore-initiator"] });
+      queryClient.invalidateQueries({ queryKey: ["restore-proxy-addresses"] });
     },
+  });
+}
+
+export function useRestoreProxyAddresses(enabled: boolean) {
+  return useQuery({
+    queryKey: ["restore-proxy-addresses"],
+    queryFn: async () =>
+      (await apiClient.get<RestoreProxyIpAddress[]>("/restore-infra/proxy-host/addresses")).data,
+    enabled,
+  });
+}
+
+export function useCheckRestoreInfraConfig() {
+  return useMutation({
+    mutationFn: async (id: string) =>
+      (await apiClient.post<RestoreInfraCheckResult>(`/restore-infra/configs/${id}/check`)).data,
   });
 }
 

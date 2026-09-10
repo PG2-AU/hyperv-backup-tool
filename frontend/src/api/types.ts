@@ -860,6 +860,20 @@ export interface RestoreInfraSetupPayload {
   iscsi_lif_address: string;
   iscsi_lif_port?: number;
   igroup_name?: string;
+  initiator_portal_address?: string | null;
+}
+
+export interface RestoreProxyIpAddress {
+  address: string;
+  interface_alias: string;
+  prefix_length?: number | null;
+}
+
+export interface RestoreInfraCheckResult {
+  reachable: boolean;
+  detail: string;
+  source_address?: string | null;
+  target: string;
 }
 
 export type RestoreMode = "replace" | "add";
@@ -955,6 +969,7 @@ export interface RestoreInfraConfig {
   iscsi_lif_port: number;
   igroup_name: string;
   initiator_iqn: string;
+  initiator_portal_address?: string | null;
 }
 
 export interface StorageAccess {

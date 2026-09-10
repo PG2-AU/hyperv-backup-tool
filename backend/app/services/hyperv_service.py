@@ -845,12 +845,74 @@ class HyperVService:
             raise RuntimeError(f"iSCSI-Initiator konnte nicht ermittelt werden: {result.error or result.output}")
         return result.output.strip()
 
-    def iscsi_connect(self, session: winrm.Session, portal_address: str, portal_port: int, target_iqn: str) -> None:
+    def list_ip_addresses(self, session: winrm.Session) -> list[dict]:
+        """IPv4-Adressen des Hosts -- fuer die Auswahl der iSCSI-Quell-NIC
+        des Restore-Proxy-Hosts (kann eine dedizierte IP in einem separaten
+        iSCSI-Netz haben). Loopback (127/8) und APIPA (169.254/16)
+        ausgefiltert."""
         script = (
-            f"New-IscsiTargetPortal -TargetPortalAddress '{portal_address}' -TargetPortalPortNumber {portal_port} "
+            "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { "
+            "$_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } "
+            "| Select-Object IPAddress, InterfaceAlias, PrefixLength | ConvertTo-Json -Depth 3"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"IP-Adressen konnten nicht ermittelt werden: {result.error or result.output}")
+        try:
+            raw = json.loads(result.output or "[]")
+        except json.JSONDecodeError:
+            return []
+        entries = raw if isinstance(raw, list) else [raw]
+        return [
+            {
+                "address": e["IPAddress"],
+                "interface_alias": e.get("InterfaceAlias") or "",
+                "prefix_length": e.get("PrefixLength"),
+            }
+            for e in entries
+            if e.get("IPAddress")
+        ]
+
+    def test_tcp(
+        self, session: winrm.Session, target_address: str, target_port: int, source_address: str | None = None
+    ) -> tuple[bool, str]:
+        """Prueft vom Host aus, ob target_address:target_port per TCP
+        erreichbar ist -- optional gebunden an eine bestimmte Quell-IP
+        (source_address), um genau den Pfad zu testen, den ein spaeterer
+        iSCSI-Login ueber -InitiatorPortalAddress nehmen wuerde."""
+        bind = (
+            f"$c.Client.Bind([System.Net.IPEndPoint]::new([System.Net.IPAddress]::Parse('{source_address}'),0)); "
+            if source_address
+            else ""
+        )
+        script = (
+            "$c = New-Object System.Net.Sockets.TcpClient; "
+            f"try {{ {bind}$c.Connect('{target_address}', {target_port}); 'OK' }} "
+            "catch { \"FAIL: $($_.Exception.Message)\" } finally { $c.Dispose() }"
+        )
+        result = self._run_ps(session, script)
+        out = (result.output or "").strip()
+        if result.success and out == "OK":
+            return True, "erreichbar"
+        return False, out or (result.error or "").strip() or "nicht erreichbar"
+
+    def iscsi_connect(
+        self,
+        session: winrm.Session,
+        portal_address: str,
+        portal_port: int,
+        target_iqn: str,
+        initiator_portal_address: str | None = None,
+    ) -> None:
+        # -InitiatorPortalAddress bindet die Session an eine bestimmte
+        # Quell-NIC des Proxys (separates iSCSI-Netz). Ohne Wert waehlt
+        # Windows die Quelle selbst (bisheriges Verhalten).
+        init = f" -InitiatorPortalAddress '{initiator_portal_address}'" if initiator_portal_address else ""
+        script = (
+            f"New-IscsiTargetPortal -TargetPortalAddress '{portal_address}' -TargetPortalPortNumber {portal_port}{init} "
             "-ErrorAction SilentlyContinue | Out-Null; "
             f"Connect-IscsiTarget -NodeAddress '{target_iqn}' -TargetPortalAddress '{portal_address}' "
-            f"-TargetPortalPortNumber {portal_port} -IsPersistent $false -IsMultipathEnabled $false -ErrorAction Stop | Out-Null"
+            f"-TargetPortalPortNumber {portal_port}{init} -IsPersistent $false -IsMultipathEnabled $false -ErrorAction Stop | Out-Null"
         )
         result = self._run_ps(session, script)
         if not result.success:

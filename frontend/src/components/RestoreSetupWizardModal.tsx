@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Group,
+  List,
   Loader,
   Modal,
   PasswordInput,
@@ -22,6 +23,7 @@ import {
   useCreateRestoreLif,
   useNetAppClusters,
   useRestoreInitiator,
+  useRestoreProxyAddresses,
   useRestoreProxyHost,
   useSaveRestoreProxyHost,
   useSetupRestoreInfra,
@@ -43,6 +45,7 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
   const [selectedLifAddress, setSelectedLifAddress] = useState<string | null>(null);
   const [selectedLifName, setSelectedLifName] = useState<string | null>(null);
   const [igroupName, setIgroupName] = useState("hvnb_restore");
+  const [initiatorPortalAddress, setInitiatorPortalAddress] = useState<string | null>(null);
 
   const [newLifName, setNewLifName] = useState("iscsi_restore");
   const [newLifAddress, setNewLifAddress] = useState("");
@@ -57,6 +60,7 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
 
   const { data: initiator, isLoading: initiatorLoading } = useRestoreInitiator(opened);
   const { data: proxyHost } = useRestoreProxyHost(opened);
+  const { data: proxyAddresses } = useRestoreProxyAddresses(opened && !!initiator?.configured);
   const saveProxyHost = useSaveRestoreProxyHost();
   const { data: clusters } = useNetAppClusters();
   const { data: svms } = useSvms();
@@ -76,6 +80,7 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
       setSelectedLifAddress(null);
       setSelectedLifName(null);
       setIgroupName("hvnb_restore");
+      setInitiatorPortalAddress(null);
       setShowCreateLif(false);
       setProxyPassword("");
     }
@@ -145,6 +150,7 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
         payload: {
           svm_name: svmName, iscsi_lif_name: selectedLifName, iscsi_lif_address: selectedLifAddress,
           iscsi_lif_port: 3260, igroup_name: igroupName,
+          initiator_portal_address: initiatorPortalAddress || null,
         },
       },
       {
@@ -162,6 +168,16 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
       <Stepper active={active} onStepClick={setActive} size="sm">
         <Stepper.Step label="Proxy-Host" description="Windows-iSCSI-Initiator">
           <Stack mt="md">
+            <Alert icon={<IconAlertTriangle size={16} />} color="blue" variant="light" title="Anforderungen an den Restore-Proxy-Host">
+              <List size="sm" spacing={2}>
+                <List.Item>Dedizierter Windows Server, per WinRM vom Backup-Server aus erreichbar (Port 5985/5986)</List.Item>
+                <List.Item>Microsoft-iSCSI-Initiator-Dienst (MSiSCSI) gestartet – die App startet ihn beim Setup automatisch und stellt ihn auf „Automatisch"</List.Item>
+                <List.Item>Eine IP-Adresse im iSCSI-Netz der Ziel-SVM(s); wird bei „Einrichten" pro SVM ausgewählt</List.Item>
+                <List.Item>Netzwerkzugriff auf Port 3260 (iSCSI) der SVM sowie Port 445 (SMB) eines Hyper-V-Knotens</List.Item>
+                <List.Item>Lokale Administratorrechte für das hier hinterlegte Konto (Disk-/iSCSI-Cmdlets)</List.Item>
+                <List.Item>Für datei-basierten Restore zusätzlich das Cmdlet <Text component="span" ff="monospace" size="sm">Mount-DiskImage</Text> (Windows-Storage-Modul, ab Server 2012 vorhanden)</List.Item>
+              </List>
+            </Alert>
             <TextInput
               label="Adresse"
               placeholder="z.B. 10.93.70.13 oder hostname"
@@ -315,6 +331,19 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
             <Text size="sm">
               SVM: <strong>{svmName}</strong> über <strong>{selectedLifAddress}</strong>
             </Text>
+            <Select
+              label="iSCSI-Quell-IP des Proxy-Hosts"
+              description="IP-Adresse auf dem Restore-Proxy, über die die iSCSI-Session zu DIESER SVM aufgebaut wird. Leer = Windows wählt selbst."
+              placeholder="automatisch"
+              data={(proxyAddresses ?? []).map((a) => ({
+                value: a.address,
+                label: `${a.address}${a.prefix_length ? `/${a.prefix_length}` : ""}${a.interface_alias ? ` — ${a.interface_alias}` : ""}`,
+              }))}
+              value={initiatorPortalAddress}
+              onChange={setInitiatorPortalAddress}
+              clearable
+              searchable
+            />
             <TextInput label="Igroup-Name" value={igroupName} onChange={(e) => setIgroupName(e.currentTarget.value)} />
             <Text size="xs" c="dimmed">
               Legt eine iSCSI-Zugriffsberechtigung für den Proxy-Host-Initiator sowie die Igroup auf der SVM an.

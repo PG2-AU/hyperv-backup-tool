@@ -359,6 +359,7 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
             igroup_name = infra_config.igroup_name
             lif_address = infra_config.iscsi_lif_address
             lif_port = infra_config.iscsi_lif_port
+            initiator_portal_address = infra_config.initiator_portal_address
 
             slug = _slugify(run.vm_name)
             suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -401,7 +402,7 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
 
             with _StepCtx(db, run.id, "iscsi-login", "iSCSI-Verbindung aufbauen", step_model=FileRestoreRunStep) as ctx:
                 target_iqn = netapp_service.get_iscsi_target_iqn(svm_name)
-                proxy_service.iscsi_connect(proxy_session, lif_address, lif_port, target_iqn)
+                proxy_service.iscsi_connect(proxy_session, lif_address, lif_port, target_iqn, initiator_portal_address)
                 run.target_iqn = target_iqn
                 db.commit()
                 ctx.row.message = target_iqn

@@ -299,6 +299,7 @@ def init_db(db: Session) -> None:
         engine, "vm_recreate_runs",
         {"target_vm_name": "VARCHAR(255)", "disconnect_network": "BOOLEAN", "destination_csv_name": "VARCHAR(255)"},
     )
+    _add_missing_columns(engine, "restore_infra_configs", {"initiator_portal_address": "VARCHAR(100)"})
     _add_missing_columns(engine, "backup_policies", {"email_alert_on_failure": "BOOLEAN"})
     _add_missing_columns(engine, "resource_groups", {"schedule_id": "VARCHAR(36)"})
     _add_missing_columns(

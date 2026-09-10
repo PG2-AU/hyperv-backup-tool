@@ -74,6 +74,22 @@ class SetupRequest(BaseModel):
     iscsi_lif_address: str
     iscsi_lif_port: int = 3260
     igroup_name: str = "hvnb_restore"
+    # Quell-IP auf dem Proxy fuer die iSCSI-Session zu dieser SVM
+    # (leer/None = Windows waehlt selbst).
+    initiator_portal_address: str | None = None
+
+
+class ProxyIpAddress(BaseModel):
+    address: str
+    interface_alias: str
+    prefix_length: int | None = None
+
+
+class InfraCheckResult(BaseModel):
+    reachable: bool
+    detail: str
+    source_address: str | None = None
+    target: str
 
 
 class RestoreInfraConfigRead(BaseModel):
@@ -85,6 +101,7 @@ class RestoreInfraConfigRead(BaseModel):
     iscsi_lif_port: int
     igroup_name: str
     initiator_iqn: str
+    initiator_portal_address: str | None = None
 
     class Config:
         from_attributes = True
@@ -152,6 +169,20 @@ def save_proxy_host(
     db.commit()
     db.refresh(proxy)
     return ProxyHostRead(configured=True, address=proxy.address, username=proxy.username, use_https=proxy.use_https)
+
+
+@router.get("/proxy-host/addresses", response_model=list[ProxyIpAddress])
+def get_proxy_host_addresses(
+    db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> list[ProxyIpAddress]:
+    """IPv4-Adressen des Restore-Proxy-Hosts -- fuer die Auswahl der
+    iSCSI-Quell-NIC (der Proxy kann eine dedizierte IP in einem separaten
+    iSCSI-Netz haben)."""
+    service, session = _proxy_service_and_session(db)
+    try:
+        return [ProxyIpAddress(**a) for a in service.list_ip_addresses(session)]
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/initiator", response_model=InitiatorInfo)
@@ -282,18 +313,21 @@ def setup_restore_infra(
         .filter(RestoreInfraConfig.netapp_cluster_id == cluster_id, RestoreInfraConfig.svm_name == payload.svm_name)
         .first()
     )
+    portal_addr = payload.initiator_portal_address or None
     if existing:
         existing.iscsi_lif_name = payload.iscsi_lif_name
         existing.iscsi_lif_address = payload.iscsi_lif_address
         existing.iscsi_lif_port = payload.iscsi_lif_port
         existing.igroup_name = payload.igroup_name
         existing.initiator_iqn = iqn
+        existing.initiator_portal_address = portal_addr
         config = existing
     else:
         config = RestoreInfraConfig(
             netapp_cluster_id=cluster_id, svm_name=payload.svm_name,
             iscsi_lif_name=payload.iscsi_lif_name, iscsi_lif_address=payload.iscsi_lif_address,
             iscsi_lif_port=payload.iscsi_lif_port, igroup_name=payload.igroup_name, initiator_iqn=iqn,
+            initiator_portal_address=portal_addr,
         )
         db.add(config)
     db.commit()
@@ -304,6 +338,31 @@ def setup_restore_infra(
 @router.get("/configs", response_model=list[RestoreInfraConfigRead])
 def list_configs(db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE))) -> list[RestoreInfraConfig]:
     return db.query(RestoreInfraConfig).all()
+
+
+@router.post("/configs/{config_id}/check", response_model=InfraCheckResult)
+def check_config(
+    config_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+) -> InfraCheckResult:
+    """Prueft VOM Restore-Proxy-Host aus -- gebunden an die fuer diese SVM
+    konfigurierte Quell-IP -- ob die iSCSI-LIF der SVM auf Port 3260
+    erreichbar ist. Testet damit genau den Pfad, den ein Restore-Lauf per
+    -InitiatorPortalAddress nehmen wuerde."""
+    config = db.get(RestoreInfraConfig, config_id)
+    if config is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Konfiguration nicht gefunden")
+    service, session = _proxy_service_and_session(db)
+    try:
+        reachable, detail = service.test_tcp(
+            session, config.iscsi_lif_address, config.iscsi_lif_port, config.initiator_portal_address
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return InfraCheckResult(
+        reachable=reachable, detail=detail,
+        source_address=config.initiator_portal_address,
+        target=f"{config.iscsi_lif_address}:{config.iscsi_lif_port}",
+    )
 
 
 @router.delete("/configs/{config_id}", status_code=status.HTTP_204_NO_CONTENT)

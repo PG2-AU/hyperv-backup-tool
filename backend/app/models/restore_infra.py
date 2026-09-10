@@ -31,4 +31,11 @@ class RestoreInfraConfig(Base):
     iscsi_lif_port: Mapped[int] = mapped_column(Integer, default=3260)
     igroup_name: Mapped[str] = mapped_column(String(255))
     initiator_iqn: Mapped[str] = mapped_column(String(255))
+    # Quell-IP-Adresse auf dem Restore-Proxy-Host, ueber die die iSCSI-
+    # Session zu DIESER SVM aufgebaut wird (der Proxy kann eine dedizierte
+    # NIC in einem separaten iSCSI-Netz haben). NULL = Windows waehlt die
+    # Quell-NIC selbst (bisheriges Verhalten). Wird als
+    # -InitiatorPortalAddress an New-IscsiTargetPortal/Connect-IscsiTarget
+    # uebergeben.
+    initiator_portal_address: Mapped[str | None] = mapped_column(String(100), nullable=True)
     configured_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

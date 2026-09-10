@@ -1,15 +1,18 @@
 import { useState } from "react";
-import { ActionIcon, Alert, Badge, Button, Group, Paper, Stack, Table, Tabs, Text, Title } from "@mantine/core";
+import { ActionIcon, Alert, Badge, Button, Group, List, Paper, Stack, Table, Tabs, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconDatabaseImport, IconInfoCircle, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
+import { IconDatabaseImport, IconInfoCircle, IconPlugConnected, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
+  useCheckRestoreInfraConfig,
   useCleanupFileRestoreRun,
   useCleanupRestoreRun,
   useDeleteRestoreInfraConfig,
   useFileRestoreRuns,
+  useNetAppClusters,
   useRestoreInfraConfigs,
+  useRestoreProxyHost,
   useRestoreRuns,
   useVmsWithBackups,
 } from "@/api/hooks";
@@ -40,8 +43,25 @@ export function RestorePage() {
   const [openFileSession, setOpenFileSession] = useState<FileRestoreRun | null>(null);
 
   const { data: restoreConfigs } = useRestoreInfraConfigs();
+  const { data: netappClusters } = useNetAppClusters();
+  const { data: proxyHost } = useRestoreProxyHost(activeTab === "setup");
   const deleteRestoreConfig = useDeleteRestoreInfraConfig();
+  const checkRestoreConfig = useCheckRestoreInfraConfig();
+  const clusterNameById = new Map((netappClusters ?? []).map((c) => [c.id, c.name]));
   const [restoreWizardOpen, setRestoreWizardOpen] = useState(false);
+
+  function runConfigCheck(id: string, svm: string) {
+    checkRestoreConfig.mutate(id, {
+      onSuccess: (r) =>
+        notifications.show({
+          title: r.reachable ? "Verbindung OK" : "Verbindung fehlgeschlagen",
+          message: `${svm}: ${r.source_address ? `${r.source_address} → ` : ""}${r.target} — ${r.detail}`,
+          color: r.reachable ? "green" : "red",
+        }),
+      onError: (err) =>
+        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Prüfung fehlgeschlagen."), color: "red" }),
+    });
+  }
   const [vmSearch, setVmSearch] = useState("");
 
   const cleanupPending = runs?.filter((r) => r.cleanup_needed) ?? [];
@@ -285,16 +305,26 @@ export function RestorePage() {
 
         <Tabs.Panel value="setup" pt="md">
           <Stack>
-            <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
-              Der VHDX-Restore-Workflow klont eine LUN aus einem Snapshot und meldet sich per nativem
-              Windows-iSCSI-Initiator auf einem dedizierten Restore-Proxy-Host (siehe HVNB_RESTORE_PROXY_* in der
-              Server-Konfiguration) bei der NetApp-SVM an, um die wiederhergestellte VHDX per SMB auf die Ziel-CSV
-              zu kopieren. Voraussetzung: der Proxy-Host braucht Netzwerkzugriff auf ein iSCSI-Interface der
-              Ziel-SVM sowie auf Port 445 (SMB) eines Hyper-V-Knotens, und ist per WinRM vom Server aus erreichbar.
+            <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light" title="Anforderungen an den Restore-Proxy-Host">
+              Der VHDX-Restore klont eine LUN aus einem Snapshot und meldet sich per nativem Windows-iSCSI-Initiator
+              auf dem Restore-Proxy-Host bei der NetApp-SVM an, um die wiederhergestellte VHDX per SMB auf die
+              Ziel-CSV zu kopieren. Der Proxy-Host braucht:
+              <List size="sm" spacing={2} mt={4}>
+                <List.Item>per WinRM vom Backup-Server aus erreichbar (Port 5985/5986), Konto mit lokalen Adminrechten</List.Item>
+                <List.Item>Microsoft-iSCSI-Initiator-Dienst (MSiSCSI) gestartet – wird beim Setup automatisch gestartet und auf „Automatisch" gestellt</List.Item>
+                <List.Item>eine IP-Adresse im iSCSI-Netz jeder Ziel-SVM – pro SVM in der Tabelle unten als Quell-IP wählbar</List.Item>
+                <List.Item>Netzwerkzugriff auf Port 3260 (iSCSI) der SVM und Port 445 (SMB) eines Hyper-V-Knotens</List.Item>
+                <List.Item>für datei-basierten Restore zusätzlich das Cmdlet <Text component="span" ff="monospace" size="sm">Mount-DiskImage</Text></List.Item>
+              </List>
             </Alert>
             <Paper p="md">
               <Group justify="space-between" mb="sm">
-                <Title order={5}>Konfigurierte SVMs</Title>
+                <div>
+                  <Title order={5}>Konfigurierte SVMs</Title>
+                  <Text size="xs" c="dimmed">
+                    Proxy-Host: {proxyHost?.configured ? proxyHost.address : "noch nicht konfiguriert"}
+                  </Text>
+                </div>
                 <Button leftSection={<IconPlus size={16} />} onClick={() => setRestoreWizardOpen(true)}>
                   Restore-Infrastruktur einrichten
                 </Button>
@@ -302,8 +332,10 @@ export function RestorePage() {
               <Table striped highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
+                    <Table.Th>NetApp-System</Table.Th>
                     <Table.Th>SVM</Table.Th>
-                    <Table.Th>iSCSI-Interface</Table.Th>
+                    <Table.Th>Quell-IP (Proxy)</Table.Th>
+                    <Table.Th>Ziel-iSCSI-LIF</Table.Th>
                     <Table.Th>Igroup</Table.Th>
                     <Table.Th>Initiator</Table.Th>
                     <Table.Th />
@@ -312,7 +344,11 @@ export function RestorePage() {
                 <Table.Tbody>
                   {restoreConfigs?.map((c) => (
                     <Table.Tr key={c.id}>
+                      <Table.Td>{clusterNameById.get(c.netapp_cluster_id) ?? c.netapp_cluster_id}</Table.Td>
                       <Table.Td>{c.svm_name}</Table.Td>
+                      <Table.Td>
+                        {c.initiator_portal_address ?? <Text span c="dimmed">automatisch</Text>}
+                      </Table.Td>
                       <Table.Td>
                         {c.iscsi_lif_name ?? "-"} ({c.iscsi_lif_address}:{c.iscsi_lif_port})
                       </Table.Td>
@@ -321,20 +357,31 @@ export function RestorePage() {
                         {c.initiator_iqn}
                       </Table.Td>
                       <Table.Td>
-                        <ActionIcon
-                          color="red"
-                          variant="subtle"
-                          onClick={() =>
-                            confirmAction({
-                              title: "Restore-Setup entfernen",
-                              message: `Restore-Setup für '${c.svm_name}' entfernen?`,
-                              confirmLabel: "Entfernen",
-                              onConfirm: () => deleteRestoreConfig.mutate(c.id),
-                            })
-                          }
-                        >
-                          <IconTrash size={16} />
-                        </ActionIcon>
+                        <Group gap={4} wrap="nowrap">
+                          <ActionIcon
+                            variant="subtle"
+                            title="Verbindung vom Proxy zur SVM prüfen"
+                            loading={checkRestoreConfig.isPending && checkRestoreConfig.variables === c.id}
+                            onClick={() => runConfigCheck(c.id, c.svm_name)}
+                          >
+                            <IconPlugConnected size={16} />
+                          </ActionIcon>
+                          <ActionIcon
+                            color="red"
+                            variant="subtle"
+                            title="Restore-Setup entfernen"
+                            onClick={() =>
+                              confirmAction({
+                                title: "Restore-Setup entfernen",
+                                message: `Restore-Setup für '${c.svm_name}' entfernen?`,
+                                confirmLabel: "Entfernen",
+                                onConfirm: () => deleteRestoreConfig.mutate(c.id),
+                              })
+                            }
+                          >
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Group>
                       </Table.Td>
                     </Table.Tr>
                   ))}

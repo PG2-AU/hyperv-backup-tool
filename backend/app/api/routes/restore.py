@@ -544,6 +544,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
             igroup_name = infra_config.igroup_name
             lif_address = infra_config.iscsi_lif_address
             lif_port = infra_config.iscsi_lif_port
+            initiator_portal_address = infra_config.initiator_portal_address
 
             slug = _slugify(run.vm_name)
             suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -581,8 +582,8 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
 
             with _StepCtx(db, run.id, "iscsi-login", "iSCSI-Verbindung aufbauen") as ctx:
                 target_iqn = netapp_service.get_iscsi_target_iqn(svm_name)
-                proxy_service.iscsi_connect(proxy_session, lif_address, lif_port, target_iqn)
-                ctx.row.message = target_iqn
+                proxy_service.iscsi_connect(proxy_session, lif_address, lif_port, target_iqn, initiator_portal_address)
+                ctx.row.message = f"{target_iqn}{f' (Quelle {initiator_portal_address})' if initiator_portal_address else ''}"
 
             with _StepCtx(db, run.id, "find-disk", "Disk erkennen") as ctx:
                 disk_number = proxy_service.find_disk_by_serial(proxy_session, clone.serial_number, timeout_sec=30)
@@ -820,6 +821,7 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 igroup_name = infra_config.igroup_name
                 lif_address = infra_config.iscsi_lif_address
                 lif_port = infra_config.iscsi_lif_port
+                initiator_portal_address = infra_config.initiator_portal_address
 
                 slug = _slugify(target_name)
                 suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -860,8 +862,8 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
 
                     with _StepCtx(db, run.id, f"iscsi-login-{i}", f"iSCSI-Verbindung fuer {vhd_name} aufbauen", step_model=VmRecreateRunStep) as ctx:
                         target_iqn = netapp_service.get_iscsi_target_iqn(vhd_svm)
-                        proxy_service.iscsi_connect(proxy_session, lif_address, lif_port, target_iqn)
-                        ctx.row.message = target_iqn
+                        proxy_service.iscsi_connect(proxy_session, lif_address, lif_port, target_iqn, initiator_portal_address)
+                        ctx.row.message = f"{target_iqn}{f' (Quelle {initiator_portal_address})' if initiator_portal_address else ''}"
 
                     with _StepCtx(db, run.id, f"find-disk-{i}", f"Disk fuer {vhd_name} erkennen", step_model=VmRecreateRunStep) as ctx:
                         disk_number = proxy_service.find_disk_by_serial(proxy_session, clone.serial_number, timeout_sec=30)
