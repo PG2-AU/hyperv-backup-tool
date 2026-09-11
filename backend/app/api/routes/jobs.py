@@ -1311,13 +1311,23 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                                                         base_sizes_by_path[fresh_vhd.path] = resolved
                                             cfg.vhds = _build_vhd_entries(fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name, base_sizes_by_path)
                                             cfg.checkpoints = list(hv_vm_fresh.checkpoints or [])
-                                except Exception as exc:  # noqa: BLE001 -- TEMP diagnostic, see chat
-                                    import traceback
-                                    print(f"[TEIL5-DEBUG] Refresh fuer {res.vm_name} fehlgeschlagen: {exc!r}\n{traceback.format_exc()}", flush=True)
-                                    # Best-effort -- BackupRunVmConfig.vhds
-                                    # bleibt dann wie von _start_job_run
-                                    # erfasst (keine Verschlechterung).
-                                    pass
+                                except Exception:
+                                    # Best-effort -- BackupRunVmConfig.vhds/
+                                    # checkpoints bleiben dann wie von
+                                    # _start_job_run erfasst (keine
+                                    # Verschlechterung). WICHTIG: rollback,
+                                    # nicht nur "pass" -- live reproduziert
+                                    # (zwei absichtlich parallel gestartete
+                                    # Laeufe): ein durch echte Nebenlaeufigkeit
+                                    # ausgeloester "database is locked"-Fehler
+                                    # (SQLite, siehe app.db.session) laesst die
+                                    # Session sonst im Zustand "pending
+                                    # rollback" zurueck -- JEDE weitere
+                                    # DB-Operation dieses Laufs (auch fuer
+                                    # andere VMs/Schritte) schlaegt dann
+                                    # ebenfalls fehl, nicht nur dieser eine
+                                    # Refresh.
+                                    db.rollback()
                         else:
                             row.status = RestoreStepStatus.ERROR
                             row.message = res.error
@@ -1518,7 +1528,13 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                     # Verschlechterung gegenueber dem Ist-Zustand.
                     hv_vm_fresh.checkpoints = [c for c in hv_vm_fresh.checkpoints if c.get("name") != checkpoint_name]
             except Exception:
-                pass
+                # Siehe die ausfuehrlichere Begruendung beim analogen
+                # Refresh-Block in _run_node_checkpoints' "done"-Handling
+                # oben -- ein bei echter Nebenlaeufigkeit moeglicher
+                # "database is locked"-Fehler darf die Session nicht im
+                # Zustand "pending rollback" zurueck lassen, sonst schlagen
+                # auch alle FOLGENDEN Schritte dieses Laufs fehl.
+                db.rollback()
 
         # Wurde dieser Lauf zwischenzeitlich vom Zeitlimit-Watchdog
         # (force_cancel_timed_out_runs in app.core.scheduler) hart
