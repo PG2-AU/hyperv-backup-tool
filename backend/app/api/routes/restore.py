@@ -382,7 +382,7 @@ def _merge_avhdx_chain(
     proxy_service: HyperVService, proxy_session,
     mount_dir: str, relative_dir: str, remote_dir: str, leaf_remote_path: str,
     hv_username: str, hv_password: str, suffix: str, merge: bool = True,
-) -> str:
+) -> tuple[str, str]:
     """Ein bei Backup-Zeitpunkt aktiver Checkpoint sichert Basis-VHDX UND
     AVHDX unveraendert im selben LUN-/Volume-Snapshot -- die bereits als
     leaf_remote_path auf den Ziel-Knoten kopierte AVHDX kennt ihren
@@ -407,14 +407,24 @@ def _merge_avhdx_chain(
 
     Wirft RuntimeError, wenn die Kette nicht aufloesbar ist (Basis fehlt/
     korrupt/zu lang) -- der Aufrufer faengt das ab und faellt auf die
-    Fehlermeldung "kann nicht wiederhergestellt werden" zurueck."""
+    Fehlermeldung "kann nicht wiederhergestellt werden" zurueck.
+
+    Gibt (Remote-Pfad der Basisdatei, ORIGINAL-Dateiname der Basis) zurueck
+    -- Letzteres, damit der Aufrufer die wiederhergestellte Datei bei
+    REPLACE korrekt auf den echten Namen/die echte Endung der Basis-VHDX
+    umbenennen kann (`original_filename` des Aufrufers bezieht sich sonst
+    auf den transienten Checkpoint-Leaf-Namen samt '.avhdx'-Endung -- live
+    gefunden: ohne diese Korrektur landete eine vollstaendig gemergte,
+    normale VHDX dauerhaft unter einem '.avhdx'-Dateinamen)."""
     chain_remote_paths = [leaf_remote_path]
     current_remote = leaf_remote_path
+    base_original_filename: str | None = None
     for _ in range(8):
         parent = node_service.get_vhd_parent_path(node_session, current_remote)
         if not parent:
             break
         parent_filename = parent.split("\\")[-1]
+        base_original_filename = parent_filename
         parent_local = f"{mount_dir}\\{relative_dir}\\{parent_filename}" if relative_dir else f"{mount_dir}\\{parent_filename}"
         parent_unique_filename = f"{Path(parent_filename).stem}_restore_{suffix}{Path(parent_filename).suffix}"
         proxy_service.copy_file_to_share(
@@ -430,7 +440,7 @@ def _merge_avhdx_chain(
     else:
         raise RuntimeError("AVHDX-Kette zu lang oder nicht auflösbar (Abbruch nach 8 Ebenen)")
 
-    if len(chain_remote_paths) < 2:
+    if len(chain_remote_paths) < 2 or base_original_filename is None:
         raise RuntimeError("Keine Basis-VHDX in der Kette gefunden")
 
     base_remote = chain_remote_paths[-1]
@@ -442,7 +452,7 @@ def _merge_avhdx_chain(
     for p in chain_remote_paths[:-1]:
         node_service.delete_file(node_session, p)
 
-    return base_remote
+    return base_remote, base_original_filename
 
 
 def _execute_restore(run_id: str) -> None:  # noqa: C901
@@ -693,6 +703,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
             run.restored_vhd_path = restored_vhd_path
             db.commit()
 
+            base_original_filename: str | None = None
             if original_filename.lower().endswith(".avhdx"):
                 merge_to_base = run.avhdx_target != AvhdxRestoreTarget.CHECKPOINT_TIME
                 step_label = (
@@ -701,7 +712,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 )
                 with _StepCtx(db, run.id, "merge", step_label) as ctx:
                     try:
-                        restored_vhd_path = _merge_avhdx_chain(
+                        restored_vhd_path, base_original_filename = _merge_avhdx_chain(
                             node_service, node_session, node_address,
                             proxy_service, proxy_session,
                             mount_dir, relative_dir, remote_dir, restored_vhd_path,
@@ -801,7 +812,14 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                     if not result.success:
                         raise RuntimeError(result.error)
                 with _StepCtx(db, run.id, "rename", "Wiederhergestellte VHDX umbenennen") as ctx:
-                    final_path = f"C:\\{remote_dir}\\{original_filename}"
+                    # Nach einer AVHDX-Aufloesung (mit oder ohne Merge) ist
+                    # original_filename der transiente Checkpoint-Leaf-Name
+                    # (u.a. mit '.avhdx'-Endung) -- der echte Name/die echte
+                    # Endung der wiederhergestellten Datei ist die der
+                    # Basis-VHDX (base_original_filename), siehe
+                    # _merge_avhdx_chain.
+                    final_filename = base_original_filename or original_filename
+                    final_path = f"C:\\{remote_dir}\\{final_filename}"
                     result = node_service.rename_file(node_session, restored_vhd_path, final_path)
                     if not result.success:
                         raise RuntimeError(result.error)
@@ -1059,7 +1077,7 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                         )
                         with _StepCtx(db, run.id, f"merge-{i}", step_label, step_model=VmRecreateRunStep) as ctx:
                             try:
-                                restored_path = _merge_avhdx_chain(
+                                restored_path, _base_filename = _merge_avhdx_chain(
                                     node_service, node_session, node_address,
                                     proxy_service, proxy_session,
                                     mount_dir, relative_dir, remote_dir, restored_path,
