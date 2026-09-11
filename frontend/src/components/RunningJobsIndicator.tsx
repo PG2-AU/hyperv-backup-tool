@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ActionIcon, Badge, Button, Divider, Group, Indicator, Loader, Popover, Stack, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Button, Divider, Group, Indicator, Loader, Popover, ScrollArea, Stack, Text, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconActivity, IconCheck, IconMinus, IconX } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -141,33 +141,42 @@ export function RunningJobsIndicator() {
               Aktuell läuft kein Backup-Job.
             </Text>
           )}
-          {runs?.map((run, idx) => (
-            <Stack key={run.id} gap={4}>
-              {idx > 0 && <Divider />}
-              <Group justify="space-between" wrap="nowrap" gap="xs">
-                <Text size="sm" truncate>
-                  {run.job_name}
-                  {run.resource_group_name && (
-                    <Text span c="dimmed" size="xs">
-                      {" "}
-                      ({run.resource_group_name})
+          {/* Bei einem Lauf mit vielen Zielen (z.B. 30 VMs) wuerde die
+              Schritt-Liste sonst ueber den sichtbaren Bereich hinaus
+              wachsen, die letzten Zeilen waeren nicht mehr erreichbar
+              (live gemeldet) -- feste Maximalhoehe, darueber intern
+              scrollbar statt das ganze Popover wachsen zu lassen. */}
+          <ScrollArea.Autosize mah={420} type="auto" offsetScrollbars>
+            <Stack gap="sm">
+              {runs?.map((run, idx) => (
+                <Stack key={run.id} gap={4}>
+                  {idx > 0 && <Divider />}
+                  <Group justify="space-between" wrap="nowrap" gap="xs">
+                    <Text size="sm" truncate>
+                      {run.job_name}
+                      {run.resource_group_name && (
+                        <Text span c="dimmed" size="xs">
+                          {" "}
+                          ({run.resource_group_name})
+                        </Text>
+                      )}
                     </Text>
+                    <Badge color="blue" variant="light">
+                      {formatElapsed(run.started_at)}
+                    </Badge>
+                  </Group>
+                  {run.cancel_requested_at ? (
+                    <Text size="xs" c="orange" ml={20}>
+                      Abbruch angefordert – wird nach dem aktuellen Schritt gestoppt…
+                    </Text>
+                  ) : (
+                    <CancelJobButton runId={run.id} jobName={run.job_name} />
                   )}
-                </Text>
-                <Badge color="blue" variant="light">
-                  {formatElapsed(run.started_at)}
-                </Badge>
-              </Group>
-              {run.cancel_requested_at ? (
-                <Text size="xs" c="orange" ml={20}>
-                  Abbruch angefordert – wird nach dem aktuellen Schritt gestoppt…
-                </Text>
-              ) : (
-                <CancelJobButton runId={run.id} jobName={run.job_name} />
-              )}
-              <RunningJobSteps runId={run.id} />
+                  <RunningJobSteps runId={run.id} />
+                </Stack>
+              ))}
             </Stack>
-          ))}
+          </ScrollArea.Autosize>
         </Stack>
       </Popover.Dropdown>
     </Popover>

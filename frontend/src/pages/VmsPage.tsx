@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ActionIcon, Badge, Box, Group, Paper, Progress, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
@@ -22,7 +22,7 @@ import {
 } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useCsvs, useDeleteVmCheckpoint, useDiscoverVm, useResourceGroups, useVms } from "@/api/hooks";
+import { useCsvs, useDeleteVmCheckpoint, useDiscoverVm, useResourceGroups, useRunningJobRuns, useVms } from "@/api/hooks";
 import { BackupsModal } from "@/components/BackupsModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
@@ -344,13 +344,43 @@ export function VmsPage() {
   const deleteCheckpoint = useDeleteVmCheckpoint();
   const discoverVm = useDiscoverVm();
 
+  // Backlog-Punkt 46: eine anwendungskonsistente Policy erzeugt fuer die
+  // Dauer des Snapshots einen EIGENEN, kurzlebigen Checkpoint (create ->
+  // Snapshot -> remove, siehe _run_node_checkpoints in jobs.py) -- ohne
+  // dieses Wissen zeigte Inventory dafuer kurzzeitig "Checkpoint
+  // vorhanden" und direkt danach "AVHDX ohne Checkpoint", obwohl beides
+  // nur der normale, erwartete Backup-Ablauf ist (live gemeldet bei einem
+  // 30-VM-Lauf). Vom bereits gepollten "Laufende Backup-Jobs"-Datensatz
+  // abgeleitet (kein zusaetzlicher Request), Set der aktuell in einem
+  // laufenden Lauf enthaltenen VM-Namen.
+  const { data: runningJobs } = useRunningJobRuns(true);
+  const vmNamesWithRunningBackup = useMemo(
+    () => new Set((runningJobs ?? []).flatMap((r) => r.targets)),
+    [runningJobs],
+  );
+
+  // Blendet einen vom Tool selbst erzeugten Checkpoint (app_created, Name
+  // 'hvnb_...') aus, WAEHREND ein Backup fuer diese VM aktuell laeuft --
+  // ein manuell angelegter Checkpoint bleibt dabei weiterhin sichtbar
+  // (z.B. wenn die Backup-Policy zusaetzlich auf einem bereits bestehenden
+  // manuellen Checkpoint aufsetzt). Existiert der Checkpoint noch NACH
+  // Lauf-Ende, ist das der bekannte Orphan-Fall (AlertType.HYPERV_ORPHAN_
+  // CHECKPOINT, siehe scheduler.py) und wird bewusst weiterhin angezeigt.
+  function visibleCheckpointsOf(vm: Vm) {
+    if (!vmNamesWithRunningBackup.has(vm.name)) return vm.checkpoints;
+    return vm.checkpoints.filter((cp) => !cp.app_created);
+  }
+
   // Live, ohne auf den naechsten Alarm-Check zu warten (analog zum
   // Multi-CSV-Badge unten) -- die VM hat keinen aktiven Checkpoint, aber
   // mindestens eine Disk zeigt trotzdem eine AVHDX-Differenzdatei. Meist
   // eingefrorene Discovery-Daten (siehe AlertType.HYPERV_VM_AVHDX_WITHOUT_
-  // CHECKPOINT in scheduler.py), behebbar per "VM Discovery".
+  // CHECKPOINT in scheduler.py), behebbar per "VM Discovery". Waehrend
+  // eines laufenden Backups fuer diese VM ebenfalls unterdrueckt -- die
+  // AVHDX ohne Checkpoint direkt nach der Entfernung des Backup-eigenen
+  // Checkpoints ist hier der Normalfall, nicht eingefrorene Daten.
   function avhdxVhdsOf(vm: Vm) {
-    if (vm.checkpoints.length > 0) return [];
+    if (vm.checkpoints.length > 0 || vmNamesWithRunningBackup.has(vm.name)) return [];
     return vm.vhds.filter((v) => v.name.toLowerCase().endsWith(".avhdx"));
   }
 
@@ -375,17 +405,18 @@ export function VmsPage() {
   // mehrere), eine Einzelauswahl je Checkpoint waere fuer diesen seltenen
   // Fall unnoetige UI-Komplexitaet.
   function deleteVmCheckpoints(vm: Vm) {
-    if (!vm.cluster_id || vm.checkpoints.length === 0) return;
+    const checkpoints = visibleCheckpointsOf(vm);
+    if (!vm.cluster_id || checkpoints.length === 0) return;
     const clusterId = vm.cluster_id;
     confirmAction({
       title: "Checkpoint löschen",
       message: (
         <Stack gap={4}>
           <Text size="sm">
-            {vm.checkpoints.length === 1 ? "Diesen Checkpoint" : `Diese ${vm.checkpoints.length} Checkpoints`} von "{vm.name}"
+            {checkpoints.length === 1 ? "Diesen Checkpoint" : `Diese ${checkpoints.length} Checkpoints`} von "{vm.name}"
             unwiderruflich löschen?
           </Text>
-          {vm.checkpoints.map((cp) => (
+          {checkpoints.map((cp) => (
             <Text key={cp.id} size="xs" c="dimmed">
               {cp.name} — seit {formatCheckpointAge(cp.creation_time)}
               {cp.app_created ? " (vermutlich von einem abgebrochenen Backup-Lauf)" : " (manuell erstellt)"}
@@ -396,7 +427,7 @@ export function VmsPage() {
       confirmLabel: "Löschen",
       color: "red",
       onConfirm: async () => {
-        for (const cp of vm.checkpoints) {
+        for (const cp of checkpoints) {
           try {
             await deleteCheckpoint.mutateAsync({ clusterId, vmName: vm.name, checkpointId: cp.id });
           } catch (err) {
@@ -484,6 +515,7 @@ export function VmsPage() {
                 const hasVhdxUsage = vm.vhdx_used_bytes != null && vm.vhdx_size_bytes != null && vm.vhdx_size_bytes > 0;
                 const vhdxPct = hasVhdxUsage ? Math.round((vm.vhdx_used_bytes! / vm.vhdx_size_bytes!) * 100) : null;
                 const avhdxVhds = avhdxVhdsOf(vm);
+                const visibleCheckpoints = visibleCheckpointsOf(vm);
                 return (
                 <Table.Tr
                   key={vm.id}
@@ -496,13 +528,13 @@ export function VmsPage() {
                       <Badge color={STATE_COLOR[vm.state] ?? "gray"} variant="light">
                         {vm.state}
                       </Badge>
-                      {vm.checkpoints.length > 0 && (
+                      {visibleCheckpoints.length > 0 && (
                         <Tooltip
                           multiline
                           w={280}
                           label={
                             <Stack gap={2}>
-                              {vm.checkpoints.map((cp) => (
+                              {visibleCheckpoints.map((cp) => (
                                 <Text key={cp.id} size="xs">
                                   {cp.name} — seit {formatCheckpointAge(cp.creation_time)}
                                 </Text>
@@ -511,7 +543,7 @@ export function VmsPage() {
                           }
                         >
                           <Badge color="orange" variant="filled" leftSection={<IconAlertTriangle size={12} />}>
-                            {vm.checkpoints.length > 1 ? `${vm.checkpoints.length} Checkpoints` : "Checkpoint"}
+                            {visibleCheckpoints.length > 1 ? `${visibleCheckpoints.length} Checkpoints` : "Checkpoint"}
                           </Badge>
                         </Tooltip>
                       )}
@@ -595,7 +627,7 @@ export function VmsPage() {
                           <IconHistory size={16} />
                         </ActionIcon>
                       </Tooltip>
-                      {vm.checkpoints.length > 0 && (
+                      {visibleCheckpoints.length > 0 && (
                         <Tooltip label="Checkpoint löschen">
                           <ActionIcon variant="light" color="red" onClick={() => deleteVmCheckpoints(vm)}>
                             <IconTrash size={16} />
