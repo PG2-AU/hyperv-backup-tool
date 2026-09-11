@@ -48,6 +48,9 @@ class VmRecreateRun(Base):
     disconnect_network: Mapped[bool] = mapped_column(Boolean, default=False)
     destination_csv_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_run_id: Mapped[str] = mapped_column(String(36))
+    # Siehe AvhdxRestoreTarget in restore_run.py -- ein Wert fuer den
+    # ganzen Lauf (nicht pro VHD), nullable/None == BACKUP_TIME.
+    avhdx_target: Mapped[str | None] = mapped_column(String(20), nullable=True)
     status: Mapped[RestoreStatus] = mapped_column(String(20), default=RestoreStatus.RUNNING)
     new_vm_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)

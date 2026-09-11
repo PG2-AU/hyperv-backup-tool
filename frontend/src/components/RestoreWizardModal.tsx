@@ -35,7 +35,7 @@ import {
 } from "@/api/hooks";
 import { FileBrowser } from "@/components/FileBrowser";
 import { SelectedFileList } from "@/components/SelectedFileList";
-import type { Csv, RestoreMode, RestoreRun, VmWithBackups } from "@/api/types";
+import type { AvhdxTarget, Csv, RestoreMode, RestoreRun, VmWithBackups } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
 
@@ -160,6 +160,9 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
   const [selectedVhdPaths, setSelectedVhdPaths] = useState<string[]>([]);
   const [restoreKind, setRestoreKind] = useState<RestoreKind>("add");
   const mode: RestoreMode = restoreKind === "replace" ? "replace" : "add";
+  // Nur relevant, wenn eine ausgewaehlte VHD is_avhdx ist (aktiver
+  // Checkpoint zum Backup-Zeitpunkt) -- siehe AvhdxTarget.
+  const [avhdxTarget, setAvhdxTarget] = useState<AvhdxTarget>("backup_time");
 
   const [queue, setQueue] = useState<string[]>([]);
   const [currentVhdPath, setCurrentVhdPath] = useState<string | null>(null);
@@ -342,7 +345,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
     setQueue(rest);
     setCurrentVhdPath(next);
     triggerRestore.mutate(
-      { vm_name: vm.name, snapshot_id: snapshotId, source_vhd_path: next, mode },
+      { vm_name: vm.name, snapshot_id: snapshotId, source_vhd_path: next, mode, avhdx_target: avhdxTarget },
       {
         onSuccess: (result) => setCurrentRunId(result.id),
         onError: (err) => {
@@ -352,7 +355,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentVhdPath, queue, vm, snapshotId, mode]);
+  }, [currentVhdPath, queue, vm, snapshotId, mode, avhdxTarget]);
 
   useEffect(() => {
     if (!run || (run.status !== "succeeded" && run.status !== "failed")) return;
@@ -376,6 +379,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
           new_vm_name: cloneName.trim(),
           disconnect_network: cloneDisconnectNetwork,
           destination_csv_name: cloneDestinationCsv ?? undefined,
+          avhdx_target: avhdxTarget,
         },
         {
           onSuccess: (result) => setCloneRunId(result.id),
@@ -577,12 +581,29 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                   clearable
                 />
                 {selectedSnapshot?.vhds.some((v) => v.is_avhdx) && (
-                  <Alert color="orange" icon={<IconAlertTriangle size={16} />} title="Enthält Checkpoint">
-                    Mindestens eine Disk dieses Snapshots wurde mit aktivem Checkpoint gesichert (AVHDX statt
-                    Basis-VHDX). Wird beim Restore automatisch mit der Basis-VHDX zusammengeführt -- das kann etwas
-                    länger dauern. Schlägt der Merge fehl (Basis fehlt/beschädigt), meldet der Restore-Schritt das
-                    klar als Fehler.
-                  </Alert>
+                  <Stack gap="xs">
+                    <Alert color="orange" icon={<IconAlertTriangle size={16} />} title="Enthält Checkpoint">
+                      Mindestens eine Disk dieses Snapshots wurde mit aktivem Checkpoint gesichert (AVHDX statt
+                      Basis-VHDX). Schlägt das Zusammenführen fehl (Basis fehlt/beschädigt), meldet der
+                      Restore-Schritt das klar als Fehler.
+                    </Alert>
+                    <Radio.Group
+                      value={avhdxTarget}
+                      onChange={(v) => setAvhdxTarget(v as AvhdxTarget)}
+                      label="Welcher Stand soll wiederhergestellt werden?"
+                    >
+                      <Stack gap={4} mt="xs">
+                        <Radio
+                          value="backup_time"
+                          label="Stand zum Backup-Zeitpunkt (inkl. Änderungen nach dem Checkpoint)"
+                        />
+                        <Radio
+                          value="checkpoint_time"
+                          label="Stand zum Zeitpunkt des Checkpoints (spätere Änderungen verwerfen)"
+                        />
+                      </Stack>
+                    </Radio.Group>
+                  </Stack>
                 )}
                 {capacityEstimates.length > 0 && (
                   <Stack gap="xs">
@@ -657,6 +678,26 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
               </Checkbox.Group>
             )}
 
+            {(restoreKind === "add" || restoreKind === "replace") &&
+              vhdOptions.some((v) => selectedVhdPaths.includes(v.path) && v.is_avhdx) && (
+                <Radio.Group
+                  value={avhdxTarget}
+                  onChange={(v) => setAvhdxTarget(v as AvhdxTarget)}
+                  label="Welcher Stand soll wiederhergestellt werden?"
+                >
+                  <Stack gap={4} mt="xs">
+                    <Radio
+                      value="backup_time"
+                      label="Stand zum Backup-Zeitpunkt (inkl. Änderungen nach dem Checkpoint)"
+                    />
+                    <Radio
+                      value="checkpoint_time"
+                      label="Stand zum Zeitpunkt des Checkpoints (spätere Änderungen verwerfen)"
+                    />
+                  </Stack>
+                </Radio.Group>
+              )}
+
             {(restoreKind === "add" || restoreKind === "replace") && capacityEstimates.length > 0 && (
               <Stack gap="xs">
                 <Text size="xs" fw={600} c="dimmed">
@@ -671,7 +712,9 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
             {restoreKind === "replace" && (
               <Alert icon={<IconAlertTriangle size={16} />} color="orange" variant="light">
                 Die aktuelle VHDX wird nach dem Umhängen unwiderruflich gelöscht, nicht nur umbenannt.
-                {selectedVhdPaths.length > 1 && " Bei mehreren VHDX wird die VM dafür pro Datei kurz gestoppt und wieder gestartet."}
+                {selectedVhdPaths.length > 1 && " Bei mehreren VHDX wird die VM dafür pro Datei kurz gestoppt und wieder gestartet."}{" "}
+                Vorhandene Checkpoints dieser VM werden dabei ebenfalls entfernt -- sie würden sonst auf eine
+                nicht mehr existierende AVHDX zeigen.
               </Alert>
             )}
             <Group justify="flex-end">

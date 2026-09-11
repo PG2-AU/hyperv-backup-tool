@@ -4,7 +4,7 @@ import { notifications } from "@mantine/notifications";
 import { IconAlertTriangle, IconCheck, IconMinus, IconX } from "@tabler/icons-react";
 
 import { useRecreateVm, useVmBackupRuns, useVmRecreateRun } from "@/api/hooks";
-import type { VmWithBackups } from "@/api/types";
+import type { AvhdxTarget, VmWithBackups } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
 
@@ -26,6 +26,9 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
   const [active, setActive] = useState(0);
   const [runId, setRunId] = useState<string | null>(null);
   const [recreateRunId, setRecreateRunId] = useState<string | null>(null);
+  // Nur relevant, wenn eine VHD des gewaehlten Laufs is_avhdx ist (aktiver
+  // Checkpoint zum Backup-Zeitpunkt) -- siehe AvhdxTarget.
+  const [avhdxTarget, setAvhdxTarget] = useState<AvhdxTarget>("backup_time");
 
   const { data: backupRuns, isLoading: runsLoading } = useVmBackupRuns(vm?.name, opened && active === 0);
   const recreateVm = useRecreateVm(vm?.name);
@@ -44,7 +47,7 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
 
   function handleStart() {
     if (!vm || !runId) return;
-    recreateVm.mutate({ run_id: runId }, {
+    recreateVm.mutate({ run_id: runId, avhdx_target: avhdxTarget }, {
       onSuccess: (result) => {
         setRecreateRunId(result.id);
         setActive(2);
@@ -181,6 +184,19 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
               ))}
             </Table.Tbody>
           </Table>
+
+          {selectedRun.vhds.some((v) => v.is_avhdx) && (
+            <Radio.Group
+              value={avhdxTarget}
+              onChange={(v) => setAvhdxTarget(v as AvhdxTarget)}
+              label="Welcher Stand soll wiederhergestellt werden?"
+            >
+              <Stack gap={4} mt="xs">
+                <Radio value="backup_time" label="Stand zum Backup-Zeitpunkt (inkl. Änderungen nach dem Checkpoint)" />
+                <Radio value="checkpoint_time" label="Stand zum Zeitpunkt des Checkpoints (spätere Änderungen verwerfen)" />
+              </Stack>
+            </Radio.Group>
+          )}
 
           {selectedRun.pci_devices.length > 0 && (
             <Text size="xs" c="dimmed">

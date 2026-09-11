@@ -883,6 +883,12 @@ export interface RestoreInfraCheckResult {
 
 export type RestoreMode = "replace" | "add";
 
+// Nur relevant, wenn die restorte VHD eine .avhdx ist (aktiver Checkpoint
+// zum Backup-Zeitpunkt): "backup_time" mergt AVHDX+VHDX (voller Stand
+// zum Backup-Zeitpunkt, Standard), "checkpoint_time" verwendet nur die
+// Basis-VHDX ohne Merge (Stand genau zum Checkpoint-Zeitpunkt).
+export type AvhdxTarget = "backup_time" | "checkpoint_time";
+
 export interface VmWithBackups {
   name: string;
   host?: string | null;
@@ -964,6 +970,7 @@ export interface TriggerRestorePayload {
   snapshot_id: string;
   source_vhd_path: string;
   mode: RestoreMode;
+  avhdx_target?: AvhdxTarget;
 }
 
 export interface RestoreInfraConfig {

@@ -51,7 +51,7 @@ from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_proxy_host import RestoreProxyHost
-from app.models.restore_run import RestoreMode, RestoreRun, RestoreRunStep, RestoreStatus, RestoreStepStatus
+from app.models.restore_run import AvhdxRestoreTarget, RestoreMode, RestoreRun, RestoreRunStep, RestoreStatus, RestoreStepStatus
 from app.models.vm_recreate_run import VmRecreateRun, VmRecreateRunStep
 from app.services.email_service import notify_restore_failure
 from app.services.hyperv_service import HyperVService
@@ -118,6 +118,9 @@ class TriggerRestoreRequest(BaseModel):
     snapshot_id: str
     source_vhd_path: str
     mode: RestoreMode
+    # Nur relevant, wenn source_vhd_path auf .avhdx endet -- siehe
+    # AvhdxRestoreTarget.
+    avhdx_target: AvhdxRestoreTarget = AvhdxRestoreTarget.BACKUP_TIME
 
 
 class VmBackupRunVhdRead(BaseModel):
@@ -198,6 +201,9 @@ class RecreateVmRequest(BaseModel):
     # Side-by-side-Restore-Optionen, nur relevant zusammen mit new_vm_name:
     disconnect_network: bool = False
     destination_csv_name: str | None = None
+    # Siehe AvhdxRestoreTarget -- ein Wert fuer den ganzen Lauf, nur
+    # relevant fuer VHDs mit aktivem Checkpoint zum Backup-Zeitpunkt.
+    avhdx_target: AvhdxRestoreTarget = AvhdxRestoreTarget.BACKUP_TIME
 
 
 @router.get("/vms", response_model=list[VmWithBackupsRead])
@@ -375,17 +381,23 @@ def _merge_avhdx_chain(
     node_service: HyperVService, node_session, node_address: str,
     proxy_service: HyperVService, proxy_session,
     mount_dir: str, relative_dir: str, remote_dir: str, leaf_remote_path: str,
-    hv_username: str, hv_password: str, suffix: str,
+    hv_username: str, hv_password: str, suffix: str, merge: bool = True,
 ) -> str:
     """Ein bei Backup-Zeitpunkt aktiver Checkpoint sichert Basis-VHDX UND
     AVHDX unveraendert im selben LUN-/Volume-Snapshot -- die bereits als
     leaf_remote_path auf den Ziel-Knoten kopierte AVHDX kennt ihren
     Elternpfad selbst (VHDX-Header, per Get-VHD auslesbar). Loest diese
-    Kette auf, kopiert jeden Vorfahren vom noch gemounteten
-    Proxy-LUN-Klon nach, korrigiert die ParentPath-Verweise (der
-    Original-Pfad im Header passt nach dem Kopieren i.d.R. nicht mehr)
-    und merged alles per Merge-VHD in die Basisdatei. Gibt den
-    Remote-Pfad der gemergten Basisdatei zurueck.
+    Kette auf und kopiert jeden Vorfahren vom noch gemounteten
+    Proxy-LUN-Klon nach.
+
+    `merge=True` (Stand zum Backup-Zeitpunkt, siehe AvhdxRestoreTarget):
+    korrigiert zusaetzlich die ParentPath-Verweise (der Original-Pfad im
+    Header passt nach dem Kopieren i.d.R. nicht mehr) und merged alles per
+    Merge-VHD in die Basisdatei -- gibt deren Remote-Pfad zurueck.
+    `merge=False` (Stand zum Checkpoint-Zeitpunkt): ueberspringt beides,
+    loescht stattdessen alle kopierten Differenzdateien (Leaf +
+    Zwischenstufen) und gibt direkt den Remote-Pfad der unveraenderten
+    Basisdatei zurueck -- der Stand genau vor dem Checkpoint.
 
     Jeder kopierte Vorfahre bekommt denselben '_restore_<suffix>'-Suffix
     wie der bereits kopierte Leaf (statt seines Original-Dateinamens) --
@@ -409,9 +421,10 @@ def _merge_avhdx_chain(
             proxy_session, parent_local, node_address, remote_dir, parent_unique_filename, hv_username, hv_password,
         )
         parent_remote = f"C:\\{remote_dir}\\{parent_unique_filename}"
-        result = node_service.set_vhd_parent(node_session, current_remote, parent_remote)
-        if not result.success:
-            raise RuntimeError(f"Elternpfad konnte nicht korrigiert werden: {result.error}")
+        if merge:
+            result = node_service.set_vhd_parent(node_session, current_remote, parent_remote)
+            if not result.success:
+                raise RuntimeError(f"Elternpfad konnte nicht korrigiert werden: {result.error}")
         chain_remote_paths.append(parent_remote)
         current_remote = parent_remote
     else:
@@ -421,9 +434,10 @@ def _merge_avhdx_chain(
         raise RuntimeError("Keine Basis-VHDX in der Kette gefunden")
 
     base_remote = chain_remote_paths[-1]
-    result = node_service.merge_vhd(node_session, leaf_remote_path, base_remote)
-    if not result.success:
-        raise RuntimeError(f"Merge-VHD fehlgeschlagen: {result.error}")
+    if merge:
+        result = node_service.merge_vhd(node_session, leaf_remote_path, base_remote)
+        if not result.success:
+            raise RuntimeError(f"Merge-VHD fehlgeschlagen: {result.error}")
 
     for p in chain_remote_paths[:-1]:
         node_service.delete_file(node_session, p)
@@ -680,13 +694,18 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
             db.commit()
 
             if original_filename.lower().endswith(".avhdx"):
-                with _StepCtx(db, run.id, "merge", "Checkpoint-Kette mit Basis-VHDX zusammenführen") as ctx:
+                merge_to_base = run.avhdx_target != AvhdxRestoreTarget.CHECKPOINT_TIME
+                step_label = (
+                    "Checkpoint-Kette mit Basis-VHDX zusammenführen" if merge_to_base
+                    else "Basis-VHDX vor dem Checkpoint auflösen (ohne Zusammenführen)"
+                )
+                with _StepCtx(db, run.id, "merge", step_label) as ctx:
                     try:
                         restored_vhd_path = _merge_avhdx_chain(
                             node_service, node_session, node_address,
                             proxy_service, proxy_session,
                             mount_dir, relative_dir, remote_dir, restored_vhd_path,
-                            hv_cluster.username, hv_password, suffix,
+                            hv_cluster.username, hv_password, suffix, merge=merge_to_base,
                         )
                     except RuntimeError as exc:
                         raise RuntimeError(
@@ -729,6 +748,29 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                         result = node_service.stop_vm(node_session, run.vm_name)
                         if not result.success:
                             raise RuntimeError(result.error)
+                # Ein Ersetzen der Basis-Disk macht jeden aktuell vorhandenen
+                # Checkpoint der VM ungueltig, unabhaengig davon, ob er mit
+                # diesem Restore zusammenhaengt (Merge-VHD, siehe oben, raeumt
+                # nur die Dateien auf, nicht Hyper-Vs eigene Checkpoint-
+                # Buchhaltung) -- live gefunden: Hyper-V zeigte nach einem
+                # gemergten Restore weiterhin einen Checkpoint, der auf eine
+                # nicht mehr existierende AVHDX zeigte. Laeuft NACH einem
+                # etwaigen Stopp oben, damit die VM garantiert aus ist --
+                # Checkpoint-Entfernung ist dann synchron (siehe
+                # [[avhdx-without-checkpoint-discovery-freeze]] zur sonst
+                # asynchronen Merge-Race bei einer laufenden VM).
+                with _StepCtx(db, run.id, "remove-checkpoints", "Vorhandene Checkpoints der VM entfernen") as ctx:
+                    live_vm = node_service.get_vm(node_session, run.vm_name)
+                    checkpoints = live_vm.checkpoints if live_vm else []
+                    if not checkpoints:
+                        ctx.row.status = RestoreStepStatus.SKIPPED
+                        ctx.row.message = "Kein Checkpoint vorhanden"
+                    else:
+                        for cp in checkpoints:
+                            result = node_service.remove_checkpoint(node_session, run.vm_name, cp.name)
+                            if not result.success:
+                                raise RuntimeError(f"Checkpoint '{cp.name}' konnte nicht entfernt werden: {result.error}")
+                        ctx.row.message = f"Entfernt: {', '.join(cp.name for cp in checkpoints)}"
                 with _StepCtx(db, run.id, "detach-old", "Alte VHDX abhängen und löschen"):
                     result = node_service.detach_vhd(node_session, run.vm_name, run.source_vhd_path)
                     if not result.success:
@@ -988,13 +1030,18 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                     restored_path = f"C:\\{remote_dir}\\{filename}"
 
                     if filename.lower().endswith(".avhdx"):
-                        with _StepCtx(db, run.id, f"merge-{i}", f"{vhd_name}: Checkpoint-Kette zusammenführen", step_model=VmRecreateRunStep) as ctx:
+                        merge_to_base = run.avhdx_target != AvhdxRestoreTarget.CHECKPOINT_TIME
+                        step_label = (
+                            f"{vhd_name}: Checkpoint-Kette zusammenführen" if merge_to_base
+                            else f"{vhd_name}: Basis-VHDX vor dem Checkpoint auflösen"
+                        )
+                        with _StepCtx(db, run.id, f"merge-{i}", step_label, step_model=VmRecreateRunStep) as ctx:
                             try:
                                 restored_path = _merge_avhdx_chain(
                                     node_service, node_session, node_address,
                                     proxy_service, proxy_session,
                                     mount_dir, relative_dir, remote_dir, restored_path,
-                                    hv_cluster.username, hv_password, f"{suffix}_{i}",
+                                    hv_cluster.username, hv_password, f"{suffix}_{i}", merge=merge_to_base,
                                 )
                             except RuntimeError as exc:
                                 raise RuntimeError(
@@ -1140,6 +1187,7 @@ def recreate_vm(
     run = VmRecreateRun(
         hyperv_cluster_id=vm_config.hyperv_cluster_id, vm_name=vm_name, target_vm_name=target_name,
         disconnect_network=payload.disconnect_network, destination_csv_name=destination_csv_name,
+        avhdx_target=payload.avhdx_target,
         source_run_id=payload.run_id, status=RestoreStatus.RUNNING, started_at=datetime.now(timezone.utc),
     )
     db.add(run)
@@ -1180,7 +1228,7 @@ def trigger_restore(
     run = RestoreRun(
         hyperv_cluster_id=vm.cluster_id, vm_name=payload.vm_name, source_snapshot_id=payload.snapshot_id,
         source_vhd_path=payload.source_vhd_path, mode=payload.mode, status=RestoreStatus.RUNNING,
-        started_at=datetime.now(timezone.utc),
+        avhdx_target=payload.avhdx_target, started_at=datetime.now(timezone.utc),
     )
     db.add(run)
     db.commit()

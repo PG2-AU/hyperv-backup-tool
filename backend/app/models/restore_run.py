@@ -29,6 +29,19 @@ class RestoreMode(str, enum.Enum):
     ADD = "add"
 
 
+class AvhdxRestoreTarget(str, enum.Enum):
+    """Nur relevant, wenn die restorte VHD eine .avhdx ist (aktiver
+    Checkpoint zum Backup-Zeitpunkt, siehe _merge_avhdx_chain in
+    restore.py): welcher Stand soll wiederhergestellt werden. BACKUP_TIME
+    (Default) mergt AVHDX+VHDX -- der volle Stand zum Backup-Zeitpunkt.
+    CHECKPOINT_TIME verwendet nur die Basis-VHDX ohne Merge -- der Stand
+    genau zum Zeitpunkt, als der Checkpoint erstellt wurde, verwirft
+    bewusst die spaeteren AVHDX-Aenderungen."""
+
+    BACKUP_TIME = "backup_time"
+    CHECKPOINT_TIME = "checkpoint_time"
+
+
 class RestoreStatus(str, enum.Enum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -53,6 +66,10 @@ class RestoreRun(Base):
     source_snapshot_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     source_vhd_path: Mapped[str] = mapped_column(String(1000))
     mode: Mapped[RestoreMode] = mapped_column(String(20))
+    # Nullable -- alte Laeufe (vor diesem Feature) sowie jeder Restore
+    # einer normalen VHDX (kein Checkpoint) haben hier None, im Code als
+    # BACKUP_TIME interpretiert (siehe AvhdxRestoreTarget).
+    avhdx_target: Mapped[str | None] = mapped_column(String(20), nullable=True)
     status: Mapped[RestoreStatus] = mapped_column(String(20), default=RestoreStatus.RUNNING)
     restored_vhd_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     attached_controller_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
