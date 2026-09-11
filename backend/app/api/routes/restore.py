@@ -759,6 +759,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 # Checkpoint-Entfernung ist dann synchron (siehe
                 # [[avhdx-without-checkpoint-discovery-freeze]] zur sonst
                 # asynchronen Merge-Race bei einer laufenden VM).
+                current_source_path = run.source_vhd_path
                 with _StepCtx(db, run.id, "remove-checkpoints", "Vorhandene Checkpoints der VM entfernen") as ctx:
                     live_vm = node_service.get_vm(node_session, run.vm_name)
                     checkpoints = live_vm.checkpoints if live_vm else []
@@ -771,11 +772,27 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                             if not result.success:
                                 raise RuntimeError(f"Checkpoint '{cp.name}' konnte nicht entfernt werden: {result.error}")
                         ctx.row.message = f"Entfernt: {', '.join(cp.name for cp in checkpoints)}"
+                        # Das Entfernen mergt Hyper-V-seitig automatisch jede
+                        # AVHDX dieser Checkpoints in ihre jeweilige Basis --
+                        # der zum Backup-Zeitpunkt aufgezeichnete source_vhd_path
+                        # kann dadurch bereits nicht mehr existieren (live
+                        # gefunden: ein waehrend DIESES Backup-Laufs selbst
+                        # erstellter/wieder entfernter Zusatz-Checkpoint hatte
+                        # die aufgezeichnete Datei laengst in eine andere Datei
+                        # gemergt). Den tatsaechlich jetzt angehaengten Pfad im
+                        # selben Ordner frisch abfragen, statt dem
+                        # aufgezeichneten Pfad blind zu vertrauen.
+                        refreshed_vm = node_service.get_vm(node_session, run.vm_name)
+                        source_dir = run.source_vhd_path.rsplit("\\", 1)[0].lower()
+                        current_source_path = next(
+                            (v.path for v in (refreshed_vm.vhds if refreshed_vm else []) if v.path.rsplit("\\", 1)[0].lower() == source_dir),
+                            run.source_vhd_path,
+                        )
                 with _StepCtx(db, run.id, "detach-old", "Alte VHDX abhängen und löschen"):
-                    result = node_service.detach_vhd(node_session, run.vm_name, run.source_vhd_path)
+                    result = node_service.detach_vhd(node_session, run.vm_name, current_source_path)
                     if not result.success:
                         raise RuntimeError(result.error)
-                    result = node_service.delete_file(node_session, run.source_vhd_path)
+                    result = node_service.delete_file(node_session, current_source_path)
                     if not result.success:
                         raise RuntimeError(result.error)
                 with _StepCtx(db, run.id, "rename", "Wiederhergestellte VHDX umbenennen") as ctx:
