@@ -43,7 +43,7 @@ from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import SessionLocal, get_db
 from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
-from app.api.routes.restore import _StepCtx, _avhdx_display_name
+from app.api.routes.restore import _StepCtx, _avhdx_display_name, _find_plain_checkpoint_id
 from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunStep, BackupRunVmConfig, JobStatus
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
@@ -635,6 +635,7 @@ def list_backups_for_object(
             .all()
         )
         for cfg in configs:
+            cfg_checkpoints = cfg.checkpoints or []
             vhds_by_run_id[cfg.run_id] = [
                 BackupSnapshotVhdRead(
                     name=v.get("name", ""),
@@ -643,12 +644,13 @@ def list_backups_for_object(
                     size_bytes=v.get("base_size_bytes") or v.get("size_bytes"),
                     used_bytes=v.get("base_used_bytes") or v.get("used_bytes"),
                     is_avhdx=v.get("name", "").lower().endswith(".avhdx"),
+                    plain_checkpoint_id=_find_plain_checkpoint_id(v.get("path", ""), cfg_checkpoints) if v.get("name", "").lower().endswith(".avhdx") else None,
                 )
                 for v in (cfg.vhds or [])
             ]
             checkpoints_by_run_id[cfg.run_id] = [
                 BackupSnapshotCheckpointRead(id=cp.get("id", ""), name=cp.get("name", ""), creation_time=cp.get("creation_time", ""))
-                for cp in (cfg.checkpoints or [])
+                for cp in cfg_checkpoints
                 if cp.get("id")
             ]
 

@@ -290,7 +290,7 @@ def init_db(db: Session) -> None:
             "last_scheduled_backup_check_at": "DATETIME",
         },
     )
-    _add_missing_columns(engine, "file_restore_runs", {"clone_volume_uuid": "VARCHAR(36)"})
+    _add_missing_columns(engine, "file_restore_runs", {"clone_volume_uuid": "VARCHAR(36)", "avhdx_checkpoint_id": "VARCHAR(64)"})
     _add_missing_columns(
         engine, "netapp_snapmirror_policies",
         {"create_snapshot_on_source": "BOOLEAN", "sync_type": "VARCHAR(30)"},

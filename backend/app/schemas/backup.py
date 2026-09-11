@@ -114,6 +114,12 @@ class BackupSnapshotVhdRead(BaseModel):
     # zusammenzufuehren (siehe _merge_avhdx_chain in routes/restore.py) --
     # dieses Feld ist nur fuer die Kennzeichnung im Restore-Wizard.
     is_avhdx: bool = False
+    # Nur gesetzt wenn is_avhdx: Id des Checkpoints (aus BackupSnapshotRead.
+    # checkpoints), dessen eigener aufgezeichneter Stand fuer DIESES VHD
+    # bereits eine plain VHDX ist (typischerweise der aelteste Checkpoint
+    # einer Kette) -- der Datei-Browse-Modus kann NUR diesen Stand direkt
+    # mounten (kein Merge moeglich dort, siehe file_restore.py).
+    plain_checkpoint_id: str | None = None
 
 
 class BackupSnapshotCheckpointRead(BaseModel):

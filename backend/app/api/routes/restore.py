@@ -438,6 +438,22 @@ def _resolve_checkpoint_source_path(
     return match or source_vhd_path
 
 
+def _find_plain_checkpoint_id(vhd_path: str, checkpoints: list[dict]) -> str | None:
+    """Findet den Checkpoint (falls vorhanden), dessen eigener
+    aufgezeichneter Stand fuer DIESES VHD bereits eine plain VHDX ist
+    (keine .avhdx) -- typischerweise der AELTESTE Checkpoint einer Kette,
+    da zu seiner Erstellung noch gar kein Checkpoint aktiv war und sein
+    aufgezeichneter Stand somit direkt die urspruengliche Basis ist. Fuer
+    den Datei-Browse-Modus der einzige direkt (ohne Merge) mountbare
+    Zustand -- siehe _execute_file_restore_open in file_restore.py."""
+    vhd_dir = vhd_path.rsplit("\\", 1)[0].lower()
+    for cp in checkpoints:
+        for p in cp.get("hard_drive_paths") or []:
+            if p.rsplit("\\", 1)[0].lower() == vhd_dir and not p.lower().endswith(".avhdx"):
+                return cp.get("id")
+    return None
+
+
 def _merge_avhdx_chain(
     node_service: HyperVService, node_session, node_address: str,
     proxy_service: HyperVService, proxy_session,

@@ -223,7 +223,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
     ? selectedSnapshot.vhds
     : (vmFull?.vhds ?? []).map((v) => ({
         name: v.name, display_name: v.name, path: v.full_path, size_bytes: v.size_bytes, used_bytes: v.used_bytes,
-        is_avhdx: v.name.toLowerCase().endsWith(".avhdx"),
+        is_avhdx: v.name.toLowerCase().endsWith(".avhdx"), plain_checkpoint_id: null as string | null,
       }));
 
   // Kapazitaetsschaetzung "CSV danach": basiert bewusst auf dem BELEGTEN
@@ -394,8 +394,12 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
     if (selectedVhdPaths.length === 0) return;
     if (restoreKind === "files") {
       setActive(3);
+      const selectedFileVhd = vhdOptions.find((v) => v.path === selectedVhdPaths[0]);
       triggerFileRestore.mutate(
-        { vm_name: vm.name, snapshot_id: snapshotId, source_vhd_path: selectedVhdPaths[0] },
+        {
+          vm_name: vm.name, snapshot_id: snapshotId, source_vhd_path: selectedVhdPaths[0],
+          avhdx_checkpoint_id: selectedFileVhd?.plain_checkpoint_id,
+        },
         {
           onSuccess: (result) => setFileRunId(result.id),
           onError: (err) =>
@@ -631,36 +635,73 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                 )}
               </Stack>
             ) : restoreKind === "files" ? (
+              <Stack gap="sm">
               <Radio.Group
                 value={selectedVhdPaths[0] ?? null}
                 onChange={(v) => setSelectedVhdPaths(v ? [v] : [])}
                 label="Welche VHDX soll durchsucht werden?"
               >
                 <Stack gap="xs" mt="xs">
-                  {vhdOptions.map((vhd) => (
-                    <Radio
-                      key={vhd.path}
-                      value={vhd.path}
-                      disabled={vhd.is_avhdx}
-                      label={
-                        <Group gap="xs">
-                          <Text size="sm">{vhd.display_name}</Text>
-                          <Text size="xs" c="dimmed">
-                            ({formatBytes(vhd.size_bytes)})
-                          </Text>
-                          {vhd.is_avhdx && (
-                            <Tooltip label="Enthält einen aktiven Checkpoint (AVHDX) -- der Datei-Modus kann das nicht durchsuchen, bitte 'Anhängen' verwenden.">
-                              <Badge color="red" size="sm" variant="light">
-                                Nicht durchsuchbar
-                              </Badge>
-                            </Tooltip>
-                          )}
-                        </Group>
-                      }
-                    />
-                  ))}
+                  {vhdOptions.map((vhd) => {
+                    const plainCheckpoint = vhd.plain_checkpoint_id
+                      ? selectedSnapshot?.checkpoints.find((cp) => cp.id === vhd.plain_checkpoint_id)
+                      : undefined;
+                    const blocked = vhd.is_avhdx && !vhd.plain_checkpoint_id;
+                    return (
+                      <Radio
+                        key={vhd.path}
+                        value={vhd.path}
+                        disabled={blocked}
+                        label={
+                          <Group gap="xs">
+                            <Text size="sm">{vhd.display_name}</Text>
+                            <Text size="xs" c="dimmed">
+                              ({formatBytes(vhd.size_bytes)})
+                            </Text>
+                            {blocked && (
+                              <Tooltip label="Enthält einen aktiven Checkpoint (AVHDX) -- der Datei-Modus kann das nicht durchsuchen, bitte 'Anhängen' verwenden.">
+                                <Badge color="red" size="sm" variant="light">
+                                  Nicht durchsuchbar
+                                </Badge>
+                              </Tooltip>
+                            )}
+                            {vhd.is_avhdx && plainCheckpoint && (
+                              <Tooltip label="Enthält einen aktiven Checkpoint -- wird auf den Stand des ältesten Checkpoints gemountet (der einzige ohne Zusammenführen direkt durchsuchbare Zustand).">
+                                <Badge color="orange" size="sm" variant="light">
+                                  Wird auf Checkpoint „{plainCheckpoint.name}“ gemountet
+                                </Badge>
+                              </Tooltip>
+                            )}
+                          </Group>
+                        }
+                      />
+                    );
+                  })}
                 </Stack>
               </Radio.Group>
+              {(() => {
+                const selected = vhdOptions.find((v) => v.path === selectedVhdPaths[0]);
+                const plainCheckpoint = selected?.is_avhdx && selected.plain_checkpoint_id
+                  ? selectedSnapshot?.checkpoints.find((cp) => cp.id === selected.plain_checkpoint_id)
+                  : undefined;
+                if (!plainCheckpoint) return null;
+                return (
+                  <Radio.Group
+                    value={plainCheckpoint.id}
+                    label="Welcher Stand soll durchsucht werden?"
+                    description="Der Datei-Modus kann nur einen Stand ohne Zusammenführen direkt öffnen -- automatisch auf den passenden Checkpoint gesperrt."
+                  >
+                    <Stack gap={4} mt="xs">
+                      <Radio
+                        value={plainCheckpoint.id}
+                        disabled
+                        label={`Stand zum Checkpoint „${formatCheckpointLabel(plainCheckpoint)}“`}
+                      />
+                    </Stack>
+                  </Radio.Group>
+                );
+              })()}
+              </Stack>
             ) : (
               <Checkbox.Group
                 value={selectedVhdPaths}

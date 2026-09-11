@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.restore import _StepCtx, _netapp_service_for, _parse_csv_name, _slugify
+from app.api.routes.restore import _StepCtx, _netapp_service_for, _parse_csv_name, _resolve_checkpoint_source_path, _slugify
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
@@ -80,6 +80,11 @@ class TriggerFileRestoreRequest(BaseModel):
     vm_name: str
     snapshot_id: str
     source_vhd_path: str
+    # Nur relevant, wenn source_vhd_path auf .avhdx endet: die Id eines
+    # Checkpoints, dessen eigener aufgezeichneter Stand fuer DIESES VHD
+    # bereits eine plain VHDX ist (siehe BackupSnapshotVhdRead.plain_checkpoint_id)
+    # -- der Datei-Modus kann NUR das direkt mounten, kein Merge moeglich.
+    avhdx_checkpoint_id: str | None = None
 
 
 class FileEntryRead(BaseModel):
@@ -154,7 +159,8 @@ def trigger_file_restore(
 
     run = FileRestoreRun(
         vm_name=payload.vm_name, source_snapshot_id=payload.snapshot_id,
-        source_vhd_path=payload.source_vhd_path, status=RestoreStatus.RUNNING,
+        source_vhd_path=payload.source_vhd_path, avhdx_checkpoint_id=payload.avhdx_checkpoint_id,
+        status=RestoreStatus.RUNNING,
         started_at=datetime.now(timezone.utc),
     )
     db.add(run)
@@ -290,23 +296,6 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
 
         try:
             with _StepCtx(db, run.id, "resolve", "Ziel auflösen", step_model=FileRestoreRunStep) as ctx:
-                if run.source_vhd_path.lower().endswith(".avhdx"):
-                    # Der Datei-Browse-Modus mountet bewusst NUR auf dem
-                    # Proxy-Host (Mount-DiskImage, kein Hyper-V dort
-                    # noetig) -- eine AVHDX kann so nicht aufgeloest
-                    # werden (ihr ParentPath verweist auf den
-                    # urspruenglichen, hier nicht erreichbaren Pfad auf
-                    # dem Quell-Cluster). Anders als beim Anhaengen/
-                    # Ersetzen (siehe _merge_avhdx_chain in restore.py,
-                    # laeuft auf einem echten Hyper-V-Knoten) gibt es
-                    # hier bewusst keinen Merge -- siehe [[avhdx-without-checkpoint-discovery-freeze]],
-                    # Teil 5.
-                    raise RuntimeError(
-                        "Diese Sicherung enthält für dieses Laufwerk einen aktiven Checkpoint (AVHDX statt "
-                        "Basis-VHDX) und kann im Datei-Modus nicht durchsucht werden. Bitte stattdessen "
-                        "'Als zusätzliche Disk anhängen' verwenden -- dort wird die Kette automatisch "
-                        "zusammengeführt und ist danach durchsuchbar."
-                    )
                 csv_name = _parse_csv_name(run.source_vhd_path)
                 if not csv_name:
                     raise RuntimeError(f"CSV konnte nicht aus '{run.source_vhd_path}' ermittelt werden")
@@ -326,6 +315,29 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
                         "Für diesen Backup-Lauf liegt keine gespeicherte VHD-Zuordnung vor "
                         "(Backups von vor der VM-Konfigurationserfassung) -- bitte stattdessen "
                         "den normalen VHDX-Restore (Anhängen/Ersetzen) verwenden."
+                    )
+
+                # Der Datei-Browse-Modus mountet bewusst NUR auf dem
+                # Proxy-Host (Mount-DiskImage, kein Hyper-V dort noetig) --
+                # eine AVHDX kann so nicht aufgeloest werden (ihr ParentPath
+                # verweist auf den urspruenglichen, hier nicht erreichbaren
+                # Pfad auf dem Quell-Cluster), anders als beim Anhaengen/
+                # Ersetzen (siehe _merge_avhdx_chain in restore.py, laeuft
+                # auf einem echten Hyper-V-Knoten). Zeigt der gewaehlte
+                # Checkpoint (avhdx_checkpoint_id) fuer DIESES VHD aber
+                # bereits direkt auf eine plain VHDX (der Fall fuer den
+                # AELTESTEN Checkpoint einer Kette -- zu seiner Erstellung
+                # war noch gar kein Checkpoint aktiv, sein aufgezeichneter
+                # Stand IST die urspruengliche Basis), ist das ohne jeden
+                # Merge direkt mountbar -- siehe [[avhdx-without-checkpoint-discovery-freeze]],
+                # Teil 5/6.
+                copy_source_path = _resolve_checkpoint_source_path(vm_config, run.source_vhd_path, run.avhdx_checkpoint_id)
+                if copy_source_path.lower().endswith(".avhdx"):
+                    raise RuntimeError(
+                        "Diese Sicherung enthält für dieses Laufwerk einen aktiven Checkpoint (AVHDX statt "
+                        "Basis-VHDX) und kann im Datei-Modus nicht durchsucht werden. Bitte stattdessen "
+                        "'Als zusätzliche Disk anhängen' verwenden -- dort wird die Kette automatisch "
+                        "zusammengeführt und ist danach durchsuchbar."
                     )
                 svm_name = vhd_entry["svm_name"]
                 volume_name = vhd_entry["volume_name"]
@@ -438,7 +450,7 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
                 ctx.row.message = lun_mount_dir
 
             with _StepCtx(db, run.id, "locate-vhdx", "VHDX-Datei finden", step_model=FileRestoreRunStep) as ctx:
-                after_csv = run.source_vhd_path.split(f"ClusterStorage\\{csv_name}\\", 1)[1]
+                after_csv = copy_source_path.split(f"ClusterStorage\\{csv_name}\\", 1)[1]
                 parts = after_csv.split("\\")
                 original_filename = parts[-1]
                 relative_dir = "\\".join(parts[:-1])

@@ -714,6 +714,11 @@ export interface BackupSnapshotVhd {
   size_bytes?: number | null;
   used_bytes?: number | null;
   is_avhdx: boolean;
+  // Nur gesetzt wenn is_avhdx: Id des Checkpoints, dessen eigener
+  // aufgezeichneter Stand fuer DIESES VHD bereits eine plain VHDX ist --
+  // der Datei-Modus kann NUR diesen Stand direkt mounten (kein Merge
+  // moeglich dort).
+  plain_checkpoint_id?: string | null;
 }
 
 // Ein zum Backup-Zeitpunkt auf der VM vorhandener Checkpoint -- fuer die
@@ -816,6 +821,8 @@ export interface TriggerFileRestorePayload {
   vm_name: string;
   snapshot_id: string;
   source_vhd_path: string;
+  // Nur relevant, wenn die VHD is_avhdx ist: siehe BackupSnapshotVhd.plain_checkpoint_id.
+  avhdx_checkpoint_id?: string | null;
 }
 
 export interface FileEntry {

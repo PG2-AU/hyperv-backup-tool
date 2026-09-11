@@ -37,6 +37,11 @@ class FileRestoreRun(Base):
     vm_name: Mapped[str] = mapped_column(String(255))
     source_snapshot_id: Mapped[str] = mapped_column(String(36))
     source_vhd_path: Mapped[str] = mapped_column(String(1000))
+    # Siehe RestoreRun.avhdx_checkpoint_id -- hier nur relevant, wenn das
+    # gewaehlte VHD einen zum Backup-Zeitpunkt bereits einer PLAIN VHDX
+    # entsprechenden Checkpoint hat (kein Merge im Datei-Modus moeglich,
+    # siehe _execute_file_restore_open).
+    avhdx_checkpoint_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[RestoreStatus] = mapped_column(String(20), default=RestoreStatus.RUNNING)
 
     # Proxy-Pfad, unter dem die VHDX-Partition gemountet ist -- Wurzel fuer
