@@ -648,10 +648,19 @@ def list_backups_for_object(
                 )
                 for v in (cfg.vhds or [])
             ]
+            # Der eigene, kurzlebige Checkpoint des Backup-Laufs selbst
+            # (Name-Praefix 'hvnb_', siehe _run_node_checkpoints) wird NICHT
+            # als eigene Wahlmoeglichkeit angezeigt -- sein aufgezeichneter
+            # Stand entspricht (abgesehen von Millisekunden zwischen seiner
+            # Erstellung und dem NetApp-Snapshot) exakt "Stand zum Backup-
+            # Zeitpunkt", eine zusaetzliche Option waere hier nur verwirrend
+            # redundant. Bleibt in cfg_checkpoints (also z.B. fuer
+            # _find_plain_checkpoint_id) weiterhin vorhanden -- betrifft nur
+            # die Anzeige/Auswahlliste.
             checkpoints_by_run_id[cfg.run_id] = [
                 BackupSnapshotCheckpointRead(id=cp.get("id", ""), name=cp.get("name", ""), creation_time=cp.get("creation_time", ""))
                 for cp in cfg_checkpoints
-                if cp.get("id")
+                if cp.get("id") and not cp.get("name", "").startswith("hvnb_")
             ]
 
     return [

@@ -323,10 +323,14 @@ def list_vm_backup_runs(
                     )
                     for v in (cfg.vhds or [])
                 ],
+                # Der eigene, kurzlebige Checkpoint des Backup-Laufs selbst
+                # (Praefix 'hvnb_') wird nicht als eigene Wahlmoeglichkeit
+                # angezeigt -- entspricht praktisch "Stand zum
+                # Backup-Zeitpunkt", siehe list_backups_for_object (jobs.py).
                 checkpoints=[
                     BackupSnapshotCheckpointRead(id=cp.get("id", ""), name=cp.get("name", ""), creation_time=cp.get("creation_time", ""))
                     for cp in (cfg.checkpoints or [])
-                    if cp.get("id")
+                    if cp.get("id") and not cp.get("name", "").startswith("hvnb_")
                 ],
                 restore_source=restore_source,
             )
