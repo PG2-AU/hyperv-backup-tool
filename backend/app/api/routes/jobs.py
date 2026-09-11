@@ -66,7 +66,7 @@ from app.schemas.backup import (
     BackupSnapshotVhdRead,
     UpcomingJobRead,
 )
-from app.services.hyperv_service import HyperVService
+from app.services.hyperv_service import HyperVService, VirtualMachineInfo
 from app.services.netapp_service import NetAppOntapService
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -731,6 +731,35 @@ class _NoTargetsError(RuntimeError):
     pass
 
 
+def _build_vhd_entries(
+    vhds: list[HyperVVhd], cluster_ids_by_name: dict[str, str], hyperv_csv_by_name: dict[str, HyperVCsv],
+) -> list[dict]:
+    """Baut die in BackupRunVmConfig.vhds gespeicherten Eintraege (Name/
+    Pfad/Groesse + CSV/LUN/SVM/Volume-Aufloesung) aus HyperVVhd-DB-Zeilen --
+    gemeinsame Logik fuer die initiale Erfassung in _start_job_run UND den
+    Refresh direkt nach der Checkpoint-Erstellung einer anwendungs-
+    konsistenten VM in _execute_job_run (siehe [[avhdx-without-checkpoint-discovery-freeze]],
+    Teil 3 -- verhindert, dass beide Stellen unbemerkt auseinanderlaufen)."""
+    entries = []
+    for vhd in vhds:
+        csv = hyperv_csv_by_name.get(vhd.csv_name) if vhd.csv_name else None
+        entries.append(
+            {
+                "name": win_basename(vhd.path),
+                "path": vhd.path,
+                "size_bytes": vhd.size_bytes,
+                "used_bytes": vhd.used_bytes,
+                "csv_name": vhd.csv_name,
+                "netapp_cluster_id": cluster_ids_by_name.get(csv.netapp_cluster_name) if csv and csv.netapp_cluster_name else None,
+                "netapp_cluster_name": csv.netapp_cluster_name if csv else None,
+                "svm_name": csv.netapp_svm_name if csv else None,
+                "volume_name": csv.netapp_volume_name if csv else None,
+                "lun_name": csv.netapp_lun_name if csv else None,
+            }
+        )
+    return entries
+
+
 def _start_job_run(
     policy: BackupPolicy, db: Session, resource_group_ids: set[str] | None = None
 ) -> tuple[BackupRun, list[str]]:
@@ -826,23 +855,10 @@ def _start_job_run(
 
         for vm_name in vm_names_in_run:
             hv_vm = hyperv_vms_by_name.get(vm_name)
-            vhd_entries = []
-            for vhd in (hyperv_vhds_by_vm_uuid.get(hv_vm.vm_uuid, []) if hv_vm and hv_vm.vm_uuid else []):
-                csv = hyperv_csv_by_name.get(vhd.csv_name) if vhd.csv_name else None
-                vhd_entries.append(
-                    {
-                        "name": win_basename(vhd.path),
-                        "path": vhd.path,
-                        "size_bytes": vhd.size_bytes,
-                        "used_bytes": vhd.used_bytes,
-                        "csv_name": vhd.csv_name,
-                        "netapp_cluster_id": cluster_ids_by_name.get(csv.netapp_cluster_name) if csv and csv.netapp_cluster_name else None,
-                        "netapp_cluster_name": csv.netapp_cluster_name if csv else None,
-                        "svm_name": csv.netapp_svm_name if csv else None,
-                        "volume_name": csv.netapp_volume_name if csv else None,
-                        "lun_name": csv.netapp_lun_name if csv else None,
-                    }
-                )
+            vhd_entries = _build_vhd_entries(
+                hyperv_vhds_by_vm_uuid.get(hv_vm.vm_uuid, []) if hv_vm and hv_vm.vm_uuid else [],
+                cluster_ids_by_name, hyperv_csv_by_name,
+            )
             db.add(
                 BackupRunVmConfig(
                     run_id=run.id, vm_name=vm_name, vm_uuid=hv_vm.vm_uuid if hv_vm else None,
@@ -892,6 +908,13 @@ class _CheckpointResult:
     node_session: object | None = None
     message: str = ""
     error: str = ""
+    # Best-effort get_vm()-Ergebnis direkt nach erfolgreichem Checkpoint,
+    # auf derselben schon verbundenen Session (siehe _run_node_checkpoints)
+    # -- macht den zum Backup-Zeitpunkt tatsaechlichen VHD-Zustand nutzbar,
+    # statt der ggf. veralteten HyperVVhd-DB-Zeilen (siehe [[avhdx-without-checkpoint-discovery-freeze]],
+    # Teil 3). None wenn der Refresh fehlschlaegt -- dann bleibt
+    # BackupRunVmConfig.vhds wie zuvor (keine Verschlechterung).
+    refreshed_vm: VirtualMachineInfo | None = None
 
 
 @dataclass
@@ -941,12 +964,24 @@ def _run_node_checkpoints(
         progress.put(("start", (vm_name, job.node_address)))
         try:
             node_service.create_checkpoint(node_session, vm_name, checkpoint_name, consistency)
+            # Best-effort: den soeben erstellten Checkpoint direkt auf der
+            # ohnehin offenen Session nachfragen, statt auf die naechste
+            # Discovery zu warten -- macht den tatsaechlichen VHD-Zustand
+            # (inkl. eines bereits VOR diesem Lauf manuell angelegten
+            # Checkpoints) fuer BackupRunVmConfig.vhds nutzbar. Ein
+            # Fehlschlag hier darf den bereits erfolgreichen Checkpoint
+            # nicht als Fehler melden.
+            try:
+                refreshed_vm = node_service.get_vm(node_session, vm_name)
+            except Exception:
+                refreshed_vm = None
             progress.put((
                 "done",
                 _CheckpointResult(
                     vm_name, cluster_id, job.node_address, ok=True,
                     node_service=node_service, node_session=node_session,
                     message=f"Checkpoint '{checkpoint_name}' auf Knoten '{job.node_address}' erstellt",
+                    refreshed_vm=refreshed_vm,
                 ),
             ))
         except Exception as exc:  # noqa: BLE001 -- eine VM scheitert, die anderen des Knotens laufen weiter
@@ -1012,6 +1047,9 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             if c.ontap_cluster_name:
                 clusters_by_name[c.ontap_cluster_name] = c
         volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
+        # Fuer den Checkpoint-Refresh unten (siehe [[avhdx-without-checkpoint-discovery-freeze]],
+        # Teil 3) -- gleiche Form wie cluster_ids_by_name in _start_job_run.
+        cluster_ids_by_name = {name: c.id for name, c in clusters_by_name.items()}
         snapshot_suffix = run.started_at.strftime("%Y%m%d%H%M%S")
         slug = _slugify(policy.name)
         label = policy.snapmirror_label.name if policy.snapmirror_label else None
@@ -1187,6 +1225,42 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                             row.status = RestoreStepStatus.SUCCESS
                             row.message = res.message
                             active_checkpoints.append((res.node_service, res.node_session, res.vm_name, res.cluster_id))
+                            # Den soeben (im Worker) frisch abgefragten VHD-
+                            # Zustand SOFORT in die fuer DIESEN Lauf bereits
+                            # angelegte BackupRunVmConfig uebernehmen, statt
+                            # auf die naechste volle Discovery zu warten --
+                            # siehe [[avhdx-without-checkpoint-discovery-freeze]],
+                            # Teil 3. Deckt insbesondere einen bereits VOR
+                            # diesem Lauf manuell angelegten Checkpoint ab,
+                            # den die letzte Discovery noch nicht kannte.
+                            if res.refreshed_vm is not None and res.cluster_id:
+                                try:
+                                    hv_vm_fresh = (
+                                        db.query(HyperVVm)
+                                        .filter(HyperVVm.name == res.vm_name, HyperVVm.cluster_id == res.cluster_id)
+                                        .first()
+                                    )
+                                    if hv_vm_fresh is not None:
+                                        _apply_vm_discovery_refresh(db, res.cluster_id, hv_vm_fresh, res.refreshed_vm)
+                                        db.flush()
+                                        cfg = (
+                                            db.query(BackupRunVmConfig)
+                                            .filter(BackupRunVmConfig.run_id == run.id, BackupRunVmConfig.vm_name == res.vm_name)
+                                            .first()
+                                        )
+                                        if cfg is not None:
+                                            hyperv_csv_by_name = {c.name: c for c in db.query(HyperVCsv).filter(HyperVCsv.cluster_id == res.cluster_id).all()}
+                                            fresh_vhds = (
+                                                db.query(HyperVVhd)
+                                                .filter(HyperVVhd.cluster_id == res.cluster_id, HyperVVhd.vm_uuid == hv_vm_fresh.vm_uuid)
+                                                .all()
+                                            )
+                                            cfg.vhds = _build_vhd_entries(fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name)
+                                except Exception:
+                                    # Best-effort -- BackupRunVmConfig.vhds
+                                    # bleibt dann wie von _start_job_run
+                                    # erfasst (keine Verschlechterung).
+                                    pass
                         else:
                             row.status = RestoreStepStatus.ERROR
                             row.message = res.error
