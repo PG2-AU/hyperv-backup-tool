@@ -75,6 +75,14 @@ function CsvCapacityBar({ estimate }: { estimate: CapacityEstimate }) {
   const total = csv.capacity_bytes ?? 0;
   const before = csv.used_bytes ?? 0;
   const after = Math.max(0, before + addedBytes - removedBytes);
+  // Restore kopiert (ein Copy-Item) die wiederhergestellte VHDX unter einem
+  // NEUEN Dateinamen direkt auf das Ziel-CSV; im Ersetzen-Modus liegt
+  // waehrend des Kopierens die ALTE VHD noch daneben -- das '- removedBytes'
+  // greift erst NACH dem Anhaengen + Loeschen der alten Datei. Die
+  // transiente Spitze ist deshalb IMMER before + addedBytes, nicht 'after'.
+  // Bei "anhaengen" ist removedBytes ohnehin 0, also peak === after (kein
+  // Extra-Segment/-Hinweis).
+  const peak = before + addedBytes;
   if (total <= 0) {
     return (
       <Text size="xs" c="dimmed">
@@ -82,9 +90,16 @@ function CsvCapacityBar({ estimate }: { estimate: CapacityEstimate }) {
       </Text>
     );
   }
-  const beforePct = Math.min(100, Math.round((before / total) * 100));
-  const afterPct = Math.min(100, Math.round((after / total) * 100));
+  const pct = (n: number) => Math.min(100, Math.round((n / total) * 100));
+  const beforePct = pct(before);
+  const afterPct = pct(after);
+  const peakPct = pct(peak);
   const color = afterPct >= 90 ? "red" : afterPct >= 75 ? "orange" : "blue";
+  const floorPct = Math.min(beforePct, afterPct);
+  const deltaPct = Math.abs(afterPct - beforePct);
+  const peakExtraPct = Math.max(0, peakPct - Math.max(beforePct, afterPct));
+  const showPeak = peak > Math.max(before, after);
+  const overshoots = peak > total;
   return (
     <div>
       <Group justify="space-between" mb={4}>
@@ -92,13 +107,26 @@ function CsvCapacityBar({ estimate }: { estimate: CapacityEstimate }) {
           {csv.name}
         </Text>
         <Text size="xs" c="dimmed">
-          {formatBytes(before)} → {formatBytes(after)} von {formatBytes(total)} ({beforePct}% → {afterPct}%)
+          {formatBytes(before)} → {formatBytes(after)}
+          {showPeak ? ` (Spitze ${formatBytes(peak)})` : ""} von {formatBytes(total)} ({beforePct}% → {afterPct}%)
         </Text>
       </Group>
       <Progress.Root size="lg">
-        <Progress.Section value={Math.min(beforePct, afterPct)} color="gray" />
-        <Progress.Section value={Math.abs(afterPct - beforePct)} color={color} />
+        <Progress.Section value={floorPct} color="gray" />
+        <Progress.Section value={deltaPct} color={color} />
+        {peakExtraPct > 0 && <Progress.Section value={peakExtraPct} color="yellow" striped />}
       </Progress.Root>
+      {showPeak && (
+        <Text size="xs" c="dimmed" mt={2}>
+          Während des Kopierens liegt die alte VHDX noch daneben – kurzzeitiger Spitzenbedarf {formatBytes(peak)}.
+        </Text>
+      )}
+      {overshoots && (
+        <Text size="xs" c="red" fw={600} mt={2}>
+          Achtung: die Spitzenbelegung übersteigt die Kapazität dieses CSV ({formatBytes(peak)} &gt; {formatBytes(total)}), auch
+          wenn der Endzustand passt.
+        </Text>
+      )}
     </div>
   );
 }
