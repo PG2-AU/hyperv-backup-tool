@@ -774,20 +774,25 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                         ctx.row.message = f"Entfernt: {', '.join(cp.name for cp in checkpoints)}"
                         # Das Entfernen mergt Hyper-V-seitig automatisch jede
                         # AVHDX dieser Checkpoints in ihre jeweilige Basis --
-                        # der zum Backup-Zeitpunkt aufgezeichnete source_vhd_path
-                        # kann dadurch bereits nicht mehr existieren (live
-                        # gefunden: ein waehrend DIESES Backup-Laufs selbst
-                        # erstellter/wieder entfernter Zusatz-Checkpoint hatte
-                        # die aufgezeichnete Datei laengst in eine andere Datei
-                        # gemergt). Den tatsaechlich jetzt angehaengten Pfad im
-                        # selben Ordner frisch abfragen, statt dem
-                        # aufgezeichneten Pfad blind zu vertrauen.
-                        refreshed_vm = node_service.get_vm(node_session, run.vm_name)
-                        source_dir = run.source_vhd_path.rsplit("\\", 1)[0].lower()
-                        current_source_path = next(
-                            (v.path for v in (refreshed_vm.vhds if refreshed_vm else []) if v.path.rsplit("\\", 1)[0].lower() == source_dir),
-                            run.source_vhd_path,
-                        )
+                        # die davor abgefragte live_vm ist damit veraltet,
+                        # frisch nachladen (siehe unten).
+                        live_vm = node_service.get_vm(node_session, run.vm_name)
+                    # Der zum Backup-Zeitpunkt aufgezeichnete source_vhd_path
+                    # kann JETZT bereits nicht mehr existieren -- nicht nur
+                    # durch die Checkpoint-Entfernung oben, sondern z.B. auch,
+                    # weil ein waehrend DES BACKUP-LAUFS SELBST erstellter und
+                    # wieder entfernter Zusatz-Checkpoint (siehe Fix A in
+                    # _execute_job_run) die aufgezeichnete Datei schon direkt
+                    # nach dem Backup in eine andere gemergt hat (live
+                    # reproduziert). Den tatsaechlich aktuell angehaengten Pfad
+                    # im selben Ordner IMMER frisch abfragen, statt dem
+                    # aufgezeichneten Pfad blind zu vertrauen -- faellt auf ihn
+                    # zurueck, falls im selben Ordner nichts (mehr) passt.
+                    source_dir = run.source_vhd_path.rsplit("\\", 1)[0].lower()
+                    current_source_path = next(
+                        (v.path for v in (live_vm.vhds if live_vm else []) if v.path.rsplit("\\", 1)[0].lower() == source_dir),
+                        run.source_vhd_path,
+                    )
                 with _StepCtx(db, run.id, "detach-old", "Alte VHDX abhängen und löschen"):
                     result = node_service.detach_vhd(node_session, run.vm_name, current_source_path)
                     if not result.success:
