@@ -1311,7 +1311,9 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                                                         base_sizes_by_path[fresh_vhd.path] = resolved
                                             cfg.vhds = _build_vhd_entries(fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name, base_sizes_by_path)
                                             cfg.checkpoints = list(hv_vm_fresh.checkpoints or [])
-                                except Exception:
+                                except Exception as exc:  # noqa: BLE001 -- TEMP diagnostic, see chat
+                                    import traceback
+                                    print(f"[TEIL5-DEBUG] Refresh fuer {res.vm_name} fehlgeschlagen: {exc!r}\n{traceback.format_exc()}", flush=True)
                                     # Best-effort -- BackupRunVmConfig.vhds
                                     # bleibt dann wie von _start_job_run
                                     # erfasst (keine Verschlechterung).
