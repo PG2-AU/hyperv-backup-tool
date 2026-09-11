@@ -12,6 +12,7 @@ import {
   IconHistory,
   IconInfoCircle,
   IconNetwork,
+  IconRefresh,
   IconServer,
   IconServer2,
   IconServerCog,
@@ -21,7 +22,7 @@ import {
 } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useCsvs, useDeleteVmCheckpoint, useResourceGroups, useVms } from "@/api/hooks";
+import { useCsvs, useDeleteVmCheckpoint, useDiscoverVm, useResourceGroups, useVms } from "@/api/hooks";
 import { BackupsModal } from "@/components/BackupsModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
@@ -325,6 +326,29 @@ export function VmsPage() {
     useRunPolicy();
   const { data: resourceGroups } = useResourceGroups();
   const deleteCheckpoint = useDeleteVmCheckpoint();
+  const discoverVm = useDiscoverVm();
+
+  // Live, ohne auf den naechsten Alarm-Check zu warten (analog zum
+  // Multi-CSV-Badge unten) -- die VM hat keinen aktiven Checkpoint, aber
+  // mindestens eine Disk zeigt trotzdem eine AVHDX-Differenzdatei. Meist
+  // eingefrorene Discovery-Daten (siehe AlertType.HYPERV_VM_AVHDX_WITHOUT_
+  // CHECKPOINT in scheduler.py), behebbar per "VM Discovery".
+  function avhdxVhdsOf(vm: Vm) {
+    if (vm.checkpoints.length > 0) return [];
+    return vm.vhds.filter((v) => v.name.toLowerCase().endsWith(".avhdx"));
+  }
+
+  function discoverVmNow(vm: Vm) {
+    if (!vm.cluster_id) return;
+    discoverVm.mutate(
+      { clusterId: vm.cluster_id, vmName: vm.name },
+      {
+        onSuccess: () => notifications.show({ title: "VM aktualisiert", message: vm.name, color: "green" }),
+        onError: (err) =>
+          notifications.show({ title: "Fehler", message: apiErrorMessage(err, "VM konnte nicht aktualisiert werden."), color: "red" }),
+      },
+    );
+  }
 
   function showBackups(scope: BackupScope, name: string, clusterId: string | null | undefined) {
     setBackupsTarget({ scope, name, clusterId: clusterId ?? null });
@@ -443,6 +467,7 @@ export function VmsPage() {
               {filteredVms.map((vm) => {
                 const hasVhdxUsage = vm.vhdx_used_bytes != null && vm.vhdx_size_bytes != null && vm.vhdx_size_bytes > 0;
                 const vhdxPct = hasVhdxUsage ? Math.round((vm.vhdx_used_bytes! / vm.vhdx_size_bytes!) * 100) : null;
+                const avhdxVhds = avhdxVhdsOf(vm);
                 return (
                 <Table.Tr
                   key={vm.id}
@@ -494,6 +519,29 @@ export function VmsPage() {
                           </Badge>
                         </Tooltip>
                       )}
+                      {avhdxVhds.length > 0 && (
+                        <Tooltip
+                          multiline
+                          w={280}
+                          label={
+                            <Stack gap={2}>
+                              <Text size="xs">
+                                Kein aktiver Checkpoint, trotzdem AVHDX -- meist eingefrorene Discovery-Daten. "VM Discovery"
+                                aktualisiert den Stand sofort.
+                              </Text>
+                              {avhdxVhds.map((v) => (
+                                <Text key={v.name} size="xs">
+                                  {v.name}
+                                </Text>
+                              ))}
+                            </Stack>
+                          }
+                        >
+                          <Badge color="orange" variant="filled" leftSection={<IconAlertTriangle size={12} />}>
+                            AVHDX ohne Checkpoint
+                          </Badge>
+                        </Tooltip>
+                      )}
                     </Group>
                   </Table.Td>
                   <Table.Td>{vm.host}</Table.Td>
@@ -535,6 +583,17 @@ export function VmsPage() {
                         <Tooltip label="Checkpoint löschen">
                           <ActionIcon variant="light" color="red" onClick={() => deleteVmCheckpoints(vm)}>
                             <IconTrash size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
+                      {avhdxVhds.length > 0 && (
+                        <Tooltip label="VM Discovery -- Stand jetzt aktualisieren">
+                          <ActionIcon
+                            variant="light"
+                            loading={discoverVm.isPending}
+                            onClick={() => discoverVmNow(vm)}
+                          >
+                            <IconRefresh size={16} />
                           </ActionIcon>
                         </Tooltip>
                       )}

@@ -545,6 +545,7 @@ export type AlertType =
   | "schedule_collision"
   | "hyperv_orphan_checkpoint"
   | "hyperv_vm_multi_csv"
+  | "hyperv_vm_avhdx_without_checkpoint"
   | "backup_failed";
 
 export interface Alert {
@@ -565,9 +566,10 @@ export interface Alert {
   run_id?: string | null;
   resource_group_id?: string | null;
   policy_id?: string | null;
-  // vm_name: bei hyperv_orphan_checkpoint UND hyperv_vm_multi_csv gesetzt.
-  // Bei hyperv_orphan_checkpoint zusaetzlich Grundlage fuer den
-  // "Checkpoint löschen"-Button.
+  // vm_name: bei hyperv_orphan_checkpoint, hyperv_vm_multi_csv UND
+  // hyperv_vm_avhdx_without_checkpoint gesetzt. Bei hyperv_orphan_checkpoint
+  // zusaetzlich Grundlage fuer den "Checkpoint löschen"-Button, bei
+  // hyperv_vm_avhdx_without_checkpoint fuer den "VM Discovery"-Button.
   vm_name?: string | null;
   checkpoint_id?: string | null;
 }
@@ -581,6 +583,7 @@ export interface AlertConfig {
   backup_missed_grace_minutes: number;
   schedule_collision_window_minutes: number;
   orphan_checkpoint_grace_minutes: number;
+  avhdx_without_checkpoint_grace_minutes: number;
   alert_check_interval_minutes: number;
   scope: AlertScope;
 }
@@ -592,6 +595,7 @@ export interface AlertConfigWritePayload {
   backup_missed_grace_minutes: number;
   schedule_collision_window_minutes: number;
   orphan_checkpoint_grace_minutes: number;
+  avhdx_without_checkpoint_grace_minutes: number;
   alert_check_interval_minutes: number;
   scope: AlertScope;
 }

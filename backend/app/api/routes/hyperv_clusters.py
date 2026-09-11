@@ -24,7 +24,7 @@ from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppLun
 from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead, HyperVClusterUpdate, HyperVReachabilityCheck
 from app.schemas.netapp_cluster import DiscoveryStepRead
-from app.services.hyperv_service import HyperVConnectionError, HyperVService, check_reachability
+from app.services.hyperv_service import HyperVConnectionError, HyperVService, VirtualMachineInfo, check_reachability
 
 router = APIRouter(prefix="/api/hyperv/clusters", tags=["hyperv-clusters"])
 
@@ -69,6 +69,29 @@ def _resolve_csv_name(folder_name: str | None, csvs) -> str | None:
         if _folder_name_from_csv_path(path) == folder_name:
             return csv.name
     return folder_name
+
+
+def _apply_vm_discovery_refresh(db: Session, cluster_id: str, vm: HyperVVm, refreshed: VirtualMachineInfo) -> None:
+    """Ersetzt Checkpoint-Liste und VHD-Zeilen EINER VM aus einem frischen
+    get_vm()-Ergebnis -- gemeinsame Logik fuer die manuelle Checkpoint-
+    Loeschung UND die manuelle "VM Discovery"-Aktion (beide
+    app.api.routes.vms) sowie den Auto-Refresh nach dem automatischen
+    Entfernen eines Backup-Checkpoints (_execute_job_run, app.api.routes.
+    jobs). `vm` muss bereits die aktuelle DB-Zeile sein (frisch
+    nachgeladen, NIE ueber den vorausgehenden WinRM-Aufruf hinweg gehalten
+    -- siehe [[backup-vs-discovery-orm-race]])."""
+    vm.checkpoints = [{"name": c.name, "id": c.id, "creation_time": c.creation_time} for c in refreshed.checkpoints]
+    existing_csvs = db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).all()
+    db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_uuid == vm.vm_uuid).delete()
+    now = datetime.now(timezone.utc)
+    for vhd in refreshed.vhds:
+        db.add(
+            HyperVVhd(
+                cluster_id=cluster_id, vm_uuid=vm.vm_uuid, vm_name=vm.name, path=vhd.path,
+                csv_name=_resolve_csv_name(_parse_csv_name(vhd.path), existing_csvs),
+                size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes, last_seen_at=now,
+            )
+        )
 
 
 def _get_cluster_or_404(db: Session, cluster_id: str) -> HyperVCluster:

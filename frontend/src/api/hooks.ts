@@ -95,6 +95,23 @@ export function useDeleteVmCheckpoint() {
   });
 }
 
+// Aktualisiert den discoverten Zustand EINER VM sofort (Get-VM inkl.
+// Checkpoints/VHDs), ohne auf die naechste volle Discovery zu warten --
+// von Inventory > VMs UND von der Alarme-Seite (hyperv_vm_avhdx_without_
+// checkpoint) genutzt, derselbe Endpunkt.
+export function useDiscoverVm() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clusterId, vmName }: { clusterId: string; vmName: string }) => {
+      await apiClient.post(`/vms/${clusterId}/${encodeURIComponent(vmName)}/discover`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vms"] });
+      queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    },
+  });
+}
+
 export function useCsvs() {
   return useQuery({
     queryKey: ["csvs"],

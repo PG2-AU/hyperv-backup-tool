@@ -9,6 +9,7 @@ import {
   useAlerts,
   useAllowScheduleCollision,
   useDeleteVmCheckpoint,
+  useDiscoverVm,
   useDismissAlert,
   useDismissBackupFailedAlert,
   useTriggerJobRun,
@@ -31,6 +32,7 @@ const TYPE_LABEL: Record<AlertType, string> = {
   schedule_collision: "Zeitplan-Kollision",
   hyperv_orphan_checkpoint: "Verwaister Checkpoint",
   hyperv_vm_multi_csv: "VM auf mehreren CSVs",
+  hyperv_vm_avhdx_without_checkpoint: "AVHDX ohne Checkpoint",
   backup_failed: "Backup fehlgeschlagen",
 };
 
@@ -46,6 +48,7 @@ const TYPE_COLOR: Record<AlertType, string> = {
   schedule_collision: "yellow",
   hyperv_orphan_checkpoint: "orange",
   hyperv_vm_multi_csv: "orange",
+  hyperv_vm_avhdx_without_checkpoint: "orange",
   backup_failed: "red",
 };
 
@@ -153,6 +156,16 @@ function AlertAction({ alert }: { alert: Alert }) {
       </Group>
     );
   }
+  if (alert.alert_type === "hyperv_vm_avhdx_without_checkpoint") {
+    return (
+      <Group gap="xs" wrap="nowrap">
+        {alert.hyperv_cluster_id && alert.vm_name && (
+          <DiscoverVmButton clusterId={alert.hyperv_cluster_id} vmName={alert.vm_name} />
+        )}
+        <DismissAlertButton alertId={alert.id} />
+      </Group>
+    );
+  }
   return null;
 }
 
@@ -192,6 +205,32 @@ function DeleteOrphanCheckpointButton({
   return (
     <Button size="xs" variant="light" color="red" onClick={handleDelete} loading={deleteCheckpoint.isPending}>
       Checkpoint löschen
+    </Button>
+  );
+}
+
+function DiscoverVmButton({ clusterId, vmName }: { clusterId: string; vmName: string }) {
+  const discoverVm = useDiscoverVm();
+
+  function handleDiscover() {
+    // Der Endpunkt loest den zugehoerigen Alarm serverseitig direkt mit auf
+    // (sofern die VM danach tatsaechlich keinen AVHDX-Rest mehr zeigt, siehe
+    // discover_vm) -- kein zusaetzlicher Quittieren-Aufruf hier noetig,
+    // useDiscoverVm invalidiert bereits die Alarm-Liste. Keine Bestaetigung
+    // noetig (rein lesende WinRM-Abfrage, keine Aenderung an der VM selbst).
+    discoverVm.mutate(
+      { clusterId, vmName },
+      {
+        onSuccess: () => notifications.show({ title: "VM aktualisiert", message: vmName, color: "green" }),
+        onError: (err) =>
+          notifications.show({ title: "Fehler", message: apiErrorMessage(err, "VM konnte nicht aktualisiert werden."), color: "red" }),
+      },
+    );
+  }
+
+  return (
+    <Button size="xs" variant="light" onClick={handleDiscover} loading={discoverVm.isPending}>
+      VM Discovery
     </Button>
   );
 }

@@ -116,6 +116,7 @@ def update_alert_config(
     config.backup_missed_grace_minutes = payload.backup_missed_grace_minutes
     config.schedule_collision_window_minutes = payload.schedule_collision_window_minutes
     config.orphan_checkpoint_grace_minutes = payload.orphan_checkpoint_grace_minutes
+    config.avhdx_without_checkpoint_grace_minutes = payload.avhdx_without_checkpoint_grace_minutes
     config.alert_check_interval_minutes = payload.alert_check_interval_minutes
     config.scope = AlertScope(payload.scope)
     config.updated_at = datetime.now(timezone.utc)

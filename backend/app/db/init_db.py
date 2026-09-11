@@ -355,6 +355,7 @@ def init_db(db: Session) -> None:
             "snapmirror_lag_threshold_minutes": "INTEGER", "snapmirror_lag_threshold_hours": "INTEGER", "scope": "VARCHAR(30)",
             "backup_missed_grace_minutes": "INTEGER", "schedule_collision_window_minutes": "INTEGER",
             "orphan_checkpoint_grace_minutes": "INTEGER", "alert_check_interval_minutes": "INTEGER",
+            "avhdx_without_checkpoint_grace_minutes": "INTEGER",
         },
     )
     _add_missing_columns(
@@ -386,6 +387,12 @@ def init_db(db: Session) -> None:
         conn.execute(
             text(
                 "UPDATE alert_config SET orphan_checkpoint_grace_minutes = 60 WHERE orphan_checkpoint_grace_minutes IS NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE alert_config SET avhdx_without_checkpoint_grace_minutes = 30 "
+                "WHERE avhdx_without_checkpoint_grace_minutes IS NULL"
             )
         )
         conn.execute(

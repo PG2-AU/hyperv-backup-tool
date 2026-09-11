@@ -37,6 +37,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
@@ -1324,38 +1325,65 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                 errors.append(f"VM '{vm_name}': Checkpoint-Entfernung fehlgeschlagen: {exc}")
                 continue
 
-            # Den soeben entfernten Checkpoint SOFORT lokal aus
-            # HyperVVm.checkpoints herausfiltern -- sonst meldet
-            # run_alert_check ihn bis zur naechsten VOLLEN Discovery (Default
-            # 240min) faelschlich als 'verwaisten Checkpoint' (realer Fall
-            # 2026-09-08).
+            # Den discoverten Zustand dieser EINEN VM bestmoeglich SOFORT
+            # auffrischen, statt auf die naechste volle Discovery zu warten
+            # (Default 240min) -- sonst kann eine volle Discovery, die
+            # zeitgleich mit einem (auch fremden) Checkpoint-Fenster dieser
+            # VM laeuft, einen voruebergehenden AVHDX-Zwischenstand
+            # einfrieren, der bis zur naechsten Discovery so stehen bleibt.
+            # Live beobachtet 2026-09-11: RestoreTestVM_PG2/VM03 zeigten
+            # AVHDX ohne jeden Checkpoint -- Get-VHD auf dem echten Knoten
+            # war laengst wieder die normale VHDX. Ursache: INTERVAL_ANCHOR-
+            # basierte volle Discovery und ein Zeitplan ("12xDaily") sind
+            # beide auf volle Stunden geankert und kollidieren dadurch
+            # strukturell, nicht nur zufaellig (siehe DISCOVERY_INTERVAL_
+            # ANCHOR in scheduler.py fuer die Gegenmassnahme).
             #
             # Frueher (Commit 17a3895) wurde dafuer die VM per get_vm()
-            # komplett neu discovert. Das rief aber Get-VHD auf der gerade
-            # entfernten AVHDX auf, die bei einer LAUFENDEN VM noch im
-            # Hintergrund-Merge steckt -- Get-VHD blockiert darauf, und da
-            # pywinrm einen langlaufenden Aufruf unbegrenzt weiterpollt (die
-            # read/operation-Timeouts greifen nur bei voelligem Stillstand,
-            # nicht bei einem langsam arbeitenden Befehl), blieb der GANZE
-            # Backup-Lauf haengen -- danach blockierte die 'laeuft bereits'-
-            # Zeile jeden Folgelauf derselben Resource Group (live 2026-09-09:
-            # Silver_Hourly / Silver_CSV01, VM win10client01, direkt nach
-            # 'checkpoint-remove-RestoreTestVM_PG2'). Der reine lokale Filter
-            # deckt die Alarm-Korrektheit ab; VHD-Groessen frischt die
-            # naechste regulaere Discovery auf (unkritisch, nur fuer
-            # Kapazitaetsschaetzungen).
-            # Frisch nachladen statt ein ueber den ganzen Lauf gehaltenes
-            # (und ggf. von einer zwischenzeitlichen Discovery geloeschtes)
-            # ORM-Objekt zu verwenden -- siehe hyperv_vm_meta oben. Rein
-            # best-effort: existiert die Zeile nicht mehr, hat die Discovery
-            # die Checkpoint-Liste ohnehin bereits frisch gesetzt.
+            # komplett neu discovert, dann aber wieder entfernt (Commit
+            # b8386a1): Get-VHD auf der gerade entfernten AVHDX kann bei
+            # einer LAUFENDEN VM noch im Hintergrund-Merge stecken und
+            # blockieren, und pywinrm pollte einen langlaufenden Aufruf
+            # damals unbegrenzt weiter. Seit dem harten WinRM-Zeitlimit im
+            # Backup-Pfad (Commit 248e12e, ebenfalls 2026-09-09) ist genau
+            # dieses Risiko entschaerft: node_service hat bereits
+            # ps_timeout_sec=settings.winrm_backup_step_timeout_seconds
+            # (aus der Checkpoint-Erstellung), haengt der Merge doch noch,
+            # bricht der Aufruf nach spaetestens dieser Zeit mit
+            # HyperVCommandTimeout ab statt den Lauf zu blockieren -- dann
+            # greift derselbe Fallback wie bisher (siehe unten).
+            #
+            # WICHTIG: der WinRM-Aufruf laeuft bewusst VOR jedem DB-Zugriff,
+            # kein ORM-Objekt wird darueber hinweg gehalten (siehe
+            # hyperv_vm_meta weiter oben / [[backup-vs-discovery-orm-race]])
+            # -- eine zwischenzeitlich gelaufene volle Discovery hat die
+            # Zeile sonst laengst geloescht+neu angelegt.
+            refreshed_vm = None
+            try:
+                refreshed_vm = node_service.get_vm(node_session, vm_name)
+            except Exception:
+                refreshed_vm = None
+
             try:
                 hv_vm_fresh = (
                     db.query(HyperVVm).filter(HyperVVm.name == vm_name, HyperVVm.cluster_id == vm_cluster_id).first()
                     if vm_cluster_id
                     else None
                 )
-                if hv_vm_fresh is not None and hv_vm_fresh.checkpoints:
+                if hv_vm_fresh is not None and refreshed_vm is not None:
+                    # Live-Refresh erfolgreich: Checkpoint-Liste UND
+                    # VHD-Zeilen dieser VM komplett aus dem frischen
+                    # Ergebnis ersetzen -- dieselbe gemeinsame Funktion wie
+                    # bei der manuellen Checkpoint-Loeschung UND der
+                    # manuellen "VM Discovery"-Aktion (beide vms.py), hier
+                    # nur automatisiert nach jedem Backup aufgerufen.
+                    _apply_vm_discovery_refresh(db, vm_cluster_id, hv_vm_fresh, refreshed_vm)
+                elif hv_vm_fresh is not None and hv_vm_fresh.checkpoints:
+                    # Refresh nicht verfuegbar (Timeout/Fehler) -- exakt der
+                    # bisherige Fallback: nur lokal den soeben entfernten
+                    # Checkpoint herausfiltern, VHD-Zeilen bleiben bis zur
+                    # naechsten vollen Discovery unveraendert. Keine
+                    # Verschlechterung gegenueber dem Ist-Zustand.
                     hv_vm_fresh.checkpoints = [c for c in hv_vm_fresh.checkpoints if c.get("name") != checkpoint_name]
             except Exception:
                 pass

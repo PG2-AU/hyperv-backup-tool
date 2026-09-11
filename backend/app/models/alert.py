@@ -33,6 +33,7 @@ class AlertType(str, enum.Enum):
     SCHEDULE_COLLISION = "schedule_collision"
     HYPERV_ORPHAN_CHECKPOINT = "hyperv_orphan_checkpoint"
     HYPERV_VM_MULTI_CSV = "hyperv_vm_multi_csv"
+    HYPERV_VM_AVHDX_WITHOUT_CHECKPOINT = "hyperv_vm_avhdx_without_checkpoint"
 
 
 class AlertScope(str, enum.Enum):
@@ -115,6 +116,15 @@ class AlertConfig(Base):
     # existiert nur Sekunden bis wenige Minuten (siehe _execute_job_run),
     # alles darueber hinaus ist praktisch sicher ein Ueberbleibsel.
     orphan_checkpoint_grace_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    # Eine VM-Disk, deren discoverter Pfad auf .avhdx endet, obwohl die VM
+    # KEINEN aktiven Checkpoint hat, gilt erst nach dieser Karenzzeit als
+    # alarmwuerdig -- meist eingefrorene Discovery-Daten (volle Discovery
+    # traf ein offenes Backup-Checkpoint-Fenster, siehe
+    # DISCOVERY_INTERVAL_ANCHOR in scheduler.py), die der automatische
+    # Einzel-VM-Refresh nach jeder Backup-Checkpoint-Entfernung
+    # (_execute_job_run, jobs.py) meist ohnehin sofort korrigiert -- dieser
+    # Alarm ist das Sicherheitsnetz fuer die restlichen Faelle.
+    avhdx_without_checkpoint_grace_minutes: Mapped[int] = mapped_column(Integer, default=30)
     # Wie oft der periodische Warnungs-Check (run_alert_check) automatisch
     # laeuft -- Aenderung hier wird sofort per scheduler.reschedule_job() auf
     # die laufende APScheduler-Job-ID "alert-check" angewendet, kein

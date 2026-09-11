@@ -74,6 +74,23 @@ _scheduler: BackgroundScheduler | None = None
 # reschedule_job, siehe app.api.routes.scheduler_config/alerts).
 INTERVAL_ANCHOR = datetime(2020, 1, 1, tzinfo=timezone.utc)
 
+# Eigener, leicht versetzter Anker NUR fuer die volle Discovery: mit
+# INTERVAL_ANCHOR direkt tickt sie exakt auf volle, durch das Intervall
+# teilbare Stunden (z.B. 240min -> 00/04/08/12/16/20:00 UTC) -- dieselben
+# Vielfachen, auf die ueblicherweise auch stuendliche/mehrstuendliche
+# Backup-Zeitplaene gelegt werden (z.B. "alle 2h" -> ebenfalls :00). Beide
+# kollidieren dadurch STRUKTURELL, nicht nur zufaellig: trifft eine volle
+# Discovery exakt ein offenes Checkpoint-Fenster, friert sie den VHD-
+# Zwischenstand (AVHDX statt VHDX) bis zur naechsten vollen Discovery ein
+# (live beobachtet 2026-09-11: RestoreTestVM_PG2/VM03, last_seen_at exakt
+# 04:00:23 UTC -- echter Knotenzustand zu dem Zeitpunkt laengst wieder
+# VHDX). +7min liegt ausserhalb der in der Praxis beobachteten Zeitplan-
+# Minuten (:00/:10/:15) und reduziert damit die strukturelle
+# Kollisionswahrscheinlichkeit fuer ALLE discoverten Felder, nicht nur
+# VHD-Pfade. Siehe auch den Einzel-VM-Refresh nach Checkpoint-Entfernung in
+# _execute_job_run (jobs.py) fuer den zweiten, primaeren Teil dieses Fixes.
+DISCOVERY_INTERVAL_ANCHOR = INTERVAL_ANCHOR + timedelta(minutes=7)
+
 
 def _log(db: Session | None, message: str, level: str = "INFO") -> None:
     """Schreibt eine Hintergrund-Meldung ins Container-Log UND (falls eine
@@ -947,6 +964,60 @@ def run_alert_check() -> None:
             elif existing.message != message:
                 existing.message = message
 
+        # AVHDX ohne aktiven Checkpoint (Nutzer-Vorgabe 2026-09-11,
+        # Backlog-Punkt 43): eine VM-Disk, deren discoverter Pfad auf
+        # .avhdx endet, obwohl die VM laut Get-VMSnapshot KEINEN aktiven
+        # Checkpoint hat, ist ein Zeichen fuer eingefrorene Discovery-Daten
+        # -- eine volle Discovery hat den Zustand exakt waehrend eines
+        # offenen Backup-Checkpoint-Fensters erfasst (structurelle
+        # Kollision, siehe DISCOVERY_INTERVAL_ANCHOR oben) und seither ist
+        # keine neue volle Discovery gelaufen. Live gefunden 2026-09-11:
+        # RestoreTestVM_PG2/VM03 zeigten AVHDX ohne jeden Checkpoint, der
+        # echte Knoten hatte laengst wieder die normale VHDX. Der
+        # automatische Einzel-VM-Refresh nach jeder Backup-Checkpoint-
+        # Entfernung (_execute_job_run, jobs.py) behebt die haeufige
+        # Ursache meist sofort -- dieser Alarm ist das Sicherheitsnetz fuer
+        # die restlichen Faelle (Refresh-Timeout, Altlast von vor diesem
+        # Fix, oder ein wirklich haengender Merge) UND traegt die
+        # "VM Discovery"-Beheben-Aktion (POST /api/vms/{cluster}/{vm}/
+        # discover, siehe app.api.routes.vms).
+        avhdx_grace_minutes = config.avhdx_without_checkpoint_grace_minutes if config else 30
+        avhdx_cutoff = now - timedelta(minutes=avhdx_grace_minutes)
+        avhdx_vhds_by_vm: dict[str, list[HyperVVhd]] = defaultdict(list)
+        for vhd in db.query(HyperVVhd).filter(HyperVVhd.vm_uuid.isnot(None), HyperVVhd.path.isnot(None)).all():
+            if vhd.path.lower().endswith(".avhdx"):
+                avhdx_vhds_by_vm[vhd.vm_uuid].append(vhd)
+        for vm in db.query(HyperVVm).filter(HyperVVm.vm_uuid.isnot(None)).all():
+            vhds = avhdx_vhds_by_vm.get(vm.vm_uuid)
+            if not vhds or vm.checkpoints:
+                continue
+            oldest_seen = min((v.last_seen_at for v in vhds if v.last_seen_at), default=None)
+            if oldest_seen is None:
+                continue
+            if oldest_seen.tzinfo is None:
+                oldest_seen = oldest_seen.replace(tzinfo=timezone.utc)
+            if oldest_seen > avhdx_cutoff:
+                continue  # noch innerhalb der Karenzzeit -- vermutlich der normale Refresh-Nachlauf
+            key = vm.vm_uuid
+            seen_keys.add((AlertType.HYPERV_VM_AVHDX_WITHOUT_CHECKPOINT, key))
+            disk_names = ", ".join(sorted(v.path.rsplit("\\", 1)[-1] for v in vhds))
+            message = (
+                f"{len(vhds)} Festplatte(n) zeigen eine AVHDX-Differenzdatei, obwohl kein Checkpoint aktiv ist "
+                f"(unveraendert seit {oldest_seen:%d.%m.%Y %H:%M} UTC): {disk_names}. Meist eingefrorene "
+                "Discovery-Daten -- \"VM Discovery\" aktualisiert den Stand sofort."
+            )
+            existing = active_by_key.get((AlertType.HYPERV_VM_AVHDX_WITHOUT_CHECKPOINT, key))
+            if existing is None:
+                _trigger(
+                    AlertType.HYPERV_VM_AVHDX_WITHOUT_CHECKPOINT, key,
+                    object_name=vm.name,
+                    hyperv_cluster_id=vm.cluster_id,
+                    vm_name=vm.name,
+                    message=message,
+                )
+            elif existing.message != message:
+                existing.message = message
+
         for (alert_type, key), alert in active_by_key.items():
             if alert_type == AlertType.BACKUP_MISSED:
                 continue  # loest sich nie automatisch -- siehe oben, nur manuell per dismiss
@@ -1388,7 +1459,7 @@ def start_scheduler() -> BackgroundScheduler:
         id="health-check", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
-        run_discovery, IntervalTrigger(minutes=discovery_interval, start_date=INTERVAL_ANCHOR),
+        run_discovery, IntervalTrigger(minutes=discovery_interval, start_date=DISCOVERY_INTERVAL_ANCHOR),
         id="discovery", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(

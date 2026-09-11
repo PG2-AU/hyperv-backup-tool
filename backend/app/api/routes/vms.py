@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.hyperv_clusters import _parse_csv_name, _resolve_csv_name
+from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
@@ -265,24 +265,7 @@ def delete_vm_checkpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Checkpoint konnte nicht geloescht werden: {exc}") from exc
 
     if refreshed_vm is not None:
-        vm.checkpoints = [{"name": c.name, "id": c.id, "creation_time": c.creation_time} for c in refreshed_vm.checkpoints]
-        db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_uuid == vm.vm_uuid).delete()
-        now = datetime.now(timezone.utc)
-        # Kein frischer CSV-Discovery-Lauf hier (nur ein Einzel-VM-Refresh
-        # nach Checkpoint-Loeschung) -- die bereits gespeicherten HyperVCsv-
-        # Zeilen aus der letzten vollen Discovery reichen zur Aufloesung des
-        # Mount-Ordnernamens auf den tatsaechlichen CSV-Namen (siehe
-        # _resolve_csv_name).
-        existing_csvs = db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).all()
-        for vhd in refreshed_vm.vhds:
-            db.add(
-                HyperVVhd(
-                    cluster_id=cluster_id, vm_uuid=vm.vm_uuid, vm_name=vm.name, path=vhd.path,
-                    csv_name=_resolve_csv_name(_parse_csv_name(vhd.path), existing_csvs),
-                    size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
-                    last_seen_at=now,
-                )
-            )
+        _apply_vm_discovery_refresh(db, cluster_id, vm, refreshed_vm)
     else:
         # Sofort aus dem discoverten Zustand entfernen, statt auf die naechste
         # Discovery zu warten -- damit verschwindet zumindest das Warn-Badge
@@ -301,5 +284,68 @@ def delete_vm_checkpoint(
     if matching_alert is not None:
         matching_alert.status = AlertStatus.RESOLVED
         matching_alert.resolved_at = datetime.now(timezone.utc)
+
+    db.commit()
+
+
+@router.post("/{cluster_id}/{vm_name}/discover", status_code=status.HTTP_204_NO_CONTENT)
+def discover_vm(
+    cluster_id: str,
+    vm_name: str,
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.HYPERV_MANAGE)),
+) -> None:
+    """Aktualisiert den discoverten Zustand EINER VM sofort (Get-VM inkl.
+    Checkpoints/VHDs), ohne auf die naechste volle Discovery zu warten --
+    Nutzer-Vorgabe 2026-09-11 als Beheben-Aktion fuer den Alarm 'AVHDX ohne
+    aktiven Checkpoint' (siehe AlertType.HYPERV_VM_AVHDX_WITHOUT_CHECKPOINT
+    in scheduler.py), aber generell fuer jede erkennbar veraltete VM
+    nutzbar (Inventory > VMs). Nutzt denselben Node-Aufloesungs-Ablauf wie
+    delete_vm_checkpoint/_execute_job_run."""
+    cluster = db.get(HyperVCluster, cluster_id)
+    if cluster is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster nicht gefunden")
+    vm = db.query(HyperVVm).filter(HyperVVm.cluster_id == cluster_id, HyperVVm.name == vm_name).first()
+    if vm is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="VM nicht gefunden")
+
+    settings = get_settings()
+    password = decrypt_secret(cluster.encrypted_password)
+    try:
+        hv_service = HyperVService(settings, cluster.management_address, use_https=cluster.use_https)
+        cno_session = hv_service.connect(cluster.username, password, read_timeout_sec=15, operation_timeout_sec=10)
+        owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or vm.host_name
+        node_address = hv_service.resolve_node_address(cno_session, owner_node)
+        node_service = HyperVService(settings, node_address, use_https=cluster.use_https)
+        node_session = node_service.connect(cluster.username, password)
+        refreshed_vm = node_service.get_vm(node_session, vm_name)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"VM konnte nicht aktualisiert werden: {exc}") from exc
+    if refreshed_vm is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="VM auf dem Knoten nicht (mehr) gefunden")
+
+    # ORM-Zeile erst NACH dem WinRM-Aufruf frisch nachladen (siehe
+    # _apply_vm_discovery_refresh-Docstring) -- 'vm' oben diente nur der
+    # Node-Aufloesung (host_name-Fallback), nicht dem Schreiben; eine
+    # zwischenzeitlich gelaufene volle Discovery hat die Zeile sonst
+    # laengst geloescht+neu angelegt.
+    vm_fresh = db.query(HyperVVm).filter(HyperVVm.cluster_id == cluster_id, HyperVVm.name == vm_name).first()
+    if vm_fresh is None:
+        return
+    _apply_vm_discovery_refresh(db, cluster_id, vm_fresh, refreshed_vm)
+
+    if not refreshed_vm.checkpoints:
+        avhdx_alert = (
+            db.query(Alert)
+            .filter(
+                Alert.alert_type == AlertType.HYPERV_VM_AVHDX_WITHOUT_CHECKPOINT,
+                Alert.object_key == (vm_fresh.vm_uuid or ""),
+                Alert.status == AlertStatus.ACTIVE,
+            )
+            .first()
+        )
+        if avhdx_alert is not None:
+            avhdx_alert.status = AlertStatus.RESOLVED
+            avhdx_alert.resolved_at = datetime.now(timezone.utc)
 
     db.commit()

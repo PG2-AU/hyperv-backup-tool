@@ -18,6 +18,7 @@ export function AlertSettingsTab() {
   const [missedGraceMinutes, setMissedGraceMinutes] = useState<number | string>(30);
   const [collisionWindowMinutes, setCollisionWindowMinutes] = useState<number | string>(15);
   const [orphanCheckpointGraceMinutes, setOrphanCheckpointGraceMinutes] = useState<number | string>(60);
+  const [avhdxGraceMinutes, setAvhdxGraceMinutes] = useState<number | string>(30);
   const [alertCheckIntervalMinutes, setAlertCheckIntervalMinutes] = useState<number | string>(5);
   const [scope, setScope] = useState<AlertScope>("all");
 
@@ -29,6 +30,7 @@ export function AlertSettingsTab() {
     setMissedGraceMinutes(config.backup_missed_grace_minutes);
     setCollisionWindowMinutes(config.schedule_collision_window_minutes);
     setOrphanCheckpointGraceMinutes(config.orphan_checkpoint_grace_minutes);
+    setAvhdxGraceMinutes(config.avhdx_without_checkpoint_grace_minutes);
     setAlertCheckIntervalMinutes(config.alert_check_interval_minutes);
     setScope(config.scope);
   }, [config]);
@@ -41,6 +43,7 @@ export function AlertSettingsTab() {
       backup_missed_grace_minutes: Number(missedGraceMinutes),
       schedule_collision_window_minutes: Number(collisionWindowMinutes),
       orphan_checkpoint_grace_minutes: Number(orphanCheckpointGraceMinutes),
+      avhdx_without_checkpoint_grace_minutes: Number(avhdxGraceMinutes),
       alert_check_interval_minutes: Number(alertCheckIntervalMinutes),
       scope,
     };
@@ -114,6 +117,15 @@ export function AlertSettingsTab() {
           max={1440}
           value={orphanCheckpointGraceMinutes}
           onChange={setOrphanCheckpointGraceMinutes}
+          suffix=" min"
+        />
+        <NumberInput
+          label="Karenzzeit AVHDX ohne Checkpoint"
+          description="So lange darf eine VM-Disk als AVHDX discovert bleiben, obwohl kein Checkpoint aktiv ist, bevor gewarnt wird -- meist eingefrorene Discovery-Daten, die sich mit der nächsten Discovery bzw. per VM Discovery sofort korrigieren"
+          min={5}
+          max={1440}
+          value={avhdxGraceMinutes}
+          onChange={setAvhdxGraceMinutes}
           suffix=" min"
         />
         <NumberInput
