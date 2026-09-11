@@ -485,6 +485,12 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
       </Stack>
     </Radio.Group>
   );
+  const chosenStateLabel = avhdxCheckpointId
+    ? (() => {
+        const cp = selectedSnapshot?.checkpoints.find((c) => c.id === avhdxCheckpointId);
+        return cp ? `Stand zum Checkpoint „${formatCheckpointLabel(cp)}“` : "Stand zum Backup-Zeitpunkt";
+      })()
+    : "Stand zum Backup-Zeitpunkt";
 
   return (
     <Modal
@@ -810,17 +816,41 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                 <Text size="sm">
                   Netzwerk: <strong>{cloneDisconnectNetwork ? "getrennt" : "verbunden"}</strong>
                 </Text>
+                {selectedSnapshot?.vhds.some((v) => v.is_avhdx) && (
+                  <Text size="sm">
+                    Stand: <strong>{chosenStateLabel}</strong>
+                  </Text>
+                )}
                 <Text size="xs" c="dimmed">
                   Die bestehende VM „{vm?.name}“ bleibt unverändert und läuft weiter.
                 </Text>
               </Stack>
             ) : (
               <Stack gap={4}>
-                {selectedVhdPaths.map((p) => (
-                  <Text key={p} size="sm" ff="monospace">
-                    • {p.split("\\").pop()}
-                  </Text>
-                ))}
+                {selectedVhdPaths.map((p) => {
+                  const vhd = vhdOptions.find((v) => v.path === p);
+                  // Der Datei-Modus wählt den Stand automatisch ueber
+                  // vhd.plain_checkpoint_id (gesperrte Auswahl, siehe
+                  // Schritt 2) statt ueber den geteilten avhdxCheckpointId-
+                  // Status der anderen Modi.
+                  const fileModeCheckpoint = restoreKind === "files" && vhd?.plain_checkpoint_id
+                    ? selectedSnapshot?.checkpoints.find((cp) => cp.id === vhd.plain_checkpoint_id)
+                    : undefined;
+                  const stateLabel = restoreKind === "files"
+                    ? (fileModeCheckpoint ? `Stand zum Checkpoint „${formatCheckpointLabel(fileModeCheckpoint)}“` : null)
+                    : chosenStateLabel;
+                  return (
+                    <Text key={p} size="sm">
+                      • <span style={{ fontFamily: "monospace" }}>{vhd?.display_name ?? p.split("\\").pop()}</span>
+                      {vhd?.is_avhdx && stateLabel && (
+                        <Text span c="dimmed">
+                          {" "}
+                          — {stateLabel}
+                        </Text>
+                      )}
+                    </Text>
+                  );
+                })}
               </Stack>
             )}
             {restoreKind !== "files" && restoreKind !== "clone" && selectedVhdPaths.length > 1 && (
