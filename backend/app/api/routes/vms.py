@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh
+from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _get_vm_settled
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
@@ -246,19 +246,20 @@ def delete_vm_checkpoint(
         # Solange ein Checkpoint besteht, zeigt Get-VM als aktive Festplatte
         # die AVHDX-Differenzdatei statt der Basis-VHDX -- Remove-VMSnapshot
         # merget sie danach zurueck, bei einer laufenden VM aber nicht immer
-        # synchron (Live-Merge im Hintergrund, live beobachtet: bei einer
-        # ausgeschalteten VM war die VHDX direkt danach schon korrekt, bei
-        # einer laufenden VM zeigte dieselbe Abfrage noch kurz die AVHDX).
-        # Direkt danach trotzdem neu abfragen (statt auf die naechste volle
-        # Discovery zu warten, siehe get_vm) -- liefert entweder schon den
-        # korrekten VHDX-Stand, oder zumindest einen ehrlichen Zwischenstand,
-        # der sich spaetestens mit der naechsten Discovery von selbst
-        # korrigiert. Best-effort: schlaegt NUR diese Abfrage fehl (der
-        # Checkpoint ist ja bereits weg), bleibt der alte VHD-Stand bis zur
-        # naechsten Discovery bestehen -- kein Grund, die ganze Aktion als
-        # fehlgeschlagen zu melden.
+        # synchron (Live-Merge im Hintergrund, live beobachtet 2026-09-11:
+        # bei einer ausgeschalteten VM war die VHDX direkt danach schon
+        # korrekt, bei einer laufenden VM zeigte dieselbe Abfrage noch kurz
+        # die AVHDX -- 4 Minuten spaeter war derselbe Merge laengst fertig).
+        # _get_vm_settled() fragt deshalb mit kurzem, begrenztem Retry nach
+        # (statt nur einmal), um genau dieses Fenster meist noch abzuwarten,
+        # statt einen unnoetig veralteten Zwischenstand zu speichern, der
+        # sonst erst mit der naechsten vollen Discovery (oder einem
+        # manuellen "VM Discovery"-Klick) korrigiert wuerde. Best-effort:
+        # schlaegt die Abfrage komplett fehl (der Checkpoint ist ja bereits
+        # weg), bleibt der alte VHD-Stand bestehen -- kein Grund, die ganze
+        # Aktion als fehlgeschlagen zu melden.
         try:
-            refreshed_vm = node_service.get_vm(node_session, vm_name)
+            refreshed_vm = _get_vm_settled(node_service, node_session, vm_name)
         except Exception:
             refreshed_vm = None
     except Exception as exc:
@@ -318,7 +319,10 @@ def discover_vm(
         node_address = hv_service.resolve_node_address(cno_session, owner_node)
         node_service = HyperVService(settings, node_address, use_https=cluster.use_https)
         node_session = node_service.connect(cluster.username, password)
-        refreshed_vm = node_service.get_vm(node_session, vm_name)
+        # Kurzer, begrenzter Retry statt nur einer Abfrage -- derselbe Grund
+        # wie bei delete_vm_checkpoint: der AVHDX->VHDX-Merge einer
+        # LAUFENDEN VM kann noch kurz nachlaufen, siehe _get_vm_settled.
+        refreshed_vm = _get_vm_settled(node_service, node_session, vm_name)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"VM konnte nicht aktualisiert werden: {exc}") from exc
     if refreshed_vm is None:

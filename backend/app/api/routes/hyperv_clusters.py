@@ -7,6 +7,7 @@ einzelnen Knoten -- vgl. NetApp-Cluster-Verwaltung in netapp_clusters.py.
 
 import json
 import re
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -92,6 +93,36 @@ def _apply_vm_discovery_refresh(db: Session, cluster_id: str, vm: HyperVVm, refr
                 size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes, last_seen_at=now,
             )
         )
+
+
+def _get_vm_settled(
+    node_service: HyperVService, node_session, vm_name: str, attempts: int = 4, delay_sec: float = 5.0
+) -> VirtualMachineInfo | None:
+    """get_vm() mit kurzem, begrenztem Retry -- fuer eine LAUFENDE VM laeuft
+    der AVHDX->VHDX-Merge nach Remove-VMSnapshot asynchron im Hintergrund
+    weiter (bei einer ausgeschalteten VM ist er dagegen synchron). Eine
+    Abfrage direkt nach dem Entfernen kann daher ehrlich noch die AVHDX
+    zeigen, obwohl der Merge Sekunden bis wenige Minuten spaeter laengst
+    fertig ist -- live beobachtet 2026-09-11 (RestoreTestVM_PG2): die erste
+    Abfrage direkt nach dem Loeschen zeigte noch AVHDX, derselbe Aufruf 4
+    Minuten spaeter bereits die normale VHDX, ohne dass sich sonst etwas
+    geaendert hatte. Bricht sofort ab, sobald keine .avhdx mehr uebrig ist
+    (der haeufige, schnelle Fall) oder wieder ein Checkpoint auftaucht
+    (z.B. ein zwischenzeitlich neu erstellter). Nur fuer manuelle,
+    synchrone Einzel-VM-Aktionen (Checkpoint-Loeschung, "VM Discovery") --
+    NICHT im automatisierten Backup-Pfad verwendet, dort soll ein
+    haengender/langsamer Merge nicht die Laufzeit des gesamten Laufs
+    verlaengern (das Sicherheitsnetz dort ist der Alarm hyperv_vm_avhdx_
+    without_checkpoint, siehe scheduler.py)."""
+    result = node_service.get_vm(node_session, vm_name)
+    for _ in range(attempts - 1):
+        if result is None or result.checkpoints:
+            break
+        if not any(v.path.lower().endswith(".avhdx") for v in result.vhds):
+            break
+        time.sleep(delay_sec)
+        result = node_service.get_vm(node_session, vm_name)
+    return result
 
 
 def _get_cluster_or_404(db: Session, cluster_id: str) -> HyperVCluster:
