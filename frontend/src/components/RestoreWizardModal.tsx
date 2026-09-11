@@ -216,7 +216,10 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
   // BackupRunVmConfig vorhanden, vhds ist dann leer).
   const vhdOptions = selectedSnapshot?.vhds.length
     ? selectedSnapshot.vhds
-    : (vmFull?.vhds ?? []).map((v) => ({ name: v.name, path: v.full_path, size_bytes: v.size_bytes, used_bytes: v.used_bytes }));
+    : (vmFull?.vhds ?? []).map((v) => ({
+        name: v.name, path: v.full_path, size_bytes: v.size_bytes, used_bytes: v.used_bytes,
+        is_avhdx: v.name.toLowerCase().endsWith(".avhdx"),
+      }));
 
   // Kapazitaetsschaetzung "CSV danach": basiert bewusst auf dem BELEGTEN
   // Platz der VHDX (Get-VHD -> FileSize), nicht der logischen/maximalen
@@ -573,6 +576,12 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                   onChange={setCloneDestinationCsv}
                   clearable
                 />
+                {selectedSnapshot?.vhds.some((v) => v.is_avhdx) && (
+                  <Alert color="red" icon={<IconAlertTriangle size={16} />} title="Nicht wiederherstellbar">
+                    Dieser Snapshot enthält für mindestens eine Disk nur eine AVHDX (Differenzdatei) statt der
+                    Basis-VHDX und kann daher nicht wiederhergestellt werden. Bitte einen anderen Wiederherstellungspunkt wählen.
+                  </Alert>
+                )}
                 {capacityEstimates.length > 0 && (
                   <Stack gap="xs">
                     <Text size="xs" fw={600} c="dimmed">
@@ -595,12 +604,20 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                     <Radio
                       key={vhd.path}
                       value={vhd.path}
+                      disabled={vhd.is_avhdx}
                       label={
                         <Group gap="xs">
                           <Text size="sm">{vhd.name}</Text>
                           <Text size="xs" c="dimmed">
                             ({formatBytes(vhd.size_bytes)})
                           </Text>
+                          {vhd.is_avhdx && (
+                            <Tooltip label="Nur AVHDX (Differenzdatei) statt Basis-VHDX gesichert -- Restore nicht möglich.">
+                              <Badge color="red" size="sm" variant="light">
+                                Nicht wiederherstellbar
+                              </Badge>
+                            </Tooltip>
+                          )}
                         </Group>
                       }
                     />
@@ -618,12 +635,20 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                     <Checkbox
                       key={vhd.path}
                       value={vhd.path}
+                      disabled={vhd.is_avhdx}
                       label={
                         <Group gap="xs">
                           <Text size="sm">{vhd.name}</Text>
                           <Text size="xs" c="dimmed">
                             (belegt: {formatBytes(occupiedBytes(vhd))} / Größe: {formatBytes(vhd.size_bytes)})
                           </Text>
+                          {vhd.is_avhdx && (
+                            <Tooltip label="Nur AVHDX (Differenzdatei) statt Basis-VHDX gesichert -- Restore nicht möglich.">
+                              <Badge color="red" size="sm" variant="light">
+                                Nicht wiederherstellbar
+                              </Badge>
+                            </Tooltip>
+                          )}
                         </Group>
                       }
                     />
@@ -653,7 +678,14 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
               <Button variant="default" onClick={() => setActive(0)}>
                 Zurück
               </Button>
-              <Button onClick={() => setActive(2)} disabled={restoreKind === "clone" ? !cloneName.trim() : selectedVhdPaths.length === 0}>
+              <Button
+                onClick={() => setActive(2)}
+                disabled={
+                  restoreKind === "clone"
+                    ? !cloneName.trim() || Boolean(selectedSnapshot?.vhds.some((v) => v.is_avhdx))
+                    : selectedVhdPaths.length === 0
+                }
+              >
                 Weiter
               </Button>
             </Group>
@@ -717,7 +749,10 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
               <Button
                 onClick={handleTrigger}
                 loading={triggerRestore.isPending || triggerFileRestore.isPending || recreateVm.isPending}
-                disabled={restoreKind === "clone" && !cloneName.trim()}
+                disabled={
+                  restoreKind === "clone" &&
+                  (!cloneName.trim() || Boolean(selectedSnapshot?.vhds.some((v) => v.is_avhdx)))
+                }
               >
                 {restoreKind === "files" ? "Mounten & durchsuchen" : "Restore starten"}
               </Button>

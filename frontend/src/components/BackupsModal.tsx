@@ -79,6 +79,7 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                   <Table.Th>Erstellt</Table.Th>
                   <Table.Th>Konsistenz</Table.Th>
                   <Table.Th>System</Table.Th>
+                  <Table.Th>Status</Table.Th>
                   <Table.Th>Policy</Table.Th>
                   <Table.Th>Volume</Table.Th>
                   <Table.Th>SVM / Cluster</Table.Th>
@@ -101,6 +102,13 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                       <Badge color={b.restore_source === "secondary" ? "orange" : "blue"} variant="light">
                         {b.restore_source === "secondary" ? "Sekundär" : "Primär"}
                       </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      {b.vhds.some((v) => v.is_avhdx) && (
+                        <Badge color="red" variant="light">
+                          Nicht wiederherstellbar
+                        </Badge>
+                      )}
                     </Table.Td>
                     <Table.Td>{b.policy_name}</Table.Td>
                     <Table.Td>{b.volume_name ?? "-"}</Table.Td>

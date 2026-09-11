@@ -710,6 +710,7 @@ export interface BackupSnapshotVhd {
   path: string;
   size_bytes?: number | null;
   used_bytes?: number | null;
+  is_avhdx: boolean;
 }
 
 export interface BackupSnapshot {
@@ -904,6 +905,7 @@ export interface VmBackupRunVhd {
   size_bytes?: number | null;
   used_bytes?: number | null;
   csv_name?: string | null;
+  is_avhdx: boolean;
 }
 
 export interface VmBackupRunNetworkAdapter {

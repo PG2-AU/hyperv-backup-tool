@@ -100,6 +100,13 @@ class BackupSnapshotVhdRead(BaseModel):
     # der Schluessel im gespeicherten JSON -> None (Frontend faellt dann auf
     # size_bytes zurueck).
     used_bytes: int | None = None
+    # True wenn der zum Backup-Zeitpunkt erfasste Name auf .avhdx endet --
+    # dann wurde nur die Differenzdatei gesichert, nicht die Basis-VHDX
+    # (siehe [[avhdx-without-checkpoint-discovery-freeze]]). Ein Restore
+    # daraus ist funktionslos und wird serverseitig hart abgelehnt (siehe
+    # _execute_restore/_execute_vm_recreate in restore.py) -- dieses Feld
+    # ist nur fuer die Kennzeichnung im Restore-Wizard.
+    is_avhdx: bool = False
 
 
 class BackupSnapshotDestinationRead(BaseModel):

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Badge, Button, Divider, Group, Loader, Modal, Radio, ScrollArea, Stack, Table, Text } from "@mantine/core";
+import { Alert, Badge, Button, Divider, Group, Loader, Modal, Radio, ScrollArea, Stack, Table, Text, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconAlertTriangle, IconCheck, IconMinus, IconX } from "@tabler/icons-react";
 
@@ -79,26 +79,37 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
           <ScrollArea.Autosize mah={420} type="auto">
             <Radio.Group value={runId} onChange={setRunId}>
               <Stack gap="xs">
-                {backupRuns?.map((r) => (
-                  <Radio
-                    key={r.run_id}
-                    value={r.run_id}
-                    label={
-                      <Group gap="xs">
-                        <Text size="sm">{new Date(r.created_at).toLocaleString("de-DE")}</Text>
-                        <Badge color={r.consistency === "ApplicationConsistent" ? "green" : "gray"} variant="light" size="sm">
-                          {r.consistency === "ApplicationConsistent" ? "App-konsistent" : "Crash-konsistent"}
-                        </Badge>
-                        <Badge color={r.restore_source === "secondary" ? "orange" : "blue"} variant="light" size="sm">
-                          {r.restore_source === "secondary" ? "Sekundär" : "Primär"}
-                        </Badge>
-                        <Text size="xs" c="dimmed">
-                          {r.policy_name} · {r.vhds.length} VHD(s)
-                        </Text>
-                      </Group>
-                    }
-                  />
-                ))}
+                {backupRuns?.map((r) => {
+                  const blocked = r.vhds.some((v) => v.is_avhdx);
+                  return (
+                    <Radio
+                      key={r.run_id}
+                      value={r.run_id}
+                      disabled={blocked}
+                      label={
+                        <Group gap="xs">
+                          <Text size="sm">{new Date(r.created_at).toLocaleString("de-DE")}</Text>
+                          <Badge color={r.consistency === "ApplicationConsistent" ? "green" : "gray"} variant="light" size="sm">
+                            {r.consistency === "ApplicationConsistent" ? "App-konsistent" : "Crash-konsistent"}
+                          </Badge>
+                          <Badge color={r.restore_source === "secondary" ? "orange" : "blue"} variant="light" size="sm">
+                            {r.restore_source === "secondary" ? "Sekundär" : "Primär"}
+                          </Badge>
+                          <Text size="xs" c="dimmed">
+                            {r.policy_name} · {r.vhds.length} VHD(s)
+                          </Text>
+                          {blocked && (
+                            <Tooltip label="Mindestens eine Disk wurde nur als AVHDX (Differenzdatei) statt Basis-VHDX gesichert -- eine Neuerstellung braucht immer alle Disks dieses Laufs und ist daher nicht möglich.">
+                              <Badge color="red" size="sm" variant="light">
+                                Nicht wiederherstellbar
+                              </Badge>
+                            </Tooltip>
+                          )}
+                        </Group>
+                      }
+                    />
+                  );
+                })}
               </Stack>
             </Radio.Group>
           </ScrollArea.Autosize>
@@ -152,7 +163,20 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
             <Table.Tbody>
               {selectedRun.vhds.map((v, i) => (
                 <Table.Tr key={i}>
-                  <Table.Td>{v.name}</Table.Td>
+                  <Table.Td>
+                    <Group gap="xs" wrap="nowrap">
+                      <Text size="sm" c={v.is_avhdx ? "red" : undefined}>
+                        {v.name}
+                      </Text>
+                      {v.is_avhdx && (
+                        <Tooltip label="Nur AVHDX (Differenzdatei) statt Basis-VHDX gesichert -- Restore nicht möglich.">
+                          <Badge color="red" size="sm" variant="light">
+                            Nicht wiederherstellbar
+                          </Badge>
+                        </Tooltip>
+                      )}
+                    </Group>
+                  </Table.Td>
                   <Table.Td>{formatBytes(v.size_bytes)}</Table.Td>
                   <Table.Td>{formatBytes(v.used_bytes ?? v.size_bytes)}</Table.Td>
                   <Table.Td>{v.csv_name ?? "-"}</Table.Td>

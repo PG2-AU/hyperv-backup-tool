@@ -636,6 +636,7 @@ def list_backups_for_object(
             vhds_by_run_id[cfg.run_id] = [
                 BackupSnapshotVhdRead(
                     name=v.get("name", ""), path=v.get("path", ""), size_bytes=v.get("size_bytes"), used_bytes=v.get("used_bytes"),
+                    is_avhdx=v.get("name", "").lower().endswith(".avhdx"),
                 )
                 for v in (cfg.vhds or [])
             ]

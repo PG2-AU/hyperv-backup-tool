@@ -125,6 +125,9 @@ class VmBackupRunVhdRead(BaseModel):
     size_bytes: int | None = None
     used_bytes: int | None = None
     csv_name: str | None = None
+    # Siehe BackupSnapshotVhdRead.is_avhdx in schemas/backup.py -- gleiche
+    # Bedeutung, nur fuer den VM-Neuerstellungs-Pfad.
+    is_avhdx: bool = False
 
 
 class VmBackupRunNetworkAdapterRead(BaseModel):
@@ -297,6 +300,7 @@ def list_vm_backup_runs(
                 vhds=[
                     VmBackupRunVhdRead(
                         name=v.get("name", ""), size_bytes=v.get("size_bytes"), used_bytes=v.get("used_bytes"), csv_name=v.get("csv_name"),
+                        is_avhdx=v.get("name", "").lower().endswith(".avhdx"),
                     )
                     for v in (cfg.vhds or [])
                 ],
@@ -390,6 +394,12 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
 
         try:
             with _StepCtx(db, run.id, "resolve", "Ziel auflösen") as ctx:
+                if run.source_vhd_path.lower().endswith(".avhdx"):
+                    raise RuntimeError(
+                        "Diese Sicherung enthält für dieses Laufwerk keine gültige Basis-VHDX "
+                        "(AVHDX statt VHDX gesichert) und kann nicht wiederhergestellt werden."
+                    )
+
                 csv_name = _parse_csv_name(run.source_vhd_path)
                 if not csv_name:
                     raise RuntimeError(f"CSV konnte nicht aus '{run.source_vhd_path}' ermittelt werden")
@@ -775,6 +785,11 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 vhd_cluster_id = vhd.get("netapp_cluster_id")
                 vhd_csv = vhd.get("csv_name")
                 vhd_name = vhd.get("name") or f"disk{i}.vhdx"
+                if vhd_name.lower().endswith(".avhdx"):
+                    raise RuntimeError(
+                        f"VHD '{vhd_name}': diese Sicherung enthält keine gültige Basis-VHDX "
+                        "(AVHDX statt VHDX gesichert) und kann nicht wiederhergestellt werden."
+                    )
                 if not (vhd_svm and vhd_volume and vhd_lun_path and vhd_cluster_id and vhd_csv):
                     raise RuntimeError(f"VHD '{vhd_name}': unvollstaendige gespeicherte Zuordnung")
 
