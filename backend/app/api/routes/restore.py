@@ -38,7 +38,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.hyperv_clusters import _resolve_csv_name
+from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _resolve_csv_name
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
@@ -913,6 +913,36 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                         result = node_service.start_vm(node_session, run.vm_name)
                         if not result.success:
                             raise RuntimeError(result.error)
+
+                # Die Disk wurde ersetzt und etwaige Checkpoints entfernt --
+                # ohne diesen Schritt zeigt Inventory den alten (geloeschten)
+                # Disk-Stand und laengst entfernte Checkpoints weiter an,
+                # bis die naechste periodische Discovery laeuft (Default
+                # mehrere Stunden). Nutzt dieselbe schon offene Node-Session
+                # wieder (keine zusaetzliche Verbindung). Bewusst best-effort
+                # innerhalb des with-Blocks abgefangen (inkl. db.rollback()
+                # bei einem DB-Fehler, siehe [[avhdx-without-checkpoint-discovery-freeze]]
+                # zur sonst moeglichen "pending rollback"-Falle) -- ein
+                # Fehlschlag hier darf den ansonsten erfolgreichen Restore
+                # nicht als FAILED markieren.
+                with _StepCtx(db, run.id, "refresh-inventory", "Inventory-Stand aktualisieren") as ctx:
+                    try:
+                        refreshed_vm = node_service.get_vm(node_session, run.vm_name)
+                        hv_vm_fresh = (
+                            db.query(HyperVVm)
+                            .filter(HyperVVm.name == run.vm_name, HyperVVm.cluster_id == run.hyperv_cluster_id)
+                            .first()
+                        )
+                        if refreshed_vm is not None and hv_vm_fresh is not None:
+                            _apply_vm_discovery_refresh(db, run.hyperv_cluster_id, hv_vm_fresh, refreshed_vm)
+                            ctx.row.message = "Disk-/Checkpoint-Stand aktualisiert"
+                        else:
+                            ctx.row.status = RestoreStepStatus.SKIPPED
+                            ctx.row.message = "Aktualisierung nicht möglich -- nächste periodische Discovery übernimmt das"
+                    except Exception as exc:
+                        db.rollback()
+                        ctx.row.status = RestoreStepStatus.SKIPPED
+                        ctx.row.message = f"Aktualisierung fehlgeschlagen ({exc}) -- nächste periodische Discovery übernimmt das"
 
             run.status = RestoreStatus.SUCCEEDED
             run.finished_at = datetime.now(timezone.utc)
