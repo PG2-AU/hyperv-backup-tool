@@ -64,6 +64,20 @@ export function formatRunTargets(snapshots: BackupRunSnapshot[], fallbackTargets
   return parts.length ? parts.join(" ") : fallbackTargets.join(", ");
 }
 
+// ONTAP fuehrt einen LUN-"Namen" intern immer als vollen Pfad
+// (z.B. "/vol/CSV01_vol/CSV01") -- fuer die Anzeige reicht ueberall im Tool
+// der letzte Pfadabschnitt (Storage > LUNs zeigte das bereits so, Nutzer-
+// Vorgabe: durchgaengig). Rein fuers Rendering: jede Stelle, die den LUN-
+// Namen tatsaechlich als ONTAP-Objektbezeichner braucht (LUN anlegen/
+// bearbeiten/mappen, Restore-/Backup-Logik), verwendet weiterhin den
+// vollen, unveraenderten Pfad -- siehe utils/netappSteps.ts, das den vollen
+// Pfad aus Volume-Name + Kurzname selbst wieder zusammensetzt.
+export function lunShortName(fullPathOrName?: string | null): string {
+  if (!fullPathOrName) return "-";
+  const parts = fullPathOrName.split("/");
+  return parts[parts.length - 1] || fullPathOrName;
+}
+
 export function formatLagTime(lagTime?: string | null): string {
   if (!lagTime) return "-";
   const match = LAG_TIME_PATTERN.exec(lagTime);

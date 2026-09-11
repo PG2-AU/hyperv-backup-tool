@@ -87,7 +87,7 @@ import type {
 } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
-import { formatBytes, formatLagTime } from "@/utils/format";
+import { formatBytes, formatLagTime, lunShortName } from "@/utils/format";
 import { matchesAllColumns } from "@/utils/search";
 import {
   buildLunCreationSteps,
@@ -1100,7 +1100,7 @@ export function StoragePage() {
                         Dateiname wird angezeigt, voller Pfad per Tooltip verfuegbar. */}
                     <Tooltip label={lun.name} openDelay={300}>
                       <Text size="sm" truncate maw={200} style={{ cursor: "default" }}>
-                        {lun.name.split("/").pop()}
+                        {lunShortName(lun.name)}
                       </Text>
                     </Tooltip>
                   </Table.Td>

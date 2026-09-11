@@ -30,7 +30,7 @@ import { SearchInput } from "@/components/SearchInput";
 import type { BackupScope, Csv, ResourceGroup, Vm } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
-import { formatBytes } from "@/utils/format";
+import { formatBytes, lunShortName } from "@/utils/format";
 import { useRunPolicy } from "@/utils/runPolicy";
 import { matchesAllColumns } from "@/utils/search";
 
@@ -100,17 +100,27 @@ function ChainNode({
   icon,
   label,
   title,
+  // Optionaler Tooltip fuer den vollen Wert, falls "title" bereits eine
+  // gekuerzte Anzeigeform ist (z.B. LUN-Kurzname statt vollem ONTAP-Pfad,
+  // siehe lunShortName in utils/format.ts) -- ansonsten ohne Tooltip.
+  fullTitle,
   usedBytes,
   capacityBytes,
 }: {
   icon: React.ReactNode;
   label: string;
   title: string;
+  fullTitle?: string;
   usedBytes?: number | null;
   capacityBytes?: number | null;
 }) {
   const hasUsage = usedBytes != null && capacityBytes != null && capacityBytes > 0;
   const pct = hasUsage ? Math.round((usedBytes! / capacityBytes!) * 100) : null;
+  const titleText = (
+    <Text size="sm" fw={600} truncate maw={170}>
+      {title}
+    </Text>
+  );
   return (
     <Paper withBorder p="xs" miw={150}>
       <Group gap={6} mb={2} wrap="nowrap">
@@ -119,9 +129,13 @@ function ChainNode({
           {label}
         </Text>
       </Group>
-      <Text size="sm" fw={600} truncate maw={170}>
-        {title}
-      </Text>
+      {fullTitle && fullTitle !== title ? (
+        <Tooltip label={fullTitle} openDelay={300}>
+          {titleText}
+        </Tooltip>
+      ) : (
+        titleText
+      )}
       {capacityBytes != null && (
         <Text size="xs" c="dimmed">
           {hasUsage ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
@@ -209,7 +223,8 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
                     <ChainNode
                       icon={<IconStack2 size={14} />}
                       label="LUN"
-                      title={csv.lun_name ?? "-"}
+                      title={lunShortName(csv.lun_name)}
+                      fullTitle={csv.lun_name ?? undefined}
                       usedBytes={csv.lun_used_bytes}
                       capacityBytes={csv.lun_capacity_bytes}
                     />
@@ -284,7 +299,8 @@ function CsvChainHeader({ csv, vms, onClose }: { csv: Csv; vms: Vm[] | undefined
             <ChainNode
               icon={<IconStack2 size={14} />}
               label="LUN"
-              title={csv.lun_name ?? "-"}
+              title={lunShortName(csv.lun_name)}
+              fullTitle={csv.lun_name ?? undefined}
               usedBytes={csv.lun_used_bytes}
               capacityBytes={csv.lun_capacity_bytes}
             />
@@ -679,7 +695,15 @@ export function VmsPage() {
                         </Stack>
                       )}
                     </Table.Td>
-                    <Table.Td>{csv.lun_name ?? "-"}</Table.Td>
+                    <Table.Td>
+                      {csv.lun_name ? (
+                        <Tooltip label={csv.lun_name} openDelay={300}>
+                          <span>{lunShortName(csv.lun_name)}</span>
+                        </Tooltip>
+                      ) : (
+                        "-"
+                      )}
+                    </Table.Td>
                     <Table.Td>{csv.volume_name ?? "-"}</Table.Td>
                     <Table.Td>
                       <ResourceGroupCell groups={csv.resource_group_names} policies={csv.policy_names} />

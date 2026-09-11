@@ -39,7 +39,7 @@ import { ScheduleFormModal } from "@/components/ScheduleFormModal";
 import type { BackupJobRun, BackupPolicy, JobStatus, ResourceGroup, Schedule } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
-import { formatRetention, formatSchedule } from "@/utils/format";
+import { formatRetention, formatSchedule, lunShortName } from "@/utils/format";
 import { memberDisplayName } from "@/utils/resourceGroupMember";
 import { useRunPolicy } from "@/utils/runPolicy";
 
@@ -686,7 +686,7 @@ export function JobsPage() {
                 Cluster: {snap.netapp_cluster_name ?? "-"} / SVM: {snap.svm_name ?? "-"}
               </Text>
               <Text size="xs">CSVs: {snap.csv_names.length ? snap.csv_names.join(", ") : "-"}</Text>
-              <Text size="xs">LUNs: {snap.lun_names.length ? snap.lun_names.join(", ") : "-"}</Text>
+              <Text size="xs">LUNs: {snap.lun_names.length ? snap.lun_names.map(lunShortName).join(", ") : "-"}</Text>
               <Text size="xs">VMs: {snap.vm_names.length ? snap.vm_names.join(", ") : "-"}</Text>
               {snap.snapshot_name && (
                 <Text size="xs" ff="monospace">

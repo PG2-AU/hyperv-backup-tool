@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Group, Modal, NumberInput, Select, Stack, Switch, Text } from "@mantine/core";
 
 import type { LunEditPlan, NetAppIgroup, NetAppLun } from "@/api/types";
-import { formatBytes } from "@/utils/format";
+import { formatBytes, lunShortName } from "@/utils/format";
 
 interface LunEditModalProps {
   opened: boolean;
@@ -13,11 +13,6 @@ interface LunEditModalProps {
 }
 
 const GB = 1024 ** 3;
-
-function shortName(fullPath: string): string {
-  const parts = fullPath.split("/");
-  return parts[parts.length - 1];
-}
 
 export function LunEditModal({ opened, onClose, lun, igroups, onSubmitPlan }: LunEditModalProps) {
   const [sizeGb, setSizeGb] = useState<number | "">("");
@@ -40,7 +35,7 @@ export function LunEditModal({ opened, onClose, lun, igroups, onSubmitPlan }: Lu
 
   if (!lun) return null;
 
-  const currentShort = shortName(lun.name);
+  const currentShort = lunShortName(lun.name);
   const sizeChanged = sizeGb !== "" && Math.round(Number(sizeGb) * GB) !== lun.size_bytes;
   const enabledChanged = enabled !== (lun.state !== "offline");
   const canSubmit = sizeChanged || enabledChanged || !!unmapIgroupName || !!mapIgroupName;
