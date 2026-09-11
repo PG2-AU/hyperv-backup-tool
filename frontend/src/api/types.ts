@@ -707,10 +707,21 @@ export interface BackupRunSnapshot {
 
 export interface BackupSnapshotVhd {
   name: string;
+  // Anzeigename -- bei aktivem Checkpoint (is_avhdx) der wahrscheinliche
+  // Name der Basis-VHDX statt der Checkpoint-AVHDX (rein kosmetisch).
+  display_name: string;
   path: string;
   size_bytes?: number | null;
   used_bytes?: number | null;
   is_avhdx: boolean;
+}
+
+// Ein zum Backup-Zeitpunkt auf der VM vorhandener Checkpoint -- fuer die
+// Auswahl "auf welchen Stand restorieren".
+export interface BackupSnapshotCheckpoint {
+  id: string;
+  name: string;
+  creation_time: string;
 }
 
 export interface BackupSnapshot {
@@ -727,6 +738,7 @@ export interface BackupSnapshot {
   snapshot_name?: string | null;
   snapshot_uuid?: string | null;
   vhds: BackupSnapshotVhd[];
+  checkpoints: BackupSnapshotCheckpoint[];
   destinations: BackupSnapshotDestination[];
   restore_source: "primary" | "secondary";
 }
@@ -883,12 +895,6 @@ export interface RestoreInfraCheckResult {
 
 export type RestoreMode = "replace" | "add";
 
-// Nur relevant, wenn die restorte VHD eine .avhdx ist (aktiver Checkpoint
-// zum Backup-Zeitpunkt): "backup_time" mergt AVHDX+VHDX (voller Stand
-// zum Backup-Zeitpunkt, Standard), "checkpoint_time" verwendet nur die
-// Basis-VHDX ohne Merge (Stand genau zum Checkpoint-Zeitpunkt).
-export type AvhdxTarget = "backup_time" | "checkpoint_time";
-
 export interface VmWithBackups {
   name: string;
   host?: string | null;
@@ -908,6 +914,7 @@ export interface RestoreRunStep {
 
 export interface VmBackupRunVhd {
   name: string;
+  display_name: string;
   size_bytes?: number | null;
   used_bytes?: number | null;
   csv_name?: string | null;
@@ -933,6 +940,7 @@ export interface VmBackupRun {
   network_adapters: VmBackupRunNetworkAdapter[];
   pci_devices: string[];
   vhds: VmBackupRunVhd[];
+  checkpoints: BackupSnapshotCheckpoint[];
   restore_source: "primary" | "secondary";
 }
 
@@ -970,7 +978,11 @@ export interface TriggerRestorePayload {
   snapshot_id: string;
   source_vhd_path: string;
   mode: RestoreMode;
-  avhdx_target?: AvhdxTarget;
+  // Nur relevant, wenn die restorte VHD eine .avhdx ist: leer/undefined =
+  // Stand zum Backup-Zeitpunkt (voller Merge, Standard), sonst die Id
+  // eines der zum Backup-Zeitpunkt vorhandenen Checkpoints (siehe
+  // BackupSnapshot.checkpoints) -- Restore auf genau dessen Stand.
+  avhdx_checkpoint_id?: string | null;
 }
 
 export interface RestoreInfraConfig {

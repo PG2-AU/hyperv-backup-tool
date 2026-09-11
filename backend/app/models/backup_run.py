@@ -190,6 +190,11 @@ class BackupRunVmConfig(Base):
     # netapp_cluster_name, svm_name, volume_name, lun_name} -- eine Zeile
     # pro VHD dieser VM zum Backup-Zeitpunkt.
     vhds: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Liste von {name, id, creation_time, hard_drive_paths} -- die zum
+    # Backup-Zeitpunkt vorhandenen Checkpoints dieser VM (betreffen die
+    # ganze VM, nicht einzelne VHDs). Grundlage fuer "Restore auf einen
+    # bestimmten Checkpoint" (siehe RestoreRun.avhdx_checkpoint_id).
+    checkpoints: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     run = relationship("BackupRun", back_populates="vm_configs")

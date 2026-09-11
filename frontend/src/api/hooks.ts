@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/api/client";
 import type {
-  AvhdxTarget,
   BackupJobRun,
   BackupPolicy,
   BackupScope,
@@ -869,7 +868,7 @@ export interface RecreateVmPayload {
   new_vm_name?: string;
   disconnect_network?: boolean;
   destination_csv_name?: string;
-  avhdx_target?: AvhdxTarget;
+  avhdx_checkpoint_id?: string | null;
 }
 
 export function useRecreateVm(vmName: string | undefined) {

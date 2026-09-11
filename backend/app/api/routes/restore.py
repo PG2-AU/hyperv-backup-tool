@@ -51,7 +51,8 @@ from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_proxy_host import RestoreProxyHost
-from app.models.restore_run import AvhdxRestoreTarget, RestoreMode, RestoreRun, RestoreRunStep, RestoreStatus, RestoreStepStatus
+from app.models.restore_run import RestoreMode, RestoreRun, RestoreRunStep, RestoreStatus, RestoreStepStatus
+from app.schemas.backup import BackupSnapshotCheckpointRead
 from app.models.vm_recreate_run import VmRecreateRun, VmRecreateRunStep
 from app.services.email_service import notify_restore_failure
 from app.services.hyperv_service import HyperVService
@@ -118,13 +119,19 @@ class TriggerRestoreRequest(BaseModel):
     snapshot_id: str
     source_vhd_path: str
     mode: RestoreMode
-    # Nur relevant, wenn source_vhd_path auf .avhdx endet -- siehe
-    # AvhdxRestoreTarget.
-    avhdx_target: AvhdxRestoreTarget = AvhdxRestoreTarget.BACKUP_TIME
+    # Nur relevant, wenn source_vhd_path auf .avhdx endet: None = Stand
+    # zum Backup-Zeitpunkt (voller Merge, Standard), sonst die Id eines
+    # der zum Backup-Zeitpunkt vorhandenen Checkpoints (siehe
+    # BackupSnapshotRead.checkpoints) -- Restore auf genau dessen Stand.
+    avhdx_checkpoint_id: str | None = None
 
 
 class VmBackupRunVhdRead(BaseModel):
     name: str
+    # Anzeigename -- bei aktivem Checkpoint (is_avhdx) der per Heuristik
+    # abgeleitete Name der Basis-VHDX statt der Checkpoint-AVHDX (siehe
+    # _avhdx_display_name), sonst identisch zu `name`.
+    display_name: str
     size_bytes: int | None = None
     used_bytes: int | None = None
     csv_name: str | None = None
@@ -159,6 +166,7 @@ class VmBackupRunRead(BaseModel):
     network_adapters: list[VmBackupRunNetworkAdapterRead] = []
     pci_devices: list[str] = []
     vhds: list[VmBackupRunVhdRead] = []
+    checkpoints: list[BackupSnapshotCheckpointRead] = []
     restore_source: str = "primary"
 
 
@@ -201,9 +209,10 @@ class RecreateVmRequest(BaseModel):
     # Side-by-side-Restore-Optionen, nur relevant zusammen mit new_vm_name:
     disconnect_network: bool = False
     destination_csv_name: str | None = None
-    # Siehe AvhdxRestoreTarget -- ein Wert fuer den ganzen Lauf, nur
-    # relevant fuer VHDs mit aktivem Checkpoint zum Backup-Zeitpunkt.
-    avhdx_target: AvhdxRestoreTarget = AvhdxRestoreTarget.BACKUP_TIME
+    # Siehe TriggerRestoreRequest.avhdx_checkpoint_id -- ein Wert fuer den
+    # ganzen Lauf (Checkpoints betreffen die ganze VM, nicht einzelne
+    # VHDs).
+    avhdx_checkpoint_id: str | None = None
 
 
 @router.get("/vms", response_model=list[VmWithBackupsRead])
@@ -305,10 +314,19 @@ def list_vm_backup_runs(
                 pci_devices=cfg.pci_devices or [],
                 vhds=[
                     VmBackupRunVhdRead(
-                        name=v.get("name", ""), size_bytes=v.get("size_bytes"), used_bytes=v.get("used_bytes"), csv_name=v.get("csv_name"),
+                        name=v.get("name", ""),
+                        display_name=_avhdx_display_name(v.get("name", "")) if v.get("name", "").lower().endswith(".avhdx") else v.get("name", ""),
+                        size_bytes=v.get("base_size_bytes") or v.get("size_bytes"),
+                        used_bytes=v.get("base_used_bytes") or v.get("used_bytes"),
+                        csv_name=v.get("csv_name"),
                         is_avhdx=v.get("name", "").lower().endswith(".avhdx"),
                     )
                     for v in (cfg.vhds or [])
+                ],
+                checkpoints=[
+                    BackupSnapshotCheckpointRead(id=cp.get("id", ""), name=cp.get("name", ""), creation_time=cp.get("creation_time", ""))
+                    for cp in (cfg.checkpoints or [])
+                    if cp.get("id")
                 ],
                 restore_source=restore_source,
             )
@@ -377,27 +395,70 @@ def _netapp_service_for(cluster: NetAppCluster) -> NetAppOntapService:
     )
 
 
+_AVHDX_CHECKPOINT_SUFFIX_RE = re.compile(
+    r"^(?P<stem>.*?)(?:_\d+)?_[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\.avhdx$",
+)
+
+
+def _avhdx_display_name(name: str) -> str:
+    """Rein kosmetische Heuristik: leitet aus dem Hyper-V-Checkpoint-
+    Dateinamen (z.B. 'VM03_E6198C6D-9C42-41F6-87F2-DDC037C66DA9.avhdx')
+    den wahrscheinlichen Namen der Basis-VHDX ab ('VM03.vhdx') -- live an
+    mehreren realen Beispielen verifiziert (optionaler '_<Zahl>'-Teil vor
+    der GUID, z.B. bei mehreren Disks: 'win10client01_1_9586F21F-....avhdx'
+    -> 'win10client01.vhdx'). Passt das Muster nicht (unerwarteter Name),
+    wird der Original-Name unveraendert zurueckgegeben -- die eigentliche
+    Aufloesung passiert ohnehin immer live per Get-VHD-Kettenlauf beim
+    Restore selbst, hier geht es nur um die Anzeige in Auswahllisten."""
+    match = _AVHDX_CHECKPOINT_SUFFIX_RE.match(name)
+    return f"{match.group('stem')}.vhdx" if match else name
+
+
+def _resolve_checkpoint_source_path(
+    vm_config: "BackupRunVmConfig | None", source_vhd_path: str, checkpoint_id: str | None,
+) -> str:
+    """Liefert den Pfad, von dem beim Restore tatsaechlich kopiert werden
+    soll. Ohne Auswahl (checkpoint_id=None): der zum Backup-Zeitpunkt
+    aufgezeichnete Pfad (Stand zum Backup-Zeitpunkt, unveraendertes
+    Verhalten). Mit Auswahl: der zu DIESER Disk passende Eintrag in
+    `hard_drive_paths` des gewaehlten Checkpoints (per Ordner-Abgleich --
+    ein Checkpoint betrifft immer alle Disks der VM gleichzeitig, daher
+    muss unter mehreren Pfaden der zur AKTUELLEN Disk passende gefunden
+    werden). Kein passender Eintrag (z.B. Disk erst nach diesem
+    Checkpoint hinzugefuegt) -> Fallback auf source_vhd_path."""
+    if not checkpoint_id or vm_config is None or not vm_config.checkpoints:
+        return source_vhd_path
+    cp = next((c for c in vm_config.checkpoints if c.get("id") == checkpoint_id), None)
+    if not cp:
+        return source_vhd_path
+    source_dir = source_vhd_path.rsplit("\\", 1)[0].lower()
+    match = next(
+        (p for p in (cp.get("hard_drive_paths") or []) if p.rsplit("\\", 1)[0].lower() == source_dir), None,
+    )
+    return match or source_vhd_path
+
+
 def _merge_avhdx_chain(
     node_service: HyperVService, node_session, node_address: str,
     proxy_service: HyperVService, proxy_session,
     mount_dir: str, relative_dir: str, remote_dir: str, leaf_remote_path: str,
-    hv_username: str, hv_password: str, suffix: str, merge: bool = True,
+    hv_username: str, hv_password: str, suffix: str,
 ) -> tuple[str, str]:
     """Ein bei Backup-Zeitpunkt aktiver Checkpoint sichert Basis-VHDX UND
     AVHDX unveraendert im selben LUN-/Volume-Snapshot -- die bereits als
     leaf_remote_path auf den Ziel-Knoten kopierte AVHDX kennt ihren
     Elternpfad selbst (VHDX-Header, per Get-VHD auslesbar). Loest diese
-    Kette auf und kopiert jeden Vorfahren vom noch gemounteten
-    Proxy-LUN-Klon nach.
+    Kette auf, kopiert jeden Vorfahren vom noch gemounteten Proxy-LUN-Klon
+    nach, korrigiert die ParentPath-Verweise (der Original-Pfad im Header
+    passt nach dem Kopieren i.d.R. nicht mehr) und merged alles per
+    Merge-VHD in die Basisdatei.
 
-    `merge=True` (Stand zum Backup-Zeitpunkt, siehe AvhdxRestoreTarget):
-    korrigiert zusaetzlich die ParentPath-Verweise (der Original-Pfad im
-    Header passt nach dem Kopieren i.d.R. nicht mehr) und merged alles per
-    Merge-VHD in die Basisdatei -- gibt deren Remote-Pfad zurueck.
-    `merge=False` (Stand zum Checkpoint-Zeitpunkt): ueberspringt beides,
-    loescht stattdessen alle kopierten Differenzdateien (Leaf +
-    Zwischenstufen) und gibt direkt den Remote-Pfad der unveraenderten
-    Basisdatei zurueck -- der Stand genau vor dem Checkpoint.
+    `leaf_remote_path` muss nicht der aeusserste Checkpoint der VM sein --
+    ist es einer aus der Mitte einer Checkpoint-Kette (Restore auf einen
+    BESTIMMTEN Checkpoint statt auf den Backup-Zeitpunkt, siehe
+    RestoreRun.avhdx_checkpoint_id), wird trotzdem korrekt bis zur Basis
+    gemerged; alles NEUER als der gewaehlte Checkpoint wird schlicht nie
+    kopiert/betrachtet.
 
     Jeder kopierte Vorfahre bekommt denselben '_restore_<suffix>'-Suffix
     wie der bereits kopierte Leaf (statt seines Original-Dateinamens) --
@@ -431,10 +492,9 @@ def _merge_avhdx_chain(
             proxy_session, parent_local, node_address, remote_dir, parent_unique_filename, hv_username, hv_password,
         )
         parent_remote = f"C:\\{remote_dir}\\{parent_unique_filename}"
-        if merge:
-            result = node_service.set_vhd_parent(node_session, current_remote, parent_remote)
-            if not result.success:
-                raise RuntimeError(f"Elternpfad konnte nicht korrigiert werden: {result.error}")
+        result = node_service.set_vhd_parent(node_session, current_remote, parent_remote)
+        if not result.success:
+            raise RuntimeError(f"Elternpfad konnte nicht korrigiert werden: {result.error}")
         chain_remote_paths.append(parent_remote)
         current_remote = parent_remote
     else:
@@ -444,10 +504,9 @@ def _merge_avhdx_chain(
         raise RuntimeError("Keine Basis-VHDX in der Kette gefunden")
 
     base_remote = chain_remote_paths[-1]
-    if merge:
-        result = node_service.merge_vhd(node_session, leaf_remote_path, base_remote)
-        if not result.success:
-            raise RuntimeError(f"Merge-VHD fehlgeschlagen: {result.error}")
+    result = node_service.merge_vhd(node_session, leaf_remote_path, base_remote)
+    if not result.success:
+        raise RuntimeError(f"Merge-VHD fehlgeschlagen: {result.error}")
 
     for p in chain_remote_paths[:-1]:
         node_service.delete_file(node_session, p)
@@ -569,6 +628,11 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                     lun_path = lun.name
                     netapp_cluster_id = lun.cluster_id
 
+                # Stand zum Backup-Zeitpunkt (Standard) oder auf einen
+                # bestimmten, damals vorhandenen Checkpoint restoren --
+                # siehe RestoreRun.avhdx_checkpoint_id.
+                copy_source_path = _resolve_checkpoint_source_path(vm_config, run.source_vhd_path, run.avhdx_checkpoint_id)
+
                 netapp_cluster = db.get(NetAppCluster, netapp_cluster_id)
                 if netapp_cluster is None:
                     raise RuntimeError("NetApp-Cluster der LUN nicht gefunden")
@@ -682,7 +746,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 mount_dir = proxy_service.prepare_data_partition_path(proxy_session, disk_number, mount_dir)
                 ctx.row.message = mount_dir
 
-            after_csv = run.source_vhd_path.split(f"ClusterStorage\\{csv_name}\\", 1)[1]
+            after_csv = copy_source_path.split(f"ClusterStorage\\{csv_name}\\", 1)[1]
             parts = after_csv.split("\\")
             original_filename = parts[-1]
             relative_dir = "\\".join(parts[:-1])
@@ -705,18 +769,13 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
 
             base_original_filename: str | None = None
             if original_filename.lower().endswith(".avhdx"):
-                merge_to_base = run.avhdx_target != AvhdxRestoreTarget.CHECKPOINT_TIME
-                step_label = (
-                    "Checkpoint-Kette mit Basis-VHDX zusammenführen" if merge_to_base
-                    else "Basis-VHDX vor dem Checkpoint auflösen (ohne Zusammenführen)"
-                )
-                with _StepCtx(db, run.id, "merge", step_label) as ctx:
+                with _StepCtx(db, run.id, "merge", "Checkpoint-Kette mit Basis-VHDX zusammenführen") as ctx:
                     try:
                         restored_vhd_path, base_original_filename = _merge_avhdx_chain(
                             node_service, node_session, node_address,
                             proxy_service, proxy_session,
                             mount_dir, relative_dir, remote_dir, restored_vhd_path,
-                            hv_cluster.username, hv_password, suffix, merge=merge_to_base,
+                            hv_cluster.username, hv_password, suffix,
                         )
                     except RuntimeError as exc:
                         raise RuntimeError(
@@ -1040,8 +1099,12 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                         ctx.row.message = mount_dir
 
                     original_path = vhd.get("path") or ""
+                    # Stand zum Backup-Zeitpunkt (Standard) oder auf einen
+                    # bestimmten, damals vorhandenen Checkpoint restoren --
+                    # siehe RestoreRun.avhdx_checkpoint_id.
+                    copy_source_path = _resolve_checkpoint_source_path(vm_config, original_path, run.avhdx_checkpoint_id)
                     split_marker = f"ClusterStorage\\{vhd_csv}\\"
-                    after_csv = original_path.split(split_marker, 1)
+                    after_csv = copy_source_path.split(split_marker, 1)
                     relative_dir = ""
                     filename = vhd_name
                     if len(after_csv) == 2:
@@ -1070,18 +1133,13 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                     restored_path = f"C:\\{remote_dir}\\{filename}"
 
                     if filename.lower().endswith(".avhdx"):
-                        merge_to_base = run.avhdx_target != AvhdxRestoreTarget.CHECKPOINT_TIME
-                        step_label = (
-                            f"{vhd_name}: Checkpoint-Kette zusammenführen" if merge_to_base
-                            else f"{vhd_name}: Basis-VHDX vor dem Checkpoint auflösen"
-                        )
-                        with _StepCtx(db, run.id, f"merge-{i}", step_label, step_model=VmRecreateRunStep) as ctx:
+                        with _StepCtx(db, run.id, f"merge-{i}", f"{vhd_name}: Checkpoint-Kette zusammenführen", step_model=VmRecreateRunStep) as ctx:
                             try:
                                 restored_path, _base_filename = _merge_avhdx_chain(
                                     node_service, node_session, node_address,
                                     proxy_service, proxy_session,
                                     mount_dir, relative_dir, remote_dir, restored_path,
-                                    hv_cluster.username, hv_password, f"{suffix}_{i}", merge=merge_to_base,
+                                    hv_cluster.username, hv_password, f"{suffix}_{i}",
                                 )
                             except RuntimeError as exc:
                                 raise RuntimeError(
@@ -1227,7 +1285,7 @@ def recreate_vm(
     run = VmRecreateRun(
         hyperv_cluster_id=vm_config.hyperv_cluster_id, vm_name=vm_name, target_vm_name=target_name,
         disconnect_network=payload.disconnect_network, destination_csv_name=destination_csv_name,
-        avhdx_target=payload.avhdx_target,
+        avhdx_checkpoint_id=payload.avhdx_checkpoint_id,
         source_run_id=payload.run_id, status=RestoreStatus.RUNNING, started_at=datetime.now(timezone.utc),
     )
     db.add(run)
@@ -1268,7 +1326,7 @@ def trigger_restore(
     run = RestoreRun(
         hyperv_cluster_id=vm.cluster_id, vm_name=payload.vm_name, source_snapshot_id=payload.snapshot_id,
         source_vhd_path=payload.source_vhd_path, mode=payload.mode, status=RestoreStatus.RUNNING,
-        avhdx_target=payload.avhdx_target, started_at=datetime.now(timezone.utc),
+        avhdx_checkpoint_id=payload.avhdx_checkpoint_id, started_at=datetime.now(timezone.utc),
     )
     db.add(run)
     db.commit()

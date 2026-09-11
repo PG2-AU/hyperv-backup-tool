@@ -46,6 +46,12 @@ class CheckpointDetail:
     name: str
     id: str
     creation_time: str  # ISO-8601-String (.NET 'o'-Format), wird erst bei Bedarf geparst
+    # Pfad(e) der Disk(s), die genau den bei Erstellung dieses Checkpoints
+    # eingefrorenen Stand repraesentieren (Get-VMSnapshot -> HardDrives) --
+    # NICHT dieselbe GUID wie das Checkpoint-Id-Feld selbst (live
+    # verifiziert). Grundlage fuer "Restore auf genau diesen Checkpoint",
+    # siehe BackupRunVmConfig.checkpoints in app.api.routes.jobs.
+    hard_drive_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -388,7 +394,8 @@ class HyperVService:
             "}); "
             "$pci = @(Get-VMAssignableDevice -VM $vm -ErrorAction SilentlyContinue | ForEach-Object { $_.InstancePath }); "
             "$checkpoints = @(Get-VMSnapshot -VM $vm -ErrorAction SilentlyContinue | ForEach-Object { "
-            "[PSCustomObject]@{ Name = $_.Name; Id = $_.Id.ToString(); CreationTime = $_.CreationTime.ToString('o') } "
+            "[PSCustomObject]@{ Name = $_.Name; Id = $_.Id.ToString(); CreationTime = $_.CreationTime.ToString('o'); "
+            "HardDrivePaths = @($_.HardDrives | ForEach-Object { $_.Path }) } "
             "}); "
             "[PSCustomObject]@{ "
             "Name = $vm.Name; Id = $vm.Id.ToString(); State = $vm.State.ToString(); ComputerName = $hostName; Vhds = $vhds; "
@@ -426,11 +433,18 @@ class HyperVService:
             pci_devices = pci_raw if isinstance(pci_raw, list) else [pci_raw]
             checkpoints_raw = e.get("Checkpoints") or []
             checkpoints_raw = checkpoints_raw if isinstance(checkpoints_raw, list) else [checkpoints_raw]
-            checkpoints = [
-                CheckpointDetail(name=c.get("Name") or "", id=c["Id"], creation_time=c.get("CreationTime") or "")
-                for c in checkpoints_raw
-                if c.get("Id")
-            ]
+            checkpoints = []
+            for c in checkpoints_raw:
+                if not c.get("Id"):
+                    continue
+                paths_raw = c.get("HardDrivePaths") or []
+                paths_raw = paths_raw if isinstance(paths_raw, list) else [paths_raw]
+                checkpoints.append(
+                    CheckpointDetail(
+                        name=c.get("Name") or "", id=c["Id"], creation_time=c.get("CreationTime") or "",
+                        hard_drive_paths=[p for p in paths_raw if p],
+                    )
+                )
             vms.append(
                 VirtualMachineInfo(
                     name=e["Name"], id=e["Id"], state=str(e["State"]), host=e.get("ComputerName", self._target_host), vhds=vhds,
@@ -840,6 +854,22 @@ class HyperVService:
             raise RuntimeError(f"Get-VHD fuer '{path}' fehlgeschlagen: {result.error}")
         parent = (result.output or "").strip()
         return parent or None
+
+    def get_vhd_info(self, session: winrm.Session, path: str) -> tuple[str | None, int, int]:
+        """Wie get_vhd_parent_path, liefert zusaetzlich Size/FileSize in
+        einem Aufruf -- genutzt, um beim Backup-Zeitpunkt-Refresh
+        (_execute_job_run) die echte Groesse der Basis-VHDX zu ermitteln,
+        statt der kleinen Differenzdatei (siehe BackupRunVmConfig.vhds
+        base_size_bytes/base_used_bytes)."""
+        escaped = path.replace("'", "''")
+        result = self._run_ps(
+            session, f"Get-VHD -Path '{escaped}' -ErrorAction Stop | Select-Object ParentPath, Size, FileSize | ConvertTo-Json",
+        )
+        if not result.success:
+            raise RuntimeError(f"Get-VHD fuer '{path}' fehlgeschlagen: {result.error}")
+        data = json.loads(result.output or "{}")
+        parent = (data.get("ParentPath") or "").strip() or None
+        return parent, int(data.get("Size") or 0), int(data.get("FileSize") or 0)
 
     def set_vhd_parent(self, session: winrm.Session, path: str, parent_path: str) -> CommandResult:
         escaped = path.replace("'", "''")

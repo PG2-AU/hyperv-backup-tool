@@ -43,7 +43,7 @@ from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import SessionLocal, get_db
 from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
-from app.api.routes.restore import _StepCtx
+from app.api.routes.restore import _StepCtx, _avhdx_display_name
 from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunStep, BackupRunVmConfig, JobStatus
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
@@ -61,6 +61,7 @@ from app.schemas.backup import (
     BackupPolicyRead,
     BackupPolicyWrite,
     BackupRunStepRead,
+    BackupSnapshotCheckpointRead,
     BackupSnapshotDestinationRead,
     BackupSnapshotRead,
     BackupSnapshotVhdRead,
@@ -625,6 +626,7 @@ def list_backups_for_object(
     # der Restore-Wizard bietet darueber nur VHDs an, die in diesem
     # konkreten Snapshot tatsaechlich enthalten waren.
     vhds_by_run_id: dict[str, list[BackupSnapshotVhdRead]] = {}
+    checkpoints_by_run_id: dict[str, list[BackupSnapshotCheckpointRead]] = {}
     if scope == BackupScope.VM and matched:
         run_ids = {r.run_id for r in matched}
         configs = (
@@ -635,10 +637,19 @@ def list_backups_for_object(
         for cfg in configs:
             vhds_by_run_id[cfg.run_id] = [
                 BackupSnapshotVhdRead(
-                    name=v.get("name", ""), path=v.get("path", ""), size_bytes=v.get("size_bytes"), used_bytes=v.get("used_bytes"),
+                    name=v.get("name", ""),
+                    display_name=_avhdx_display_name(v.get("name", "")) if v.get("name", "").lower().endswith(".avhdx") else v.get("name", ""),
+                    path=v.get("path", ""),
+                    size_bytes=v.get("base_size_bytes") or v.get("size_bytes"),
+                    used_bytes=v.get("base_used_bytes") or v.get("used_bytes"),
                     is_avhdx=v.get("name", "").lower().endswith(".avhdx"),
                 )
                 for v in (cfg.vhds or [])
+            ]
+            checkpoints_by_run_id[cfg.run_id] = [
+                BackupSnapshotCheckpointRead(id=cp.get("id", ""), name=cp.get("name", ""), creation_time=cp.get("creation_time", ""))
+                for cp in (cfg.checkpoints or [])
+                if cp.get("id")
             ]
 
     return [
@@ -656,6 +667,7 @@ def list_backups_for_object(
             snapshot_name=r.snapshot_name,
             snapshot_uuid=r.snapshot_uuid,
             vhds=vhds_by_run_id.get(r.run_id, []),
+            checkpoints=checkpoints_by_run_id.get(r.run_id, []),
             restore_source="primary" if r.success else "secondary",
             destinations=[
                 BackupSnapshotDestinationRead(
@@ -733,22 +745,33 @@ class _NoTargetsError(RuntimeError):
 
 def _build_vhd_entries(
     vhds: list[HyperVVhd], cluster_ids_by_name: dict[str, str], hyperv_csv_by_name: dict[str, HyperVCsv],
+    base_sizes_by_path: dict[str, tuple[int, int]] | None = None,
 ) -> list[dict]:
     """Baut die in BackupRunVmConfig.vhds gespeicherten Eintraege (Name/
     Pfad/Groesse + CSV/LUN/SVM/Volume-Aufloesung) aus HyperVVhd-DB-Zeilen --
     gemeinsame Logik fuer die initiale Erfassung in _start_job_run UND den
     Refresh direkt nach der Checkpoint-Erstellung einer anwendungs-
     konsistenten VM in _execute_job_run (siehe [[avhdx-without-checkpoint-discovery-freeze]],
-    Teil 3 -- verhindert, dass beide Stellen unbemerkt auseinanderlaufen)."""
+    Teil 3 -- verhindert, dass beide Stellen unbemerkt auseinanderlaufen).
+
+    `base_sizes_by_path`: optional, Leaf-Pfad -> (Basis-size_bytes,
+    Basis-used_bytes) -- nur vom Teil-3-Refresh befuellt (live per
+    Get-VHD-Kettenlauf ermittelt, siehe _resolve_base_vhd_size). Ohne das
+    bleiben size_bytes/used_bytes die der (bei einem aktiven Checkpoint
+    kleinen) Leaf-AVHDX -- fuer die CSV-Kapazitaetsschaetzung beim
+    Restore wird stattdessen die echte Basis-Groesse gebraucht (Teil 5)."""
     entries = []
     for vhd in vhds:
         csv = hyperv_csv_by_name.get(vhd.csv_name) if vhd.csv_name else None
+        base_size = (base_sizes_by_path or {}).get(vhd.path)
         entries.append(
             {
                 "name": win_basename(vhd.path),
                 "path": vhd.path,
                 "size_bytes": vhd.size_bytes,
                 "used_bytes": vhd.used_bytes,
+                "base_size_bytes": base_size[0] if base_size else None,
+                "base_used_bytes": base_size[1] if base_size else None,
                 "csv_name": vhd.csv_name,
                 "netapp_cluster_id": cluster_ids_by_name.get(csv.netapp_cluster_name) if csv and csv.netapp_cluster_name else None,
                 "netapp_cluster_name": csv.netapp_cluster_name if csv else None,
@@ -758,6 +781,25 @@ def _build_vhd_entries(
             }
         )
     return entries
+
+
+def _resolve_base_vhd_size(node_service: HyperVService, node_session, leaf_path: str) -> tuple[int, int] | None:
+    """Loest die Elternkette einer AVHDX bis zur Basis auf (bounded, max.
+    8 Ebenen, gleiches Muster wie _merge_avhdx_chain in restore.py -- hier
+    aber nur lesend, es wird nichts kopiert/gemerged) und gibt deren
+    echte (Size, FileSize) zurueck. Best-effort: gibt None zurueck, wenn
+    irgendein Schritt fehlschlaegt -- die kleine Leaf-Groesse bleibt dann
+    einfach wie bisher stehen (keine Verschlechterung)."""
+    try:
+        current = leaf_path
+        for _ in range(8):
+            parent, size_bytes, used_bytes = node_service.get_vhd_info(node_session, current)
+            if not parent:
+                return size_bytes, used_bytes
+            current = parent
+    except Exception:
+        return None
+    return None
 
 
 def _start_job_run(
@@ -873,6 +915,7 @@ def _start_job_run(
                     network_adapters=hv_vm.network_adapters if hv_vm else None,
                     pci_devices=hv_vm.pci_devices if hv_vm else None,
                     vhds=vhd_entries,
+                    checkpoints=list(hv_vm.checkpoints or []) if hv_vm else [],
                 )
             )
         db.commit()
@@ -1255,7 +1298,19 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                                                 .filter(HyperVVhd.cluster_id == res.cluster_id, HyperVVhd.vm_uuid == hv_vm_fresh.vm_uuid)
                                                 .all()
                                             )
-                                            cfg.vhds = _build_vhd_entries(fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name)
+                                            # Fuer jede AVHDX (aktiver Checkpoint)
+                                            # zusaetzlich die echte Groesse der
+                                            # Basis-VHDX ermitteln (Teil 5) --
+                                            # dieselbe schon offene Node-Session
+                                            # wiederverwendet, best-effort.
+                                            base_sizes_by_path: dict[str, tuple[int, int]] = {}
+                                            for fresh_vhd in fresh_vhds:
+                                                if fresh_vhd.path.lower().endswith(".avhdx"):
+                                                    resolved = _resolve_base_vhd_size(res.node_service, res.node_session, fresh_vhd.path)
+                                                    if resolved:
+                                                        base_sizes_by_path[fresh_vhd.path] = resolved
+                                            cfg.vhds = _build_vhd_entries(fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name, base_sizes_by_path)
+                                            cfg.checkpoints = list(hv_vm_fresh.checkpoints or [])
                                 except Exception:
                                     # Best-effort -- BackupRunVmConfig.vhds
                                     # bleibt dann wie von _start_job_run

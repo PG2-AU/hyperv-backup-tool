@@ -81,7 +81,10 @@ def _apply_vm_discovery_refresh(db: Session, cluster_id: str, vm: HyperVVm, refr
     jobs). `vm` muss bereits die aktuelle DB-Zeile sein (frisch
     nachgeladen, NIE ueber den vorausgehenden WinRM-Aufruf hinweg gehalten
     -- siehe [[backup-vs-discovery-orm-race]])."""
-    vm.checkpoints = [{"name": c.name, "id": c.id, "creation_time": c.creation_time} for c in refreshed.checkpoints]
+    vm.checkpoints = [
+        {"name": c.name, "id": c.id, "creation_time": c.creation_time, "hard_drive_paths": c.hard_drive_paths}
+        for c in refreshed.checkpoints
+    ]
     existing_csvs = db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).all()
     db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_uuid == vm.vm_uuid).delete()
     now = datetime.now(timezone.utc)

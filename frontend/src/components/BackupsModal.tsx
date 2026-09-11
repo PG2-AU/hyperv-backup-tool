@@ -63,7 +63,7 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
   }
 
   return (
-    <Modal opened={opened} onClose={onClose} title={`Vorhandene Backups: ${name ?? ""}`} size="1400px">
+    <Modal opened={opened} onClose={onClose} title={`Vorhandene Backups: ${name ?? ""}`} size="min(1400px, 95vw)">
       <Stack>
         {isLoading && <Loader size="sm" />}
         {!isLoading && backups?.length === 0 && (

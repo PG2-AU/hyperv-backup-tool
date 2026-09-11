@@ -290,6 +290,23 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
 
         try:
             with _StepCtx(db, run.id, "resolve", "Ziel auflösen", step_model=FileRestoreRunStep) as ctx:
+                if run.source_vhd_path.lower().endswith(".avhdx"):
+                    # Der Datei-Browse-Modus mountet bewusst NUR auf dem
+                    # Proxy-Host (Mount-DiskImage, kein Hyper-V dort
+                    # noetig) -- eine AVHDX kann so nicht aufgeloest
+                    # werden (ihr ParentPath verweist auf den
+                    # urspruenglichen, hier nicht erreichbaren Pfad auf
+                    # dem Quell-Cluster). Anders als beim Anhaengen/
+                    # Ersetzen (siehe _merge_avhdx_chain in restore.py,
+                    # laeuft auf einem echten Hyper-V-Knoten) gibt es
+                    # hier bewusst keinen Merge -- siehe [[avhdx-without-checkpoint-discovery-freeze]],
+                    # Teil 5.
+                    raise RuntimeError(
+                        "Diese Sicherung enthält für dieses Laufwerk einen aktiven Checkpoint (AVHDX statt "
+                        "Basis-VHDX) und kann im Datei-Modus nicht durchsucht werden. Bitte stattdessen "
+                        "'Als zusätzliche Disk anhängen' verwenden -- dort wird die Kette automatisch "
+                        "zusammengeführt und ist danach durchsuchbar."
+                    )
                 csv_name = _parse_csv_name(run.source_vhd_path)
                 if not csv_name:
                     raise RuntimeError(f"CSV konnte nicht aus '{run.source_vhd_path}' ermittelt werden")

@@ -92,21 +92,38 @@ class BackupSnapshotVhdRead(BaseModel):
     kann, z.B. neue Disks oder ein CSV/LUN-Umzug)."""
 
     name: str
+    # Anzeigename -- bei aktivem Checkpoint (is_avhdx) der per Heuristik
+    # abgeleitete Name der Basis-VHDX statt der Checkpoint-AVHDX (siehe
+    # _avhdx_display_name in routes/restore.py), sonst identisch zu `name`.
+    display_name: str
     path: str
     size_bytes: int | None = None
     # Belegter Platz zum Backup-Zeitpunkt (Get-VHD -> FileSize) -- Basis fuer
     # die CSV-Kapazitaetsabschaetzung beim Restore, siehe VhdInfo.used_bytes
     # in schemas/vm.py. Bei vor dieser Ergaenzung erstellten Laeufen fehlt
     # der Schluessel im gespeicherten JSON -> None (Frontend faellt dann auf
-    # size_bytes zurueck).
+    # size_bytes zurueck). Bei aktivem Checkpoint bevorzugt die ECHTE
+    # Groesse der Basis-VHDX (base_size_bytes/base_used_bytes), nicht die
+    # der kleinen Differenzdatei -- siehe Teil 5 in
+    # [[avhdx-without-checkpoint-discovery-freeze]].
     used_bytes: int | None = None
     # True wenn der zum Backup-Zeitpunkt erfasste Name auf .avhdx endet --
     # dann wurde nur die Differenzdatei gesichert, nicht die Basis-VHDX
-    # (siehe [[avhdx-without-checkpoint-discovery-freeze]]). Ein Restore
-    # daraus ist funktionslos und wird serverseitig hart abgelehnt (siehe
-    # _execute_restore/_execute_vm_recreate in restore.py) -- dieses Feld
-    # ist nur fuer die Kennzeichnung im Restore-Wizard.
+    # (siehe [[avhdx-without-checkpoint-discovery-freeze]]). Der Restore
+    # versucht in diesem Fall automatisch, die Kette bis zur Basis-VHDX
+    # zusammenzufuehren (siehe _merge_avhdx_chain in routes/restore.py) --
+    # dieses Feld ist nur fuer die Kennzeichnung im Restore-Wizard.
     is_avhdx: bool = False
+
+
+class BackupSnapshotCheckpointRead(BaseModel):
+    """Ein zum Backup-Zeitpunkt auf der VM vorhandener Checkpoint -- fuer
+    die Auswahl 'auf welchen Stand restorieren' im Wizard, siehe
+    RestoreRun.avhdx_checkpoint_id in routes/restore.py."""
+
+    id: str
+    name: str
+    creation_time: str
 
 
 class BackupSnapshotDestinationRead(BaseModel):
@@ -142,6 +159,7 @@ class BackupSnapshotRead(BaseModel):
     snapshot_name: str | None = None
     snapshot_uuid: str | None = None
     vhds: list[BackupSnapshotVhdRead] = []
+    checkpoints: list[BackupSnapshotCheckpointRead] = []
     destinations: list[BackupSnapshotDestinationRead] = []
     # "primary": Snapshot ist noch auf dem urspruenglichen (Quell-)Volume
     # vorhanden, ein Restore verwendet IMMER dieses (Nutzer-Vorgabe: Primaer

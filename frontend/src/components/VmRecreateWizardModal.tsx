@@ -4,7 +4,7 @@ import { notifications } from "@mantine/notifications";
 import { IconAlertTriangle, IconCheck, IconMinus, IconX } from "@tabler/icons-react";
 
 import { useRecreateVm, useVmBackupRuns, useVmRecreateRun } from "@/api/hooks";
-import type { AvhdxTarget, VmWithBackups } from "@/api/types";
+import type { VmWithBackups } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
 
@@ -27,8 +27,8 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
   const [runId, setRunId] = useState<string | null>(null);
   const [recreateRunId, setRecreateRunId] = useState<string | null>(null);
   // Nur relevant, wenn eine VHD des gewaehlten Laufs is_avhdx ist (aktiver
-  // Checkpoint zum Backup-Zeitpunkt) -- siehe AvhdxTarget.
-  const [avhdxTarget, setAvhdxTarget] = useState<AvhdxTarget>("backup_time");
+  // Checkpoint zum Backup-Zeitpunkt): null = Stand zum Backup-Zeitpunkt.
+  const [avhdxCheckpointId, setAvhdxCheckpointId] = useState<string | null>(null);
 
   const { data: backupRuns, isLoading: runsLoading } = useVmBackupRuns(vm?.name, opened && active === 0);
   const recreateVm = useRecreateVm(vm?.name);
@@ -47,7 +47,7 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
 
   function handleStart() {
     if (!vm || !runId) return;
-    recreateVm.mutate({ run_id: runId, avhdx_target: avhdxTarget }, {
+    recreateVm.mutate({ run_id: runId, avhdx_checkpoint_id: avhdxCheckpointId }, {
       onSuccess: (result) => {
         setRecreateRunId(result.id);
         setActive(2);
@@ -167,7 +167,7 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
                 <Table.Tr key={i}>
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
-                      <Text size="sm">{v.name}</Text>
+                      <Text size="sm">{v.display_name}</Text>
                       {v.is_avhdx && (
                         <Tooltip label="Checkpoint zum Backup-Zeitpunkt aktiv -- wird bei der Neuerstellung automatisch mit der Basis-VHDX zusammengeführt.">
                           <Badge color="orange" size="sm" variant="light">
@@ -185,15 +185,19 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
             </Table.Tbody>
           </Table>
 
-          {selectedRun.vhds.some((v) => v.is_avhdx) && (
+          {selectedRun.checkpoints.length > 0 && (
             <Radio.Group
-              value={avhdxTarget}
-              onChange={(v) => setAvhdxTarget(v as AvhdxTarget)}
+              value={avhdxCheckpointId ?? ""}
+              onChange={(v) => setAvhdxCheckpointId(v || null)}
               label="Welcher Stand soll wiederhergestellt werden?"
             >
               <Stack gap={4} mt="xs">
-                <Radio value="backup_time" label="Stand zum Backup-Zeitpunkt (inkl. Änderungen nach dem Checkpoint)" />
-                <Radio value="checkpoint_time" label="Stand zum Zeitpunkt des Checkpoints (spätere Änderungen verwerfen)" />
+                <Radio value="" label="Stand zum Backup-Zeitpunkt (inkl. Änderungen nach dem Checkpoint)" />
+                {selectedRun.checkpoints.map((cp) => {
+                  const when = new Date(cp.creation_time);
+                  const label = `Stand zum Checkpoint „${cp.name} (${Number.isNaN(when.getTime()) ? cp.creation_time : when.toLocaleString("de-DE")})“`;
+                  return <Radio key={cp.id} value={cp.id} label={label} />;
+                })}
               </Stack>
             </Radio.Group>
           )}
