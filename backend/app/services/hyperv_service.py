@@ -823,6 +823,34 @@ class HyperVService:
         new_escaped = new_path.replace("'", "''")
         return self._run_ps(session, f"Move-Item -Path '{old_escaped}' -Destination '{new_escaped}' -Force -ErrorAction Stop")
 
+    # --- AVHDX-Merge beim Restore (siehe restore.py, _copy_and_merge_vhd) ---
+    # Ein bei Backup-Zeitpunkt aktiver Checkpoint sichert sowohl die
+    # Basis-VHDX als auch die AVHDX unveraendert im selben LUN-/Volume-
+    # Snapshot -- der Elternpfad steht authoritativ im Header der AVHDX
+    # selbst und ist per Get-VHD auf JEDEM Rechner mit Hyper-V-PowerShell-
+    # Modul auslesbar, nicht nur auf dem Quell-Knoten. Laeuft bewusst auf
+    # dem Ziel-Knoten (node_service), nicht auf dem Restore-Proxy -- der
+    # hat garantiert Hyper-V (echter Cluster-Node), der Proxy braucht so
+    # keine neue Voraussetzung.
+
+    def get_vhd_parent_path(self, session: winrm.Session, path: str) -> str | None:
+        escaped = path.replace("'", "''")
+        result = self._run_ps(session, f"(Get-VHD -Path '{escaped}' -ErrorAction Stop).ParentPath")
+        if not result.success:
+            raise RuntimeError(f"Get-VHD fuer '{path}' fehlgeschlagen: {result.error}")
+        parent = (result.output or "").strip()
+        return parent or None
+
+    def set_vhd_parent(self, session: winrm.Session, path: str, parent_path: str) -> CommandResult:
+        escaped = path.replace("'", "''")
+        parent_escaped = parent_path.replace("'", "''")
+        return self._run_ps(session, f"Set-VHD -Path '{escaped}' -ParentPath '{parent_escaped}' -ErrorAction Stop")
+
+    def merge_vhd(self, session: winrm.Session, path: str, destination_path: str) -> CommandResult:
+        escaped = path.replace("'", "''")
+        dest_escaped = destination_path.replace("'", "''")
+        return self._run_ps(session, f"Merge-VHD -Path '{escaped}' -DestinationPath '{dest_escaped}' -ErrorAction Stop")
+
     # --- VM-Restore: nativer Windows-iSCSI-Initiator auf dem Restore-Proxy-Host ---
     # Ersetzt die fruehere Linux-Variante (iscsiadm/ntfs-3g/smbclient im
     # Container, siehe Chat-Verlauf) -- der native Microsoft-iSCSI-Initiator

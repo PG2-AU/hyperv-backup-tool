@@ -105,8 +105,8 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                     </Table.Td>
                     <Table.Td>
                       {b.vhds.some((v) => v.is_avhdx) && (
-                        <Badge color="red" variant="light">
-                          Nicht wiederherstellbar
+                        <Badge color="orange" variant="light">
+                          Enthält Checkpoint
                         </Badge>
                       )}
                     </Table.Td>

@@ -371,6 +371,66 @@ def _netapp_service_for(cluster: NetAppCluster) -> NetAppOntapService:
     )
 
 
+def _merge_avhdx_chain(
+    node_service: HyperVService, node_session, node_address: str,
+    proxy_service: HyperVService, proxy_session,
+    mount_dir: str, relative_dir: str, remote_dir: str, leaf_remote_path: str,
+    hv_username: str, hv_password: str, suffix: str,
+) -> str:
+    """Ein bei Backup-Zeitpunkt aktiver Checkpoint sichert Basis-VHDX UND
+    AVHDX unveraendert im selben LUN-/Volume-Snapshot -- die bereits als
+    leaf_remote_path auf den Ziel-Knoten kopierte AVHDX kennt ihren
+    Elternpfad selbst (VHDX-Header, per Get-VHD auslesbar). Loest diese
+    Kette auf, kopiert jeden Vorfahren vom noch gemounteten
+    Proxy-LUN-Klon nach, korrigiert die ParentPath-Verweise (der
+    Original-Pfad im Header passt nach dem Kopieren i.d.R. nicht mehr)
+    und merged alles per Merge-VHD in die Basisdatei. Gibt den
+    Remote-Pfad der gemergten Basisdatei zurueck.
+
+    Jeder kopierte Vorfahre bekommt denselben '_restore_<suffix>'-Suffix
+    wie der bereits kopierte Leaf (statt seines Original-Dateinamens) --
+    sonst wuerde z.B. bei einem ADD-Restore die Kopie der Basis-VHDX exakt
+    den Namen der noch angehaengten, live laufenden Original-Disk im
+    selben CSV-Ordner tragen und sie beim Kopieren ueberschreiben.
+
+    Wirft RuntimeError, wenn die Kette nicht aufloesbar ist (Basis fehlt/
+    korrupt/zu lang) -- der Aufrufer faengt das ab und faellt auf die
+    Fehlermeldung "kann nicht wiederhergestellt werden" zurueck."""
+    chain_remote_paths = [leaf_remote_path]
+    current_remote = leaf_remote_path
+    for _ in range(8):
+        parent = node_service.get_vhd_parent_path(node_session, current_remote)
+        if not parent:
+            break
+        parent_filename = parent.split("\\")[-1]
+        parent_local = f"{mount_dir}\\{relative_dir}\\{parent_filename}" if relative_dir else f"{mount_dir}\\{parent_filename}"
+        parent_unique_filename = f"{Path(parent_filename).stem}_restore_{suffix}{Path(parent_filename).suffix}"
+        proxy_service.copy_file_to_share(
+            proxy_session, parent_local, node_address, remote_dir, parent_unique_filename, hv_username, hv_password,
+        )
+        parent_remote = f"C:\\{remote_dir}\\{parent_unique_filename}"
+        result = node_service.set_vhd_parent(node_session, current_remote, parent_remote)
+        if not result.success:
+            raise RuntimeError(f"Elternpfad konnte nicht korrigiert werden: {result.error}")
+        chain_remote_paths.append(parent_remote)
+        current_remote = parent_remote
+    else:
+        raise RuntimeError("AVHDX-Kette zu lang oder nicht auflösbar (Abbruch nach 8 Ebenen)")
+
+    if len(chain_remote_paths) < 2:
+        raise RuntimeError("Keine Basis-VHDX in der Kette gefunden")
+
+    base_remote = chain_remote_paths[-1]
+    result = node_service.merge_vhd(node_session, leaf_remote_path, base_remote)
+    if not result.success:
+        raise RuntimeError(f"Merge-VHD fehlgeschlagen: {result.error}")
+
+    for p in chain_remote_paths[:-1]:
+        node_service.delete_file(node_session, p)
+
+    return base_remote
+
+
 def _execute_restore(run_id: str) -> None:  # noqa: C901
     db = SessionLocal()
     clone_lun_uuid: str | None = None
@@ -394,12 +454,6 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
 
         try:
             with _StepCtx(db, run.id, "resolve", "Ziel auflösen") as ctx:
-                if run.source_vhd_path.lower().endswith(".avhdx"):
-                    raise RuntimeError(
-                        "Diese Sicherung enthält für dieses Laufwerk keine gültige Basis-VHDX "
-                        "(AVHDX statt VHDX gesichert) und kann nicht wiederhergestellt werden."
-                    )
-
                 csv_name = _parse_csv_name(run.source_vhd_path)
                 if not csv_name:
                     raise RuntimeError(f"CSV konnte nicht aus '{run.source_vhd_path}' ermittelt werden")
@@ -625,6 +679,25 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
             run.restored_vhd_path = restored_vhd_path
             db.commit()
 
+            if original_filename.lower().endswith(".avhdx"):
+                with _StepCtx(db, run.id, "merge", "Checkpoint-Kette mit Basis-VHDX zusammenführen") as ctx:
+                    try:
+                        restored_vhd_path = _merge_avhdx_chain(
+                            node_service, node_session, node_address,
+                            proxy_service, proxy_session,
+                            mount_dir, relative_dir, remote_dir, restored_vhd_path,
+                            hv_cluster.username, hv_password, suffix,
+                        )
+                    except RuntimeError as exc:
+                        raise RuntimeError(
+                            "Diese Sicherung enthält für dieses Laufwerk keine gültige Basis-VHDX "
+                            "(AVHDX statt VHDX gesichert) und konnte auch nicht automatisch zusammengeführt "
+                            f"werden: {exc}"
+                        ) from exc
+                    run.restored_vhd_path = restored_vhd_path
+                    db.commit()
+                    ctx.row.message = restored_vhd_path
+
             with _StepCtx(db, run.id, "cleanup-source", "Temporäre LUN aufräumen"):
                 proxy_service.release_disk(proxy_session, disk_number, mount_dir)
                 disk_number = None
@@ -785,11 +858,6 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 vhd_cluster_id = vhd.get("netapp_cluster_id")
                 vhd_csv = vhd.get("csv_name")
                 vhd_name = vhd.get("name") or f"disk{i}.vhdx"
-                if vhd_name.lower().endswith(".avhdx"):
-                    raise RuntimeError(
-                        f"VHD '{vhd_name}': diese Sicherung enthält keine gültige Basis-VHDX "
-                        "(AVHDX statt VHDX gesichert) und kann nicht wiederhergestellt werden."
-                    )
                 if not (vhd_svm and vhd_volume and vhd_lun_path and vhd_cluster_id and vhd_csv):
                     raise RuntimeError(f"VHD '{vhd_name}': unvollstaendige gespeicherte Zuordnung")
 
@@ -917,7 +985,25 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                             hv_cluster.username, hv_password,
                         )
                         ctx.row.message = f"{remote_size} Bytes kopiert"
-                    restored_paths.append(f"C:\\{remote_dir}\\{filename}")
+                    restored_path = f"C:\\{remote_dir}\\{filename}"
+
+                    if filename.lower().endswith(".avhdx"):
+                        with _StepCtx(db, run.id, f"merge-{i}", f"{vhd_name}: Checkpoint-Kette zusammenführen", step_model=VmRecreateRunStep) as ctx:
+                            try:
+                                restored_path = _merge_avhdx_chain(
+                                    node_service, node_session, node_address,
+                                    proxy_service, proxy_session,
+                                    mount_dir, relative_dir, remote_dir, restored_path,
+                                    hv_cluster.username, hv_password, f"{suffix}_{i}",
+                                )
+                            except RuntimeError as exc:
+                                raise RuntimeError(
+                                    f"VHD '{vhd_name}': diese Sicherung enthält keine gültige Basis-VHDX "
+                                    "(AVHDX statt VHDX gesichert) und konnte auch nicht automatisch "
+                                    f"zusammengeführt werden: {exc}"
+                                ) from exc
+                            ctx.row.message = restored_path
+                    restored_paths.append(restored_path)
 
                     with _StepCtx(db, run.id, f"cleanup-source-{i}", f"Temporaere LUN fuer {vhd_name} aufraeumen", step_model=VmRecreateRunStep):
                         proxy_service.release_disk(proxy_session, disk_number, mount_dir)

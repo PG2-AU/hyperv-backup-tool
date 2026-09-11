@@ -80,12 +80,11 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
             <Radio.Group value={runId} onChange={setRunId}>
               <Stack gap="xs">
                 {backupRuns?.map((r) => {
-                  const blocked = r.vhds.some((v) => v.is_avhdx);
+                  const hasCheckpoint = r.vhds.some((v) => v.is_avhdx);
                   return (
                     <Radio
                       key={r.run_id}
                       value={r.run_id}
-                      disabled={blocked}
                       label={
                         <Group gap="xs">
                           <Text size="sm">{new Date(r.created_at).toLocaleString("de-DE")}</Text>
@@ -98,10 +97,10 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
                           <Text size="xs" c="dimmed">
                             {r.policy_name} · {r.vhds.length} VHD(s)
                           </Text>
-                          {blocked && (
-                            <Tooltip label="Mindestens eine Disk wurde nur als AVHDX (Differenzdatei) statt Basis-VHDX gesichert -- eine Neuerstellung braucht immer alle Disks dieses Laufs und ist daher nicht möglich.">
-                              <Badge color="red" size="sm" variant="light">
-                                Nicht wiederherstellbar
+                          {hasCheckpoint && (
+                            <Tooltip label="Mindestens eine Disk wurde mit aktivem Checkpoint gesichert (AVHDX) -- wird bei der Neuerstellung automatisch mit der Basis-VHDX zusammengeführt.">
+                              <Badge color="orange" size="sm" variant="light">
+                                Enthält Checkpoint
                               </Badge>
                             </Tooltip>
                           )}
@@ -165,13 +164,11 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
                 <Table.Tr key={i}>
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
-                      <Text size="sm" c={v.is_avhdx ? "red" : undefined}>
-                        {v.name}
-                      </Text>
+                      <Text size="sm">{v.name}</Text>
                       {v.is_avhdx && (
-                        <Tooltip label="Nur AVHDX (Differenzdatei) statt Basis-VHDX gesichert -- Restore nicht möglich.">
-                          <Badge color="red" size="sm" variant="light">
-                            Nicht wiederherstellbar
+                        <Tooltip label="Checkpoint zum Backup-Zeitpunkt aktiv -- wird bei der Neuerstellung automatisch mit der Basis-VHDX zusammengeführt.">
+                          <Badge color="orange" size="sm" variant="light">
+                            Enthält Checkpoint
                           </Badge>
                         </Tooltip>
                       )}
