@@ -528,6 +528,11 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                               Primärsystem
                             </Badge>
                           )}
+                          {b.vhds.some((v) => v.is_avhdx) && (
+                            <Badge color="orange" variant="light" size="sm">
+                              Enthält Checkpoint
+                            </Badge>
+                          )}
                           <Text size="xs" c="dimmed">
                             {b.policy_name}
                           </Text>
