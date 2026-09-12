@@ -1018,17 +1018,16 @@ def _run_node_checkpoints(
         progress.put(("start", (vm_name, job.node_address)))
         try:
             node_service.create_checkpoint(node_session, vm_name, checkpoint_name, consistency)
-            # Best-effort: den soeben erstellten Checkpoint direkt auf der
-            # ohnehin offenen Session nachfragen, statt auf die naechste
-            # Discovery zu warten -- macht den tatsaechlichen VHD-Zustand
-            # (inkl. eines bereits VOR diesem Lauf manuell angelegten
-            # Checkpoints) fuer BackupRunVmConfig.vhds nutzbar. Ein
-            # Fehlschlag hier darf den bereits erfolgreichen Checkpoint
-            # nicht als Fehler melden.
-            try:
-                refreshed_vm = node_service.get_vm(node_session, vm_name)
-            except Exception:
-                refreshed_vm = None
+            # TEMPORAER DEAKTIVIERT 2026-09-12 (siehe [[credssp-checkpoint-auth-failures]]):
+            # der zusaetzliche Get-VM-Aufruf direkt nach der Checkpoint-
+            # Erstellung (seit e5b6130) steht im Verdacht, zu den seit
+            # 2026-09-12 live beobachteten CredSSP-/Anmeldefehlern
+            # beizutragen (mehr WinRM-Operationen pro Knoten waehrend des
+            # Checkpoint-Laufs). Bewusst nur der Aufruf entfernt, nicht die
+            # Weiterverarbeitung -- refreshed_vm bleibt None, wodurch der
+            # Refresh in _execute_job_run einfach nichts tut (kein
+            # Funktionsverlust ausser der Teil-3-Sofort-Aktualisierung).
+            refreshed_vm = None
             progress.put((
                 "done",
                 _CheckpointResult(
