@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.core.rbac import Permission
 from app.db.session import get_db
-from app.models.backup_policy import BackupPolicy
+from app.models.resource_group import ResourceGroupPolicyLink
 from app.models.schedule import Schedule
 from app.schemas.schedule import ScheduleRead, ScheduleWrite
 
@@ -107,12 +107,18 @@ def delete_schedule(
     if schedule is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Zeitplan nicht gefunden")
 
-    referencing_policies = db.query(BackupPolicy).filter(BackupPolicy.schedule_id == schedule_id).all()
-    if referencing_policies:
-        names = ", ".join(p.name for p in referencing_policies)
+    # BUG (live gefunden 2026-09-14, Backlog-Punkt 52): filterte bisher auf
+    # BackupPolicy.schedule_id -- das Feld ist seit dem Umstieg auf
+    # ResourceGroupPolicyLink.schedule_id (siehe app.models.resource_group)
+    # nicht mehr auf BackupPolicy gemappt, jeder Aufruf schlug mit einem
+    # AttributeError (500er) fehl. Der Zeitplan haengt jetzt an der
+    # Resource-Group/Policy-VERKNUEPFUNG, nicht mehr an der Policy allein.
+    referencing_links = db.query(ResourceGroupPolicyLink).filter(ResourceGroupPolicyLink.schedule_id == schedule_id).all()
+    if referencing_links:
+        names = ", ".join(f"{link.resource_group.name} / {link.policy.name}" for link in referencing_links)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Zeitplan wird noch von folgenden Backup-Policies verwendet: {names}",
+            detail=f"Zeitplan wird noch von folgenden Verknuepfungen verwendet: {names}",
         )
 
     db.delete(schedule)
