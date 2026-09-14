@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { ActionIcon, Group, Paper, Text, Title } from "@mantine/core";
-import { IconX } from "@tabler/icons-react";
+import { IconChevronLeft, IconChevronRight, IconX } from "@tabler/icons-react";
 
 import { JobTimelineTrack, type TimelineEntry } from "@/components/JobTimelineTrack";
 import type { BackupJobRun, UpcomingJob } from "@/api/types";
@@ -23,6 +23,14 @@ function startOfDay(d: Date): number {
   return r.getTime();
 }
 
+function dayLabelFor(windowStartMs: number): string {
+  const diffDays = Math.round((windowStartMs - startOfDay(new Date())) / (24 * 60 * 60 * 1000));
+  if (diffDays === 0) return "Heute";
+  if (diffDays === 1) return "Morgen";
+  if (diffDays === -1) return "Gestern";
+  return new Date(windowStartMs).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" });
+}
+
 /** Kompakter Tages-Zeitstrahl (00:00-24:00, ohne Liste darunter -- siehe
  * JobTimelineTrack showList=false) fuer einen schnellen Ueberblick: nur
  * farbige Marker, tatsaechliche Laeufe des Tages nach Ergebnis (gruen/rot),
@@ -38,6 +46,8 @@ export function DayJobStrip({
   scheduled,
   title = "Backup-Zeitstrahl",
   onClose,
+  onPrevDay,
+  onNextDay,
 }: {
   /** Tag, dessen 00:00-24:00-Fenster angezeigt wird -- Default: heute
    * (Dashboard-Nutzung). Fuer Vergangenheits-/Zukunftstage (Kalender)
@@ -50,6 +60,12 @@ export function DayJobStrip({
   scheduled: UpcomingJob[];
   title?: string;
   onClose?: () => void;
+  /** Optionale Tag-vor/-zurueck-Pfeile (Backlog-Punkt 38, Quick-Win statt
+   * voller Kalenderauswahl) -- nur vom Dashboard genutzt, die Kalender-
+   * Tagesansicht steuert den Tag bereits ueber den Monatskalender selbst
+   * und laesst diese Props weg. */
+  onPrevDay?: () => void;
+  onNextDay?: () => void;
 }) {
   const now = Date.now();
   const windowStart = useMemo(() => startOfDay(day ?? new Date()), [day]);
@@ -92,10 +108,27 @@ export function DayJobStrip({
     return result;
   }, [runs, scheduled, windowStart, windowEnd, now]);
 
+  const dayLabel = dayLabelFor(windowStart);
+
   return (
     <Paper p="md" mt={onClose ? "md" : undefined}>
       <Group justify="space-between" mb="sm" align="flex-end">
-        <Title order={5}>{title}</Title>
+        <Group gap="xs" align="baseline">
+          <Title order={5}>{title}</Title>
+          {(onPrevDay || onNextDay) && (
+            <Group gap={2} align="center">
+              <ActionIcon variant="subtle" size="sm" onClick={onPrevDay} disabled={!onPrevDay} aria-label="Vorheriger Tag">
+                <IconChevronLeft size={14} />
+              </ActionIcon>
+              <Text size="sm" c="dimmed" miw={90} ta="center">
+                {dayLabel}
+              </Text>
+              <ActionIcon variant="subtle" size="sm" onClick={onNextDay} disabled={!onNextDay} aria-label="Naechster Tag">
+                <IconChevronRight size={14} />
+              </ActionIcon>
+            </Group>
+          )}
+        </Group>
         <Group gap="md">
           <ColorLegendDot color="green" label="Erfolgreich" />
           <ColorLegendDot color="red" label="Fehlgeschlagen" />

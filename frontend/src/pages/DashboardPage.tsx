@@ -128,12 +128,17 @@ export function DashboardPage() {
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
   const { data: runs } = useJobRuns();
+  // Backlog-Punkt 38 (Quick-Win, 2026-09-15): Tag im Dashboard-Zeitstrahl
+  // vor/zurueck schaltbar statt nur "heute" -- bewusst nur ein einfacher
+  // Tages-Offset statt einer vollen Kalenderauswahl (Nutzer-Vorgabe).
+  const [dayOffset, setDayOffset] = useState(0);
   // Lokales Datum (nicht toISOString(), das UTC ist und rund um Mitternacht
   // auf den falschen Kalendertag zeigen wuerde) -- deckungsgleich mit der
   // dayKey()-Logik in BackupCalendarTab.
   const now0 = new Date();
-  const todayStr = `${now0.getFullYear()}-${String(now0.getMonth() + 1).padStart(2, "0")}-${String(now0.getDate()).padStart(2, "0")}`;
-  const { data: todayJobs } = useJobsCalendar(todayStr, todayStr);
+  const selectedDay = new Date(now0.getFullYear(), now0.getMonth(), now0.getDate() + dayOffset);
+  const selectedDayStr = `${selectedDay.getFullYear()}-${String(selectedDay.getMonth() + 1).padStart(2, "0")}-${String(selectedDay.getDate()).padStart(2, "0")}`;
+  const { data: todayJobs } = useJobsCalendar(selectedDayStr, selectedDayStr);
   const { data: hyperVClusters } = useHyperVClusters();
   const { data: netAppClusters } = useNetAppClusters();
   const { data: svms } = useSvms();
@@ -319,7 +324,13 @@ export function DashboardPage() {
 
       <Grid>
         <Grid.Col span={12}>
-          <DayJobStrip runs={runs ?? []} scheduled={todayJobs ?? []} />
+          <DayJobStrip
+            day={selectedDay}
+            runs={runs ?? []}
+            scheduled={todayJobs ?? []}
+            onPrevDay={() => setDayOffset((d) => d - 1)}
+            onNextDay={() => setDayOffset((d) => d + 1)}
+          />
         </Grid.Col>
       </Grid>
 
