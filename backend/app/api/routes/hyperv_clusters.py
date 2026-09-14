@@ -65,9 +65,19 @@ def _resolve_csv_name(folder_name: str | None, csvs) -> str | None:
     Fallback, wie im bisherigen (fehlerhaften) Verhalten."""
     if not folder_name:
         return None
+    # Live gefunden (2026-09-15, Produktivumgebung): Get-VMHardDiskDrive
+    # kann den Mount-Ordner in abweichender Gross-/Kleinschreibung liefern
+    # (z.B. 'volume16'), obwohl der tatsaechliche CSV-Ordner 'Volume16'
+    # heisst -- Windows-Pfade sind case-insensitiv, ein reiner Python-'=='-
+    # Vergleich ist es aber nicht. Ohne .lower() schlug der Vergleich fehl,
+    # die betroffene VM landete nie in HyperVVhd.csv_name mit dem echten
+    # CSV-Namen und wurde dadurch faelschlich als "ungeschuetzt" gefuehrt,
+    # obwohl ihr CSV einer Protection Group zugeordnet war.
+    folder_name_lower = folder_name.lower()
     for csv in csvs:
         path = getattr(csv, "path", None) or getattr(csv, "volume_path", None)
-        if _folder_name_from_csv_path(path) == folder_name:
+        csv_folder = _folder_name_from_csv_path(path)
+        if csv_folder is not None and csv_folder.lower() == folder_name_lower:
             return csv.name
     return folder_name
 
