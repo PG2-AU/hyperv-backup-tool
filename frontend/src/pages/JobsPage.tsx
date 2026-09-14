@@ -49,6 +49,7 @@ import { useRunPolicy } from "@/utils/runPolicy";
 
 const STATUS_COLOR: Record<JobStatus, string> = {
   succeeded: "green",
+  succeeded_with_errors: "yellow",
   failed: "red",
   running: "blue",
   pending: "gray",

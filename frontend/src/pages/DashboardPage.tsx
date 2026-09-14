@@ -28,6 +28,7 @@ import { formatRunTargets } from "@/utils/format";
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: "green",
+  succeeded_with_errors: "yellow",
   failed: "red",
   running: "blue",
   pending: "gray",
@@ -142,8 +143,11 @@ export function DashboardPage() {
 
   const protectedVms = vms?.filter((v) => v.protected).length ?? 0;
 
+  // succeeded_with_errors zaehlt hier bewusst mit -- ein gueltiger,
+  // restorebarer Snapshot existiert, auch wenn einzelne VMs keinen
+  // Checkpoint erstellen konnten.
   const lastSuccessfulRun = runs
-    ?.filter((r) => r.status === "succeeded")
+    ?.filter((r) => r.status === "succeeded" || r.status === "succeeded_with_errors")
     .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0];
 
   // Nur die SnapMirror-Beziehungen beruecksichtigen, deren Quell- oder
@@ -179,7 +183,9 @@ export function DashboardPage() {
     for (const cluster of hyperVClusters ?? []) {
       const clusterVmNames = new Set(vms.filter((v) => v.cluster === cluster.name).map((v) => v.name));
       const clusterRuns = runs
-        .filter((r) => r.status === "succeeded" && r.targets.some((t) => clusterVmNames.has(t)))
+        .filter(
+          (r) => (r.status === "succeeded" || r.status === "succeeded_with_errors") && r.targets.some((t) => clusterVmNames.has(t)),
+        )
         .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
       if (clusterRuns[0]) lastRunPerCluster.set(cluster.id, clusterRuns[0]);
     }

@@ -21,6 +21,13 @@ class JobStatus(str, enum.Enum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
+    # Storage-Snapshot(s) wurden erfolgreich erstellt, aber mindestens eine
+    # VM konnte keinen Checkpoint erstellen (o.ae. nicht-fataler Fehler,
+    # z.B. SnapMirror-Update) -- Backup ist gueltig/restorebar, nur nicht
+    # jede VM app-konsistent gesichert (2026-09-14, Nutzer-Vorgabe: nur ein
+    # gescheiterter Storage-Snapshot soll den ganzen Lauf als FAILED
+    # markieren, alles andere ist eine Warnung).
+    SUCCEEDED_WITH_ERRORS = "succeeded_with_errors"
     FAILED = "failed"
     CLEANING_UP = "cleaning_up"
     CLEANED_UP_AFTER_FAILURE = "cleaned_up_after_failure"

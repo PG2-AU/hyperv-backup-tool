@@ -491,6 +491,7 @@ export type JobStatus =
   | "pending"
   | "running"
   | "succeeded"
+  | "succeeded_with_errors"
   | "failed"
   | "cleaning_up"
   | "cleaned_up_after_failure"

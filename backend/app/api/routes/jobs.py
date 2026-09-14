@@ -1159,6 +1159,12 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         }
 
         errors: list[str] = list(initial_warnings)
+        # Nur ein gescheiterter STORAGE-SNAPSHOT macht den Lauf insgesamt
+        # FAILED (rot) -- alles, was in `errors` landet (Checkpoint-/
+        # SnapMirror-Probleme einzelner VMs/Ziele), fuehrt bestenfalls zu
+        # SUCCEEDED_WITH_ERRORS (gelb), sofern mindestens ein Snapshot
+        # erfolgreich war. Nutzer-Vorgabe 2026-09-14.
+        fatal_errors: list[str] = []
         was_cancelled = False
 
         # Applikationskonsistenz: pro betroffener VM VORHER einen Hyper-V-
@@ -1386,7 +1392,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             if cluster is None or not target.svm_name or not target.volume_name:
                 row.success = False
                 row.error_message = "NetApp-Cluster oder -Volume nicht auflösbar"
-                errors.append(f"{target.volume_name or '?'}: {row.error_message}")
+                fatal_errors.append(f"{target.volume_name or '?'}: {row.error_message}")
                 db.add(row)
                 with _StepCtx(db, run.id, f"snapshot-{target_label}", f"Snapshot erstellen: {target_label}", step_model=BackupRunStep) as ctx:
                     ctx.row.status = RestoreStepStatus.SKIPPED
@@ -1409,7 +1415,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             except Exception as exc:
                 row.success = False
                 row.error_message = str(exc)
-                errors.append(f"{target.volume_name}: {exc}")
+                fatal_errors.append(f"{target.volume_name}: {exc}")
             db.add(row)
 
             # SnapMirror-Update anstossen, falls die Policy das vorsieht --
@@ -1421,9 +1427,10 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             # check-snapmirror, das dieselbe Tabelle fuer die Praesenzpruefung
             # im Policy-/Protection-Group-Formular nutzt). Fehlt die Beziehung
             # oder schlaegt der Trigger fehl, wird das wie ein Checkpoint-Fehler
-            # oben als Warnung vermerkt (Lauf insgesamt FAILED, der Snapshot
-            # selbst bleibt aber gueltig und restorebar) -- der Nutzer soll das
-            # sehen und ueber den Check-Panel-Hinweis die Beziehung anlegen.
+            # oben als Warnung vermerkt (Lauf insgesamt SUCCEEDED_WITH_ERRORS,
+            # der Snapshot selbst bleibt gueltig und restorebar) -- der Nutzer
+            # soll das sehen und ueber den Check-Panel-Hinweis die Beziehung
+            # anlegen.
             if row.success and policy.snapmirror_update:
                 try:
                     with _StepCtx(
@@ -1637,12 +1644,24 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             db.commit()
             return
         run.finished_at = datetime.now(timezone.utc)
+        all_messages = fatal_errors + errors
         if was_cancelled:
             run.status = JobStatus.CANCELLED
-            run.error_message = "; ".join(["Manuell abgebrochen", *errors]) if errors else "Manuell abgebrochen"
+            run.error_message = "; ".join(["Manuell abgebrochen", *all_messages]) if all_messages else "Manuell abgebrochen"
+        elif fatal_errors:
+            # Mindestens ein Storage-Snapshot konnte nicht erstellt werden --
+            # das ist der einzige Grund fuer ein echtes FAILED (Nutzer-Vorgabe
+            # 2026-09-14). Checkpoint-/SnapMirror-Probleme einzelner VMs/Ziele
+            # (in `errors`) fuehren fuer sich allein nur zu
+            # SUCCEEDED_WITH_ERRORS, siehe unten.
+            run.status = JobStatus.FAILED
+            run.error_message = "; ".join(all_messages)
+        elif errors:
+            run.status = JobStatus.SUCCEEDED_WITH_ERRORS
+            run.error_message = "; ".join(errors)
         else:
-            run.status = JobStatus.FAILED if errors else JobStatus.SUCCEEDED
-            run.error_message = "; ".join(errors) if errors else None
+            run.status = JobStatus.SUCCEEDED
+            run.error_message = None
         db.commit()
         # Direkt konstruiert statt ueber _StepCtx -- dessen __exit__ fuellt
         # eine leere Nachricht sonst automatisch mit 'OK', was hier bei
@@ -1653,12 +1672,16 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             final_label, final_message, final_step_status = "Backup abgebrochen", run.error_message, RestoreStepStatus.SKIPPED
         elif run.status == JobStatus.FAILED:
             final_label, final_message, final_step_status = "Backup mit Fehlern beendet", run.error_message, RestoreStepStatus.ERROR
+        elif run.status == JobStatus.SUCCEEDED_WITH_ERRORS:
+            final_label, final_message, final_step_status = "Backup mit Warnungen beendet", run.error_message, RestoreStepStatus.SUCCESS
         else:
             final_label, final_message, final_step_status = "Backup erfolgreich beendet", None, RestoreStepStatus.SUCCESS
         db.add(BackupRunStep(run_id=run.id, step="run-finished", label=final_label, message=final_message, status=final_step_status))
         db.commit()
         # CANCELLED ist bewusst kein Fehler-Alarm wert (der Nutzer hat den
         # Lauf ja absichtlich gestoppt) -- nur ein echtes FAILED benachrichtigt.
+        # SUCCEEDED_WITH_ERRORS gilt als Erfolg (gueltiger, restorebarer
+        # Snapshot vorhanden) und loest bewusst KEINEN Fehler-Alarm aus.
         if run.status == JobStatus.FAILED:
             notify_backup_failure(db, run.policy_name, run.id, run.error_message, run.targets, policy.email_alert_on_failure)
     except Exception as exc:

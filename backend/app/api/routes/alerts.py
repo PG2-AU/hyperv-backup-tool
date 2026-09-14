@@ -72,7 +72,12 @@ def list_alerts(db: Session = Depends(get_db), user=Depends(require_permission(P
         for i, run in enumerate(policy_runs):
             if run.status not in (JobStatus.FAILED, JobStatus.CLEANED_UP_AFTER_FAILURE):
                 continue
-            resolved_run = next((r for r in policy_runs[i + 1 :] if r.status == JobStatus.SUCCEEDED), None)
+            # SUCCEEDED_WITH_ERRORS zaehlt hier bewusst mit -- ein gueltiger,
+            # restorebarer Snapshot existiert, auch wenn einzelne VMs keinen
+            # Checkpoint erstellen konnten (siehe JobStatus-Docstring).
+            resolved_run = next(
+                (r for r in policy_runs[i + 1 :] if r.status in (JobStatus.SUCCEEDED, JobStatus.SUCCEEDED_WITH_ERRORS)), None
+            )
             resolved_at = resolved_run.started_at if resolved_run else run.alert_dismissed_at
             results.append(
                 AlertRead(
