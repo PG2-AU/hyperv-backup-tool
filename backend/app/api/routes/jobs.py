@@ -1485,6 +1485,32 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             except Exception:
                 refreshed_vm = None
 
+            # Widerspruechliches Zwischenergebnis erkennen und verwerfen:
+            # eine .avhdx OHNE jeden Checkpoint kann es bei einem echten,
+            # abgeschlossenen Zustand nie geben (ein Checkpoint-Objekt
+            # erzeugt immer genau diese AVHDX -- ohne Checkpoint gibt es
+            # keinen Grund fuer eine Differenzdatei). Diese Kombination
+            # entsteht ausschliesslich, wenn Remove-VMSnapshot bei einer
+            # LAUFENDEN VM zwar das Checkpoint-Objekt schon entfernt hat,
+            # der zugehoerige Datei-Merge aber im Hintergrund noch laeuft --
+            # live beobachtet bei win10client01 (~2TB-Datendisk, stuendliche
+            # anwendungskonsistente Laeufe), 2026-09-14: rund die Haelfte
+            # der Laeufe fingen genau diesen Zwischenstand ein, wodurch die
+            # naechste volle Discovery (alle 240min) nie eine Chance hatte,
+            # das vor dem naechsten stuendlichen Lauf zu korrigieren --
+            # der Alarm 'hyperv_vm_avhdx_without_checkpoint' blieb dadurch
+            # de facto dauerhaft aktiv. Statt hier einen Retry einzubauen
+            # (wuerde JEDEN Lauf dieser VM verlangsamen, bewusst vermieden,
+            # siehe _get_vm_settled-Kommentar oben) wird das Ergebnis
+            # schlicht verworfen -- der bestehende Fallback unten
+            # (lokal nur den entfernten Namen herausfiltern) greift dann
+            # wie bei einem fehlgeschlagenen Refresh, keine Verschlechterung
+            # gegenueber dem vorherigen (korrekten) Stand.
+            if refreshed_vm is not None and not refreshed_vm.checkpoints and any(
+                v.path.lower().endswith(".avhdx") for v in refreshed_vm.vhds
+            ):
+                refreshed_vm = None
+
             try:
                 hv_vm_fresh = (
                     db.query(HyperVVm).filter(HyperVVm.name == vm_name, HyperVVm.cluster_id == vm_cluster_id).first()
