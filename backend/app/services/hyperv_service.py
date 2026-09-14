@@ -31,6 +31,15 @@ class VhdDetail:
     path: str
     size_bytes: int = 0
     used_bytes: int = 0
+    # Groesse der aufgeloesten BASIS-VHDX, falls path selbst eine .avhdx ist
+    # (Get-VHD-Elternkette serverseitig im selben Skript aufgeloest, siehe
+    # _query_vms -- KEIN zusaetzlicher WinRM-Aufruf). None, wenn path keine
+    # .avhdx ist oder die Kette nicht auflösbar war (Basis fehlt/Fehler).
+    # Grundlage fuer die Inventory-Anzeige "belegter Platz", die bei einem
+    # aktiven Checkpoint sonst die kleine AVHDX-Differenzdatei zeigen wuerde
+    # statt der tatsaechlich belegten Basis-VHDX.
+    base_size_bytes: int | None = None
+    base_used_bytes: int | None = None
 
 
 @dataclass
@@ -384,8 +393,17 @@ class HyperVService:
             "$vms | ForEach-Object { "
             "$vm = $_; "
             "$vhds = @($vm.HardDrives | ForEach-Object { "
-            "$info = Get-VHD -Path $_.Path -ErrorAction SilentlyContinue; "
-            "[PSCustomObject]@{ Path = $_.Path; SizeBytes = $(if ($info) { $info.Size } else { 0 }); UsedBytes = $(if ($info) { $info.FileSize } else { 0 }) } "
+            "$leafPath = $_.Path; "
+            "$info = Get-VHD -Path $leafPath -ErrorAction SilentlyContinue; "
+            "$baseSize = $null; $baseUsed = $null; "
+            "if ($info -and $leafPath -like '*.avhdx') { "
+            "$cur = $info; $depth = 0; "
+            "while ($cur -and $cur.ParentPath -and $depth -lt 8) { "
+            "$cur = Get-VHD -Path $cur.ParentPath -ErrorAction SilentlyContinue; $depth++ "
+            "}; "
+            "if ($cur -and -not $cur.ParentPath) { $baseSize = $cur.Size; $baseUsed = $cur.FileSize } "
+            "}; "
+            "[PSCustomObject]@{ Path = $leafPath; SizeBytes = $(if ($info) { $info.Size } else { 0 }); UsedBytes = $(if ($info) { $info.FileSize } else { 0 }); BaseSizeBytes = $baseSize; BaseUsedBytes = $baseUsed } "
             "}); "
             "$nics = @(Get-VMNetworkAdapter -VM $vm -ErrorAction SilentlyContinue | ForEach-Object { "
             "$vlanId = $null; "
@@ -416,7 +434,11 @@ class HyperVService:
             vhds_raw = e.get("Vhds") or []
             vhds_raw = vhds_raw if isinstance(vhds_raw, list) else [vhds_raw]
             vhds = [
-                VhdDetail(path=v["Path"], size_bytes=int(v.get("SizeBytes") or 0), used_bytes=int(v.get("UsedBytes") or 0))
+                VhdDetail(
+                    path=v["Path"], size_bytes=int(v.get("SizeBytes") or 0), used_bytes=int(v.get("UsedBytes") or 0),
+                    base_size_bytes=int(v["BaseSizeBytes"]) if v.get("BaseSizeBytes") is not None else None,
+                    base_used_bytes=int(v["BaseUsedBytes"]) if v.get("BaseUsedBytes") is not None else None,
+                )
                 for v in vhds_raw
                 if v.get("Path")
             ]

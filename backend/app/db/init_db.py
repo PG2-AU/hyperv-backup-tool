@@ -352,6 +352,7 @@ def init_db(db: Session) -> None:
         conn.commit()
     _add_missing_columns(engine, "hyperv_clusters", {"unreachable_nodes_json": "VARCHAR(2000)"})
     _add_missing_columns(engine, "hyperv_vms", {"checkpoints": "JSON"})
+    _add_missing_columns(engine, "hyperv_vhds", {"base_size_bytes": "INTEGER", "base_used_bytes": "INTEGER"})
     _add_missing_columns(
         engine, "alert_config",
         {

@@ -59,6 +59,13 @@ class HyperVVhd(Base):
     csv_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Groesse der aufgeloesten Basis-VHDX, falls path eine aktive .avhdx ist
+    # (siehe HyperVService._query_vms) -- Grundlage fuer die Inventory-
+    # Anzeige "belegter Platz", die sonst bei einem aktiven Checkpoint die
+    # kleine AVHDX-Differenzdatei zeigen wuerde. None = keine .avhdx oder
+    # Basis nicht auflösbar.
+    base_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    base_used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

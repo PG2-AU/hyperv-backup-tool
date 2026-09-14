@@ -93,7 +93,8 @@ def _apply_vm_discovery_refresh(db: Session, cluster_id: str, vm: HyperVVm, refr
             HyperVVhd(
                 cluster_id=cluster_id, vm_uuid=vm.vm_uuid, vm_name=vm.name, path=vhd.path,
                 csv_name=_resolve_csv_name(_parse_csv_name(vhd.path), existing_csvs),
-                size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes, last_seen_at=now,
+                size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
+                base_size_bytes=vhd.base_size_bytes, base_used_bytes=vhd.base_used_bytes, last_seen_at=now,
             )
         )
 
@@ -356,6 +357,7 @@ def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
                         cluster_id=cluster.id, vm_uuid=vm.id, vm_name=vm.name, path=vhd.path,
                         csv_name=_resolve_csv_name(_parse_csv_name(vhd.path), data.csvs),
                         size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
+                        base_size_bytes=vhd.base_size_bytes, base_used_bytes=vhd.base_used_bytes,
                         last_seen_at=now,
                     )
                 )

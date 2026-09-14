@@ -124,13 +124,19 @@ def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Perm
             cluster=cluster_names.get(vm.cluster_id),
             cluster_id=vm.cluster_id,
             csv_paths=csv_paths,
-            vhdx_size_bytes=sum(v.size_bytes or 0 for v in vhds),
-            vhdx_used_bytes=sum(v.used_bytes or 0 for v in vhds),
+            vhdx_size_bytes=sum((v.base_size_bytes or v.size_bytes or 0) for v in vhds),
+            vhdx_used_bytes=sum((v.base_used_bytes or v.used_bytes or 0) for v in vhds),
             vhds=[
+                # Bei einem aktiven Checkpoint bevorzugt die echte Groesse
+                # der Basis-VHDX statt der kleinen AVHDX-Differenzdatei --
+                # sonst zeigt "belegt" einen irrefuehrend winzigen Wert
+                # (Backlog Punkt 48). base_size_bytes/base_used_bytes werden
+                # serverseitig im selben Get-VM-Aufruf mitaufgeloest (siehe
+                # HyperVService._query_vms), kein Extra-WinRM-Aufruf noetig.
                 VhdInfo(
                     name=win_basename(v.path),
-                    size_bytes=v.size_bytes or 0,
-                    used_bytes=v.used_bytes,
+                    size_bytes=v.base_size_bytes or v.size_bytes or 0,
+                    used_bytes=v.base_used_bytes if v.base_used_bytes is not None else v.used_bytes,
                     csv_path=f"C:\\ClusterStorage\\{v.csv_name}" if v.csv_name else v.path,
                     full_path=v.path,
                 )
