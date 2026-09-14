@@ -3,6 +3,8 @@ Backup-Jobs. Typen: hourly (mehrere feste Uhrzeiten/Tag), daily (eine
 Uhrzeit/Tag), weekly (ein Wochentag + Uhrzeit), monthly (ein Tag des
 Monats + Uhrzeit)."""
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -54,6 +56,44 @@ def update_schedule(
 
     for field, value in payload.model_dump().items():
         setattr(schedule, field, value)
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
+@router.post("/{schedule_id}/pause", response_model=ScheduleRead)
+def pause_schedule(
+    schedule_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> Schedule:
+    """Backups fuer diesen Zeitplan temporaer aussetzen (Backlog-Punkt 52,
+    2026-09-14) -- rein manuell, kein Enddatum. Gleiches Muster wie
+    ResourceGroup.pause_resource_group. Wirkt auf ALLE Resource-Group/
+    Policy-Verknuepfungen, die diesen Zeitplan verwenden."""
+    schedule = db.get(Schedule, schedule_id)
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Zeitplan nicht gefunden")
+    schedule.paused = True
+    schedule.paused_since = datetime.now(timezone.utc)
+    schedule.paused_until = None
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
+@router.post("/{schedule_id}/resume", response_model=ScheduleRead)
+def resume_schedule(
+    schedule_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> Schedule:
+    """Setzt `paused_until` auf JETZT statt paused_since/paused_until zu
+    leeren -- die backup_missed-Erkennung (scheduler.py) braucht dieses
+    Zeitfenster noch, um waehrend der Pause ausgelassene Vorkommen weiterhin
+    korrekt als 'bewusst uebersprungen', nicht als 'verpasst' zu erkennen."""
+    schedule = db.get(Schedule, schedule_id)
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Zeitplan nicht gefunden")
+    schedule.paused = False
+    if schedule.paused_since is not None:
+        schedule.paused_until = datetime.now(timezone.utc)
     db.commit()
     db.refresh(schedule)
     return schedule

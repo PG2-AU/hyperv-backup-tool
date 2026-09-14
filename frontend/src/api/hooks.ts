@@ -536,6 +536,41 @@ export function useResumeResourceGroup() {
   });
 }
 
+// Backups temporaer pausieren, auch auf Policy-/Zeitplan-Ebene (Backlog-
+// Punkt 52) -- gleiches Muster wie usePauseResourceGroup. Policy-Pause
+// nutzt das schon bestehende `enabled`-Feld (siehe app.api.routes.jobs).
+export function usePausePolicy() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<BackupPolicy>(`/jobs/${id}/pause`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+}
+
+export function useResumePolicy() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<BackupPolicy>(`/jobs/${id}/resume`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+}
+
+export function usePauseSchedule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<Schedule>(`/schedules/${id}/pause`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedules"] }),
+  });
+}
+
+export function useResumeSchedule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await apiClient.post<Schedule>(`/schedules/${id}/resume`)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedules"] }),
+  });
+}
+
 export function useCheckSnapMirror() {
   return useMutation({
     mutationFn: async (groups: SnapMirrorCheckGroup[]) =>

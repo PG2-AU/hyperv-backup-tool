@@ -50,6 +50,9 @@ class BackupPolicyRead(BaseModel):
     metrocluster_aware: bool
     email_alert_on_failure: bool
     enabled: bool
+    # Nur fuer die GUI-Anzeige ("pausiert seit ..."), nicht paused_until --
+    # analog zu ResourceGroupRead.paused_since (siehe dort).
+    paused_since: datetime | None = None
     created_at: datetime
 
 

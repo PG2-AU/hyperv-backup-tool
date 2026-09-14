@@ -532,7 +532,7 @@ def _find_schedule_collisions(
         schedule = link.schedule
         policy = link.policy
         group = link.resource_group
-        if schedule is None or policy is None or group is None or not schedule.times or not policy.enabled:
+        if schedule is None or policy is None or group is None or not schedule.times or not policy.enabled or schedule.paused:
             continue
         day_key = _schedule_day_key(schedule)
         for time_str in schedule.times:
@@ -585,6 +585,22 @@ def _find_schedule_collisions(
         summary = ", ".join(f"[{m['rg_name']}] {m['policy_name']} um {m['time_str']} Uhr" for m in members_sorted)
         results.append({"key": key, "members": members_sorted, "summary": summary})
     return results
+
+
+def _occurrence_in_pause_window(
+    paused_since: datetime | None, paused_until: datetime | None, occurrence_utc: datetime
+) -> bool:
+    """Prueft, ob ein Vorkommen in ein (ggf. inzwischen beendetes) Pause-
+    Fenster faellt -- gemeinsame Logik fuer ResourceGroup/BackupPolicy/
+    Schedule in der backup_missed-Erkennung unten (Backlog-Punkt 36/52).
+    `paused_until` bleibt waehrend einer noch laufenden Pause leer (Fenster
+    reicht dann bis 'jetzt'), wird erst beim Fortsetzen/Wiedereinschalten
+    gesetzt."""
+    return (
+        paused_since is not None
+        and occurrence_utc >= paused_since
+        and (paused_until is None or occurrence_utc <= paused_until)
+    )
 
 
 def run_alert_check() -> None:
@@ -781,7 +797,7 @@ def run_alert_check() -> None:
             schedule = link.schedule
             policy = link.policy
             group = link.resource_group
-            if schedule is None or policy is None or group is None or not schedule.times or not policy.enabled:
+            if schedule is None or policy is None or group is None or not schedule.times:
                 continue
             # Live gefunden: ein Zeitplan kann juenger sein als das 48h-
             # Rueckblickfenster (z.B. erst gestern angelegt) -- ohne diese
@@ -800,16 +816,25 @@ def run_alert_check() -> None:
                 if occurrence_local > cutoff_local:
                     continue  # noch innerhalb der Karenzzeit -- normale Verzoegerung, kein Fehlalarm
                 occurrence_utc = occurrence_local.astimezone(timezone.utc)
-                # Backlog-Punkt 36 (Nutzer-Vorgabe 2026-09-09): waehrend
-                # einer (ggf. inzwischen beendeten) Pause der Protection
-                # Group ausgelassene Vorkommen sind bewusst uebersprungen,
-                # nicht verpasst -- paused_until bleibt waehrend einer noch
-                # laufenden Pause leer (Fenster reicht dann bis "jetzt").
-                if (
-                    group.paused_since is not None
-                    and occurrence_utc >= group.paused_since
-                    and (group.paused_until is None or occurrence_utc <= group.paused_until)
-                ):
+                # Backlog-Punkt 36/52: waehrend einer (ggf. inzwischen
+                # beendeten) Pause der Protection Group, Policy oder des
+                # Zeitplans ausgelassene Vorkommen sind bewusst
+                # uebersprungen, nicht verpasst.
+                if _occurrence_in_pause_window(group.paused_since, group.paused_until, occurrence_utc):
+                    continue
+                if _occurrence_in_pause_window(policy.paused_since, policy.paused_until, occurrence_utc):
+                    continue
+                if _occurrence_in_pause_window(schedule.paused_since, schedule.paused_until, occurrence_utc):
+                    continue
+                # Altbestand (Policy vor Backlog-Punkt 52 bereits deaktiviert,
+                # also ohne je gesetztes paused_since): ohne bekanntes
+                # Pausen-Fenster bleibt "aktuell deaktiviert" der einzige
+                # verfuegbare Anhaltspunkt -- besser dauerhaft uebersprungen
+                # als eine Flut falscher Alarme fuer eine schon lange
+                # bewusst deaktivierte Policy. Sobald sie einmal ueber die
+                # neue Pause/Fortsetzen-Logik umgeschaltet wird, greift ab
+                # dann der praezisere Fenster-Check oben.
+                if not policy.enabled and policy.paused_since is None:
                     continue
                 # ResourceGroupPolicyLink hat keinen eigenen Primärschluessel
                 # (zusammengesetzt aus resource_group_id+policy_id) -- beide
@@ -1254,8 +1279,6 @@ def run_scheduled_backups() -> None:
             group = link.resource_group
             if schedule is None or policy is None or group is None or not schedule.times:
                 continue
-            if not policy.enabled:
-                continue
             if schedule.id not in occurrences_by_schedule:
                 occurrences_by_schedule[schedule.id] = _occurrences_within(schedule, last_check_local, now_local)
             for occurrence in occurrences_by_schedule[schedule.id]:
@@ -1285,19 +1308,29 @@ def run_scheduled_backups() -> None:
 
         # Phase 2: jetzt erst ausfuehren.
         for link, schedule, policy, group, occurrence in due:
-            if group.paused:
-                # Backlog-Punkt 36 (Nutzer-Vorgabe 2026-09-09): rein manuell
-                # pausierte Protection Group -- faelliges Vorkommen bewusst
-                # NICHT ausfuehren, aber auch nicht als Fehler loggen. Der
-                # Checkpoint (status_row.last_scheduled_backup_check_at) ist
-                # bereits VOR dieser Schleife committet, dieses Vorkommen wird
-                # also nicht beim naechsten Tick nachgeholt. Die
-                # backup_missed-Erkennung unten kennt paused_since/
-                # paused_until und meldet es deshalb ebenfalls nicht als
-                # verpasst.
+            if group.paused or not policy.enabled or schedule.paused:
+                # Backlog-Punkt 36/52: rein manuell pausierte Protection
+                # Group, Policy (enabled=False, seit Backlog-Punkt 52 auch
+                # die Pausier-Funktion fuer Policies) oder Zeitplan --
+                # faelliges Vorkommen bewusst NICHT ausfuehren, aber auch
+                # nicht als Fehler loggen. Der Checkpoint (status_row.
+                # last_scheduled_backup_check_at) ist bereits VOR dieser
+                # Schleife committet, dieses Vorkommen wird also nicht beim
+                # naechsten Tick nachgeholt. Die backup_missed-Erkennung
+                # unten kennt die jeweiligen paused_since/paused_until-
+                # Fenster und meldet es deshalb ebenfalls nicht als verpasst.
+                reasons = ", ".join(
+                    label
+                    for cond, label in (
+                        (group.paused, "Protection Group pausiert"),
+                        (not policy.enabled, "Policy pausiert"),
+                        (schedule.paused, "Zeitplan pausiert"),
+                    )
+                    if cond
+                )
                 _log(
                     db,
-                    f"Geplanter Backup-Lauf uebersprungen (Protection Group pausiert): '{group.name}' / "
+                    f"Geplanter Backup-Lauf uebersprungen ({reasons}): '{group.name}' / "
                     f"Policy '{policy.name}' (Zeitplan '{schedule.name}', faellig {occurrence.strftime('%Y-%m-%d %H:%M')})",
                 )
                 continue

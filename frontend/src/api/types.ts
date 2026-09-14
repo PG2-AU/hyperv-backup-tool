@@ -506,6 +506,8 @@ export interface Schedule {
   weekday?: number | null;
   day_of_month?: number | null;
   created_at: string;
+  paused: boolean;
+  paused_since?: string | null;
 }
 
 export interface SnapMirrorLabel {
@@ -530,6 +532,7 @@ export interface BackupPolicy {
   metrocluster_aware: boolean;
   email_alert_on_failure: boolean;
   enabled: boolean;
+  paused_since?: string | null;
   created_at: string;
 }
 

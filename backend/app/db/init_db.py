@@ -353,6 +353,10 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "hyperv_clusters", {"unreachable_nodes_json": "VARCHAR(2000)"})
     _add_missing_columns(engine, "hyperv_vms", {"checkpoints": "JSON"})
     _add_missing_columns(engine, "hyperv_vhds", {"base_size_bytes": "INTEGER", "base_used_bytes": "INTEGER"})
+    _add_missing_columns(engine, "backup_policies", {"paused_since": "DATETIME", "paused_until": "DATETIME"})
+    _add_missing_columns(
+        engine, "schedules", {"paused": "BOOLEAN", "paused_since": "DATETIME", "paused_until": "DATETIME"}
+    )
     _add_missing_columns(
         engine, "alert_config",
         {

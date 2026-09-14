@@ -56,7 +56,20 @@ class BackupPolicy(Base):
     # Setzt zusaetzlich voraus, dass SMTP unter Settings > E-Mail konfiguriert
     # und aktiviert ist.
     email_alert_on_failure: Mapped[bool] = mapped_column(Boolean, default=False)
+    # `enabled=False` dient seit 2026-09-14 (Backlog-Punkt 52) auch als die
+    # "Pausieren"-Funktion fuer Policies (GUI-Status zeigte "pausiert" bei
+    # enabled=False schon vorher an -- bewusst dasselbe Feld wiederverwendet
+    # statt ein zweites, verwirrendes Pausier-Feld einzufuehren). paused_
+    # since/paused_until tragen dafuer dasselbe Zeitfenster-Muster wie
+    # ResourceGroup.paused_since/-until nach: verhindert, dass ein
+    # Wiedereinschalten nach laengerer Pause die backup_missed-Erkennung
+    # (scheduler.py) mit einer Flut falscher 'verpasst'-Alarme fuer jedes
+    # waehrend der Pause ausgelassene Vorkommen ueberschwemmt.
+    # paused_until bleibt waehrend einer laufenden Pause leer und wird erst
+    # beim Wiedereinschalten auf den aktuellen Zeitpunkt gesetzt.
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    paused_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    paused_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     snapmirror_label = relationship("SnapMirrorLabel")

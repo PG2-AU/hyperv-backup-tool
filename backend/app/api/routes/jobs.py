@@ -254,6 +254,46 @@ def update_job(
     return policy
 
 
+@router.post("/{job_id}/pause", response_model=BackupPolicyRead)
+def pause_job(
+    job_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> BackupPolicy:
+    """Backups fuer diese Policy temporaer aussetzen (Backlog-Punkt 52,
+    2026-09-14) -- rein manuell, kein Enddatum. Nutzt bewusst das schon
+    bestehende `enabled`-Feld (die GUI zeigte enabled=False schon vorher
+    als 'pausiert' an, siehe schemas.backup.BackupPolicyRead) statt ein
+    zweites, verwirrendes Pausier-Feld einzufuehren -- gleiches Muster wie
+    ResourceGroup.pause_resource_group."""
+    policy = db.get(BackupPolicy, job_id)
+    if policy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
+    policy.enabled = False
+    policy.paused_since = datetime.now(timezone.utc)
+    policy.paused_until = None
+    db.commit()
+    db.refresh(policy)
+    return policy
+
+
+@router.post("/{job_id}/resume", response_model=BackupPolicyRead)
+def resume_job(
+    job_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_CREATE)),
+) -> BackupPolicy:
+    """Setzt `paused_until` auf JETZT statt paused_since/paused_until zu
+    leeren -- die backup_missed-Erkennung (scheduler.py) braucht dieses
+    Zeitfenster noch, um waehrend der Pause ausgelassene Vorkommen weiterhin
+    korrekt als 'bewusst uebersprungen', nicht als 'verpasst' zu erkennen."""
+    policy = db.get(BackupPolicy, job_id)
+    if policy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy nicht gefunden")
+    policy.enabled = True
+    if policy.paused_since is not None:
+        policy.paused_until = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(policy)
+    return policy
+
+
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_job(
     job_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_DELETE)),

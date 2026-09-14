@@ -21,11 +21,15 @@ import {
   useDeleteResourceGroup,
   useDeleteSchedule,
   useJobRuns,
+  usePausePolicy,
   usePauseResourceGroup,
+  usePauseSchedule,
   usePolicies,
   useCancelJobRun,
   useResourceGroups,
+  useResumePolicy,
   useResumeResourceGroup,
+  useResumeSchedule,
   useSchedules,
   useTriggerJobRun,
 } from "@/api/hooks";
@@ -77,6 +81,8 @@ export function JobsPage() {
   const cancelRun = useCancelJobRun();
   const [groupPickerPolicy, setGroupPickerPolicy] = useState<BackupPolicy | null>(null);
   const deletePolicy = useDeletePolicy();
+  const pausePolicy = usePausePolicy();
+  const resumePolicy = useResumePolicy();
   const [logsOpened, { open: openLogs, close: closeLogs }] = useDisclosure(false);
   const [logContext, setLogContext] = useState<string | undefined>(undefined);
   const [logTitle, setLogTitle] = useState<string | undefined>(undefined);
@@ -96,6 +102,8 @@ export function JobsPage() {
 
   const { data: schedules } = useSchedules();
   const deleteSchedule = useDeleteSchedule();
+  const pauseSchedule = usePauseSchedule();
+  const resumeSchedule = useResumeSchedule();
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
   const [duplicateFromSchedule, setDuplicateFromSchedule] = useState<Schedule | null>(null);
@@ -291,6 +299,42 @@ export function JobsPage() {
     });
   }
 
+  function togglePolicyPause(policy: BackupPolicy) {
+    const mutation = policy.enabled ? pausePolicy : resumePolicy;
+    mutation.mutate(policy.id, {
+      onSuccess: () =>
+        notifications.show({
+          title: policy.enabled ? "Policy pausiert" : "Policy fortgesetzt",
+          message: policy.name,
+          color: "blue",
+        }),
+      onError: (err) =>
+        notifications.show({
+          title: "Fehler",
+          message: apiErrorMessage(err, "Status konnte nicht geändert werden."),
+          color: "red",
+        }),
+    });
+  }
+
+  function toggleSchedulePause(schedule: Schedule) {
+    const mutation = schedule.paused ? resumeSchedule : pauseSchedule;
+    mutation.mutate(schedule.id, {
+      onSuccess: () =>
+        notifications.show({
+          title: schedule.paused ? "Zeitplan fortgesetzt" : "Zeitplan pausiert",
+          message: schedule.name,
+          color: "blue",
+        }),
+      onError: (err) =>
+        notifications.show({
+          title: "Fehler",
+          message: apiErrorMessage(err, "Status konnte nicht geändert werden."),
+          color: "red",
+        }),
+    });
+  }
+
   return (
     <Stack>
       <Title order={3}>Backup</Title>
@@ -357,15 +401,28 @@ export function JobsPage() {
                       )}
                     </Table.Td>
                     <Table.Td>
-                      <Badge color={policy.enabled ? "green" : "gray"} variant="light">
-                        {policy.enabled ? "aktiv" : "pausiert"}
-                      </Badge>
+                      {policy.enabled ? (
+                        <Badge color="green" variant="light">
+                          aktiv
+                        </Badge>
+                      ) : (
+                        <Tooltip label={policy.paused_since ? `Pausiert seit ${new Date(policy.paused_since).toLocaleString("de-DE")}` : "Pausiert"}>
+                          <Badge color="gray" variant="light">
+                            pausiert
+                          </Badge>
+                        </Tooltip>
+                      )}
                     </Table.Td>
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">
                         <Tooltip label="Jetzt ausführen">
                           <ActionIcon variant="light" onClick={() => runNow(policy)}>
                             <IconBolt size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label={policy.enabled ? "Backup pausieren" : "Backup fortsetzen"}>
+                          <ActionIcon variant="light" color={policy.enabled ? "gray" : "green"} onClick={() => togglePolicyPause(policy)}>
+                            {policy.enabled ? <IconPlayerPause size={16} /> : <IconPlayerPlay size={16} />}
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Bearbeiten">
@@ -515,6 +572,7 @@ export function JobsPage() {
                   <Table.Th>Name</Table.Th>
                   <Table.Th>Typ</Table.Th>
                   <Table.Th>Details</Table.Th>
+                  <Table.Th>Status</Table.Th>
                   <Table.Th>Aktionen</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -529,7 +587,25 @@ export function JobsPage() {
                     </Table.Td>
                     <Table.Td>{formatSchedule(s)}</Table.Td>
                     <Table.Td>
+                      {s.paused ? (
+                        <Tooltip label={s.paused_since ? `Pausiert seit ${new Date(s.paused_since).toLocaleString("de-DE")}` : "Pausiert"}>
+                          <Badge color="gray" variant="light">
+                            pausiert
+                          </Badge>
+                        </Tooltip>
+                      ) : (
+                        <Badge color="green" variant="light">
+                          aktiv
+                        </Badge>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
                       <Group gap="xs">
+                        <Tooltip label={s.paused ? "Backup fortsetzen" : "Backup pausieren"}>
+                          <ActionIcon variant="light" color={s.paused ? "green" : "gray"} onClick={() => toggleSchedulePause(s)}>
+                            {s.paused ? <IconPlayerPlay size={16} /> : <IconPlayerPause size={16} />}
+                          </ActionIcon>
+                        </Tooltip>
                         <Tooltip label="Bearbeiten">
                           <ActionIcon variant="light" onClick={() => openEditSchedule(s)}>
                             <IconEdit size={16} />

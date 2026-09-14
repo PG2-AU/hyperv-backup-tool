@@ -53,3 +53,5 @@ class ScheduleRead(BaseModel):
     weekday: int | None = None
     day_of_month: int | None = None
     created_at: datetime
+    paused: bool = False
+    paused_since: datetime | None = None

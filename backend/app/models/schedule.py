@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Enum, Integer, JSON, String
+from sqlalchemy import Boolean, Enum, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -30,3 +30,15 @@ class Schedule(Base):
     weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0=Montag..6=Sonntag, nur WEEKLY
     day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-31, nur MONTHLY
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # Backups fuer diesen Zeitplan temporaer aussetzen (Backlog-Punkt 52,
+    # 2026-09-14) -- rein manuell, kein automatisches Enddatum. Gleiches
+    # Muster wie ResourceGroup.paused/-since/-until: `paused` ist der
+    # massgebliche Schalter fuer run_scheduled_backups, paused_since/
+    # paused_until dienen ausschliesslich der backup_missed-Erkennung
+    # (scheduler.py), um waehrend der Pause ausgelassene Vorkommen
+    # rueckwirkend als bewusst uebersprungen statt verpasst zu erkennen.
+    # Ein Zeitplan kann an mehreren Resource-Group/Policy-Verknuepfungen
+    # gleichzeitig haengen -- ein Pausieren wirkt dann auf alle davon.
+    paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    paused_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    paused_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
