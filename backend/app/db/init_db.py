@@ -357,6 +357,14 @@ def init_db(db: Session) -> None:
     _add_missing_columns(
         engine, "schedules", {"paused": "BOOLEAN", "paused_since": "DATETIME", "paused_until": "DATETIME"}
     )
+    with engine.connect() as conn:
+        # ScheduleRead.paused ist ein Pflicht-bool (nicht optional) --
+        # ohne Backfill bekommen bestehende Zeilen NULL statt False,
+        # was beim Serialisieren mit einem 500er abstuerzt (identischer
+        # Bug wie zuvor bei backup_policies.email_alert_on_failure/
+        # resource_groups.paused, siehe dort).
+        conn.execute(text("UPDATE schedules SET paused = 0 WHERE paused IS NULL"))
+        conn.commit()
     _add_missing_columns(
         engine, "alert_config",
         {
