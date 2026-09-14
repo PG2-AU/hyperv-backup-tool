@@ -962,32 +962,13 @@ class _CheckpointResult:
     node_session: object | None = None
     message: str = ""
     error: str = ""
-
-
-@dataclass
-class _NodeRefreshResult:
-    """Ergebnis EINER Sammel-Abfrage aller VMs eines Knotens, direkt NACH
-    Abschluss aller Checkpoint-Erstellungen dieses Knotens (siehe
-    _run_node_checkpoints) -- ersetzt den frueheren Get-VM-Aufruf JE VM
-    (Commit e5b6130, am 2026-09-12 wegen CredSSP-Verdachts entfernt, siehe
-    [[credssp-checkpoint-auth-failures]]) durch GENAU EINEN Aufruf JE
-    KNOTEN (list_vms ohne Namensfilter -- dieselbe Abfrage wie bei einer
-    regulaeren Discovery), der alle VMs dieses Knotens auf einmal liefert.
-    Bei einem Knoten mit mehreren VMs im selben Lauf damit ein Bruchteil
-    der vorherigen WinRM-Zusatzlast; bei genau einer VM identisch zu
-    vorher. Timing bleibt korrekt: innerhalb eines Knotens wird seriell
-    gearbeitet, der Checkpoint-Zustand jeder VM dieses Knotens ist zu
-    diesem Zeitpunkt bereits final (Checkpoints werden erst in einer
-    spaeteren, separaten Phase nach dem Storage-Snapshot wieder entfernt).
-    node_service/node_session sind None, wenn der Knoten unerreichbar war
-    (vms_by_name dann leer) -- best-effort, keine Verschlechterung
-    gegenueber dem vorherigen Verhalten."""
-
-    node_address: str
-    node_service: HyperVService | None
-    node_session: object | None
-    vms_by_name: dict[str, VirtualMachineInfo]
-    vm_cluster_ids: dict[str, str]
+    # Best-effort get_vm()-Ergebnis direkt nach erfolgreichem Checkpoint,
+    # auf derselben schon verbundenen Session (siehe _run_node_checkpoints)
+    # -- macht den zum Backup-Zeitpunkt tatsaechlichen VHD-Zustand nutzbar,
+    # statt der ggf. veralteten HyperVVhd-DB-Zeilen (siehe [[avhdx-without-checkpoint-discovery-freeze]],
+    # Teil 3). None wenn der Refresh fehlschlaegt -- dann bleibt
+    # BackupRunVmConfig.vhds wie zuvor (keine Verschlechterung).
+    refreshed_vm: VirtualMachineInfo | None = None
 
 
 @dataclass
@@ -1022,12 +1003,8 @@ def _run_node_checkpoints(
     ("start", (vm_name, node_address)) direkt vor create_checkpoint,
     ("done", _CheckpointResult) danach. Fuer JEDE VM des Knotens kommt
     genau ein "done" -- der Haupt-Thread zaehlt darueber, wann alles fertig
-    ist. Zusaetzlich kommt GENAU EIN ("node-refresh", _NodeRefreshResult)
-    je Knoten, nachdem alle Checkpoints dieses Knotens erstellt wurden
-    (bzw. sofort, falls der Knoten gar nicht erreichbar war) -- siehe
-    _NodeRefreshResult."""
+    ist."""
     step_timeout = settings.winrm_backup_step_timeout_seconds
-    vm_cluster_ids = dict(job.vms)
     try:
         node_service = HyperVService(
             settings, job.node_address, use_https=job.use_https, ps_timeout_sec=step_timeout
@@ -1036,32 +1013,32 @@ def _run_node_checkpoints(
     except Exception as exc:  # noqa: BLE001 -- Knoten unerreichbar: alle seine VMs crash-konsistent
         for vm, cid in job.vms:
             progress.put(("done", _CheckpointResult(vm, cid, job.node_address, ok=False, error=f"Knoten nicht erreichbar ({exc})")))
-        progress.put(("node-refresh", _NodeRefreshResult(job.node_address, None, None, {}, vm_cluster_ids)))
         return
     for vm_name, cluster_id in job.vms:
         progress.put(("start", (vm_name, job.node_address)))
         try:
             node_service.create_checkpoint(node_session, vm_name, checkpoint_name, consistency)
+            # TEMPORAER DEAKTIVIERT 2026-09-12 (siehe [[credssp-checkpoint-auth-failures]]):
+            # der zusaetzliche Get-VM-Aufruf direkt nach der Checkpoint-
+            # Erstellung (seit e5b6130) steht im Verdacht, zu den seit
+            # 2026-09-12 live beobachteten CredSSP-/Anmeldefehlern
+            # beizutragen (mehr WinRM-Operationen pro Knoten waehrend des
+            # Checkpoint-Laufs). Bewusst nur der Aufruf entfernt, nicht die
+            # Weiterverarbeitung -- refreshed_vm bleibt None, wodurch der
+            # Refresh in _execute_job_run einfach nichts tut (kein
+            # Funktionsverlust ausser der Teil-3-Sofort-Aktualisierung).
+            refreshed_vm = None
             progress.put((
                 "done",
                 _CheckpointResult(
                     vm_name, cluster_id, job.node_address, ok=True,
                     node_service=node_service, node_session=node_session,
                     message=f"Checkpoint '{checkpoint_name}' auf Knoten '{job.node_address}' erstellt",
+                    refreshed_vm=refreshed_vm,
                 ),
             ))
         except Exception as exc:  # noqa: BLE001 -- eine VM scheitert, die anderen des Knotens laufen weiter
             progress.put(("done", _CheckpointResult(vm_name, cluster_id, job.node_address, ok=False, error=str(exc))))
-
-    # Sammel-Abfrage NACH allen Checkpoints dieses Knotens (siehe
-    # _NodeRefreshResult) -- EIN WinRM-Aufruf statt vormals einem je VM.
-    # Best-effort: schlaegt sie fehl, bleibt BackupRunVmConfig.vhds wie von
-    # _start_job_run erfasst (keine Verschlechterung).
-    try:
-        fresh_vms_by_name = {v.name: v for v in node_service.list_vms(node_session)}
-    except Exception:
-        fresh_vms_by_name = {}
-    progress.put(("node-refresh", _NodeRefreshResult(job.node_address, node_service, node_session, fresh_vms_by_name, vm_cluster_ids)))
 
 
 def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
@@ -1259,7 +1236,6 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                 node_count = len(vms_by_node)
                 workers = node_count if max_parallel == 0 else max(1, min(max_parallel, node_count))
                 outstanding = sum(len(j.vms) for j in vms_by_node.values())
-                outstanding_node_refreshes = node_count
                 progress: queue.Queue = queue.Queue()
                 running_rows: dict[str, BackupRunStep] = {}
                 with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="checkpoint") as ex:
@@ -1267,7 +1243,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                         ex.submit(_run_node_checkpoints, settings, job, checkpoint_name, policy.consistency, progress)
                         for job in vms_by_node.values()
                     ]
-                    while outstanding > 0 or outstanding_node_refreshes > 0:
+                    while outstanding > 0:
                         try:
                             kind, payload = progress.get(timeout=1.0)
                         except queue.Empty:
@@ -1288,73 +1264,6 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                             db.commit()
                             running_rows[vm_name] = row
                             continue
-                        if kind == "node-refresh":
-                            outstanding_node_refreshes -= 1
-                            nres: _NodeRefreshResult = payload
-                            # Den soeben (im Worker) frisch abgefragten VHD-
-                            # Zustand ALLER VMs dieses Knotens SOFORT in die
-                            # fuer diesen Lauf bereits angelegten
-                            # BackupRunVmConfig-Zeilen uebernehmen, statt auf
-                            # die naechste volle Discovery zu warten -- siehe
-                            # [[avhdx-without-checkpoint-discovery-freeze]],
-                            # Teil 3. Deckt insbesondere einen bereits VOR
-                            # diesem Lauf manuell angelegten Checkpoint ab,
-                            # den die letzte Discovery noch nicht kannte.
-                            for vm_name, cluster_id in nres.vm_cluster_ids.items():
-                                fresh_vm = nres.vms_by_name.get(vm_name)
-                                if fresh_vm is None:
-                                    continue
-                                try:
-                                    hv_vm_fresh = (
-                                        db.query(HyperVVm)
-                                        .filter(HyperVVm.name == vm_name, HyperVVm.cluster_id == cluster_id)
-                                        .first()
-                                    )
-                                    if hv_vm_fresh is None:
-                                        continue
-                                    _apply_vm_discovery_refresh(db, cluster_id, hv_vm_fresh, fresh_vm)
-                                    db.flush()
-                                    cfg = (
-                                        db.query(BackupRunVmConfig)
-                                        .filter(BackupRunVmConfig.run_id == run.id, BackupRunVmConfig.vm_name == vm_name)
-                                        .first()
-                                    )
-                                    if cfg is not None:
-                                        hyperv_csv_by_name = {c.name: c for c in db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).all()}
-                                        fresh_vhds = (
-                                            db.query(HyperVVhd)
-                                            .filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_uuid == hv_vm_fresh.vm_uuid)
-                                            .all()
-                                        )
-                                        # Fuer jede AVHDX (aktiver Checkpoint)
-                                        # zusaetzlich die echte Groesse der
-                                        # Basis-VHDX ermitteln (Teil 5) --
-                                        # dieselbe schon offene Node-Session
-                                        # wiederverwendet, best-effort.
-                                        base_sizes_by_path: dict[str, tuple[int, int]] = {}
-                                        for fresh_vhd in fresh_vhds:
-                                            if fresh_vhd.path.lower().endswith(".avhdx"):
-                                                resolved = _resolve_base_vhd_size(nres.node_service, nres.node_session, fresh_vhd.path)
-                                                if resolved:
-                                                    base_sizes_by_path[fresh_vhd.path] = resolved
-                                        cfg.vhds = _build_vhd_entries(fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name, base_sizes_by_path)
-                                        cfg.checkpoints = list(hv_vm_fresh.checkpoints or [])
-                                    db.commit()
-                                except Exception:
-                                    # Best-effort -- BackupRunVmConfig.vhds/
-                                    # checkpoints bleiben dann wie von
-                                    # _start_job_run erfasst (keine
-                                    # Verschlechterung). WICHTIG: rollback,
-                                    # nicht nur "pass" -- siehe
-                                    # [[credssp-checkpoint-auth-failures]] /
-                                    # commit 4060628 fuer den Hintergrund
-                                    # (sonst bleibt die Session im Zustand
-                                    # "pending rollback", jede weitere
-                                    # DB-Operation dieses Laufs schlaegt dann
-                                    # ebenfalls fehl, nicht nur dieser eine
-                                    # Refresh).
-                                    db.rollback()
-                            continue
                         # kind == "done"
                         res: _CheckpointResult = payload
                         outstanding -= 1
@@ -1369,10 +1278,66 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                             row.status = RestoreStepStatus.SUCCESS
                             row.message = res.message
                             active_checkpoints.append((res.node_service, res.node_session, res.vm_name, res.cluster_id))
-                            # Die eigentliche BackupRunVmConfig-Aktualisierung
-                            # passiert jetzt gebuendelt ueber die
-                            # "node-refresh"-Nachricht (siehe oben) statt hier
-                            # je VM.
+                            # Den soeben (im Worker) frisch abgefragten VHD-
+                            # Zustand SOFORT in die fuer DIESEN Lauf bereits
+                            # angelegte BackupRunVmConfig uebernehmen, statt
+                            # auf die naechste volle Discovery zu warten --
+                            # siehe [[avhdx-without-checkpoint-discovery-freeze]],
+                            # Teil 3. Deckt insbesondere einen bereits VOR
+                            # diesem Lauf manuell angelegten Checkpoint ab,
+                            # den die letzte Discovery noch nicht kannte.
+                            if res.refreshed_vm is not None and res.cluster_id:
+                                try:
+                                    hv_vm_fresh = (
+                                        db.query(HyperVVm)
+                                        .filter(HyperVVm.name == res.vm_name, HyperVVm.cluster_id == res.cluster_id)
+                                        .first()
+                                    )
+                                    if hv_vm_fresh is not None:
+                                        _apply_vm_discovery_refresh(db, res.cluster_id, hv_vm_fresh, res.refreshed_vm)
+                                        db.flush()
+                                        cfg = (
+                                            db.query(BackupRunVmConfig)
+                                            .filter(BackupRunVmConfig.run_id == run.id, BackupRunVmConfig.vm_name == res.vm_name)
+                                            .first()
+                                        )
+                                        if cfg is not None:
+                                            hyperv_csv_by_name = {c.name: c for c in db.query(HyperVCsv).filter(HyperVCsv.cluster_id == res.cluster_id).all()}
+                                            fresh_vhds = (
+                                                db.query(HyperVVhd)
+                                                .filter(HyperVVhd.cluster_id == res.cluster_id, HyperVVhd.vm_uuid == hv_vm_fresh.vm_uuid)
+                                                .all()
+                                            )
+                                            # Fuer jede AVHDX (aktiver Checkpoint)
+                                            # zusaetzlich die echte Groesse der
+                                            # Basis-VHDX ermitteln (Teil 5) --
+                                            # dieselbe schon offene Node-Session
+                                            # wiederverwendet, best-effort.
+                                            base_sizes_by_path: dict[str, tuple[int, int]] = {}
+                                            for fresh_vhd in fresh_vhds:
+                                                if fresh_vhd.path.lower().endswith(".avhdx"):
+                                                    resolved = _resolve_base_vhd_size(res.node_service, res.node_session, fresh_vhd.path)
+                                                    if resolved:
+                                                        base_sizes_by_path[fresh_vhd.path] = resolved
+                                            cfg.vhds = _build_vhd_entries(fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name, base_sizes_by_path)
+                                            cfg.checkpoints = list(hv_vm_fresh.checkpoints or [])
+                                except Exception:
+                                    # Best-effort -- BackupRunVmConfig.vhds/
+                                    # checkpoints bleiben dann wie von
+                                    # _start_job_run erfasst (keine
+                                    # Verschlechterung). WICHTIG: rollback,
+                                    # nicht nur "pass" -- live reproduziert
+                                    # (zwei absichtlich parallel gestartete
+                                    # Laeufe): ein durch echte Nebenlaeufigkeit
+                                    # ausgeloester "database is locked"-Fehler
+                                    # (SQLite, siehe app.db.session) laesst die
+                                    # Session sonst im Zustand "pending
+                                    # rollback" zurueck -- JEDE weitere
+                                    # DB-Operation dieses Laufs (auch fuer
+                                    # andere VMs/Schritte) schlaegt dann
+                                    # ebenfalls fehl, nicht nur dieser eine
+                                    # Refresh.
+                                    db.rollback()
                         else:
                             row.status = RestoreStepStatus.ERROR
                             row.message = res.error
