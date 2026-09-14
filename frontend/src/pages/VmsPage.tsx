@@ -260,9 +260,15 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
   );
 }
 
+// Gemeinsam von CsvChainHeader (Detailansicht) und der CSV-Tabellenspalte
+// "Anzahl VMs" genutzt -- ein CSV traegt selbst keine VM-Liste, daher ueber
+// vm.csv_paths (Ordnername je VHD-Pfad) rueckwaerts aufgeloest.
+function vmsOnCsv(csv: Csv, vms: Vm[] | undefined): Vm[] {
+  return vms?.filter((vm) => vm.cluster_id === csv.cluster_id && vm.csv_paths.some((p) => p.split(/[\\/]/).pop() === csv.name)) ?? [];
+}
+
 function CsvChainHeader({ csv, vms, onClose }: { csv: Csv; vms: Vm[] | undefined; onClose: () => void }) {
-  const vmsOnCsv =
-    vms?.filter((vm) => vm.cluster_id === csv.cluster_id && vm.csv_paths.some((p) => p.split(/[\\/]/).pop() === csv.name)) ?? [];
+  const vmsOnThisCsv = vmsOnCsv(csv, vms);
 
   return (
     <Paper withBorder p="md">
@@ -279,8 +285,8 @@ function CsvChainHeader({ csv, vms, onClose }: { csv: Csv; vms: Vm[] | undefined
           <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
             VMs auf diesem CSV:
           </Text>
-          {vmsOnCsv.length ? (
-            vmsOnCsv.map((vm) => (
+          {vmsOnThisCsv.length ? (
+            vmsOnThisCsv.map((vm) => (
               <Badge key={vm.id} color="teal" variant="light">
                 {vm.name}
               </Badge>
@@ -699,6 +705,7 @@ export function VmsPage() {
                 <Table.Th>Belegung</Table.Th>
                 <Table.Th>LUN</Table.Th>
                 <Table.Th>Volume</Table.Th>
+                <Table.Th>Anzahl VMs</Table.Th>
                 <Table.Th>Protection Group</Table.Th>
                 <Table.Th>Protected</Table.Th>
                 <Table.Th>Aktionen</Table.Th>
@@ -755,6 +762,7 @@ export function VmsPage() {
                       )}
                     </Table.Td>
                     <Table.Td>{csv.volume_name ?? "-"}</Table.Td>
+                    <Table.Td>{vmsOnCsv(csv, vms).length}</Table.Td>
                     <Table.Td>
                       <ResourceGroupCell groups={csv.resource_group_names} policies={csv.policy_names} />
                     </Table.Td>
