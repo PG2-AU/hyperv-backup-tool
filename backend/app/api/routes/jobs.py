@@ -1530,6 +1530,55 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                     # manuellen "VM Discovery"-Aktion (beide vms.py), hier
                     # nur automatisiert nach jedem Backup aufgerufen.
                     _apply_vm_discovery_refresh(db, vm_cluster_id, hv_vm_fresh, refreshed_vm)
+                    db.flush()
+                    # Zusaetzlich (2026-09-14, ersetzt den in e5b6130
+                    # eingefuehrten und wegen CredSSP-Verdachts in 2f63aec
+                    # wieder entfernten separaten Get-VM-Aufruf waehrend der
+                    # Checkpoint-ERSTELLUNG, siehe [[credssp-checkpoint-auth-failures]]):
+                    # BackupRunVmConfig.vhds/.checkpoints dieses Laufs auf
+                    # denselben frischen Stand bringen -- KEIN zusaetzlicher
+                    # WinRM-Aufruf, nutzt einfach das oben ohnehin schon fuer
+                    # die Inventory-Aktualisierung geholte refreshed_vm mit.
+                    # Bewusst HIER (nach der Checkpoint-ENTFERNUNG) statt bei
+                    # der Erstellung: der eigene, transiente hvnb_-Checkpoint
+                    # ist zu diesem Zeitpunkt bereits wieder weg -- taucht in
+                    # refreshed_vm also gar nicht erst auf, kein Filtern
+                    # noetig. Ein zum Zeitpunkt des NetApp-Snapshots noch
+                    # zusaetzlich vorhandener hvnb_-Checkpoint hielt ohnehin
+                    # keine eigenen Daten (wurde Sekunden spaeter ohne
+                    # Aenderungen wieder entfernt) -- der jetzt erfasste,
+                    # bereinigte Stand entspricht exakt dem tatsaechlich
+                    # bedeutsamen "Backup-Zeitpunkt". Deckt weiterhin
+                    # zuverlaessig einen bereits VOR diesem Lauf manuell
+                    # angelegten Checkpoint ab, den die letzte Discovery noch
+                    # nicht kannte (siehe [[avhdx-without-checkpoint-discovery-freeze]]
+                    # Teil 3).
+                    cfg = (
+                        db.query(BackupRunVmConfig)
+                        .filter(BackupRunVmConfig.run_id == run.id, BackupRunVmConfig.vm_name == vm_name)
+                        .first()
+                    )
+                    if cfg is not None:
+                        hyperv_csv_by_name = {c.name: c for c in db.query(HyperVCsv).filter(HyperVCsv.cluster_id == vm_cluster_id).all()}
+                        fresh_vhds = (
+                            db.query(HyperVVhd)
+                            .filter(HyperVVhd.cluster_id == vm_cluster_id, HyperVVhd.vm_uuid == hv_vm_fresh.vm_uuid)
+                            .all()
+                        )
+                        # Fuer jede AVHDX (jetzt nur noch moeglich durch
+                        # einen ECHTEN, manuell angelegten Checkpoint --
+                        # unser eigener ist ja bereits entfernt) zusaetzlich
+                        # die echte Groesse der Basis-VHDX ermitteln
+                        # (Teil 5) -- dieselbe schon offene Node-Session
+                        # wiederverwendet, best-effort.
+                        base_sizes_by_path: dict[str, tuple[int, int]] = {}
+                        for fresh_vhd in fresh_vhds:
+                            if fresh_vhd.path.lower().endswith(".avhdx"):
+                                resolved = _resolve_base_vhd_size(node_service, node_session, fresh_vhd.path)
+                                if resolved:
+                                    base_sizes_by_path[fresh_vhd.path] = resolved
+                        cfg.vhds = _build_vhd_entries(fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name, base_sizes_by_path)
+                        cfg.checkpoints = list(hv_vm_fresh.checkpoints or [])
                 elif hv_vm_fresh is not None and hv_vm_fresh.checkpoints:
                     # Refresh nicht verfuegbar (Timeout/Fehler) -- exakt der
                     # bisherige Fallback: nur lokal den soeben entfernten
