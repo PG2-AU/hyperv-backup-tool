@@ -39,6 +39,11 @@ import { matchesAllColumns } from "@/utils/search";
 // Aufloesung wie im Backend-Alarmtext (run_alert_check), nur clientseitig
 // fuer die Inventory-Tabelle nachgebildet, da hier kein Alarm noetig ist,
 // nur eine Anzeige.
+// Ein normaler, vom Tool selbst erstellter Backup-Checkpoint besteht nur
+// Sekunden bis wenige Minuten -- aelter als das gilt als "vermutlich haengen
+// geblieben" (Backlog-Punkt 49, siehe visibleCheckpointsOf unten).
+const STUCK_CHECKPOINT_MINUTES = 10;
+
 function formatCheckpointAge(creationTime: string): string {
   const created = new Date(creationTime);
   if (Number.isNaN(created.getTime())) return "unbekanntes Alter";
@@ -366,9 +371,22 @@ export function VmsPage() {
   // manuellen Checkpoint aufsetzt). Existiert der Checkpoint noch NACH
   // Lauf-Ende, ist das der bekannte Orphan-Fall (AlertType.HYPERV_ORPHAN_
   // CHECKPOINT, siehe scheduler.py) und wird bewusst weiterhin angezeigt.
+  //
+  // Backlog-Punkt 49 (Nutzer-Vorgabe 2026-09-15): die Unterdrueckung allein
+  // ueber "laeuft laut DB gerade ein Backup fuer diese VM" reicht nicht --
+  // ein haengen gebliebener/abgestuerzter Lauf kann beliebig lange als
+  // RUNNING stehen bleiben (WinRM-Timeout noch nicht erreicht, Watchdog
+  // noch nicht gelaufen), waehrenddessen bliebe ein tatsaechlich verwaister
+  // hvnb_-Checkpoint unsichtbar. Zusaetzlich zum Lauf-Status daher auch das
+  // ALTER des Checkpoints pruefen: ein normaler Backup-Checkpoint besteht
+  // nur Sekunden bis wenige Minuten (siehe auch die Karenzzeit-Begruendung
+  // beim Orphan-Alarm oben) -- aelter als STUCK_CHECKPOINT_MINUTES heisst
+  // "vermutlich haengen geblieben", wird dann auch waehrend eines
+  // (vermeintlich) laufenden Backups wieder angezeigt.
   function visibleCheckpointsOf(vm: Vm) {
     if (!vmNamesWithRunningBackup.has(vm.name)) return vm.checkpoints;
-    return vm.checkpoints.filter((cp) => !cp.app_created);
+    const cutoff = Date.now() - STUCK_CHECKPOINT_MINUTES * 60 * 1000;
+    return vm.checkpoints.filter((cp) => !cp.app_created || new Date(cp.creation_time).getTime() < cutoff);
   }
 
   // Live, ohne auf den naechsten Alarm-Check zu warten (analog zum
