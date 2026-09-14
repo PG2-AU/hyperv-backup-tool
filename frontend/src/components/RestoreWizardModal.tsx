@@ -209,6 +209,11 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
   const clusterCsvs = (csvs ?? []).filter((c) => c.hyperv_cluster_name === vm?.cluster);
 
   const vmFull = vms?.find((v) => v.name === vm?.name);
+  // Fuer den "Checkpoint geht verloren"-Hinweis bei REPLACE: nur ein
+  // ECHTER, manuell angelegter Checkpoint auf der Ziel-VM zaehlt --
+  // app_created (hvnb_-Praefix) waere ein Ueberbleibsel eines eigenen
+  // Backup-Laufs, kein Grund fuer die Warnung.
+  const hasManualCheckpoint = (vmFull?.checkpoints ?? []).some((cp) => !cp.app_created);
   const totalCount = finishedRuns.length + (currentVhdPath ? 1 : 0) + queue.length;
 
   const selectedSnapshot = backups?.find((b) => b.id === snapshotId);
@@ -767,7 +772,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
               </Alert>
             )}
 
-            {restoreKind === "replace" && (
+            {restoreKind === "replace" && hasManualCheckpoint && (
               <Alert icon={<IconAlertTriangle size={16} />} color="red" variant="light" title="Vorhandener Checkpoint geht verloren">
                 Diese VM wird dafür zuerst kurz ausgeschaltet, ein aktuell vorhandener Checkpoint wird entfernt
                 und erst danach die VHDX ersetzt -- unabhängig davon, welchen Stand Sie oben gewählt haben. Der
