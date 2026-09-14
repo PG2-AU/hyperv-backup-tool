@@ -81,9 +81,6 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                   <Table.Th>System</Table.Th>
                   <Table.Th>Status</Table.Th>
                   <Table.Th>Policy</Table.Th>
-                  <Table.Th>Volume</Table.Th>
-                  <Table.Th>SVM / Cluster</Table.Th>
-                  <Table.Th>CSVs</Table.Th>
                   <Table.Th>VMs</Table.Th>
                   <Table.Th>Snapshot</Table.Th>
                   <Table.Th />
@@ -111,11 +108,6 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                       )}
                     </Table.Td>
                     <Table.Td>{b.policy_name}</Table.Td>
-                    <Table.Td>{b.volume_name ?? "-"}</Table.Td>
-                    <Table.Td>
-                      {b.svm_name ?? "-"} / {b.netapp_cluster_name ?? "-"}
-                    </Table.Td>
-                    <Table.Td>{b.csv_names.join(", ") || "-"}</Table.Td>
                     <Table.Td>{b.vm_names.join(", ") || "-"}</Table.Td>
                     <Table.Td ff="monospace" fz="xs">
                       {b.snapshot_name ?? "-"}
