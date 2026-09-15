@@ -374,7 +374,7 @@ class HyperVService:
                 )
                 continue
             try:
-                node_service = HyperVService(self._settings, address, use_https=self._use_https)
+                node_service = HyperVService(self._settings, address, use_https=self._use_https, node_hostname=name)
                 node_session = node_service._session(username, password, read_timeout_sec=10, operation_timeout_sec=8)
                 probe = node_service._run_ps(node_session, "$env:COMPUTERNAME")
                 if probe.success:
@@ -619,7 +619,7 @@ class HyperVService:
                 continue
             target = node_ips.get(node.name.lower(), node.name)
             try:
-                node_service = HyperVService(self._settings, target, use_https=self._use_https)
+                node_service = HyperVService(self._settings, target, use_https=self._use_https, node_hostname=node.name)
                 session = node_service._session(username, password)
                 vms = node_service.list_vms(session)
                 data.vms.extend(vms)

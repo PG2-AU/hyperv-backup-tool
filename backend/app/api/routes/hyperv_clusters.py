@@ -147,7 +147,14 @@ def _get_cluster_or_404(db: Session, cluster_id: str) -> HyperVCluster:
 
 
 def _service_for(cluster: HyperVCluster) -> HyperVService:
-    return HyperVService(get_settings(), cluster.management_address, use_https=cluster.use_https)
+    # node_hostname=cluster.hyperv_cluster_name: fuer Kerberos benoetigt
+    # (SPN-Aufloesung ist hostnamenbasiert, cluster.management_address ist
+    # i.d.R. eine IP) -- fuer NTLM/CredSSP wirkungslos. Wird von _refresh_status
+    # (manueller Verify-Button UND periodische Discovery, siehe scheduler.py)
+    # sowie der eigentlichen VM/CSV-Discovery genutzt.
+    return HyperVService(
+        get_settings(), cluster.management_address, use_https=cluster.use_https, node_hostname=cluster.hyperv_cluster_name,
+    )
 
 
 def _apply_summary(cluster: HyperVCluster, summary) -> None:

@@ -1224,6 +1224,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                             settings, hv_cluster.management_address,
                             use_https=hv_cluster.use_https,
                             ps_timeout_sec=settings.winrm_backup_step_timeout_seconds,
+                            node_hostname=hv_cluster.hyperv_cluster_name,
                         )
                         cno_session = cno_service.connect(
                             hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10
