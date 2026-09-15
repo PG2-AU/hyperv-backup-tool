@@ -126,7 +126,9 @@ def test_connection(
     write_krb5_conf(base_settings, payload.realm, payload.kdc_hostname)
     settings = copy.copy(base_settings)
     settings.winrm_transport = "kerberos"
-    service = HyperVService(settings, cluster.management_address, use_https=cluster.use_https)
+    service = HyperVService(
+        settings, cluster.management_address, use_https=cluster.use_https, node_hostname=cluster.hyperv_cluster_name,
+    )
     password = decrypt_secret(cluster.encrypted_password) if cluster.encrypted_password else ""
     try:
         ensure_ticket(cluster.username, password, payload.realm)
