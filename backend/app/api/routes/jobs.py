@@ -675,7 +675,17 @@ def list_backups_for_object(
             .filter(BackupRunVmConfig.run_id.in_(run_ids), BackupRunVmConfig.vm_name == name)
             .all()
         )
+        # Laeufe, bei denen festgestellt wurde, dass GENAU DIESE VM
+        # zwischenzeitlich auf eine andere CSV verschoben war (siehe
+        # BackupRunVmConfig.not_captured) -- der Snapshot deckt ihren
+        # aktuellen Stand dann nicht ab, obwohl er fuer andere VMs auf
+        # derselben CSV gueltig bleibt. Nicht als Restore-Option fuer
+        # diese VM anbieten.
+        not_captured_run_ids = {cfg.run_id for cfg in configs if cfg.not_captured}
+        matched = [r for r in matched if r.run_id not in not_captured_run_ids]
         for cfg in configs:
+            if cfg.not_captured:
+                continue
             cfg_checkpoints = cfg.checkpoints or []
             vhds_by_run_id[cfg.run_id] = [
                 BackupSnapshotVhdRead(
@@ -1379,10 +1389,40 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                                     clusters_needing_discovery.add(res.cluster_id)
                                     errors.append(
                                         f"VM '{res.vm_name}': liegt aktuell auf CSV(s) {', '.join(sorted(current_csvs))} "
-                                        f"statt der zuletzt bekannten {', '.join(sorted(expected))} -- dieser Lauf "
-                                        "sichert eventuell nicht den aktuellen Stand (Hyper-V-Discovery wird automatisch "
-                                        "angestossen)"
+                                        f"statt der zuletzt bekannten {', '.join(sorted(expected))} -- diese VM wurde in "
+                                        "diesem Lauf NICHT gesichert und wird nicht als Wiederherstellungspunkt "
+                                        "angeboten (Hyper-V-Discovery wird automatisch angestossen)"
                                     )
+                                    # Verhindert, dass dieser Lauf fuer GENAU
+                                    # DIESE VM als Restore-Option angeboten
+                                    # wird (list_backups_for_object/
+                                    # list_vm_backup_runs) -- andere VMs auf
+                                    # derselben (korrekt gesicherten) CSV sind
+                                    # davon unberuehrt. cfg existiert immer,
+                                    # da _start_job_run sie vor der
+                                    # Checkpoint-Phase fuer jede Ziel-VM anlegt.
+                                    try:
+                                        cfg_row = (
+                                            db.query(BackupRunVmConfig)
+                                            .filter(BackupRunVmConfig.run_id == run.id, BackupRunVmConfig.vm_name == res.vm_name)
+                                            .first()
+                                        )
+                                        if cfg_row is not None:
+                                            cfg_row.not_captured = True
+                                        # Dieselbe Entfernung wie beim
+                                        # manuellen detach-vm-Endpunkt (siehe
+                                        # detach_vm_from_backup_snapshot) --
+                                        # sonst zeigt "Vorhandene Backups"
+                                        # (Inventory/Job-Verlauf) die VM
+                                        # weiterhin faelschlich als in diesem
+                                        # Snapshot enthalten. Der Snapshot
+                                        # selbst und andere VMs darin bleiben
+                                        # unangetastet.
+                                        for snap_row in db.query(BackupRunSnapshot).filter(BackupRunSnapshot.run_id == run.id).all():
+                                            if res.vm_name in (snap_row.vm_names or []):
+                                                snap_row.vm_names = [v for v in snap_row.vm_names if v != res.vm_name]
+                                    except Exception:
+                                        db.rollback()
                             # Den soeben (im Worker) frisch abgefragten VHD-
                             # Zustand SOFORT in die fuer DIESEN Lauf bereits
                             # angelegte BackupRunVmConfig uebernehmen, statt

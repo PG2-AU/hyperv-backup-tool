@@ -313,6 +313,13 @@ def list_vm_backup_runs(
 
     result: list[VmBackupRunRead] = []
     for cfg in configs:
+        # Wurde beim Checkpoint dieses Laufs festgestellt, dass die VM
+        # zwischenzeitlich auf eine andere CSV verschoben wurde (siehe
+        # app.api.routes.jobs, Vergleich current_vhd_paths vs.
+        # expected_csvs_by_vm), sichert dieser Lauf NICHT den aktuellen
+        # Stand der VM -- nicht als Wiederherstellungspunkt anbieten.
+        if cfg.not_captured:
+            continue
         vhd_volume_keys = {
             (v.get("netapp_cluster_id"), v.get("svm_name"), v.get("volume_name")) for v in (cfg.vhds or [])
         }

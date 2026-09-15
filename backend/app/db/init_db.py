@@ -282,6 +282,10 @@ def init_db(db: Session) -> None:
         },
     )
     _add_missing_columns(engine, "backup_run_vm_configs", {"hyperv_cluster_id": "VARCHAR(36)", "checkpoints": "JSON"})
+    _add_missing_columns(engine, "backup_run_vm_configs", {"not_captured": "BOOLEAN"})
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE backup_run_vm_configs SET not_captured = 0 WHERE not_captured IS NULL"))
+        conn.commit()
     _add_missing_columns(
         engine, "scheduler_status",
         {

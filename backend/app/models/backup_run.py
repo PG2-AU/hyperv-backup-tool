@@ -180,6 +180,15 @@ class BackupRunVmConfig(Base):
     run_id: Mapped[str] = mapped_column(String(36), ForeignKey("backup_runs.id", ondelete="CASCADE"))
     vm_name: Mapped[str] = mapped_column(String(255))
     vm_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # True, wenn beim Checkpoint dieser VM festgestellt wurde, dass sie
+    # zwischenzeitlich (seit der letzten Discovery) auf eine andere CSV
+    # verschoben wurde -- der Storage-Snapshot dieses Laufs sichert dann
+    # NICHT den aktuellen Stand dieser VM (siehe app.api.routes.jobs,
+    # Vergleich current_vhd_paths vs. expected_csvs_by_vm). Restore-
+    # Listings (list_backups_for_object/list_vm_backup_runs) muessen diese
+    # VM fuer DIESEN Lauf ausschliessen, obwohl der Snapshot selbst
+    # erfolgreich war (andere VMs auf derselben CSV sind ja unbetroffen).
+    not_captured: Mapped[bool] = mapped_column(Boolean, default=False)
     # Aus HyperVVm.cluster_id zum Backup-Zeitpunkt uebernommen -- einzige
     # dauerhafte Quelle dafuer, sobald die VM geloescht und aus HyperVVm
     # beim naechsten Discovery-Lauf verschwunden ist (siehe VmRecreateRun).
