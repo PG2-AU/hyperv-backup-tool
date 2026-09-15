@@ -1563,13 +1563,139 @@ Voraussetzungen:
 - Die SPNs der Hyper-V-Hosts (`WSMAN/<hostname>`) sind registriert — bei
   aktiviertem WinRM in der Regel automatisch der Fall, im Zweifel per
   `setspn -L <hostname>` auf dem jeweiligen Host prüfen.
+- Falls ein Restore-Proxy-Host (Settings → Restore → Setup) im Einsatz
+  ist: dessen `address`-Feld ist meist eine IP — Kerberos-SPNs sind aber
+  hostnamenbasiert. Dafür zusätzlich das optionale **Hostname**-Feld
+  dort mit dem DNS-Namen des Proxy-Hosts befüllen, sonst schlägt die
+  Proxy-Verbindung (und damit jeder Restore) unter Kerberos fehl, auch
+  wenn der Verbindungstest gegen die Hyper-V-Cluster selbst erfolgreich
+  war.
 
-Einrichtung: Settings → Kerberos → Cluster auswählen → "Automatisch
-erkennen" (fragt Realm/KDC live über den aktuell funktionierenden
-Transport des gewählten Clusters ab) oder manuell eintragen → "Verbindung
-testen" → Speichern. Erst danach `HVNB_WINRM_TRANSPORT=kerberos` setzen
-und den Container neu erstellen (`podman-compose up -d`, siehe Abschnitt
-6 — eine reine `.env`-Änderung wird nicht automatisch übernommen).
+**Docker-Image neu bauen.** Kerberos braucht zusätzliche System-Pakete
+im Image (`krb5-devel`, `gcc`, `python3.12-devel`, `krb5-workstation`,
+`krb5-libs`) — der normale Git-Pull-Auto-Update-Mechanismus reicht dafür
+NICHT aus, er baut kein neues Image. Erst bauen, dann prüfen, erst dann
+den Container neu erstellen (der laufende Container läuft während des
+Bauens unverändert weiter):
+
+```bash
+cd ~/hyperv-netapp-backup
+git pull
+podman-compose -f docker-compose.yml build
+podman run --rm --entrypoint bash localhost/hyperv-netapp-backup:local \
+  -c "rpm -q krb5-devel gcc python3.12-devel krb5-workstation krb5-libs"
+```
+
+Erwartet: fünf Zeilen mit Paketnamen+Version, keine
+"package ... is not installed"-Meldung. Erst danach den Container neu
+erstellen (siehe Abschnitt 6/9 — Quadlet-Setup empfohlen):
+
+```bash
+systemctl --user restart hvnb-backup.service
+```
+
+Der erste Start danach dauert spürbar länger (Repo-Klon + `pip install`
+kompiliert `gssapi`/`pykerberos` aus Quellcode, keine fertigen Wheels
+für diese Plattform verfügbar, ca. 1,5–2 Minuten) — kein Fehler, kurz
+warten und dann verifizieren:
+
+```bash
+podman logs --tail 50 hvnb-backup
+podman exec hvnb-backup git -C /opt/app rev-parse HEAD
+curl -sk4 https://127.0.0.1:8443/api/health
+```
+
+**Einrichtung in der GUI:** Settings → Kerberos → Cluster auswählen →
+"Automatisch erkennen" (fragt Realm/KDC live über den aktuell
+funktionierenden Transport des gewählten Clusters ab) oder manuell
+eintragen → "Verbindung testen" → Speichern.
+
+**Bekannte Einschränkung bei geclusterten VMs (automatisch behandelt,
+keine Aktion nötig):** manche Failover-Cluster-Operationen
+(`Add-/Remove-VMHardDiskDrive` beim Restore/der VM-Neuerstellung an
+einer bereits geclusterten VM, sowie `Add-ClusterVirtualMachineRole` am
+Ende einer VM-Neuerstellung) brauchen intern einen zweiten Hop zum
+Cluster-Dienst, den weder NTLM noch Kerberos ohne AD Constrained
+Delegation unterstützen ("Access is denied" bzw.
+"Update-ClusterVirtualMachineConfiguration could not be completed").
+Die App weicht dafür automatisch temporär auf NTLM bzw. gezielt CredSSP
+aus (nur für diese einzelnen Schritte, nicht global) — live verifiziert,
+keine zusätzliche Konfiguration nötig. Die eigentliche, vollständige
+Lösung wäre Kerberos Constrained Delegation in AD für die
+WinRM-Dienstkonten der Hyper-V-Knoten (braucht AD-Admin-Zugriff auf den
+Domain Controller, aktuell nicht eingerichtet).
+
+**Empfohlener Test vor der produktiven Umstellung:** einen echten
+Checkpoint-Erstellen/Entfernen-Zyklus gegen eine unkritische Test-VM
+ohne aktive Policy (oder deren Policy vorher kurz pausieren) fahren,
+bevor der Transport global umgestellt wird — vermeidet Kollisionen mit
+einem parallel laufenden echten Backup-Lauf auf derselben VM. Ad-hoc-
+Testskript (Cluster-ID vorher per kurzer DB-Abfrage ermitteln):
+
+```bash
+podman exec -i hvnb-backup python3 - <<'EOF'
+import sys
+sys.path.insert(0, "/opt/app/backend")
+import app.main
+from app.db.session import SessionLocal
+from app.models.hyperv_cluster import HyperVCluster
+db = SessionLocal()
+for c in db.query(HyperVCluster).all():
+    print(c.id, c.name, c.hyperv_cluster_name, c.management_address)
+EOF
+```
+
+```bash
+podman exec -i hvnb-backup python3 - <<'EOF'
+import sys, copy
+sys.path.insert(0, "/opt/app/backend")
+from app.core.config import get_settings
+from app.core.crypto import decrypt_secret
+from app.core.kerberos_config import ensure_krb5_config_env
+from app.core.kerberos_auth import ensure_ccache_env
+from app.services.hyperv_service import HyperVService, ConsistencyType
+from app.db.session import SessionLocal
+from app.models.hyperv_cluster import HyperVCluster
+
+CLUSTER_ID = "HIER-CLUSTER-ID-EINTRAGEN"
+VM_NAME = "HIER-TEST-VM-EINTRAGEN"
+
+settings = get_settings()
+ensure_krb5_config_env(settings)
+ensure_ccache_env(settings)
+settings = copy.copy(settings)
+settings.winrm_transport = "kerberos"
+
+db = SessionLocal()
+cluster = db.query(HyperVCluster).filter(HyperVCluster.id == CLUSTER_ID).first()
+password = decrypt_secret(cluster.encrypted_password) if cluster.encrypted_password else ""
+
+cno_service = HyperVService(settings, cluster.management_address, use_https=cluster.use_https, node_hostname=cluster.hyperv_cluster_name)
+cno_session = cno_service.connect(cluster.username, password, read_timeout_sec=15, operation_timeout_sec=10)
+owner_node = cno_service.get_vm_owner_node(cno_session, VM_NAME)
+node_address = cno_service.resolve_node_address(cno_session, owner_node)
+
+node_service = HyperVService(settings, node_address, use_https=cluster.use_https, node_hostname=owner_node)
+node_session = node_service.connect(cluster.username, password, read_timeout_sec=15, operation_timeout_sec=10)
+
+cp_name = "hvnb_kerberos_adhoc_test"
+info = node_service.create_checkpoint(node_session, VM_NAME, cp_name, ConsistencyType.CRASH_CONSISTENT)
+print("Checkpoint erstellt:", info)
+result = node_service.remove_checkpoint(node_session, VM_NAME, cp_name)
+print("Checkpoint entfernt, success=", result.success, result.error or "")
+EOF
+```
+
+**Produktiv umstellen:** erst danach `HVNB_WINRM_TRANSPORT=kerberos` in
+der `.env` setzen und den Container neu erstellen (`systemctl --user
+restart hvnb-backup.service`, siehe Abschnitt 6/9 — eine reine
+`.env`-Änderung wird sonst nicht automatisch übernommen). Anschließend
+einen echten, planmäßig ausgelösten Backup-Lauf beobachten, bevor das
+Ergebnis als endgültig stabil gilt.
+
+**Rückfallebene:** NTLM bleibt jederzeit per Rückstellung von
+`HVNB_WINRM_TRANSPORT=ntlm` + Container-Neustart verfügbar, falls an
+einem einzelnen Knoten doch etwas nicht greift (z. B. fehlende SPN).
 
 ---
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Badge, Button, Group, Paper, Select, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, List, Paper, Select, Stack, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconAlertTriangle, IconCheck, IconSearch, IconX } from "@tabler/icons-react";
 
@@ -176,6 +176,43 @@ export function KerberosTab() {
         Realm/KDC, das dabei bei "kerberos" verwendet wird -- ohne gültige Konfiguration hier schlägt eine
         Kerberos-Verbindung fehl.
       </Alert>
+
+      <Paper withBorder p="md">
+        <Title order={5} mb="xs">
+          Rollout-Checkliste (vor der produktiven Umstellung)
+        </Title>
+        <Text size="sm" c="dimmed" mb="sm">
+          Genaue Befehle und Skripte: <Anchor href="/docs/deployment" target="_blank">DEPLOYMENT.md, Abschnitt "Alternative zu
+          CredSSP/NTLM: Kerberos"</Anchor>.
+        </Text>
+        <List type="ordered" size="sm" spacing="xs">
+          <List.Item>
+            Docker-Image neu bauen (<code>podman-compose build</code>) -- der normale Git-Pull-Auto-Update baut kein neues
+            Image, braucht aber die zusätzlichen System-Pakete (<code>krb5-devel</code>, <code>gcc</code>,{" "}
+            <code>python3.12-devel</code>, <code>krb5-workstation</code>). Erst per <code>rpm -q</code> im neuen Image
+            verifizieren, dann den Container neu erstellen.
+          </List.Item>
+          <List.Item>
+            Oben Realm/KDC erkennen/eintragen, testen und speichern (pro Installation nur einmal nötig).
+          </List.Item>
+          <List.Item>
+            Falls ein Restore-Proxy-Host im Einsatz ist: dessen Hostname-Feld setzen (Restore &gt; Setup &gt; Proxy-Host) --
+            sonst schlägt jeder Restore trotz erfolgreichem Cluster-Test fehl.
+          </List.Item>
+          <List.Item>
+            Empfohlen: einen echten Checkpoint-Erstellen/Entfernen-Zyklus gegen eine unkritische Test-VM ohne aktive Policy
+            fahren (Ad-hoc-Skript in der Doku), bevor der Transport global umgestellt wird.
+          </List.Item>
+          <List.Item>
+            Erst danach <code>HVNB_WINRM_TRANSPORT=kerberos</code> in der <code>.env</code> setzen und den Container neu
+            erstellen -- eine reine <code>.env</code>-Änderung wird sonst nicht automatisch übernommen.
+          </List.Item>
+          <List.Item>
+            Anschließend einen echten, planmäßig ausgelösten Backup-Lauf beobachten. Rückfallebene: jederzeit zurück auf{" "}
+            <code>ntlm</code> + Container-Neustart.
+          </List.Item>
+        </List>
+      </Paper>
     </Stack>
   );
 }
