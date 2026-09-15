@@ -37,7 +37,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh
+from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _parse_csv_name, _resolve_csv_name
+from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
@@ -989,6 +990,14 @@ class _CheckpointResult:
     # Teil 3). None wenn der Refresh fehlschlaegt -- dann bleibt
     # BackupRunVmConfig.vhds wie zuvor (keine Verschlechterung).
     refreshed_vm: VirtualMachineInfo | None = None
+    # VHD-Pfade aus DEMSELBEN Checkpoint-PS-Aufruf mitgeliefert (siehe
+    # HyperVService.create_checkpoint) -- kein zusaetzlicher WinRM-Roundtrip
+    # (anders als refreshed_vm oben, das einen separaten get_vm()-Aufruf
+    # gebraucht haette und deshalb seit dem 2026-09-12-Vorfall deaktiviert
+    # ist). Dient dem Haupt-Thread dazu, zu erkennen, ob die VM
+    # zwischenzeitlich (seit der letzten Discovery) auf eine andere CSV
+    # verschoben wurde (siehe Vergleich mit expected_csvs_by_vm unten).
+    current_vhd_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1002,7 +1011,7 @@ class _NodeCheckpointJob:
     use_https: bool
     username: str
     password: str
-    vms: list[tuple[str, str]]  # (vm_name, cluster_id)
+    vms: list[tuple[str, str, frozenset[str]]]  # (vm_name, cluster_id, erwartete_csv_namen)
     # DNS-Name des Knotens (node_address ist meist dessen Management-IP,
     # siehe _node_management_ips) -- nur fuer HVNB_WINRM_TRANSPORT=kerberos
     # gebraucht (Kerberos-SPNs sind hostnamenbasiert, siehe
@@ -1038,13 +1047,13 @@ def _run_node_checkpoints(
         )
         node_session = node_service.connect(job.username, job.password)
     except Exception as exc:  # noqa: BLE001 -- Knoten unerreichbar: alle seine VMs crash-konsistent
-        for vm, cid in job.vms:
+        for vm, cid, _expected_csvs in job.vms:
             progress.put(("done", _CheckpointResult(vm, cid, job.node_address, ok=False, error=f"Knoten nicht erreichbar ({exc})")))
         return
-    for vm_name, cluster_id in job.vms:
+    for vm_name, cluster_id, _expected_csvs in job.vms:
         progress.put(("start", (vm_name, job.node_address)))
         try:
-            node_service.create_checkpoint(node_session, vm_name, checkpoint_name, consistency)
+            info = node_service.create_checkpoint(node_session, vm_name, checkpoint_name, consistency)
             # TEMPORAER DEAKTIVIERT 2026-09-12 (siehe [[credssp-checkpoint-auth-failures]]):
             # der zusaetzliche Get-VM-Aufruf direkt nach der Checkpoint-
             # Erstellung (seit e5b6130) steht im Verdacht, zu den seit
@@ -1054,6 +1063,9 @@ def _run_node_checkpoints(
             # Weiterverarbeitung -- refreshed_vm bleibt None, wodurch der
             # Refresh in _execute_job_run einfach nichts tut (kein
             # Funktionsverlust ausser der Teil-3-Sofort-Aktualisierung).
+            # current_vhd_paths (fuer die CSV-Verschiebungs-Erkennung, siehe
+            # _CheckpointResult) kommt dagegen OHNE Zusatz-Roundtrip direkt
+            # aus derselben create_checkpoint()-Antwort.
             refreshed_vm = None
             progress.put((
                 "done",
@@ -1062,6 +1074,7 @@ def _run_node_checkpoints(
                     node_service=node_service, node_session=node_session,
                     message=f"Checkpoint '{checkpoint_name}' auf Knoten '{job.node_address}' erstellt",
                     refreshed_vm=refreshed_vm,
+                    current_vhd_paths=info.vhd_paths,
                 ),
             ))
         except Exception as exc:  # noqa: BLE001 -- eine VM scheitert, die anderen des Knotens laufen weiter
@@ -1166,6 +1179,12 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         }
 
         errors: list[str] = list(initial_warnings)
+        # Cluster, fuer die eine CSV-Verschiebung erkannt wurde (siehe Fall-B-
+        # Erkennung weiter unten) -- ausserhalb des APPLICATION_CONSISTENT-
+        # Zweigs deklariert, damit sie auch fuer rein crash-konsistente
+        # Policies (die den Checkpoint-Zweig komplett ueberspringen) definiert
+        # ist, wenn sie am Ende des Laufs best-effort abgefragt wird.
+        clusters_needing_discovery: set[str] = set()
         # Nur ein gescheiterter STORAGE-SNAPSHOT macht den Lauf insgesamt
         # FAILED (rot) -- alles, was in `errors` landet (Checkpoint-/
         # SnapMirror-Probleme einzelner VMs/Ziele), fuehrt bestenfalls zu
@@ -1196,6 +1215,16 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             max_parallel = sched_cfg.backup_checkpoint_parallelism if sched_cfg else 0
             hyperv_clusters_by_id = {c.id: c for c in db.query(HyperVCluster).all()}
 
+            # Je VM die bei der Zielaufloesung oben (_resolve_targets)
+            # ermittelte(n) CSV(s) -- Vergleichsbasis, um zu erkennen, ob die
+            # VM zwischenzeitlich (seit der letzten Discovery) auf eine
+            # andere CSV verschoben wurde (siehe Vergleich mit
+            # current_vhd_paths unten, _CheckpointResult).
+            expected_csvs_by_vm: dict[str, set[str]] = defaultdict(set)
+            for t in targets:
+                for vm_name in t.vm_names:
+                    expected_csvs_by_vm[vm_name] |= t.csv_names
+
             if _cancel_requested(db, run.id):
                 was_cancelled = True
 
@@ -1215,6 +1244,15 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                         skipped_vms.append((vm_name, "Hyper-V-Cluster nicht gefunden"))
                         continue
                     vms_by_cluster[meta["cluster_id"]].append(vm_name)
+
+                # Fuer die CSV-Verschiebungs-Erkennung unten (Umbenennungs-
+                # sicherer Abgleich Mount-Ordner -> echter CSV-Name, siehe
+                # _resolve_csv_name) -- einmal pro betroffenem Cluster, nicht
+                # pro VM/Checkpoint-Ergebnis.
+                hv_csvs_by_cluster: dict[str, list[HyperVCsv]] = {
+                    cluster_id: db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).all()
+                    for cluster_id in vms_by_cluster
+                }
 
                 for cluster_id, cluster_vms in vms_by_cluster.items():
                     hv_cluster = hyperv_clusters_by_id[cluster_id]
@@ -1249,7 +1287,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                                 node_name=owner,
                             )
                             vms_by_node[node_address] = job
-                        job.vms.append((vm_name, cluster_id))
+                        job.vms.append((vm_name, cluster_id, frozenset(expected_csvs_by_vm.get(vm_name, set()))))
 
             # VMs, die schon vor dem Submit feststehen (kein Cluster/kein
             # Owner-Knoten) -- direkt als uebersprungen protokollieren.
@@ -1313,6 +1351,38 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                             row.status = RestoreStepStatus.SUCCESS
                             row.message = res.message
                             active_checkpoints.append((res.node_service, res.node_session, res.vm_name, res.cluster_id))
+                            # CSV-Verschiebungs-Erkennung (Backlog-Anfrage
+                            # 2026-09-16, Fall B): die Zielaufloesung oben
+                            # (_resolve_targets) basiert auf dem letzten
+                            # Discovery-Stand -- wurde die VM zwischenzeitlich
+                            # per Storage Live Migration auf eine andere CSV
+                            # verschoben, wuerde der Storage-Snapshot unten
+                            # sonst stillschweigend die FALSCHE (alte) CSV
+                            # sichern, waehrend der Checkpoint selbst
+                            # anstandslos gelingt (die VM ist ja weiterhin
+                            # live erreichbar) -- ein sonst unbemerkter
+                            # Datensicherungs-Luecken-Fall. current_vhd_paths
+                            # kommt ohne Zusatz-Roundtrip direkt aus der
+                            # Checkpoint-Antwort (siehe _CheckpointResult).
+                            if res.cluster_id:
+                                current_folders = {
+                                    f for f in (_parse_csv_name(p) for p in res.current_vhd_paths) if f
+                                }
+                                current_csvs = {
+                                    n for n in (
+                                        _resolve_csv_name(f, hv_csvs_by_cluster.get(res.cluster_id, []))
+                                        for f in current_folders
+                                    ) if n
+                                }
+                                expected = expected_csvs_by_vm.get(res.vm_name, set())
+                                if expected and current_csvs and not (current_csvs & expected):
+                                    clusters_needing_discovery.add(res.cluster_id)
+                                    errors.append(
+                                        f"VM '{res.vm_name}': liegt aktuell auf CSV(s) {', '.join(sorted(current_csvs))} "
+                                        f"statt der zuletzt bekannten {', '.join(sorted(expected))} -- dieser Lauf "
+                                        "sichert eventuell nicht den aktuellen Stand (Hyper-V-Discovery wird automatisch "
+                                        "angestossen)"
+                                    )
                             # Den soeben (im Worker) frisch abgefragten VHD-
                             # Zustand SOFORT in die fuer DIESEN Lauf bereits
                             # angelegte BackupRunVmConfig uebernehmen, statt
@@ -1652,6 +1722,23 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         if db.query(BackupRun.finished_at).filter(BackupRun.id == run.id).scalar() is not None:
             db.commit()
             return
+
+        # Best-effort Discovery fuer jeden Cluster, auf dem oben eine CSV-
+        # Verschiebung erkannt wurde (Fall B) -- korrigiert die naechste
+        # Zielaufloesung automatisch, statt bis zum naechsten periodischen
+        # Zyklus (Default mehrere Stunden) zu warten. Laeuft NACH dem
+        # eigentlichen Backup, ein Fehler hier darf den bereits erfolgreich
+        # (bzw. mit Warnungen) abgeschlossenen Lauf nicht nachtraeglich
+        # veraendern.
+        for cluster_id in clusters_needing_discovery:
+            hv_cluster = db.get(HyperVCluster, cluster_id)
+            if hv_cluster is None:
+                continue
+            try:
+                _run_hyperv_discovery(db, hv_cluster)
+            except Exception:
+                db.rollback()
+
         run.finished_at = datetime.now(timezone.utc)
         all_messages = fatal_errors + errors
         if was_cancelled:

@@ -105,6 +105,14 @@ class CheckpointInfo:
     checkpoint_name: str
     checkpoint_id: str
     created_at: str
+    # Aktuelle VHD-Pfade der VM, im selben PS-Aufruf wie der Checkpoint
+    # selbst mit abgefragt (kein zusaetzlicher WinRM-Roundtrip!) -- siehe
+    # create_checkpoint(). Zweck: erkennen, ob sich eine VM zwischenzeitlich
+    # (seit der letzten Discovery) auf eine andere CSV verschoben hat, OHNE
+    # den 2026-09-12-Fehler zu wiederholen (siehe [[credssp-checkpoint-auth-failures]]
+    # -- ein zusaetzlicher Get-VM-Aufruf pro VM war dort die nachgewiesene
+    # Ursache erhoehter WinRM-Last).
+    vhd_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -725,7 +733,14 @@ class HyperVService:
         Set-VM -Name '{vm_name}' -CheckpointType {"Production" if consistency == ConsistencyType.APPLICATION_CONSISTENT else "Standard"}
         try {{
             $cp = Checkpoint-VM -Name '{vm_name}' -SnapshotName '{checkpoint_name}' -Passthru
-            $cp | Select-Object VMName, Name, Id, CreationTime | ConvertTo-Json
+            $vhdPaths = @(Get-VMHardDiskDrive -VMName '{vm_name}' | Select-Object -ExpandProperty Path)
+            [PSCustomObject]@{{
+                VMName = $cp.VMName
+                Name = $cp.Name
+                Id = $cp.Id
+                CreationTime = $cp.CreationTime
+                VhdPaths = $vhdPaths
+            }} | ConvertTo-Json -Depth 3
         }} finally {{
             Set-VM -Name '{vm_name}' -CheckpointType $originalType
         }}
@@ -735,11 +750,14 @@ class HyperVService:
             raise RuntimeError(f"Checkpoint fuer '{vm_name}' fehlgeschlagen: {result.error}")
 
         data = json.loads(result.output)
+        vhd_paths_raw = data.get("VhdPaths") or []
+        vhd_paths = vhd_paths_raw if isinstance(vhd_paths_raw, list) else [vhd_paths_raw]
         return CheckpointInfo(
             vm_name=data["VMName"],
             checkpoint_name=data["Name"],
             checkpoint_id=data["Id"],
             created_at=str(data["CreationTime"]),
+            vhd_paths=[p for p in vhd_paths if p],
         )
 
     def remove_checkpoint(self, session: winrm.Session, vm_name: str, checkpoint_name: str) -> CommandResult:
