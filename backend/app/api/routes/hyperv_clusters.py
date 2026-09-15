@@ -25,7 +25,13 @@ from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppLun
 from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead, HyperVClusterUpdate, HyperVReachabilityCheck
 from app.schemas.netapp_cluster import DiscoveryStepRead
-from app.services.hyperv_service import HyperVConnectionError, HyperVService, VirtualMachineInfo, check_reachability
+from app.services.hyperv_service import (
+    ClusterSharedVolumeInfo,
+    HyperVConnectionError,
+    HyperVService,
+    VirtualMachineInfo,
+    check_reachability,
+)
 
 router = APIRouter(prefix="/api/hyperv/clusters", tags=["hyperv-clusters"])
 
@@ -80,6 +86,44 @@ def _resolve_csv_name(folder_name: str | None, csvs) -> str | None:
         if csv_folder is not None and csv_folder.lower() == folder_name_lower:
             return csv.name
     return folder_name
+
+
+def _refresh_csv_rows(db: Session, cluster_id: str, csvs: list[ClusterSharedVolumeInfo]) -> None:
+    """Ersetzt alle HyperVCsv-Zeilen eines Clusters aus einem frischen
+    list_csvs()-Ergebnis -- ausgelagert aus der vollstaendigen Discovery,
+    damit auch ein einzelner Restore (ADD/REPLACE, siehe app.api.routes.
+    restore) danach die CSV-Auslastung aktualisieren kann, ohne eine
+    komplette Cluster-Discovery (inkl. VM-Neuabfrage aller Knoten)
+    anzustossen. Loescht/ersetzt ALLE CSVs des Clusters statt nur einer
+    einzelnen Zeile -- list_csvs() liest ohnehin den kompletten
+    Cluster-Datenbestand in einem Single-Hop-Aufruf gegen den CNO, ein
+    gezielteres Teil-Update waere nicht guenstiger."""
+    now = datetime.now(timezone.utc)
+    # Seriennummer -> NetApp-LUN ueber alle registrierten NetApp-Cluster
+    # hinweg (die Windows-Disk-Seriennummer entspricht ONTAP's
+    # lun.serial_number, siehe list_csvs()); Clustername separat
+    # aufloesen, da NetAppLun selbst nur die cluster_id speichert.
+    netapp_cluster_names = {c.id: c.ontap_cluster_name or c.name for c in db.query(NetAppCluster).all()}
+    luns_by_serial = {
+        lun.serial_number: lun for lun in db.query(NetAppLun).all() if lun.serial_number
+    }
+    db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).delete()
+    for csv in csvs:
+        lun = luns_by_serial.get(csv.disk_serial_number) if csv.disk_serial_number else None
+        db.add(
+            HyperVCsv(
+                cluster_id=cluster_id, name=csv.name, path=csv.volume_path, owner_node=csv.owner_node,
+                state=csv.state, capacity_bytes=csv.capacity_bytes, used_bytes=csv.used_bytes,
+                disk_serial_number=csv.disk_serial_number,
+                netapp_lun_id=lun.id if lun else None,
+                netapp_lun_name=lun.name if lun else None,
+                netapp_volume_name=lun.volume_name if lun else None,
+                netapp_svm_name=lun.svm_name if lun else None,
+                netapp_cluster_name=netapp_cluster_names.get(lun.cluster_id) if lun else None,
+                last_seen_at=now,
+            )
+        )
+    db.commit()
 
 
 def _apply_vm_discovery_refresh(db: Session, cluster_id: str, vm: HyperVVm, refreshed: VirtualMachineInfo) -> None:
@@ -381,32 +425,7 @@ def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
         db.commit()
 
     if any(s.success for s in steps if s.step == "csvs"):
-        now = datetime.now(timezone.utc)
-        # Seriennummer -> NetApp-LUN ueber alle registrierten NetApp-Cluster
-        # hinweg (die Windows-Disk-Seriennummer entspricht ONTAP's
-        # lun.serial_number, siehe list_csvs()); Clustername separat
-        # aufloesen, da NetAppLun selbst nur die cluster_id speichert.
-        netapp_cluster_names = {c.id: c.ontap_cluster_name or c.name for c in db.query(NetAppCluster).all()}
-        luns_by_serial = {
-            lun.serial_number: lun for lun in db.query(NetAppLun).all() if lun.serial_number
-        }
-        db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster.id).delete()
-        for csv in data.csvs:
-            lun = luns_by_serial.get(csv.disk_serial_number) if csv.disk_serial_number else None
-            db.add(
-                HyperVCsv(
-                    cluster_id=cluster.id, name=csv.name, path=csv.volume_path, owner_node=csv.owner_node,
-                    state=csv.state, capacity_bytes=csv.capacity_bytes, used_bytes=csv.used_bytes,
-                    disk_serial_number=csv.disk_serial_number,
-                    netapp_lun_id=lun.id if lun else None,
-                    netapp_lun_name=lun.name if lun else None,
-                    netapp_volume_name=lun.volume_name if lun else None,
-                    netapp_svm_name=lun.svm_name if lun else None,
-                    netapp_cluster_name=netapp_cluster_names.get(lun.cluster_id) if lun else None,
-                    last_seen_at=now,
-                )
-            )
-        db.commit()
+        _refresh_csv_rows(db, cluster.id, data.csvs)
 
     return steps
 

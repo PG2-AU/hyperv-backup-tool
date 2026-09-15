@@ -39,7 +39,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _resolve_csv_name
+from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _refresh_csv_rows, _resolve_csv_name
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
 from app.core.config import Settings, get_settings
 from app.core.crypto import decrypt_secret
@@ -950,6 +950,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 # Fehlschlag hier darf den ansonsten erfolgreichen Restore
                 # nicht als FAILED markieren.
                 with _StepCtx(db, run.id, "refresh-inventory", "Inventory-Stand aktualisieren") as ctx:
+                    messages = []
                     try:
                         refreshed_vm = node_service.get_vm(node_session, run.vm_name)
                         hv_vm_fresh = (
@@ -959,14 +960,29 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                         )
                         if refreshed_vm is not None and hv_vm_fresh is not None:
                             _apply_vm_discovery_refresh(db, run.hyperv_cluster_id, hv_vm_fresh, refreshed_vm)
-                            ctx.row.message = "Disk-/Checkpoint-Stand aktualisiert"
+                            messages.append("Disk-/Checkpoint-Stand aktualisiert")
                         else:
-                            ctx.row.status = RestoreStepStatus.SKIPPED
-                            ctx.row.message = "Aktualisierung nicht möglich -- nächste periodische Discovery übernimmt das"
+                            messages.append("VM-Stand nicht aktualisiert -- nächste periodische Discovery übernimmt das")
                     except Exception as exc:
                         db.rollback()
-                        ctx.row.status = RestoreStepStatus.SKIPPED
-                        ctx.row.message = f"Aktualisierung fehlgeschlagen ({exc}) -- nächste periodische Discovery übernimmt das"
+                        messages.append(f"VM-Stand nicht aktualisiert ({exc})")
+                    # Zusaetzlich zum VM-eigenen Disk-/Checkpoint-Stand oben
+                    # auch die CSV-Auslastung neu einlesen -- der Restore hat
+                    # gerade eine neue VHDX auf die Ziel-CSV geschrieben,
+                    # ohne diesen Schritt bliebe Storage/Inventory bis zur
+                    # naechsten periodischen Discovery (Default mehrere
+                    # Stunden) auf dem alten Belegungsstand stehen. Nutzt
+                    # dieselbe schon offene CNO-Session (keine zusaetzliche
+                    # Verbindung), bewusst best-effort wie der VM-Refresh
+                    # oben.
+                    try:
+                        csvs = hv_service.list_csvs(cno_session)
+                        _refresh_csv_rows(db, run.hyperv_cluster_id, csvs)
+                        messages.append("CSV-Auslastung aktualisiert")
+                    except Exception as exc:
+                        db.rollback()
+                        messages.append(f"CSV-Auslastung nicht aktualisiert ({exc})")
+                    ctx.row.message = "; ".join(messages)
 
             run.status = RestoreStatus.SUCCEEDED
             run.finished_at = datetime.now(timezone.utc)
