@@ -29,6 +29,7 @@ abhaengen + Datei loeschen) -- siehe RestoreRun.cleanup_needed."""
 
 from __future__ import annotations
 
+import copy
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,7 +41,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _resolve_csv_name
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import SessionLocal, get_db
@@ -61,6 +62,26 @@ from app.services.netapp_service import NetAppConnectionError, NetAppOntapServic
 router = APIRouter(prefix="/api/restore", tags=["restore"])
 
 _CSV_NAME_RE = re.compile(r"ClusterStorage\\([^\\]+)\\", re.IGNORECASE)
+
+
+def _restore_settings() -> Settings:
+    """Wie get_settings(), aber mit Kerberos auf NTLM zurueckgestuft --
+    live gefunden (2026-09-15): Add-/Remove-VMHardDiskDrive an einer
+    bereits geclusterten VM (REPLACE-Restore, VM-Neuerstellung, Cleanup)
+    loest intern Update-ClusterVirtualMachineConfiguration aus, das einen
+    zweiten Hop zum Cluster-Dienst braucht -- ohne Kerberos Constrained
+    Delegation (bewusst nicht eingerichtet, siehe [[kerberos-transport-
+    rollout]]) schlaegt genau dieser interne Hop fehl, obwohl die
+    Datentraeger-Aenderung selbst durchgefuehrt wird (das Cmdlet meldet
+    trotzdem einen Fehler). NTLM war hierfuer bereits verifiziert
+    funktionsfaehig. Backup/Checkpoint/Discovery bleiben unveraendert auf
+    dem global konfigurierten Transport -- nur die drei Restore-/
+    Neuerstellungs-Flows in dieser Datei nutzen diesen Helper."""
+    settings = get_settings()
+    if settings.winrm_transport == "kerberos":
+        settings = copy.copy(settings)
+        settings.winrm_transport = "ntlm"
+    return settings
 
 
 def _parse_csv_name(vhd_path: str) -> str | None:
@@ -678,7 +699,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 system_label = "Sekundärsystem (SnapMirror-Ziel)" if used_secondary else "Primärsystem"
                 ctx.row.message = f"CSV {csv_name} -> Volume {volume_name} @ {svm_name} ({system_label})"
 
-            settings = get_settings()
+            settings = _restore_settings()
             proxy = db.query(RestoreProxyHost).first()
             if proxy is None or not proxy.address or not proxy.username:
                 raise RuntimeError(
@@ -1023,7 +1044,7 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 if proxy is None or not proxy.address or not proxy.username:
                     raise RuntimeError("Kein Restore-Proxy-Host konfiguriert (Restore > Setup > Restore-Infrastruktur einrichten).")
 
-                settings = get_settings()
+                settings = _restore_settings()
                 hv_service = HyperVService(
                     settings, hv_cluster.management_address, use_https=hv_cluster.use_https,
                     node_hostname=hv_cluster.hyperv_cluster_name,
@@ -1415,7 +1436,7 @@ def cleanup_restore(
     if vm is None or not vm.host_name:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="VM bzw. deren Knoten nicht gefunden")
 
-    settings = get_settings()
+    settings = _restore_settings()
     hv_service = HyperVService(
         settings, hv_cluster.management_address, use_https=hv_cluster.use_https,
         node_hostname=hv_cluster.hyperv_cluster_name,
