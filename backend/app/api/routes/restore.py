@@ -710,10 +710,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 ctx.row.message = node_address
 
             with _StepCtx(db, run.id, "connect-proxy", "Verbindung zum Restore-Proxy-Host") as ctx:
-                # Kein node_hostname: RestoreProxyHost hat kein separates
-                # Hostnamen-Feld (nur `address`) -- unter Kerberos muss dort
-                # bereits ein DNS-Name statt einer IP eingetragen sein.
-                proxy_service = HyperVService(settings, proxy.address, use_https=proxy.use_https)
+                proxy_service = HyperVService(settings, proxy.address, use_https=proxy.use_https, node_hostname=proxy.hostname)
                 proxy_password = decrypt_secret(proxy.encrypted_password) if proxy.encrypted_password else ""
                 proxy_session = proxy_service.connect(proxy.username, proxy_password)
                 ctx.row.message = proxy.address
@@ -1047,10 +1044,7 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 ctx.row.message = node_address
 
             with _StepCtx(db, run.id, "connect-proxy", "Verbindung zum Restore-Proxy-Host", step_model=VmRecreateRunStep) as ctx:
-                # Kein node_hostname: RestoreProxyHost hat kein separates
-                # Hostnamen-Feld (nur `address`) -- unter Kerberos muss dort
-                # bereits ein DNS-Name statt einer IP eingetragen sein.
-                proxy_service = HyperVService(settings, proxy.address, use_https=proxy.use_https)
+                proxy_service = HyperVService(settings, proxy.address, use_https=proxy.use_https, node_hostname=proxy.hostname)
                 proxy_password = decrypt_secret(proxy.encrypted_password) if proxy.encrypted_password else ""
                 proxy_session = proxy_service.connect(proxy.username, proxy_password)
                 ctx.row.message = proxy.address

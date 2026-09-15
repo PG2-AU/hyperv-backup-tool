@@ -110,12 +110,14 @@ class RestoreInfraConfigRead(BaseModel):
 class ProxyHostRead(BaseModel):
     configured: bool
     address: str | None = None
+    hostname: str | None = None
     username: str | None = None
     use_https: bool = True
 
 
 class ProxyHostWrite(BaseModel):
     address: str
+    hostname: str | None = None
     username: str
     password: str | None = None
     use_https: bool = True
@@ -132,10 +134,7 @@ def _proxy_service_and_session(db: Session):
             detail="Kein Restore-Proxy-Host konfiguriert (Restore > Setup > Restore-Infrastruktur einrichten).",
         )
     settings = get_settings()
-    # Kein node_hostname: RestoreProxyHost hat kein separates Hostnamen-Feld
-    # (nur `address`) -- unter Kerberos muss dort bereits ein DNS-Name statt
-    # einer IP eingetragen sein.
-    service = HyperVService(settings, proxy.address, use_https=proxy.use_https)
+    service = HyperVService(settings, proxy.address, use_https=proxy.use_https, node_hostname=proxy.hostname)
     password = decrypt_secret(proxy.encrypted_password) if proxy.encrypted_password else ""
     try:
         session = service.connect(proxy.username, password, read_timeout_sec=15, operation_timeout_sec=10)
@@ -149,7 +148,9 @@ def get_proxy_host(db: Session = Depends(get_db), user=Depends(require_permissio
     proxy = db.query(RestoreProxyHost).first()
     if proxy is None:
         return ProxyHostRead(configured=False)
-    return ProxyHostRead(configured=True, address=proxy.address, username=proxy.username, use_https=proxy.use_https)
+    return ProxyHostRead(
+        configured=True, address=proxy.address, hostname=proxy.hostname, username=proxy.username, use_https=proxy.use_https,
+    )
 
 
 @router.put("/proxy-host", response_model=ProxyHostRead)
@@ -159,19 +160,23 @@ def save_proxy_host(
     """Legt die (einzige) Restore-Proxy-Host-Konfiguration an oder aktualisiert
     sie. Ein leeres Passwort laesst ein bereits gespeichertes unveraendert --
     so lassen sich Adresse/Username aendern, ohne das Passwort neu einzugeben."""
+    hostname = payload.hostname.strip() if payload.hostname and payload.hostname.strip() else None
     proxy = db.query(RestoreProxyHost).first()
     if proxy is None:
-        proxy = RestoreProxyHost(address=payload.address, username=payload.username, use_https=payload.use_https)
+        proxy = RestoreProxyHost(address=payload.address, hostname=hostname, username=payload.username, use_https=payload.use_https)
         db.add(proxy)
     else:
         proxy.address = payload.address
+        proxy.hostname = hostname
         proxy.username = payload.username
         proxy.use_https = payload.use_https
     if payload.password:
         proxy.encrypted_password = encrypt_secret(payload.password)
     db.commit()
     db.refresh(proxy)
-    return ProxyHostRead(configured=True, address=proxy.address, username=proxy.username, use_https=proxy.use_https)
+    return ProxyHostRead(
+        configured=True, address=proxy.address, hostname=proxy.hostname, username=proxy.username, use_https=proxy.use_https,
+    )
 
 
 @router.get("/proxy-host/addresses", response_model=list[ProxyIpAddress])

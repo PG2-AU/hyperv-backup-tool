@@ -844,12 +844,14 @@ export interface CopyFileRestoreSelectionPayload {
 export interface RestoreProxyHostConfig {
   configured: boolean;
   address?: string | null;
+  hostname?: string | null;
   username?: string | null;
   use_https: boolean;
 }
 
 export interface RestoreProxyHostWrite {
   address: string;
+  hostname?: string | null;
   username: string;
   password?: string | null;
   use_https: boolean;

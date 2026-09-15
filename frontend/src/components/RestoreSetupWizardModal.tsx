@@ -54,6 +54,7 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
   const [showCreateLif, setShowCreateLif] = useState(false);
 
   const [proxyAddress, setProxyAddress] = useState("");
+  const [proxyHostname, setProxyHostname] = useState("");
   const [proxyUsername, setProxyUsername] = useState("");
   const [proxyPassword, setProxyPassword] = useState("");
   const [proxyUseHttps, setProxyUseHttps] = useState(true);
@@ -89,6 +90,7 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
   useEffect(() => {
     if (proxyHost?.configured) {
       setProxyAddress(proxyHost.address ?? "");
+      setProxyHostname(proxyHost.hostname ?? "");
       setProxyUsername(proxyHost.username ?? "");
       setProxyUseHttps(proxyHost.use_https);
     }
@@ -96,7 +98,10 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
 
   function handleSaveProxyHost() {
     saveProxyHost.mutate(
-      { address: proxyAddress, username: proxyUsername, password: proxyPassword || null, use_https: proxyUseHttps },
+      {
+        address: proxyAddress, hostname: proxyHostname.trim() || null, username: proxyUsername,
+        password: proxyPassword || null, use_https: proxyUseHttps,
+      },
       {
         onSuccess: () => {
           notifications.show({ title: "Gespeichert", message: "Restore-Proxy-Host wurde gespeichert.", color: "green" });
@@ -189,6 +194,13 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
               placeholder="z.B. 10.93.70.13 oder hostname"
               value={proxyAddress}
               onChange={(e) => setProxyAddress(e.currentTarget.value)}
+            />
+            <TextInput
+              label="Hostname (optional)"
+              description="Nur für WinRM-Transport Kerberos nötig, falls oben eine IP statt eines Hostnamens steht – Kerberos-SPNs sind hostnamenbasiert. Bei NTLM/CredSSP wirkungslos."
+              placeholder="z.B. proxy01.hyperv.demo.au.local"
+              value={proxyHostname}
+              onChange={(e) => setProxyHostname(e.currentTarget.value)}
             />
             <TextInput
               label="Benutzername"

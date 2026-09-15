@@ -19,6 +19,12 @@ class RestoreProxyHost(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     address: Mapped[str] = mapped_column(String(255))
+    # DNS-Name des Proxy-Hosts, separat von `address` (das i.d.R. eine IP
+    # ist) -- nur fuer HVNB_WINRM_TRANSPORT=kerberos benoetigt, wo
+    # kerberos_hostname_override einen Hostnamen statt einer IP braucht
+    # (Kerberos-SPNs sind hostnamenbasiert). Optional, wirkungslos bei
+    # NTLM/CredSSP.
+    hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
     username: Mapped[str] = mapped_column(String(255))
     encrypted_password: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     use_https: Mapped[bool] = mapped_column(Boolean, default=True)
