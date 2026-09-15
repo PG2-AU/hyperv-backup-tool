@@ -208,52 +208,83 @@ def run_snapshot_reconciliation() -> None:
             .filter(BackupRunSnapshot.success.is_(True), BackupRunSnapshot.volume_uuid.isnot(None))
             .all()
         )
-        if not rows:
-            return
-
-        groups: dict[tuple[str, str], list[BackupRunSnapshot]] = defaultdict(list)
-        for row in rows:
-            groups[(row.netapp_cluster_id, row.volume_uuid)].append(row)
-
         clusters = {c.id: c for c in db.query(NetAppCluster).all()}
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
 
-        for (cluster_id, volume_uuid), group_rows in groups.items():
-            cluster = clusters.get(cluster_id)
-            if cluster is None:
-                continue
-            try:
-                service = _netapp_service_for(cluster)
-                real_names = service.list_snapshot_names(volume_uuid)
-            except Exception as exc:
-                _log(db, f"Snapshot-Abgleich uebersprungen fuer Cluster '{cluster.name}'/Volume '{volume_uuid}': {exc}", level="WARNING")
-                continue
+        if rows:
+            groups: dict[tuple[str, str], list[BackupRunSnapshot]] = defaultdict(list)
+            for row in rows:
+                groups[(row.netapp_cluster_id, row.volume_uuid)].append(row)
 
-            for row in group_rows:
-                if row.snapshot_name and row.snapshot_name not in real_names:
-                    row.success = False
-                    row.error_message = f"Snapshot wurde extern geloescht (Abgleich am {now_str} UTC)"
-            db.commit()
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
 
-        _reconcile_snapshot_destinations(db, rows, clusters)
+            for (cluster_id, volume_uuid), group_rows in groups.items():
+                cluster = clusters.get(cluster_id)
+                if cluster is None:
+                    continue
+                try:
+                    service = _netapp_service_for(cluster)
+                    real_names = service.list_snapshot_names(volume_uuid)
+                except Exception as exc:
+                    _log(db, f"Snapshot-Abgleich uebersprungen fuer Cluster '{cluster.name}'/Volume '{volume_uuid}': {exc}", level="WARNING")
+                    continue
+
+                for row in group_rows:
+                    if row.snapshot_name and row.snapshot_name not in real_names:
+                        row.success = False
+                        row.error_message = f"Snapshot wurde extern geloescht (Abgleich am {now_str} UTC)"
+                db.commit()
+
+        # Ziel-Abgleich (SnapMirror-Destination) unabhaengig vom Primaer-
+        # Status: eine Ziel-Kopie hat ihre EIGENE, unabhaengige Aufbewahrung
+        # (SnapMirror-Policy-Retention auf ONTAP-Seite) und kann noch lange
+        # existieren, nachdem der Primaer-Snapshot (durch unsere eigene
+        # Primaer-Retention) bereits verschwunden und row.success=False
+        # gesetzt wurde. Live gefunden (2026-09-16): ein primaerseitig am
+        # 30.08. geloeschter Snapshot blieb auf der Ziel-Seite noch gut zwei
+        # Wochen bestehen, wurde aber -- weil die alte Logik ausschliesslich
+        # success=True-Zeilen prueft -- nie wieder abgeglichen und zeigte
+        # dauerhaft den letzten (laengst veralteten) 'present=True'-Stand,
+        # obwohl er auch dort laengst uebliche Retention-Aufraeumung
+        # verschwunden war -- ein "Geister-Eintrag", der faelschlich als
+        # sekundaer restorebar erschien. `rows` (success=True) deckt die
+        # Erstpruefung/laufende Ueberwachung ab; zusaetzlich alle Zeilen,
+        # deren Ziel-Kopie beim letzten Abgleich noch als vorhanden bekannt
+        # war, auch wenn der Primaer-Status inzwischen success=False ist --
+        # bewusst NICHT alle jemals success=False gewordenen Zeilen (das
+        # waere unbegrenzt viele taegliche NetApp-API-Aufrufe fuer laengst
+        # bestaetigt verschwundene uralte Zeilen).
+        stale_but_present_rows = (
+            db.query(BackupRunSnapshot)
+            .join(BackupRunSnapshotDestination)
+            .filter(BackupRunSnapshot.success.is_(False), BackupRunSnapshotDestination.present.is_(True))
+            .distinct()
+            .all()
+        )
+        _reconcile_snapshot_destinations(db, rows + stale_but_present_rows, clusters)
     finally:
         _touch(db, "last_snapshot_reconciliation_at")
         db.close()
 
 
 def _reconcile_snapshot_destinations(db: Session, rows: list[BackupRunSnapshot], clusters: dict[str, NetAppCluster]) -> None:
-    """Zweiter Teil des Snapshot-Abgleichs: prueft fuer jeden (weiterhin)
-    erfolgreichen Snapshot, ob er per SnapMirror auf eine discoverte
-    Ziel-Beziehung repliziert wurde -- Grundlage fuer den Restore-von-
-    SnapMirror-Destination-Workflow (siehe BackupRunSnapshotDestination).
-    Snapshot-Namen bleiben beim SnapMirror-Transfer unveraendert (live
-    verifiziert), der Abgleich erfolgt daher per Namensvergleich wie beim
-    Quell-Abgleich oben."""
+    """Zweiter Teil des Snapshot-Abgleichs: prueft fuer jeden Snapshot, ob
+    er per SnapMirror auf eine discoverte Ziel-Beziehung repliziert wurde --
+    Grundlage fuer den Restore-von-SnapMirror-Destination-Workflow (siehe
+    BackupRunSnapshotDestination). Snapshot-Namen bleiben beim SnapMirror-
+    Transfer unveraendert (live verifiziert), der Abgleich erfolgt daher per
+    Namensvergleich wie beim Quell-Abgleich oben.
+
+    BEWUSST kein Filter auf row.success (anders als frueher) -- die
+    Ziel-Kopie hat ihre eigene, unabhaengige Aufbewahrung und muss auch nach
+    Wegfall des Primaer-Snapshots weiter beobachtet werden, siehe
+    run_snapshot_reconciliation (dort curated der Aufrufer bereits die
+    richtige Zeilen-Auswahl: success=True + zuletzt bekannt praesente
+    success=False-Zeilen)."""
     clusters_by_name = {c.name: c for c in clusters.values()}
     now = datetime.now(timezone.utc)
 
     for row in rows:
-        if not row.success or not row.snapshot_name or not row.svm_name or not row.volume_name:
+        if not row.snapshot_name or not row.svm_name or not row.volume_name:
             continue
         relationships = (
             db.query(NetAppSnapMirrorRelationship)
