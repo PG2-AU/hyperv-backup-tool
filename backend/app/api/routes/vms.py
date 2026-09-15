@@ -240,11 +240,13 @@ def delete_vm_checkpoint(
     password = decrypt_secret(cluster.encrypted_password)
     refreshed_vm = None
     try:
-        hv_service = HyperVService(settings, cluster.management_address, use_https=cluster.use_https)
+        hv_service = HyperVService(
+            settings, cluster.management_address, use_https=cluster.use_https, node_hostname=cluster.hyperv_cluster_name,
+        )
         cno_session = hv_service.connect(cluster.username, password, read_timeout_sec=15, operation_timeout_sec=10)
         owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or vm.host_name
         node_address = hv_service.resolve_node_address(cno_session, owner_node)
-        node_service = HyperVService(settings, node_address, use_https=cluster.use_https)
+        node_service = HyperVService(settings, node_address, use_https=cluster.use_https, node_hostname=owner_node)
         node_session = node_service.connect(cluster.username, password)
         result = node_service.remove_checkpoint(node_session, vm_name, checkpoint["name"])
         if not result.success:
@@ -319,11 +321,13 @@ def discover_vm(
     settings = get_settings()
     password = decrypt_secret(cluster.encrypted_password)
     try:
-        hv_service = HyperVService(settings, cluster.management_address, use_https=cluster.use_https)
+        hv_service = HyperVService(
+            settings, cluster.management_address, use_https=cluster.use_https, node_hostname=cluster.hyperv_cluster_name,
+        )
         cno_session = hv_service.connect(cluster.username, password, read_timeout_sec=15, operation_timeout_sec=10)
         owner_node = hv_service.get_vm_owner_node(cno_session, vm_name) or vm.host_name
         node_address = hv_service.resolve_node_address(cno_session, owner_node)
-        node_service = HyperVService(settings, node_address, use_https=cluster.use_https)
+        node_service = HyperVService(settings, node_address, use_https=cluster.use_https, node_hostname=owner_node)
         node_session = node_service.connect(cluster.username, password)
         # Kurzer, begrenzter Retry statt nur einer Abfrage -- derselbe Grund
         # wie bei delete_vm_checkpoint: der AVHDX->VHDX-Merge einer
