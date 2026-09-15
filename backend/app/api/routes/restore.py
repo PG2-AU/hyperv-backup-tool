@@ -684,7 +684,10 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 raise RuntimeError(
                     "Kein Restore-Proxy-Host konfiguriert (Restore > Setup > Restore-Infrastruktur einrichten)."
                 )
-            hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
+            hv_service = HyperVService(
+                settings, hv_cluster.management_address, use_https=hv_cluster.use_https,
+                node_hostname=hv_cluster.hyperv_cluster_name,
+            )
             hv_password = decrypt_secret(hv_cluster.encrypted_password)
 
             with _StepCtx(db, run.id, "connect-node", f"Verbindung zu Knoten '{vm.host_name}'") as ctx:
@@ -702,11 +705,14 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 # VM nicht mehr).
                 owner_node = hv_service.get_vm_owner_node(cno_session, run.vm_name) or vm.host_name
                 node_address = hv_service.resolve_node_address(cno_session, owner_node)
-                node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
+                node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node)
                 node_session = node_service.connect(hv_cluster.username, hv_password)
                 ctx.row.message = node_address
 
             with _StepCtx(db, run.id, "connect-proxy", "Verbindung zum Restore-Proxy-Host") as ctx:
+                # Kein node_hostname: RestoreProxyHost hat kein separates
+                # Hostnamen-Feld (nur `address`) -- unter Kerberos muss dort
+                # bereits ein DNS-Name statt einer IP eingetragen sein.
                 proxy_service = HyperVService(settings, proxy.address, use_https=proxy.use_https)
                 proxy_password = decrypt_secret(proxy.encrypted_password) if proxy.encrypted_password else ""
                 proxy_session = proxy_service.connect(proxy.username, proxy_password)
@@ -1021,7 +1027,10 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                     raise RuntimeError("Kein Restore-Proxy-Host konfiguriert (Restore > Setup > Restore-Infrastruktur einrichten).")
 
                 settings = get_settings()
-                hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
+                hv_service = HyperVService(
+                    settings, hv_cluster.management_address, use_https=hv_cluster.use_https,
+                    node_hostname=hv_cluster.hyperv_cluster_name,
+                )
                 hv_password = decrypt_secret(hv_cluster.encrypted_password)
                 name_note = f", Ziel-Name '{target_name}'" if target_name != run.vm_name else ""
                 csv_note = f", Ziel-CSV '{run.destination_csv_name}'" if run.destination_csv_name else ""
@@ -1031,11 +1040,16 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
             with _StepCtx(db, run.id, "connect-node", f"Verbindung zu Knoten '{vm_config.host_name}'", step_model=VmRecreateRunStep) as ctx:
                 cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
                 node_address = hv_service.resolve_node_address(cno_session, vm_config.host_name or "")
-                node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
+                node_service = HyperVService(
+                    settings, node_address, use_https=hv_cluster.use_https, node_hostname=vm_config.host_name,
+                )
                 node_session = node_service.connect(hv_cluster.username, hv_password)
                 ctx.row.message = node_address
 
             with _StepCtx(db, run.id, "connect-proxy", "Verbindung zum Restore-Proxy-Host", step_model=VmRecreateRunStep) as ctx:
+                # Kein node_hostname: RestoreProxyHost hat kein separates
+                # Hostnamen-Feld (nur `address`) -- unter Kerberos muss dort
+                # bereits ein DNS-Name statt einer IP eingetragen sein.
                 proxy_service = HyperVService(settings, proxy.address, use_https=proxy.use_https)
                 proxy_password = decrypt_secret(proxy.encrypted_password) if proxy.encrypted_password else ""
                 proxy_session = proxy_service.connect(proxy.username, proxy_password)
@@ -1408,13 +1422,16 @@ def cleanup_restore(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="VM bzw. deren Knoten nicht gefunden")
 
     settings = get_settings()
-    hv_service = HyperVService(settings, hv_cluster.management_address, use_https=hv_cluster.use_https)
+    hv_service = HyperVService(
+        settings, hv_cluster.management_address, use_https=hv_cluster.use_https,
+        node_hostname=hv_cluster.hyperv_cluster_name,
+    )
     hv_password = decrypt_secret(hv_cluster.encrypted_password)
     try:
         cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
         owner_node = hv_service.get_vm_owner_node(cno_session, run.vm_name) or vm.host_name
         node_address = hv_service.resolve_node_address(cno_session, owner_node)
-        node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https)
+        node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node)
         node_session = node_service.connect(hv_cluster.username, hv_password)
         result = node_service.detach_vhd(node_session, run.vm_name, run.restored_vhd_path)
         if not result.success:

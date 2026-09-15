@@ -132,6 +132,9 @@ def _proxy_service_and_session(db: Session):
             detail="Kein Restore-Proxy-Host konfiguriert (Restore > Setup > Restore-Infrastruktur einrichten).",
         )
     settings = get_settings()
+    # Kein node_hostname: RestoreProxyHost hat kein separates Hostnamen-Feld
+    # (nur `address`) -- unter Kerberos muss dort bereits ein DNS-Name statt
+    # einer IP eingetragen sein.
     service = HyperVService(settings, proxy.address, use_https=proxy.use_https)
     password = decrypt_secret(proxy.encrypted_password) if proxy.encrypted_password else ""
     try:
