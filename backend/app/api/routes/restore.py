@@ -1301,7 +1301,29 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                             )
 
             with _StepCtx(db, run.id, "register-cluster-role", "Als Cluster-Rolle registrieren", step_model=VmRecreateRunStep):
-                hv_service.register_cluster_role(cno_session, target_name)
+                # Add-ClusterVirtualMachineRole braucht einen echten
+                # Double-Hop zum Cluster-Dienst -- live gefunden
+                # (2026-09-15): schlaegt sowohl unter NTLM als auch Kerberos
+                # (beide ohne Credential-Delegation) mit "Access is denied"
+                # fehl, waehrend eine interaktive Sitzung (volle Kerberos-
+                # Delegation) denselben Befehl problemlos ausfuehrt. Anders
+                # als beim Disk-Attach/Detach oben (dort reicht NTLM) nur
+                # fuer DIESEN einen Schritt separat auf CredSSP umstellen,
+                # das echte Delegation unterstuetzt -- CredSSP selbst war
+                # beim 2026-09-12-Vorfall nachweislich nicht die Ursache
+                # (siehe [[credssp-checkpoint-auth-failures]]), das
+                # Sicherheitsrisiko bleibt hier durch die seltene, gezielte
+                # Nutzung minimal.
+                credssp_settings = copy.copy(settings)
+                credssp_settings.winrm_transport = "credssp"
+                credssp_service = HyperVService(
+                    credssp_settings, hv_cluster.management_address, use_https=hv_cluster.use_https,
+                    node_hostname=hv_cluster.hyperv_cluster_name,
+                )
+                credssp_session = credssp_service.connect(
+                    hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10,
+                )
+                credssp_service.register_cluster_role(credssp_session, target_name)
 
             with _StepCtx(db, run.id, "post-discovery", "Inventory aktualisieren", step_model=VmRecreateRunStep) as ctx:
                 # Best-effort: die VM ist zu diesem Zeitpunkt bereits
