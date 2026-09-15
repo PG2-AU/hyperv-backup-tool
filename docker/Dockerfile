@@ -22,9 +22,16 @@ ENV LANG=C.UTF-8 \
 # aktuellen Bridge-Networking-Modus nicht mehr aktiv reproduziert, aber
 # schadlos und billig als Vorsichtsmassnahme beibehalten.
 
+# python3.12-devel/gcc/krb5-devel: Build-Abhaengigkeiten fuer die
+# gssapi/pykerberos-C-Extensions (HVNB_WINRM_TRANSPORT=kerberos, siehe
+# app.core.kerberos_auth) -- dafuer gibt es i.d.R. keine fertigen Wheels,
+# sie werden bei 'pip install' (entrypoint.sh/updater.sh) aus dem Quellpaket
+# gebaut. krb5-workstation liefert kinit/klist nur fuer manuelle Diagnose
+# im Container, wird vom App-Code selbst nicht aufgerufen.
 RUN dnf install -y --setopt=install_weak_deps=False \
-        python3.12 python3.12-pip \
+        python3.12 python3.12-pip python3.12-devel gcc \
         git nginx openssl gettext shadow-utils \
+        krb5-devel krb5-workstation krb5-libs \
     && dnf module -y reset nodejs \
     && dnf module -y install nodejs:20 \
     && dnf clean all \

@@ -13,6 +13,9 @@ import type {
   HyperVClusterCreate,
   HyperVClusterUpdate,
   IgroupCreate,
+  KerberosConfig,
+  KerberosDetectResult,
+  KerberosTestResult,
   MetroClusterStatus,
   NetAppAggregate,
   NetAppCluster,
@@ -1182,5 +1185,36 @@ export function useGenerateWinrmSetupScript() {
   return useMutation({
     mutationFn: async (payload: WinrmSetupScriptRequest) =>
       (await apiClient.post<{ script: string }>("/winrm-certs/setup-script", payload)).data.script,
+  });
+}
+
+// Settings > Kerberos (Backlog-Punkt 50).
+export function useKerberosConfig() {
+  return useQuery({
+    queryKey: ["kerberos-config"],
+    queryFn: async () => (await apiClient.get<KerberosConfig>("/kerberos-config")).data,
+  });
+}
+
+export function useUpdateKerberosConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { realm: string; kdc_hostname: string; kdc_address?: string | null }) =>
+      (await apiClient.put<KerberosConfig>("/kerberos-config", payload)).data,
+    onSuccess: (data) => queryClient.setQueryData(["kerberos-config"], data),
+  });
+}
+
+export function useDetectKerberosRealm() {
+  return useMutation({
+    mutationFn: async (clusterId: string) =>
+      (await apiClient.post<KerberosDetectResult>("/kerberos-config/detect", { cluster_id: clusterId })).data,
+  });
+}
+
+export function useTestKerberosConnection() {
+  return useMutation({
+    mutationFn: async (payload: { cluster_id: string; realm: string; kdc_hostname: string }) =>
+      (await apiClient.post<KerberosTestResult>("/kerberos-config/test", payload)).data,
   });
 }

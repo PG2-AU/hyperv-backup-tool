@@ -1050,3 +1050,25 @@ export interface WinrmSetupScriptRequest {
   cno_ip?: string | null;
   own_ip?: string | null;
 }
+
+// Settings > Kerberos (Backlog-Punkt 50) -- ein globales Realm/KDC-Paar,
+// siehe app.core.kerberos_config fuer den Hintergrund (bewusst kein
+// Multi-Domain).
+export interface KerberosConfig {
+  realm?: string | null;
+  kdc_hostname?: string | null;
+  kdc_address?: string | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+export interface KerberosDetectResult {
+  realm: string;
+  kdc_hostname: string;
+  kdc_address?: string | null;
+}
+
+export interface KerberosTestResult {
+  success: boolean;
+  message: string;
+}

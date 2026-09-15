@@ -1003,6 +1003,12 @@ class _NodeCheckpointJob:
     username: str
     password: str
     vms: list[tuple[str, str]]  # (vm_name, cluster_id)
+    # DNS-Name des Knotens (node_address ist meist dessen Management-IP,
+    # siehe _node_management_ips) -- nur fuer HVNB_WINRM_TRANSPORT=kerberos
+    # gebraucht (Kerberos-SPNs sind hostnamenbasiert, siehe
+    # HyperVService._session/node_hostname). Bei anderen Transports
+    # ungenutzt.
+    node_name: str | None = None
 
 
 def _run_node_checkpoints(
@@ -1027,7 +1033,8 @@ def _run_node_checkpoints(
     step_timeout = settings.winrm_backup_step_timeout_seconds
     try:
         node_service = HyperVService(
-            settings, job.node_address, use_https=job.use_https, ps_timeout_sec=step_timeout
+            settings, job.node_address, use_https=job.use_https, ps_timeout_sec=step_timeout,
+            node_hostname=job.node_name,
         )
         node_session = node_service.connect(job.username, job.password)
     except Exception as exc:  # noqa: BLE001 -- Knoten unerreichbar: alle seine VMs crash-konsistent
@@ -1238,6 +1245,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                             job = _NodeCheckpointJob(
                                 node_address=node_address, use_https=hv_cluster.use_https,
                                 username=hv_cluster.username, password=hv_password, vms=[],
+                                node_name=owner,
                             )
                             vms_by_node[node_address] = job
                         job.vms.append((vm_name, cluster_id))

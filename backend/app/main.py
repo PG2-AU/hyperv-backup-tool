@@ -10,6 +10,7 @@ from app.api.routes import (
     file_restore,
     hyperv_clusters,
     jobs,
+    kerberos_config as kerberos_config_routes,
     logs,
     netapp_clusters,
     resource_groups,
@@ -27,6 +28,8 @@ from app.api.routes import (
     winrm_certs,
 )
 from app.core.config import get_settings
+from app.core.kerberos_auth import ensure_ccache_env
+from app.core.kerberos_config import ensure_krb5_config_env
 from app.core.scheduler import shutdown_scheduler, start_scheduler
 from app.db.init_db import init_db
 from app.db.session import SessionLocal
@@ -34,6 +37,12 @@ from app.db.session import SessionLocal
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Muss VOR jedem Ticket-Erwerb gesetzt sein (siehe app.core.kerberos_auth) --
+    # hier einmalig beim App-Start, unabhaengig davon, ob die krb5.conf
+    # selbst schon existiert oder HVNB_WINRM_TRANSPORT ueberhaupt kerberos
+    # ist (schadlos, falls nicht genutzt).
+    ensure_krb5_config_env(get_settings())
+    ensure_ccache_env(get_settings())
     db = SessionLocal()
     try:
         init_db(db)
@@ -79,6 +88,7 @@ app.include_router(scheduler_config.router)
 app.include_router(alerts.router)
 app.include_router(storage_access.router)
 app.include_router(winrm_certs.router)
+app.include_router(kerberos_config_routes.router)
 
 
 @app.get("/api/health")

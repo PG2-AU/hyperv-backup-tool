@@ -1540,6 +1540,37 @@ Hyper-V-Cluster prüfen — genau dieses Muster (Server erreichbar,
 aber durch eine VLAN-Trennung vom App-Host aus nicht) trat bereits beim
 Code-Bezug in der Referenzumgebung auf, siehe Abschnitt 4c.
 
+### Alternative zu CredSSP/NTLM: Kerberos
+
+`HVNB_WINRM_TRANSPORT=kerberos` ist eine dritte Option neben `ntlm`
+(Standard) und `credssp` — im Gegensatz zu CredSSP ohne dessen
+protokollbedingte Empfindlichkeit gegenüber Windows-Sicherheitsupdates
+("Encryption Oracle Remediation"), im Gegensatz zu NTLM mit dem
+moderneren, von Sicherheits-Audits meist erwarteten Verfahren.
+
+**Kein Domain-Join des Containers nötig.** Die Ticket-Beschaffung
+erfolgt zur Laufzeit mit den ohnehin hinterlegten Zugangsdaten (kein
+Keytab, keine Sonderbehandlung bei einer Kennwort-Rotation). Das Tool
+geht davon aus, dass alle registrierten Hyper-V-Cluster in **derselben**
+AD-Domäne liegen — es gibt bewusst nur ein einziges, globales Realm/KDC-
+Paar (Settings → Kerberos), keine Konfiguration pro Cluster.
+
+Voraussetzungen:
+- Der HVNB-Server erreicht den Domain Controller/KDC über das Netzwerk
+  (Port 88 TCP/UDP).
+- Uhrzeit-Synchronität zwischen HVNB-Server und KDC (Kerberos toleriert
+  standardmäßig nur wenige Minuten Abweichung).
+- Die SPNs der Hyper-V-Hosts (`WSMAN/<hostname>`) sind registriert — bei
+  aktiviertem WinRM in der Regel automatisch der Fall, im Zweifel per
+  `setspn -L <hostname>` auf dem jeweiligen Host prüfen.
+
+Einrichtung: Settings → Kerberos → Cluster auswählen → "Automatisch
+erkennen" (fragt Realm/KDC live über den aktuell funktionierenden
+Transport des gewählten Clusters ab) oder manuell eintragen → "Verbindung
+testen" → Speichern. Erst danach `HVNB_WINRM_TRANSPORT=kerberos` setzen
+und den Container neu erstellen (`podman-compose up -d`, siehe Abschnitt
+6 — eine reine `.env`-Änderung wird nicht automatisch übernommen).
+
 ---
 
 **Teil 3: Cluster/Storage in der App registrieren**

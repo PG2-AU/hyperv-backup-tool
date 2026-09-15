@@ -36,6 +36,7 @@ import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useU
 import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { AlertSettingsTab } from "@/components/AlertSettingsTab";
 import { EmailSettingsTab } from "@/components/EmailSettingsTab";
+import { KerberosTab } from "@/components/KerberosTab";
 import { SchedulerConfigTab } from "@/components/SchedulerConfigTab";
 import { WinrmCertsTab } from "@/components/WinrmCertsTab";
 import { HyperVClusterFormModal } from "@/components/HyperVClusterFormModal";
@@ -287,6 +288,7 @@ export function SettingsPage() {
           <Tabs.Tab value="ad">Active Directory</Tabs.Tab>
           <Tabs.Tab value="hyperv">Hyper-V-Hosts</Tabs.Tab>
           <Tabs.Tab value="winrm-certs">WinRM-Zertifikate</Tabs.Tab>
+          <Tabs.Tab value="kerberos">Kerberos</Tabs.Tab>
           <Tabs.Tab value="storage">Storage</Tabs.Tab>
           <Tabs.Tab value="email">E-Mail</Tabs.Tab>
           <Tabs.Tab value="scheduler">Hintergrundjobs</Tabs.Tab>
@@ -648,6 +650,10 @@ export function SettingsPage() {
 
         <Tabs.Panel value="winrm-certs" pt="md">
           <WinrmCertsTab />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="kerberos" pt="md">
+          <KerberosTab />
         </Tabs.Panel>
 
         <Tabs.Panel value="email" pt="md">

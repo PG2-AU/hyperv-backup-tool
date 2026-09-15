@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     # noetig. Liegt auf demselben persistenten /data-Volume wie
     # 'netapp_cert_dir'.
     winrm_trust_dir: str = "/data/winrm-trust"
+    # Verzeichnis, in das die GUI-Sektion "Settings > Kerberos" die aus
+    # Realm/KDC (app.models.kerberos_config.KerberosConfig) erzeugte
+    # krb5.conf schreibt -- nur relevant bei winrm_transport=kerberos, siehe
+    # app.core.kerberos_config. Gleiches Muster wie winrm_trust_dir: liegt
+    # auf dem persistenten /data-Volume, wird bei jeder Ticket-Beschaffung
+    # frisch gelesen, kein Neustart bei einer Aenderung noetig.
+    kerberos_config_dir: str = "/data/kerberos"
     # Hartes Wall-Clock-Zeitlimit fuer EINEN einzelnen PowerShell-/WinRM-
     # Aufruf im Backup-Pfad (Checkpoint erstellen/entfernen, Owner-Node
     # aufloesen). pywinrm pollt einen langlaufenden Befehl sonst unbegrenzt

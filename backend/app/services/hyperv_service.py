@@ -18,6 +18,8 @@ from enum import StrEnum
 import winrm
 
 from app.core.config import Settings
+from app.core.kerberos_auth import KerberosTicketError, ensure_ticket
+from app.core.kerberos_config import resolved_realm
 from app.core.winrm_trust import resolved_trust_path
 
 
@@ -185,7 +187,7 @@ def check_reachability(host: str, port: int, timeout_sec: float = 5.0) -> None:
 class HyperVService:
     def __init__(
         self, settings: Settings, target_host: str, use_https: bool | None = None,
-        *, ps_timeout_sec: int | None = None,
+        *, ps_timeout_sec: int | None = None, node_hostname: str | None = None,
     ):
         """'use_https' ist ein Pro-Cluster-Override (Standard: globale
         Einstellung 'winrm_use_https'). Der Port wird daraus abgeleitet
@@ -200,11 +202,20 @@ class HyperVService:
         Hintergrund-Thread aus). None = kein Zeitlimit (bisheriges Verhalten;
         so bleibt u.a. der Restore-Pfad mit legitimen Langlaeufer-Copy-Item
         unberuehrt). Gesetzt wird es aktuell nur im Backup-Pfad, siehe
-        app.api.routes.jobs._execute_job_run."""
+        app.api.routes.jobs._execute_job_run.
+
+        'node_hostname' (optional, nur fuer HVNB_WINRM_TRANSPORT=kerberos
+        relevant, siehe _session): der DNS-Name des Ziels, falls 'target_host'
+        selbst eine IP-Adresse ist (die App verbindet meist per Management-IP,
+        siehe _node_management_ips in hyperv_clusters.py -- Kerberos-SPNs sind
+        aber hostnamenbasiert). Fehlt er, wird 'target_host' selbst als SPN-
+        Hostname verwendet (funktioniert nur, wenn das bereits ein Name ist,
+        keine IP)."""
         self._settings = settings
         self._target_host = target_host
         self._use_https = settings.winrm_use_https if use_https is None else use_https
         self._ps_timeout_sec = ps_timeout_sec
+        self._node_hostname = node_hostname
 
     @property
     def port(self) -> int:
@@ -213,9 +224,28 @@ class HyperVService:
     def _session(self, username: str, password: str, *, read_timeout_sec: int = 30, operation_timeout_sec: int = 20) -> winrm.Session:
         scheme = "https" if self._use_https else "http"
         endpoint = f"{scheme}://{self._target_host}:{self.port}/wsman"
+        kwargs: dict = {}
+        auth = (username, password)
+        if self._settings.winrm_transport == "kerberos":
+            # Ticket-Beschaffung + Principal-Normalisierung, siehe
+            # app.core.kerberos_auth -- muss VOR dem Verbindungsaufbau
+            # passieren, da winrm/pywinrm selbst keine Ticket-Beschaffung
+            # macht, nur ein bereits vorhandenes Ticket verwendet.
+            realm = resolved_realm(self._settings)
+            if not realm:
+                raise HyperVConnectionError(
+                    "Kerberos ist als Transport ausgewaehlt, aber kein Realm konfiguriert "
+                    "(Settings > Kerberos)."
+                )
+            try:
+                principal = ensure_ticket(username, password, realm)
+            except KerberosTicketError as exc:
+                raise HyperVConnectionError(str(exc)) from exc
+            auth = (principal, "")  # Passwort wird von HTTPKerberosAuth nicht genutzt, das Ticket ist schon da
+            kwargs["kerberos_hostname_override"] = self._node_hostname or self._target_host
         return winrm.Session(
             endpoint,
-            auth=(username, password),
+            auth=auth,
             transport=self._settings.winrm_transport,
             server_cert_validation="validate" if self._use_https else "ignore",
             # Explizites HVNB_WINRM_CA_TRUST_PATH zuerst, sonst das ueber
@@ -226,6 +256,7 @@ class HyperVService:
             ca_trust_path=resolved_trust_path(self._settings),
             read_timeout_sec=read_timeout_sec,
             operation_timeout_sec=operation_timeout_sec,
+            **kwargs,
         )
 
     def connect(self, username: str, password: str, *, read_timeout_sec: int = 30, operation_timeout_sec: int = 20) -> winrm.Session:
