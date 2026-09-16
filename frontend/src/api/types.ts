@@ -1074,3 +1074,21 @@ export interface KerberosTestResult {
   success: boolean;
   message: string;
 }
+
+// Kapazitaetsverlauf (Liniendiagramm) fuer VHDs/CSVs/LUNs/Volumes/
+// Aggregate, siehe GET /api/capacity-history. object_key ist der stabile,
+// serverseitig abgeleitete Schluessel (siehe capacity_key im Backend) --
+// NICHT die id des jeweiligen Discovery-Objekts.
+export type CapacityObjectType = "vhd" | "csv" | "lun" | "volume" | "aggregate";
+
+export interface CapacitySamplePoint {
+  sampled_at: string;
+  capacity_bytes?: number | null;
+  used_bytes?: number | null;
+}
+
+export interface CapacitySeries {
+  object_key: string;
+  object_name: string;
+  points: CapacitySamplePoint[];
+}

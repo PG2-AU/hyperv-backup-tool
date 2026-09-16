@@ -6,6 +6,8 @@ import type {
   BackupPolicy,
   BackupScope,
   BackupSnapshot,
+  CapacityObjectType,
+  CapacitySeries,
   ClusterPeerCreate,
   Csv,
   DiscoveryStep,
@@ -140,6 +142,34 @@ export function useLuns() {
   return useQuery({
     queryKey: ["luns"],
     queryFn: async () => (await apiClient.get<NetAppLun[]>("/storage/luns")).data,
+  });
+}
+
+// Kapazitaetsverlauf (Inventory/Storage > Verlauf-Chart). Fuer vhd ist
+// vmUuid erforderlich (liefert automatisch eine Serie je aktueller VHD
+// dieser VM), fuer csv ist name erforderlich, fuer lun/volume/aggregate
+// wird bevorzugt ueber uuid aufgeloest (Fallback name).
+export function useCapacityHistory(
+  params: {
+    objectType: CapacityObjectType;
+    clusterId: string | null | undefined;
+    months: number;
+    vmUuid?: string | null;
+    name?: string | null;
+    uuid?: string | null;
+  },
+  enabled: boolean,
+) {
+  const { objectType, clusterId, months, vmUuid, name, uuid } = params;
+  return useQuery({
+    queryKey: ["capacity-history", objectType, clusterId, months, vmUuid, name, uuid],
+    queryFn: async () =>
+      (
+        await apiClient.get<CapacitySeries[]>("/capacity-history", {
+          params: { object_type: objectType, cluster_id: clusterId, months, vm_uuid: vmUuid, name, uuid },
+        })
+      ).data,
+    enabled: enabled && !!clusterId,
   });
 }
 

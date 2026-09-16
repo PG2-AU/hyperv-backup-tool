@@ -31,18 +31,20 @@ from app.api.routes.jobs import _execute_job_run, _occurrences_within, _start_jo
 from app.api.routes.netapp_clusters import _discover_and_persist as _run_netapp_discovery
 from app.api.routes.netapp_clusters import _refresh_status as _refresh_netapp_status
 from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
+from app.core.capacity_history import capacity_key
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.alert import Alert, AlertConfig, AlertScope, AlertStatus, AlertType
 from app.models.allowed_schedule_collision import AllowedScheduleCollision
 from app.models.backup_policy import BackupPolicy, RetentionType
 from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapshotDestination, BackupRunStep, JobStatus
+from app.models.capacity_history import CapacitySample
 from app.models.email_config import EmailConfig
 from app.models.file_restore_run import FileRestoreRun
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
 from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
-from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
+from app.models.netapp_discovery import NetAppAggregate, NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink
 from app.models.restore_run import RestoreRun, RestoreStatus, RestoreStepStatus
 from app.models.schedule import ScheduleType
@@ -1197,6 +1199,88 @@ def run_daily_email_summary() -> None:
         db.close()
 
 
+CAPACITY_HISTORY_RETENTION_DAYS = 396  # ~13 Monate
+
+
+def run_capacity_history_sampling() -> None:
+    """Schreibt einmal taeglich einen Kapazitaets-Messpunkt je VHD/CSV/LUN/
+    Volume/Aggregat (Inventory/Storage > Verlauf-Chart) -- liest dabei NUR
+    die bereits von der regulaeren Discovery persistierten aktuellen Werte,
+    KEINE zusaetzlichen WinRM-/NetApp-API-Aufrufe. Die id-Spalte dieser
+    Discovery-Tabellen ist bei jedem Discovery-Lauf eine neue Zufalls-UUID
+    (Zeilen werden ersetzt, nicht aktualisiert) -- als Zeitreihen-Schluessel
+    daher untauglich, siehe app.core.capacity_history.capacity_key fuer die
+    stattdessen genutzte, aus stabilen Objekteigenschaften abgeleitete
+    Schluesselbildung (dieselbe Funktion wie im Abfrage-Endpunkt, damit
+    beide Seiten garantiert denselben Schluessel berechnen)."""
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        for vhd in db.query(HyperVVhd).all():
+            db.add(
+                CapacitySample(
+                    object_type="vhd",
+                    object_key=capacity_key("vhd", vhd.cluster_id, path=vhd.path),
+                    object_name=(vhd.path or "").split("\\")[-1] or vhd.path,
+                    capacity_bytes=vhd.size_bytes,
+                    used_bytes=vhd.used_bytes,
+                    sampled_at=now,
+                )
+            )
+        for csv in db.query(HyperVCsv).all():
+            db.add(
+                CapacitySample(
+                    object_type="csv",
+                    object_key=capacity_key("csv", csv.cluster_id, name=csv.name),
+                    object_name=csv.name,
+                    capacity_bytes=csv.capacity_bytes,
+                    used_bytes=csv.used_bytes,
+                    sampled_at=now,
+                )
+            )
+        for volume in db.query(NetAppVolume).all():
+            db.add(
+                CapacitySample(
+                    object_type="volume",
+                    object_key=capacity_key("volume", volume.cluster_id, uuid=volume.uuid, name=volume.name),
+                    object_name=volume.name,
+                    capacity_bytes=volume.size_bytes,
+                    used_bytes=volume.used_bytes,
+                    sampled_at=now,
+                )
+            )
+        for lun in db.query(NetAppLun).all():
+            db.add(
+                CapacitySample(
+                    object_type="lun",
+                    object_key=capacity_key("lun", lun.cluster_id, uuid=lun.uuid, name=lun.name),
+                    object_name=lun.name,
+                    capacity_bytes=lun.size_bytes,
+                    used_bytes=lun.used_bytes,
+                    sampled_at=now,
+                )
+            )
+        for agg in db.query(NetAppAggregate).all():
+            db.add(
+                CapacitySample(
+                    object_type="aggregate",
+                    object_key=capacity_key("aggregate", agg.cluster_id, uuid=agg.uuid, name=agg.name),
+                    object_name=agg.name,
+                    capacity_bytes=agg.size_bytes,
+                    used_bytes=agg.used_bytes,
+                    sampled_at=now,
+                )
+            )
+        db.commit()
+
+        cutoff = now - timedelta(days=CAPACITY_HISTORY_RETENTION_DAYS)
+        deleted = db.query(CapacitySample).filter(CapacitySample.sampled_at < cutoff).delete(synchronize_session=False)
+        db.commit()
+        _log(db, f"Kapazitaetsverlauf: Messpunkte gesammelt, {deleted} Punkt(e) älter als {CAPACITY_HISTORY_RETENTION_DAYS} Tage entfernt")
+    finally:
+        db.close()
+
+
 # Obergrenze fuer den Nachhol-Mechanismus in run_scheduled_backups: eine
 # groessere Luecke seit dem letzten Check (z.B. Container-Neustart/Deploy,
 # oder der Prozess war laenger nicht lauffaehig) soll NICHT dazu fuehren,
@@ -1553,6 +1637,10 @@ def start_scheduler() -> BackgroundScheduler:
     scheduler.add_job(
         run_alert_check, IntervalTrigger(minutes=alert_check_interval, start_date=INTERVAL_ANCHOR),
         id="alert-check", replace_existing=True, max_instances=1,
+    )
+    scheduler.add_job(
+        run_capacity_history_sampling, IntervalTrigger(hours=24, start_date=INTERVAL_ANCHOR),
+        id="capacity-history-sampling", replace_existing=True, max_instances=1,
     )
     scheduler.start()
     startup_db = SessionLocal()

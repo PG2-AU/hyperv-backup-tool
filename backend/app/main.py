@@ -7,6 +7,7 @@ from app.api.routes import (
     ad_config as ad_config_routes,
     alerts,
     auth,
+    capacity_history,
     email_config,
     file_restore,
     hyperv_clusters,
@@ -91,6 +92,7 @@ app.include_router(storage_access.router)
 app.include_router(winrm_certs.router)
 app.include_router(kerberos_config_routes.router)
 app.include_router(ad_config_routes.router)
+app.include_router(capacity_history.router)
 
 
 @app.get("/api/health")

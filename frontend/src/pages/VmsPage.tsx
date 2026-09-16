@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActionIcon, Badge, Box, Group, Paper, Progress, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
   IconAlertTriangle,
   IconBolt,
+  IconChartLine,
   IconChevronsRight,
   IconCpu,
   IconDatabase,
@@ -24,6 +25,7 @@ import { useSearchParams } from "react-router-dom";
 
 import { useCsvs, useDeleteVmCheckpoint, useDiscoverVm, useResourceGroups, useRunningJobRuns, useVms } from "@/api/hooks";
 import { BackupsModal } from "@/components/BackupsModal";
+import { CapacityHistoryPanel } from "@/components/CapacityHistoryPanel";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
@@ -152,6 +154,7 @@ function ChainNode({
 }
 
 function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined; onClose: () => void }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
   const vhds = vm.vhds.length
     ? vm.vhds
     : vm.csv_paths.map((p) => ({ name: `${vm.name}.vhdx`, size_bytes: vm.vhdx_size_bytes ?? 0, used_bytes: vm.vhdx_used_bytes, csv_path: p }));
@@ -162,10 +165,23 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
         <Text size="sm" fw={600}>
           Speicherkette: {vm.name}
         </Text>
-        <ActionIcon variant="subtle" size="sm" onClick={onClose}>
-          <IconX size={14} />
-        </ActionIcon>
+        <Group gap={4}>
+          <Tooltip label="Kapazitätsverlauf (je VHD eine Linie)">
+            <ActionIcon variant={historyOpen ? "light" : "subtle"} size="sm" onClick={() => setHistoryOpen((v) => !v)}>
+              <IconChartLine size={14} />
+            </ActionIcon>
+          </Tooltip>
+          <ActionIcon variant="subtle" size="sm" onClick={onClose}>
+            <IconX size={14} />
+          </ActionIcon>
+        </Group>
       </Group>
+
+      {historyOpen && (
+        <Box mb="sm">
+          <CapacityHistoryPanel objectType="vhd" clusterId={vm.cluster_id} vmUuid={vm.id} />
+        </Box>
+      )}
 
       <Group gap="lg" mb="sm">
         <Group gap={4}>
@@ -267,8 +283,19 @@ function vmsOnCsv(csv: Csv, vms: Vm[] | undefined): Vm[] {
   return vms?.filter((vm) => vm.cluster_id === csv.cluster_id && vm.csv_paths.some((p) => p.split(/[\\/]/).pop() === csv.name)) ?? [];
 }
 
-function CsvChainHeader({ csv, vms, onClose }: { csv: Csv; vms: Vm[] | undefined; onClose: () => void }) {
+function CsvChainHeader({
+  csv,
+  vms,
+  onClose,
+  onVmClick,
+}: {
+  csv: Csv;
+  vms: Vm[] | undefined;
+  onClose: () => void;
+  onVmClick: (vm: Vm) => void;
+}) {
   const vmsOnThisCsv = vmsOnCsv(csv, vms);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   return (
     <Paper withBorder p="md">
@@ -276,10 +303,24 @@ function CsvChainHeader({ csv, vms, onClose }: { csv: Csv; vms: Vm[] | undefined
         <Text size="sm" fw={600}>
           Speicherkette: {csv.name}
         </Text>
-        <ActionIcon variant="subtle" size="sm" onClick={onClose}>
-          <IconX size={14} />
-        </ActionIcon>
+        <Group gap={4}>
+          <Tooltip label="Kapazitätsverlauf">
+            <ActionIcon variant={historyOpen ? "light" : "subtle"} size="sm" onClick={() => setHistoryOpen((v) => !v)}>
+              <IconChartLine size={14} />
+            </ActionIcon>
+          </Tooltip>
+          <ActionIcon variant="subtle" size="sm" onClick={onClose}>
+            <IconX size={14} />
+          </ActionIcon>
+        </Group>
       </Group>
+
+      {historyOpen && (
+        <Box mb="sm">
+          <CapacityHistoryPanel objectType="csv" clusterId={csv.cluster_id} name={csv.name} />
+        </Box>
+      )}
+
       <Stack gap="sm">
         <Group gap={6} wrap="nowrap">
           <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
@@ -287,7 +328,14 @@ function CsvChainHeader({ csv, vms, onClose }: { csv: Csv; vms: Vm[] | undefined
           </Text>
           {vmsOnThisCsv.length ? (
             vmsOnThisCsv.map((vm) => (
-              <Badge key={vm.id} color="teal" variant="light">
+              <Badge
+                key={vm.id}
+                component="button"
+                color="teal"
+                variant="light"
+                style={{ cursor: "pointer", border: "none" }}
+                onClick={() => onVmClick(vm)}
+              >
                 {vm.name}
               </Badge>
             ))
@@ -349,6 +397,24 @@ export function VmsPage() {
   const filteredVms = (vms ?? []).filter((vm) => matchesAllColumns(vm, vmSearch));
   const [csvSearch, setCsvSearch] = useState("");
   const filteredCsvs = (csvs ?? []).filter((csv) => matchesAllColumns(csv, csvSearch));
+
+  // Deep-Link von einem VM-Badge in CsvChainHeader ("VMs auf diesem CSV") --
+  // setParams({ tab: "vms", vm: vm.id }) setzt den Query-Param, dieser
+  // Effekt wendet ihn EINMALIG an (Param wird danach wieder entfernt),
+  // damit eine spaetere manuelle Ab-/Auswahl durch den Nutzer nicht durch
+  // einen stehen gebliebenen Param ueberschrieben wird. Wartet auf
+  // geladene vms, damit ein Deep-Link direkt nach einem Seiten-Reload
+  // nicht ins Leere laeuft.
+  useEffect(() => {
+    const targetVmId = params.get("vm");
+    if (!targetVmId || !vms) return;
+    const target = vms.find((vm) => vm.id === targetVmId);
+    if (target) setSelectedVm(target);
+    const next = new URLSearchParams(params);
+    next.delete("vm");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params, vms]);
   const { runOrPickForGroups, step1GroupChoices, step2PolicyChoices, pickStep1Group, pickStep2Policy, closeStep1, closeStep2 } =
     useRunPolicy();
   const { data: resourceGroups } = useResourceGroups();
@@ -501,7 +567,17 @@ export function VmsPage() {
       <Title order={3}>Inventory</Title>
 
       {selectedVm && <VmChainHeader vm={selectedVm} csvs={csvs} onClose={() => setSelectedVm(null)} />}
-      {selectedCsv && <CsvChainHeader csv={selectedCsv} vms={vms} onClose={() => setSelectedCsv(null)} />}
+      {selectedCsv && (
+        <CsvChainHeader
+          csv={selectedCsv}
+          vms={vms}
+          onClose={() => setSelectedCsv(null)}
+          onVmClick={(vm) => {
+            setSelectedCsv(null);
+            setParams({ tab: "vms", vm: vm.id });
+          }}
+        />
+      )}
 
       <Tabs
         value={activeTab}

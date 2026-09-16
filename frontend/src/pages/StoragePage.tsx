@@ -3,6 +3,7 @@ import {
   ActionIcon,
   Alert,
   Badge,
+  Box,
   Button,
   Group,
   Modal,
@@ -24,6 +25,7 @@ import { notifications } from "@mantine/notifications";
 import {
   IconAlertTriangle,
   IconCertificate,
+  IconChartLine,
   IconEdit,
   IconLink,
   IconPlus,
@@ -32,6 +34,7 @@ import {
   IconShieldCheck,
   IconShieldOff,
   IconTrash,
+  IconX,
 } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
@@ -59,6 +62,7 @@ import {
   useVerifyNetAppCluster,
   useVolumes,
 } from "@/api/hooks";
+import { CapacityHistoryPanel } from "@/components/CapacityHistoryPanel";
 import { ClusterPeerFormModal } from "@/components/ClusterPeerFormModal";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { IgroupFormModal } from "@/components/IgroupFormModal";
@@ -77,6 +81,7 @@ import { SvmPeerFormModal } from "@/components/SvmPeerFormModal";
 import { VolumeEditModal } from "@/components/VolumeEditModal";
 import { VolumeFormModal } from "@/components/VolumeFormModal";
 import type {
+  NetAppAggregate,
   NetAppCluster,
   NetAppClusterPeer,
   NetAppLun,
@@ -308,6 +313,44 @@ function ClusterPeerDetailHeader({ peer, onClose }: { peer: NetAppClusterPeer; o
   );
 }
 
+// Details-Kopfzeile fuer den Kapazitaetsverlauf von Volume/LUN/Aggregat --
+// anders als bei VmChainHeader/CsvChainHeader (Inventory) gibt es fuer
+// diese drei Objekttypen bislang keine Detailansicht, nur die Bearbeiten-
+// Modals (selectedLun/selectedVolume). Bewusst eine eigene, einfache
+// Kopfzeile statt die Edit-Modal-Auswahl mitzunutzen, da beides
+// unabhaengig voneinander bedienbar sein soll (Verlauf ansehen, OHNE ein
+// Bearbeiten-Modal zu oeffnen). Erscheint OBERHALB der jeweiligen Tabelle,
+// die selbst in einer festen Hoehe scrollt (siehe die Box-Wrapper um
+// jedes <Table> weiter unten) -- so bleibt diese Kopfzeile bei langen
+// Tabellen sichtbar, ohne dass die ganze Seite gescrollt werden muss.
+function CapacityDetailHeader({
+  title,
+  objectType,
+  clusterId,
+  name,
+  uuid,
+  onClose,
+}: {
+  title: string;
+  objectType: "lun" | "volume" | "aggregate";
+  clusterId: string;
+  name?: string | null;
+  uuid?: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <Paper withBorder p="sm" mb="sm">
+      <Group justify="space-between" mb="xs">
+        <Text fw={600}>Kapazitätsverlauf: {title}</Text>
+        <ActionIcon variant="subtle" size="sm" onClick={onClose}>
+          <IconX size={14} />
+        </ActionIcon>
+      </Group>
+      <CapacityHistoryPanel objectType={objectType} clusterId={clusterId} name={name} uuid={uuid} />
+    </Paper>
+  );
+}
+
 function ClusterTab({ locked }: { locked: boolean }) {
   const { data: clusters } = useNetAppClusters();
   const verifyCluster = useVerifyNetAppCluster();
@@ -399,7 +442,8 @@ function ClusterTab({ locked }: { locked: boolean }) {
       </Group>
 
       <div>
-        <Table striped highlightOnHover>
+        <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+        <Table striped highlightOnHover stickyHeader>
           <Table.Thead>
             <Table.Tr>
               <Table.Th>System-Name</Table.Th>
@@ -489,6 +533,7 @@ function ClusterTab({ locked }: { locked: boolean }) {
             ))}
           </Table.Tbody>
         </Table>
+        </Box>
         {clusters?.length === 0 && (
           <Text c="dimmed" size="sm" ta="center" py="md">
             Noch keine NetApp-Systeme hinzugefügt.
@@ -663,6 +708,16 @@ export function StoragePage() {
   const [selectedLun, setSelectedLun] = useState<NetAppLun | null>(null);
   const [selectedVolume, setSelectedVolume] = useState<NetAppVolume | null>(null);
   const [selectedRelationship, setSelectedRelationship] = useState<SnapMirrorRelationship | null>(null);
+  // Separat von selectedLun/selectedVolume oben -- jene sind an das
+  // Bearbeiten-Modal gekoppelt (lunEditOpen/volumeEditOpen), diese hier
+  // steuern nur die eingeblendete Details-Kopfzeile mit Kapazitaetsverlauf
+  // (siehe CapacityDetailHeader unten). Nutzer-Vorgabe: die Tabellen
+  // darunter sollen dabei in sich scrollbar bleiben (siehe die Box-
+  // Wrapper um jede <Table>), damit diese Kopfzeile bei langen Tabellen
+  // sichtbar bleibt, statt aus dem Blickfeld zu scrollen.
+  const [historyVolume, setHistoryVolume] = useState<NetAppVolume | null>(null);
+  const [historyLun, setHistoryLun] = useState<NetAppLun | null>(null);
+  const [historyAggregate, setHistoryAggregate] = useState<NetAppAggregate | null>(null);
   const [lunEditOpen, setLunEditOpen] = useState(false);
   const [volumeEditOpen, setVolumeEditOpen] = useState(false);
   const [snapmirrorEditOpen, setSnapmirrorEditOpen] = useState(false);
@@ -857,7 +912,8 @@ export function StoragePage() {
           <Group justify="flex-start" mb="xs">
             <SearchInput value={svmSearch} onChange={setSvmSearch} />
           </Group>
-          <Table striped highlightOnHover>
+          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>System</Table.Th>
@@ -885,6 +941,7 @@ export function StoragePage() {
               ))}
             </Table.Tbody>
           </Table>
+          </Box>
           {svms?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine SVMs erkannt. Führe eine Discovery unter System aus.
@@ -927,7 +984,18 @@ export function StoragePage() {
               w={360}
             />
           </Group>
-          <Table striped highlightOnHover>
+          {historyVolume && (
+            <CapacityDetailHeader
+              title={historyVolume.name}
+              objectType="volume"
+              clusterId={historyVolume.cluster_id}
+              name={historyVolume.name}
+              uuid={historyVolume.uuid}
+              onClose={() => setHistoryVolume(null)}
+            />
+          )}
+          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>System</Table.Th>
@@ -1010,6 +1078,11 @@ export function StoragePage() {
                   )}
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
+                      <Tooltip label="Kapazitätsverlauf">
+                        <ActionIcon variant="light" onClick={() => setHistoryVolume(vol)}>
+                          <IconChartLine size={16} />
+                        </ActionIcon>
+                      </Tooltip>
                       <Tooltip label="Bearbeiten">
                         <ActionIcon
                           variant="light"
@@ -1038,6 +1111,7 @@ export function StoragePage() {
               ))}
             </Table.Tbody>
           </Table>
+          </Box>
           {volumes?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine Volumes erkannt. Führe eine Discovery unter System aus.
@@ -1065,7 +1139,18 @@ export function StoragePage() {
               LUN anlegen
             </Button>
           </Group>
-          <Table striped highlightOnHover horizontalSpacing="sm">
+          {historyLun && (
+            <CapacityDetailHeader
+              title={lunShortName(historyLun.name)}
+              objectType="lun"
+              clusterId={historyLun.cluster_id}
+              name={historyLun.name}
+              uuid={historyLun.uuid}
+              onClose={() => setHistoryLun(null)}
+            />
+          )}
+          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Table striped highlightOnHover horizontalSpacing="sm" stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>System</Table.Th>
@@ -1133,6 +1218,11 @@ export function StoragePage() {
                   </Table.Td>
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
+                      <Tooltip label="Kapazitätsverlauf">
+                        <ActionIcon variant="light" onClick={() => setHistoryLun(lun)}>
+                          <IconChartLine size={16} />
+                        </ActionIcon>
+                      </Tooltip>
                       <Tooltip label="Bearbeiten">
                         <ActionIcon
                           variant="light"
@@ -1156,6 +1246,7 @@ export function StoragePage() {
               ))}
             </Table.Tbody>
           </Table>
+          </Box>
           {luns?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine LUNs erkannt. Führe eine Discovery unter System aus.
@@ -1183,7 +1274,8 @@ export function StoragePage() {
               IGroup anlegen
             </Button>
           </Group>
-          <Table striped highlightOnHover>
+          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>System</Table.Th>
@@ -1207,6 +1299,7 @@ export function StoragePage() {
               ))}
             </Table.Tbody>
           </Table>
+          </Box>
           {igroups?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine Initiator-Gruppen erkannt. Führe eine Discovery unter System aus.
@@ -1233,7 +1326,8 @@ export function StoragePage() {
             </Button>
           </Group>
           {peerDetail && <ClusterPeerDetailHeader peer={peerDetail} onClose={() => setPeerDetail(null)} />}
-          <Table striped highlightOnHover>
+          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>System</Table.Th>
@@ -1264,6 +1358,7 @@ export function StoragePage() {
               ))}
             </Table.Tbody>
           </Table>
+          </Box>
           {clusterPeers?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine Cluster-Peer-Beziehungen erkannt. Führe eine Discovery unter System aus.
@@ -1289,7 +1384,8 @@ export function StoragePage() {
               SVM Peer erstellen
             </Button>
           </Group>
-          <Table striped highlightOnHover>
+          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>System</Table.Th>
@@ -1317,6 +1413,7 @@ export function StoragePage() {
               ))}
             </Table.Tbody>
           </Table>
+          </Box>
           {svmPeers?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine SVM-Peer-Beziehungen erkannt. Führe eine Discovery unter System aus.
@@ -1354,7 +1451,8 @@ export function StoragePage() {
               Neue SnapMirror-Beziehung
             </Button>
           </Group>
-          <Table striped highlightOnHover>
+          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>System</Table.Th>
@@ -1440,6 +1538,7 @@ export function StoragePage() {
               ))}
             </Table.Tbody>
           </Table>
+          </Box>
           {relationships?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine SnapMirror-Beziehungen erkannt. Führe eine Discovery unter System aus.
@@ -1465,7 +1564,8 @@ export function StoragePage() {
           <Group justify="flex-start" mb="xs">
             <SearchInput value={platformSearch} onChange={setPlatformSearch} />
           </Group>
-          <Table striped highlightOnHover>
+          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>System</Table.Th>
@@ -1495,6 +1595,7 @@ export function StoragePage() {
               ))}
             </Table.Tbody>
           </Table>
+          </Box>
           {platforms?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine Plattform-Informationen erkannt. Führe eine Discovery unter System aus.
@@ -1522,7 +1623,18 @@ export function StoragePage() {
           <Group justify="flex-start" mb="xs">
             <SearchInput value={aggregateSearch} onChange={setAggregateSearch} />
           </Group>
-          <Table striped highlightOnHover>
+          {historyAggregate && (
+            <CapacityDetailHeader
+              title={historyAggregate.name}
+              objectType="aggregate"
+              clusterId={historyAggregate.cluster_id}
+              name={historyAggregate.name}
+              uuid={historyAggregate.uuid}
+              onClose={() => setHistoryAggregate(null)}
+            />
+          )}
+          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>System</Table.Th>
@@ -1532,6 +1644,7 @@ export function StoragePage() {
                 <Table.Th>Größe</Table.Th>
                 <Table.Th>Belegt</Table.Th>
                 <Table.Th>Storage Efficiency (ohne Snapshots/FlexClones)</Table.Th>
+                <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -1564,10 +1677,18 @@ export function StoragePage() {
                       ? `${agg.efficiency_ratio_wo_snapshots_flexclones.toFixed(2)} : 1`
                       : "-"}
                   </Table.Td>
+                  <Table.Td>
+                    <Tooltip label="Kapazitätsverlauf">
+                      <ActionIcon variant="light" onClick={() => setHistoryAggregate(agg)}>
+                        <IconChartLine size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
           </Table>
+          </Box>
           {aggregates?.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Noch keine Aggregate erkannt. Führe eine Discovery unter System aus.
@@ -1589,7 +1710,8 @@ export function StoragePage() {
                 Policy anlegen
               </Button>
             </Group>
-            <Table striped highlightOnHover>
+            <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+            <Table striped highlightOnHover stickyHeader>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>System</Table.Th>
@@ -1632,6 +1754,7 @@ export function StoragePage() {
                 ))}
               </Table.Tbody>
             </Table>
+            </Box>
             {sortedNetappPolicies.length === 0 && (
               <Text c="dimmed" size="sm" ta="center" py="md">
                 Noch keine SnapMirror-Policies erkannt. Führe eine Discovery unter System aus.
@@ -1668,7 +1791,8 @@ export function StoragePage() {
                 Schedule anlegen
               </Button>
             </Group>
-            <Table striped highlightOnHover>
+            <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+            <Table striped highlightOnHover stickyHeader>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>System</Table.Th>
@@ -1694,6 +1818,7 @@ export function StoragePage() {
                 ))}
               </Table.Tbody>
             </Table>
+            </Box>
             {sortedNetappSchedules.length === 0 && (
               <Text c="dimmed" size="sm" ta="center" py="md">
                 Noch keine Schedules erkannt. Führe eine Discovery unter System aus.

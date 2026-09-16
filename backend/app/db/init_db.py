@@ -13,6 +13,7 @@ from app.core.security import hash_password
 from app.db.base import Base
 from app.db.session import engine
 from app.models.backup_policy import BackupScope
+from app.models.capacity_history import CapacitySample  # noqa: F401  (nur fuer create_all)
 from app.models.hyperv_discovery import HyperVCsv, HyperVVm
 from app.models.kerberos_config import KerberosConfig  # noqa: F401  (nur fuer create_all)
 from app.models.ad_config import AdConfig  # noqa: F401  (nur fuer create_all)
