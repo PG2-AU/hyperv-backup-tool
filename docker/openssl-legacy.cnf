@@ -1,0 +1,24 @@
+# Aktiviert den OpenSSL-3.x-"legacy"-Provider zusaetzlich zum Standard-
+# Provider -- NUR fuer den uvicorn-Prozess gesetzt (siehe OPENSSL_CONF in
+# supervisord.conf), nicht containerweit. Grund: ldap3s NTLM-Implementierung
+# (Settings > Active Directory, app.services.ad_service) braucht MD4 fuer
+# den NT-Hash (Teil des NTLM-Protokolls selbst, nicht optional) -- OpenSSL
+# 3.x deaktiviert MD4 seit Version 3.0 standardmaessig (verschoben in den
+# "legacy"-Provider, der nicht automatisch geladen wird), live gefunden
+# 2026-09-16 als "ValueError: unsupported hash type MD4". Rein additiv:
+# macht nur zusaetzliche (veraltete) Algorithmen verfuegbar, deaktiviert
+# keine modernen -- TLS/AES/Fernet-Verschluesselung bleiben unveraendert.
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+legacy = legacy_sect
+
+[default_sect]
+activate = 1
+
+[legacy_sect]
+activate = 1

@@ -57,6 +57,7 @@ COPY docker/updater.sh /usr/local/bin/updater.sh
 COPY docker/gen-selfsigned-cert.sh /usr/local/bin/gen-selfsigned-cert.sh
 COPY docker/nginx.conf.template /etc/nginx/templates/hvnb.conf.template
 COPY docker/supervisord.conf /etc/supervisord.conf
+COPY docker/openssl-legacy.cnf /etc/hvnb/openssl-legacy.cnf
 
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/updater.sh /usr/local/bin/gen-selfsigned-cert.sh
 
