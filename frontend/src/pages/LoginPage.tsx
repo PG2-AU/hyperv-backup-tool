@@ -52,7 +52,7 @@ export function LoginPage() {
             )}
             <TextInput
               label="Benutzername"
-              placeholder="admin oder DOMAIN-User"
+              placeholder="z.B. admin oder netapp.service (ohne Domänen-Präfix)"
               required
               value={username}
               onChange={(e) => setUsername(e.currentTarget.value)}

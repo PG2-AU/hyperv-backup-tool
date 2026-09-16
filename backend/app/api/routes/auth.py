@@ -9,14 +9,24 @@ from app.db.session import get_db
 from app.models.ad_config import AdConfig
 from app.models.user import User, UserSource
 from app.schemas.auth import CurrentUser, LoginRequest, TokenResponse
-from app.services.ad_service import ActiveDirectoryService
+from app.services.ad_service import ActiveDirectoryService, _bare_username
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
-    user = db.query(User).filter(User.username == payload.username).first()
+    # Toleriert sowohl 'netapp.service' als auch 'DOMAIN\netapp.service' im
+    # Login-Feld -- auf die reine sAMAccountName-Form normalisieren, BEVOR
+    # gegen User.username nachgeschlagen wird. Sonst wuerde ein Login mit
+    # domain-qualifiziertem Namen ein bereits ueber "Benutzer hinzufuegen" >
+    # Active Directory vorab angelegtes (und mit Rolle versehenes!) Konto
+    # verfehlen -- dessen User.username ist immer die reine sAMAccountName-
+    # Form (aus der AD-Suche uebernommen) -- und stattdessen faelschlich
+    # einen zweiten, rechtelosen JIT-Account anlegen. Live gefunden
+    # 2026-09-16 in der Produktionsumgebung.
+    username = _bare_username(payload.username)
+    user = db.query(User).filter(User.username == username).first()
 
     # Ein bestehendes LOKALES Konto (inkl. des initialen admin-Kontos)
     # wird IMMER lokal geprueft, unabhaengig davon, ob AD aktiviert ist
@@ -32,13 +42,13 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ungueltige Anmeldedaten")
 
         ad_service = ActiveDirectoryService(ad_config.server, ad_config.domain, ad_config.base_dn, ad_config.use_ssl)
-        result = ad_service.authenticate(payload.username, payload.password)
+        result = ad_service.authenticate(username, payload.password)
         if not result.success:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error or "Login fehlgeschlagen")
 
         if user is None:
             user = User(
-                username=payload.username,
+                username=username,
                 display_name=result.display_name,
                 email=result.email,
                 source=UserSource.ACTIVE_DIRECTORY,
