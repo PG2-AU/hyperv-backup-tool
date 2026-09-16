@@ -43,6 +43,25 @@ def _bare_username(username: str) -> str:
     return username.strip().split("\\", 1)[-1]
 
 
+def _bind_failure_detail(conn: Connection) -> str:
+    """Liest die eigentliche LDAP-Fehlerbeschreibung aus einem
+    fehlgeschlagenen Bind aus (z.B. 'strongerAuthRequired', wenn der DC
+    LDAP-Signing ohne TLS verlangt -- live gefunden 2026-09-16, mit der
+    generischen 'Ungueltige Anmeldedaten'-Meldung leicht mit falschem
+    Passwort verwechselbar, obwohl die eigentliche Ursache eine
+    Server-Richtlinie ist). Faellt auf eine generische Meldung zurueck,
+    falls ldap3 kein result-Objekt liefert."""
+    result = conn.result or {}
+    description = result.get("description")
+    message = result.get("message")
+    if description and description != "success":
+        detail = f"LDAP-Fehler: {description}"
+        if message:
+            detail += f" ({message.splitlines()[0]})"
+        return detail
+    return "Ungueltige Anmeldedaten"
+
+
 @dataclass
 class ADAuthResult:
     success: bool
@@ -80,7 +99,7 @@ class ActiveDirectoryService:
         try:
             conn = Connection(server, user=user_principal, password=password, authentication=NTLM)
             if not conn.bind():
-                return ADAuthResult(success=False, error="Ungueltige Anmeldedaten")
+                return ADAuthResult(success=False, error=_bind_failure_detail(conn))
 
             conn.search(
                 search_base=self._base_dn,
@@ -121,7 +140,7 @@ class ActiveDirectoryService:
         try:
             conn = Connection(server, user=bind_principal, password=bind_password, authentication=NTLM)
             if not conn.bind():
-                return ADSearchResult(success=False, error="Service-Konto konnte sich nicht anmelden (Zugangsdaten pruefen)")
+                return ADSearchResult(success=False, error=f"Service-Konto konnte sich nicht anmelden -- {_bind_failure_detail(conn)}")
 
             conn.search(
                 search_base=self._base_dn,
