@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
+    ad_config as ad_config_routes,
     alerts,
     auth,
     email_config,
@@ -89,6 +90,7 @@ app.include_router(alerts.router)
 app.include_router(storage_access.router)
 app.include_router(winrm_certs.router)
 app.include_router(kerberos_config_routes.router)
+app.include_router(ad_config_routes.router)
 
 
 @app.get("/api/health")

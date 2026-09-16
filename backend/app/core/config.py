@@ -21,15 +21,6 @@ class Settings(BaseSettings):
     # --- Datenbank ---
     database_url: str = "sqlite:///./data/app.db"
 
-    # --- Active Directory ---
-    ad_enabled: bool = False
-    ad_server: str = ""
-    ad_domain: str = ""
-    ad_base_dn: str = ""
-    ad_bind_user: str = ""
-    ad_bind_password: str = ""
-    ad_use_ssl: bool = True
-
     # --- NetApp ONTAP ---
     ontap_cluster_mgmt_lif: str = ""
     ontap_username: str = ""

@@ -28,3 +28,20 @@ class UserCreate(BaseModel):
 
 class UserPasswordUpdate(BaseModel):
     password: str
+
+
+class ADUserSearchRequest(BaseModel):
+    query: str
+
+
+class ADUserSearchResult(BaseModel):
+    username: str
+    display_name: str = ""
+    email: str = ""
+
+
+class ADUserAddRequest(BaseModel):
+    username: str
+    display_name: str = ""
+    email: str = ""
+    role_id: str | None = None

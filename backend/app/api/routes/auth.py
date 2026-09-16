@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_user_permissions
-from app.core.config import get_settings
 from app.core.security import create_access_token, verify_password
 from app.db.session import get_db
+from app.models.ad_config import AdConfig
 from app.models.user import User, UserSource
 from app.schemas.auth import CurrentUser, LoginRequest, TokenResponse
 from app.services.ad_service import ActiveDirectoryService
@@ -16,11 +16,22 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
-    settings = get_settings()
     user = db.query(User).filter(User.username == payload.username).first()
 
-    if settings.ad_enabled:
-        ad_service = ActiveDirectoryService(settings)
+    # Ein bestehendes LOKALES Konto (inkl. des initialen admin-Kontos)
+    # wird IMMER lokal geprueft, unabhaengig davon, ob AD aktiviert ist
+    # -- sonst waeren lokale Konten nicht mehr nutzbar, sobald AD
+    # aktiviert wird (live gefunden 2026-09-16, Nutzer-Vorgabe: lokale
+    # und AD-Benutzer muessen nebeneinander funktionieren).
+    if user is not None and user.source == UserSource.LOCAL:
+        if user.hashed_password is None or not verify_password(payload.password, user.hashed_password):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ungueltige Anmeldedaten")
+    else:
+        ad_config = db.query(AdConfig).first()
+        if ad_config is None or not ad_config.enabled:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ungueltige Anmeldedaten")
+
+        ad_service = ActiveDirectoryService(ad_config.server, ad_config.domain, ad_config.base_dn, ad_config.use_ssl)
         result = ad_service.authenticate(payload.username, payload.password)
         if not result.success:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error or "Login fehlgeschlagen")
@@ -36,9 +47,6 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
         else:
             user.display_name = result.display_name or user.display_name
             user.email = result.email or user.email
-    else:
-        if user is None or user.hashed_password is None or not verify_password(payload.password, user.hashed_password):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ungueltige Anmeldedaten")
 
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Benutzer ist deaktiviert")

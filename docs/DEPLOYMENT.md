@@ -371,16 +371,6 @@ HVNB_ENVIRONMENT=production
 HVNB_SECRET_KEY=<zufaelliger, langer String -- z.B. `openssl rand -hex 32`>
 HVNB_INITIAL_ADMIN_PASSWORD=<einmaliges Startpasswort, sofort nach dem ersten Login aendern>
 
-# Nur relevant, falls Active-Directory-Login genutzt werden soll -- sonst
-# HVNB_AD_ENABLED=false lassen, lokale Benutzerverwaltung reicht dann aus.
-HVNB_AD_ENABLED=false
-HVNB_AD_SERVER=dc01.example.local
-HVNB_AD_DOMAIN=EXAMPLE
-HVNB_AD_BASE_DN=DC=example,DC=local
-HVNB_AD_BIND_USER=svc-hvnb-ad
-HVNB_AD_BIND_PASSWORD=<Passwort des Bind-Kontos>
-HVNB_AD_USE_SSL=true
-
 HVNB_WINRM_TRANSPORT=credssp
 HVNB_WINRM_USE_HTTPS=true
 HVNB_WINRM_PORT=5986
@@ -1736,8 +1726,12 @@ Web-GUI folgen (in dieser Reihenfolge sinnvoll):
    (Voraussetzung für jeden Restore-Vorgang)
 4. **Backup > Policies / Protection Groups / Zeitpläne** — Backup-Regeln
    definieren
-5. **Settings > Active-Directory-Integration** (falls gewünscht) /
-   **Settings > E-Mail** (Alerting) — optional
+5. **Settings > Active Directory** (falls gewünscht) — Server, Domäne,
+   Base DN und ein Lese-Service-Konto für die AD-Benutzersuche werden
+   direkt in der GUI konfiguriert (kein `.env`/Neustart nötig). Danach
+   können AD-Benutzer über "Benutzer hinzufügen" gesucht und mit einer
+   Rolle versehen werden, unabhängig von lokalen Konten, die weiterhin
+   funktionieren. **Settings > E-Mail** (Alerting) — optional
 
 Eine funktionale Architekturübersicht ist direkt in der Applikation unter
 dem Dokumentations-Link in der Seitenleiste verlinkt.

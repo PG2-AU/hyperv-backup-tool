@@ -23,10 +23,6 @@ export interface RoleRead {
 
 export interface PublicSettings {
   environment: string;
-  ad_enabled: boolean;
-  ad_server: string;
-  ad_domain: string;
-  ad_base_dn: string;
   ontap_cluster_mgmt_lif: string;
   ontap_verify_ssl: boolean;
   ontap_is_metrocluster: boolean;
@@ -68,6 +64,46 @@ export interface UserCreatePayload {
   role_id?: string | null;
 }
 
+export interface AdConfig {
+  enabled: boolean;
+  server: string;
+  domain: string;
+  base_dn: string;
+  use_ssl: boolean;
+  bind_user: string;
+  bind_password_set: boolean;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+export interface AdConfigWrite {
+  enabled: boolean;
+  server: string;
+  domain: string;
+  base_dn: string;
+  use_ssl: boolean;
+  bind_user: string;
+  bind_password?: string | null;
+}
+
+export interface AdTestResult {
+  success: boolean;
+  message: string;
+}
+
+export interface ADUserSearchResult {
+  username: string;
+  display_name: string;
+  email: string;
+}
+
+export interface ADUserAddPayload {
+  username: string;
+  display_name?: string;
+  email?: string;
+  role_id?: string | null;
+}
+
 export function useUsers() {
   return useQuery({
     queryKey: ["users"],
@@ -94,6 +130,45 @@ export function useRoles() {
   return useQuery({
     queryKey: ["roles"],
     queryFn: async () => (await apiClient.get<RoleRead[]>("/roles")).data,
+  });
+}
+
+// Settings > Active Directory -- GUI-verwaltete AD-Integration fuer die
+// GUI-Anmeldung (nicht zu verwechseln mit Settings > Kerberos, das ist
+// ausschliesslich fuer die WinRM-Verbindung zu Hyper-V).
+export function useAdConfig() {
+  return useQuery({
+    queryKey: ["ad-config"],
+    queryFn: async () => (await apiClient.get<AdConfig>("/ad-config")).data,
+  });
+}
+
+export function useUpdateAdConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: AdConfigWrite) => (await apiClient.put<AdConfig>("/ad-config", payload)).data,
+    onSuccess: (data) => queryClient.setQueryData(["ad-config"], data),
+  });
+}
+
+export function useTestAdConnection() {
+  return useMutation({
+    mutationFn: async (payload: { server: string; domain: string; base_dn: string; use_ssl: boolean; bind_user: string; bind_password?: string | null }) =>
+      (await apiClient.post<AdTestResult>("/ad-config/test", payload)).data,
+  });
+}
+
+export function useSearchAdUsers() {
+  return useMutation({
+    mutationFn: async (query: string) => (await apiClient.post<ADUserSearchResult[]>("/users/ad-search", { query })).data,
+  });
+}
+
+export function useAddAdUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: ADUserAddPayload) => (await apiClient.post<UserRead>("/users/ad-add", payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
   });
 }
 

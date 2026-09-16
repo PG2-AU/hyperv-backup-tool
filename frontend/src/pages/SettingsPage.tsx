@@ -8,6 +8,7 @@ import {
   Modal,
   Paper,
   PasswordInput,
+  Radio,
   Select,
   Stack,
   Switch,
@@ -19,7 +20,7 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconEdit, IconInfoCircle, IconKey, IconPlus, IconRadar2, IconRefresh, IconTrash, IconUserPlus } from "@tabler/icons-react";
+import { IconEdit, IconInfoCircle, IconKey, IconPlus, IconRadar2, IconRefresh, IconSearch, IconTrash, IconUserPlus } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -32,10 +33,22 @@ import {
   useUpdateStorageAccess,
   useVerifyHyperVCluster,
 } from "@/api/hooks";
-import { useCreateUser, usePublicSettings, useRoles, useUpdateUserPassword, useUsers, type UserRead } from "@/api/hooks.settings";
+import {
+  useAddAdUser,
+  useAdConfig,
+  useCreateUser,
+  usePublicSettings,
+  useRoles,
+  useSearchAdUsers,
+  useUpdateUserPassword,
+  useUsers,
+  type ADUserSearchResult,
+  type UserRead,
+} from "@/api/hooks.settings";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { AlertSettingsTab } from "@/components/AlertSettingsTab";
 import { EmailSettingsTab } from "@/components/EmailSettingsTab";
+import { AdConfigTab } from "@/components/AdConfigTab";
 import { KerberosTab } from "@/components/KerberosTab";
 import { SchedulerConfigTab } from "@/components/SchedulerConfigTab";
 import { WinrmCertsTab } from "@/components/WinrmCertsTab";
@@ -71,19 +84,32 @@ function ConfigRow({ label, value }: { label: string; value: React.ReactNode }) 
 
 function CreateUserModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const { data: roles } = useRoles();
+  const { data: adConfig } = useAdConfig();
   const createUser = useCreateUser();
+  const searchAdUsers = useSearchAdUsers();
+  const addAdUser = useAddAdUser();
+
+  const [userType, setUserType] = useState<"local" | "ad">("local");
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [roleId, setRoleId] = useState<string | null>(null);
 
+  const [adQuery, setAdQuery] = useState("");
+  const [adResults, setAdResults] = useState<ADUserSearchResult[] | null>(null);
+  const [selectedAdUser, setSelectedAdUser] = useState<ADUserSearchResult | null>(null);
+
   function reset() {
+    setUserType("local");
     setUsername("");
     setDisplayName("");
     setEmail("");
     setPassword("");
     setRoleId(null);
+    setAdQuery("");
+    setAdResults(null);
+    setSelectedAdUser(null);
   }
 
   function handleClose() {
@@ -91,7 +117,35 @@ function CreateUserModal({ opened, onClose }: { opened: boolean; onClose: () => 
     onClose();
   }
 
+  function runAdSearch() {
+    if (!adQuery.trim()) return;
+    setSelectedAdUser(null);
+    searchAdUsers.mutate(adQuery.trim(), {
+      onSuccess: (results) => setAdResults(results),
+      onError: (err) => {
+        setAdResults(null);
+        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "AD-Suche fehlgeschlagen."), color: "red" });
+      },
+    });
+  }
+
   function handleSubmit() {
+    if (userType === "ad") {
+      if (!selectedAdUser) return;
+      addAdUser.mutate(
+        { username: selectedAdUser.username, display_name: selectedAdUser.display_name, email: selectedAdUser.email, role_id: roleId },
+        {
+          onSuccess: () => {
+            notifications.show({ title: "Benutzer hinzugefügt", message: `'${selectedAdUser.username}' wurde aus Active Directory hinzugefügt.`, color: "green" });
+            handleClose();
+          },
+          onError: (err) => {
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Benutzer konnte nicht hinzugefügt werden."), color: "red" });
+          },
+        },
+      );
+      return;
+    }
     createUser.mutate(
       { username, display_name: displayName, email, password, role_id: roleId },
       {
@@ -106,34 +160,90 @@ function CreateUserModal({ opened, onClose }: { opened: boolean; onClose: () => 
     );
   }
 
+  const roleSelect = (
+    <Select
+      label="Rolle"
+      placeholder="Keine Rolle zuweisen"
+      data={roles?.map((r) => ({ value: r.id, label: r.name })) ?? []}
+      value={roleId}
+      onChange={setRoleId}
+      clearable
+    />
+  );
+
   return (
     <Modal opened={opened} onClose={handleClose} title="Benutzer hinzufügen">
       <Stack>
-        <TextInput label="Benutzername" required value={username} onChange={(e) => setUsername(e.currentTarget.value)} />
-        <TextInput label="Anzeigename" value={displayName} onChange={(e) => setDisplayName(e.currentTarget.value)} />
-        <TextInput label="E-Mail" type="email" value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
-        <PasswordInput
-          label="Kennwort"
-          required
-          description="Mindestens 8 Zeichen"
-          value={password}
-          onChange={(e) => setPassword(e.currentTarget.value)}
-        />
-        <Select
-          label="Rolle"
-          placeholder="Keine Rolle zuweisen"
-          data={roles?.map((r) => ({ value: r.id, label: r.name })) ?? []}
-          value={roleId}
-          onChange={setRoleId}
-          clearable
-        />
+        <Radio.Group label="Typ" value={userType} onChange={(v) => setUserType(v as "local" | "ad")}>
+          <Group mt={4}>
+            <Radio value="local" label="Lokal" />
+            <Radio value="ad" label="Active Directory" disabled={!adConfig?.enabled} />
+          </Group>
+        </Radio.Group>
+        {!adConfig?.enabled && (
+          <Text size="xs" c="dimmed">
+            Active Directory ist nicht aktiviert (Settings &gt; Active Directory).
+          </Text>
+        )}
+
+        {userType === "local" ? (
+          <>
+            <TextInput label="Benutzername" required value={username} onChange={(e) => setUsername(e.currentTarget.value)} />
+            <TextInput label="Anzeigename" value={displayName} onChange={(e) => setDisplayName(e.currentTarget.value)} />
+            <TextInput label="E-Mail" type="email" value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
+            <PasswordInput
+              label="Kennwort"
+              required
+              description="Mindestens 8 Zeichen"
+              value={password}
+              onChange={(e) => setPassword(e.currentTarget.value)}
+            />
+            {roleSelect}
+          </>
+        ) : (
+          <>
+            <Group align="flex-end">
+              <TextInput
+                label="AD durchsuchen"
+                placeholder="Name oder Benutzername"
+                value={adQuery}
+                onChange={(e) => setAdQuery(e.currentTarget.value)}
+                style={{ flex: 1 }}
+              />
+              <Button variant="light" leftSection={<IconSearch size={16} />} loading={searchAdUsers.isPending} disabled={!adQuery.trim()} onClick={runAdSearch}>
+                Suchen
+              </Button>
+            </Group>
+            {adResults && (
+              <Radio.Group
+                label={adResults.length === 0 ? "Keine Treffer" : "Treffer auswählen"}
+                value={selectedAdUser?.username ?? null}
+                onChange={(v) => setSelectedAdUser(adResults.find((u) => u.username === v) ?? null)}
+              >
+                <Stack gap={4} mt={4}>
+                  {adResults.map((u) => (
+                    <Radio key={u.username} value={u.username} label={`${u.display_name || u.username} (${u.username}${u.email ? `, ${u.email}` : ""})`} />
+                  ))}
+                </Stack>
+              </Radio.Group>
+            )}
+            {roleSelect}
+          </>
+        )}
+
         <Group justify="flex-end" mt="sm">
           <Button variant="default" onClick={handleClose}>
             Abbrechen
           </Button>
-          <Button onClick={handleSubmit} loading={createUser.isPending} disabled={!username || password.length < 8}>
-            Anlegen
-          </Button>
+          {userType === "local" ? (
+            <Button onClick={handleSubmit} loading={createUser.isPending} disabled={!username || password.length < 8}>
+              Anlegen
+            </Button>
+          ) : (
+            <Button onClick={handleSubmit} loading={addAdUser.isPending} disabled={!selectedAdUser}>
+              Hinzufügen
+            </Button>
+          )}
         </Group>
       </Stack>
     </Modal>
@@ -471,25 +581,7 @@ export function SettingsPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="ad" pt="md">
-          <Paper p="md" maw={520}>
-            <Group gap="xs" mb={4}>
-              <Title order={5}>Active Directory</Title>
-              <Badge color="gray" variant="light" size="sm">
-                Noch nicht vollständig implementiert
-              </Badge>
-            </Group>
-            <Text size="xs" c="dimmed" mb="sm">
-              Die Anmeldung per LDAP-Bind funktioniert bereits, aber neu angelegte AD-Benutzer bekommen noch keine Rolle automatisch
-              zugewiesen (kein Gruppe-zu-Rolle-Mapping) und müssten manuell berechtigt werden. Konfiguration erfolgt weiterhin nur
-              über Server-Umgebungsvariablen, nicht über diese Seite.
-            </Text>
-            <Stack gap="xs">
-              <ConfigRow label="AD-Integration aktiv" value={settings?.ad_enabled ? "Ja" : "Nein"} />
-              <ConfigRow label="Domain Controller" value={settings?.ad_server || "-"} />
-              <ConfigRow label="Domaene" value={settings?.ad_domain || "-"} />
-              <ConfigRow label="Base DN" value={settings?.ad_base_dn || "-"} />
-            </Stack>
-          </Paper>
+          <AdConfigTab />
         </Tabs.Panel>
 
         <Tabs.Panel value="hyperv" pt="md">

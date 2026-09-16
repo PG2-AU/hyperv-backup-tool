@@ -33,11 +33,6 @@ class PublicSettings(BaseModel):
 
     environment: str
 
-    ad_enabled: bool
-    ad_server: str
-    ad_domain: str
-    ad_base_dn: str
-
     ontap_cluster_mgmt_lif: str
     ontap_verify_ssl: bool
     ontap_is_metrocluster: bool

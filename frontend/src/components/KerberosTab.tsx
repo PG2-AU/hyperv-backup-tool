@@ -1,13 +1,39 @@
 import { useEffect, useState } from "react";
-import { Alert, Anchor, Badge, Button, Group, List, Paper, Select, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Code, CopyButton, Group, Paper, Select, Stack, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconAlertTriangle, IconCheck, IconSearch, IconX } from "@tabler/icons-react";
+import { IconAlertTriangle, IconCheck, IconCopy, IconSearch, IconX } from "@tabler/icons-react";
 
 import { useDetectKerberosRealm, useHyperVClusters, useKerberosConfig, useTestKerberosConnection, useUpdateKerberosConfig } from "@/api/hooks";
 import { apiErrorMessage } from "@/utils/errors";
 
 function fmtDate(value?: string | null): string {
   return value ? new Date(value).toLocaleString("de-DE") : "–";
+}
+
+/** Ein kopierbarer Shell-Befehlsblock fuer die Rollout-Checkliste unten --
+ * dieselbe Code+CopyButton-Kombination wie beim PowerShell-Skript in
+ * WinrmCertsTab, hier aber fuer mehrere statische Befehlsgruppen statt
+ * eines einzelnen generierten Skripts. */
+function CommandBlock({ title, commands }: { title: string; commands: string }) {
+  return (
+    <Stack gap={4}>
+      <Group justify="space-between">
+        <Text size="xs" fw={600} c="dimmed">
+          {title}
+        </Text>
+        <CopyButton value={commands}>
+          {({ copied, copy }) => (
+            <Button size="compact-xs" variant="subtle" leftSection={<IconCopy size={12} />} color={copied ? "teal" : undefined} onClick={copy}>
+              {copied ? "Kopiert" : "Kopieren"}
+            </Button>
+          )}
+        </CopyButton>
+      </Group>
+      <Code block style={{ whiteSpace: "pre", overflowX: "auto" }}>
+        {commands}
+      </Code>
+    </Stack>
+  );
 }
 
 /** Settings > Kerberos (Backlog-Punkt 50) -- ein einziges, globales
@@ -181,37 +207,100 @@ export function KerberosTab() {
         <Title order={5} mb="xs">
           Rollout-Checkliste (vor der produktiven Umstellung)
         </Title>
-        <Text size="sm" c="dimmed" mb="sm">
-          Genaue Befehle und Skripte: <Anchor href="/docs/deployment" target="_blank">DEPLOYMENT.md, Abschnitt "Alternative zu
-          CredSSP/NTLM: Kerberos"</Anchor>.
+        <Text size="sm" c="dimmed" mb="md">
+          Alle Befehle laufen auf dem HVNB-Server selbst (SSH), im Projektverzeichnis (z.B. <Code>~/hyperv-netapp-backup</Code>).
+          Ausführlicher Hintergrund je Schritt: <Anchor href="/docs/deployment" target="_blank">DEPLOYMENT.md, Abschnitt "Alternative
+          zu CredSSP/NTLM: Kerberos"</Anchor>.
         </Text>
-        <List type="ordered" size="sm" spacing="xs">
-          <List.Item>
-            Docker-Image neu bauen (<code>podman-compose build</code>) -- der normale Git-Pull-Auto-Update baut kein neues
-            Image, braucht aber die zusätzlichen System-Pakete (<code>krb5-devel</code>, <code>gcc</code>,{" "}
-            <code>python3.12-devel</code>, <code>krb5-workstation</code>). Erst per <code>rpm -q</code> im neuen Image
-            verifizieren, dann den Container neu erstellen.
-          </List.Item>
-          <List.Item>
-            Oben Realm/KDC erkennen/eintragen, testen und speichern (pro Installation nur einmal nötig).
-          </List.Item>
-          <List.Item>
-            Falls ein Restore-Proxy-Host im Einsatz ist: dessen Hostname-Feld setzen (Restore &gt; Setup &gt; Proxy-Host) --
-            sonst schlägt jeder Restore trotz erfolgreichem Cluster-Test fehl.
-          </List.Item>
-          <List.Item>
-            Empfohlen: einen echten Checkpoint-Erstellen/Entfernen-Zyklus gegen eine unkritische Test-VM ohne aktive Policy
-            fahren (Ad-hoc-Skript in der Doku), bevor der Transport global umgestellt wird.
-          </List.Item>
-          <List.Item>
-            Erst danach <code>HVNB_WINRM_TRANSPORT=kerberos</code> in der <code>.env</code> setzen und den Container neu
-            erstellen -- eine reine <code>.env</code>-Änderung wird sonst nicht automatisch übernommen.
-          </List.Item>
-          <List.Item>
-            Anschließend einen echten, planmäßig ausgelösten Backup-Lauf beobachten. Rückfallebene: jederzeit zurück auf{" "}
-            <code>ntlm</code> + Container-Neustart.
-          </List.Item>
-        </List>
+
+        <Stack gap="lg">
+          <div>
+            <Text size="sm" fw={600} mb={4}>
+              1. Aktuellen Code-Stand holen
+            </Text>
+            <Text size="xs" c="dimmed" mb={6}>
+              Kerberos braucht Code-Änderungen (Dockerfile + Backend) -- ohne <Code>git pull</Code> baut Schritt 2 aus einem
+              veralteten Dockerfile und die neuen System-Pakete fehlen im Image.
+            </Text>
+            <CommandBlock title="Shell" commands={"git pull\ngit log -1 --oneline"} />
+          </div>
+
+          <div>
+            <Text size="sm" fw={600} mb={4}>
+              2. Docker-Image neu bauen und Pakete verifizieren
+            </Text>
+            <Text size="xs" c="dimmed" mb={6}>
+              Der normale Git-Pull-Auto-Update-Mechanismus des laufenden Containers baut <strong>kein</strong> neues Image --
+              das reine Ausrollen des neuen Codes reicht nicht. Der laufende Container bleibt waehrend des Bauens unangetastet.
+              Erwartete Ausgabe der zweiten Zeile: fuenf Paketnamen mit Version, keine "is not installed"-Meldung.
+            </Text>
+            <CommandBlock
+              title="Shell"
+              commands={
+                "podman-compose -f docker-compose.yml build\n" +
+                'podman run --rm --entrypoint bash localhost/hyperv-netapp-backup:local -c "rpm -q krb5-devel gcc python3.12-devel krb5-workstation krb5-libs"'
+              }
+            />
+          </div>
+
+          <div>
+            <Text size="sm" fw={600} mb={4}>
+              3. Realm/KDC einrichten (oben auf dieser Seite)
+            </Text>
+            <Text size="xs" c="dimmed">
+              Cluster auswählen → "Automatisch erkennen" → "Verbindung testen" → "Speichern". Pro Installation nur einmal
+              nötig. Falls ein Restore-Proxy-Host im Einsatz ist: zusätzlich dessen <strong>Hostname</strong>-Feld setzen
+              (Restore &gt; Setup &gt; Proxy-Host) -- sonst schlägt jeder Restore trotz erfolgreichem Cluster-Test fehl.
+            </Text>
+          </div>
+
+          <div>
+            <Text size="sm" fw={600} mb={4}>
+              4. <Code>.env</Code> anpassen
+            </Text>
+            <Text size="xs" c="dimmed" mb={6}>
+              Empfohlen: erst NACH einem erfolgreichen Ad-hoc-Checkpoint-Test gegen eine unkritische Test-VM ohne aktive
+              Policy (Skript in der Doku, siehe Link oben). In der <Code>.env</Code>-Datei im Projektverzeichnis die Zeile
+              suchen/ergänzen:
+            </Text>
+            <CommandBlock title=".env" commands={"HVNB_WINRM_TRANSPORT=kerberos"} />
+          </div>
+
+          <div>
+            <Text size="sm" fw={600} mb={4}>
+              5. Container neu erstellen und verifizieren
+            </Text>
+            <Text size="xs" c="dimmed" mb={6}>
+              Eine reine <Code>.env</Code>-Änderung wird nicht automatisch übernommen -- braucht einen Neustart. Der erste
+              Start danach dauert spürbar länger (Repo-Klon + Kompilieren von <Code>gssapi</Code>/<Code>pykerberos</Code>,
+              ca. 1,5–2 Minuten) -- kein Fehler, kurz warten.
+            </Text>
+            <CommandBlock
+              title="Shell"
+              commands={
+                "systemctl --user restart hvnb-backup.service\n" +
+                "systemctl --user status hvnb-backup.service\n" +
+                "podman logs --tail 50 hvnb-backup\n" +
+                "podman exec hvnb-backup git -C /opt/app rev-parse HEAD\n" +
+                "curl -sk4 https://127.0.0.1:8443/api/health"
+              }
+            />
+            <Text size="xs" c="dimmed" mt={6}>
+              Erwartet: Status <Code>active (running)</Code>, keine Fehler in den Logs, der Commit-Hash entspricht dem aus
+              Schritt 1, und <Code>{'{"status":"ok","app":"Hyper-V NetApp Backup"}'}</Code> vom Health-Check.
+            </Text>
+          </div>
+
+          <div>
+            <Text size="sm" fw={600} mb={4}>
+              6. Beobachten, nicht nur einmal testen
+            </Text>
+            <Text size="xs" c="dimmed">
+              Den nächsten planmäßig ausgelösten Backup-Lauf im Job-Verlauf verfolgen. Rückfallebene bei Auffälligkeiten:
+              jederzeit <Code>HVNB_WINRM_TRANSPORT=ntlm</Code> zurückstellen + erneut Schritt 5 (Neustart) ausführen.
+            </Text>
+          </div>
+        </Stack>
       </Paper>
     </Stack>
   );
