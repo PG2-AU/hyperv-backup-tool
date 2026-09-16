@@ -21,6 +21,28 @@ from ldap3.utils.conv import escape_filter_chars
 SEARCH_RESULT_LIMIT = 25
 
 
+def _principal_for(domain: str, username: str) -> str:
+    """Baut den NTLM-Principal 'DOMAIN\\username' -- akzeptiert wahlweise
+    einen bereits domain-qualifizierten Namen (z.B. 'HYPERVDEMO\\
+    Administrator', dann unveraendert uebernommen statt die Domaene
+    ein zweites Mal voranzustellen) oder einen blossen Benutzernamen
+    (dann mit `domain` praefigiert). Live gefunden (2026-09-16): an
+    anderen Stellen der App (z.B. HyperVCluster.username fuer WinRM)
+    wird das volle DOMAIN\\user-Format direkt in EIN Feld eingegeben --
+    Nutzer wenden dieselbe Konvention naheliegenderweise auch hier an,
+    obwohl Domaene und Benutzername hier in getrennten Feldern stehen."""
+    username = username.strip()
+    if "\\" in username:
+        return username
+    return f"{domain}\\{username}" if domain else username
+
+
+def _bare_username(username: str) -> str:
+    """Entfernt ein etwaiges DOMAIN\\-Praefix -- sAMAccountName-Filter
+    duerfen nie einen Domaenen-Anteil enthalten."""
+    return username.strip().split("\\", 1)[-1]
+
+
 @dataclass
 class ADAuthResult:
     success: bool
@@ -53,7 +75,7 @@ class ActiveDirectoryService:
 
     def authenticate(self, username: str, password: str) -> ADAuthResult:
         server = Server(self._server, use_ssl=self._use_ssl, get_info=ALL)
-        user_principal = f"{self._domain}\\{username}"
+        user_principal = _principal_for(self._domain, username)
 
         try:
             conn = Connection(server, user=user_principal, password=password, authentication=NTLM)
@@ -62,18 +84,18 @@ class ActiveDirectoryService:
 
             conn.search(
                 search_base=self._base_dn,
-                search_filter=f"(sAMAccountName={escape_filter_chars(username)})",
+                search_filter=f"(sAMAccountName={escape_filter_chars(_bare_username(username))})",
                 attributes=["displayName", "mail", "memberOf"],
             )
 
             if not conn.entries:
-                return ADAuthResult(success=True, display_name=username, groups=[])
+                return ADAuthResult(success=True, display_name=_bare_username(username), groups=[])
 
             entry = conn.entries[0]
             groups = [str(g) for g in entry.memberOf] if "memberOf" in entry else []
             return ADAuthResult(
                 success=True,
-                display_name=str(entry.displayName) if "displayName" in entry else username,
+                display_name=str(entry.displayName) if "displayName" in entry else _bare_username(username),
                 email=str(entry.mail) if "mail" in entry else "",
                 groups=groups,
             )
@@ -93,7 +115,7 @@ class ActiveDirectoryService:
             return ADSearchResult(success=False, error="Suchbegriff darf nicht leer sein")
 
         server = Server(self._server, use_ssl=self._use_ssl, get_info=ALL)
-        bind_principal = f"{self._domain}\\{bind_user}"
+        bind_principal = _principal_for(self._domain, bind_user)
         escaped = escape_filter_chars(query.strip())
 
         try:
