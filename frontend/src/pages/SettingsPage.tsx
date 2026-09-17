@@ -309,6 +309,12 @@ export function SettingsPage() {
   // aber nicht letzteres).
   const canManageHyperv = hasPermission("hyperv:manage");
   const canManageHypervClusterLifecycle = hasPermission("hyperv:cluster_manage");
+  // SnapMirror-Labels haengen an denselben Permissions wie Backup-Policies
+  // (snapmirror_labels.py), nicht an settings:manage -- der Tab selbst ist
+  // daher fuer Viewer sichtbar (backup:view), seine Aktionen hier aber
+  // nicht (Nutzer-Meldung 2026-09-17: Viewer konnte Labels bearbeiten).
+  const canCreateBackup = hasPermission("backup:create");
+  const canDeleteBackup = hasPermission("backup:delete");
   const [params, setParams] = useSearchParams();
   const contentFontSize = useDisplayStore((s) => s.contentFontSize);
   const setContentFontSize = useDisplayStore((s) => s.setContentFontSize);
@@ -510,7 +516,7 @@ export function SettingsPage() {
           <Paper p="md">
             <Group justify="space-between" mb="sm">
               <Title order={5}>SnapMirror-Labels</Title>
-              <Button leftSection={<IconPlus size={16} />} onClick={openCreateLabel}>
+              <Button leftSection={<IconPlus size={16} />} disabled={!canCreateBackup} onClick={openCreateLabel}>
                 Label erstellen
               </Button>
             </Group>
@@ -528,12 +534,12 @@ export function SettingsPage() {
                     <Table.Td>
                       <Group gap="xs">
                         <Tooltip label="Bearbeiten">
-                          <ActionIcon variant="light" onClick={() => openEditLabel(l)}>
+                          <ActionIcon variant="light" disabled={!canCreateBackup} onClick={() => openEditLabel(l)}>
                             <IconEdit size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Löschen">
-                          <ActionIcon variant="light" color="red" onClick={() => removeLabel(l)}>
+                          <ActionIcon variant="light" color="red" disabled={!canDeleteBackup} onClick={() => removeLabel(l)}>
                             <IconTrash size={16} />
                           </ActionIcon>
                         </Tooltip>
