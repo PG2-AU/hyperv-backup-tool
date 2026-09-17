@@ -431,7 +431,7 @@ function ClusterTab({
 
   return (
     <>
-    <Paper p="md">
+    <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       <Title order={5} mb="sm">Systeme</Title>
 
       <StatRibbon>
@@ -452,8 +452,8 @@ function ClusterTab({
         </Tooltip>
       </Group>
 
-      <div>
-        <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         <Table striped highlightOnHover stickyHeader>
           <Table.Thead>
             <Table.Tr>
@@ -884,7 +884,7 @@ export function StoragePage() {
   }
 
   return (
-    <Stack>
+    <Stack style={{ height: "calc(100vh - 112px)" }} gap="md">
       <Title order={3}>Storage</Title>
 
       {locked && (
@@ -895,7 +895,11 @@ export function StoragePage() {
         </Alert>
       )}
 
-      <Tabs value={activeTab} onChange={(v) => setParams({ tab: v ?? "clusters" })}>
+      <Tabs
+        value={activeTab}
+        onChange={(v) => setParams({ tab: v ?? "clusters" })}
+        style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+      >
         <Tabs.List>
           <Tabs.Tab value="clusters">Systeme</Tabs.Tab>
           {/* Nodes/Aggregate/Cluster Peer/MetroCluster sind reine
@@ -922,12 +926,12 @@ export function StoragePage() {
           {hasClusterTypeSystem && <Tabs.Tab value="metrocluster">MetroCluster</Tabs.Tab>}
         </Tabs.List>
 
-        <Tabs.Panel value="clusters" pt="md">
+        <Tabs.Panel value="clusters" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <ClusterTab locked={locked} canManageStorage={canManageStorage} canManageClusterLifecycle={canManageClusterLifecycle} />
         </Tabs.Panel>
 
-        <Tabs.Panel value="svms" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="svms" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Title order={5} mb="sm">Storage Virtual Machines</Title>
           <StatRibbon>
             <StatCard label="Anzahl SVMs" value={visibleSvms.length} />
@@ -935,7 +939,7 @@ export function StoragePage() {
           <Group justify="flex-start" mb="xs">
             <SearchInput value={svmSearch} onChange={setSvmSearch} />
           </Group>
-          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
@@ -978,8 +982,8 @@ export function StoragePage() {
           </Paper>
         </Tabs.Panel>
 
-        <Tabs.Panel value="volumes" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="volumes" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Title order={5} mb="sm">Volumes</Title>
           <StatRibbon>
             <StatCard label="Anzahl Volumes" value={visibleVolumes.length} />
@@ -1017,7 +1021,7 @@ export function StoragePage() {
               onClose={() => setHistoryVolume(null)}
             />
           )}
-          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
@@ -1148,8 +1152,8 @@ export function StoragePage() {
           </Paper>
         </Tabs.Panel>
 
-        <Tabs.Panel value="luns" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="luns" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Title order={5} mb="sm">LUNs</Title>
           <StatRibbon>
             <StatCard label="Anzahl LUNs" value={visibleLuns.length} />
@@ -1172,7 +1176,7 @@ export function StoragePage() {
               onClose={() => setHistoryLun(null)}
             />
           )}
-          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover horizontalSpacing="sm" stickyHeader>
             <Table.Thead>
               <Table.Tr>
@@ -1283,8 +1287,8 @@ export function StoragePage() {
           </Paper>
         </Tabs.Panel>
 
-        <Tabs.Panel value="igroups" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="igroups" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Title order={5} mb="sm">IGroups</Title>
           <StatRibbon>
             <StatCard label="Anzahl IGroups" value={visibleIgroups.length} />
@@ -1297,7 +1301,7 @@ export function StoragePage() {
               IGroup anlegen
             </Button>
           </Group>
-          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
@@ -1336,8 +1340,8 @@ export function StoragePage() {
           </Paper>
         </Tabs.Panel>
 
-        <Tabs.Panel value="cluster-peers" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="cluster-peers" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Title order={5} mb="sm">Cluster Peer</Title>
           <StatRibbon>
             <StatCard label="Anzahl Cluster Peer" value={clusterPeers?.length ?? 0} />
@@ -1349,7 +1353,7 @@ export function StoragePage() {
             </Button>
           </Group>
           {peerDetail && <ClusterPeerDetailHeader peer={peerDetail} onClose={() => setPeerDetail(null)} />}
-          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
@@ -1395,8 +1399,8 @@ export function StoragePage() {
           </Paper>
         </Tabs.Panel>
 
-        <Tabs.Panel value="svm-peers" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="svm-peers" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Title order={5} mb="sm">SVM Peer</Title>
           <StatRibbon>
             <StatCard label="Anzahl SVM Peer" value={visibleSvmPeers.length} />
@@ -1407,7 +1411,7 @@ export function StoragePage() {
               SVM Peer erstellen
             </Button>
           </Group>
-          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
@@ -1450,8 +1454,8 @@ export function StoragePage() {
           </Paper>
         </Tabs.Panel>
 
-        <Tabs.Panel value="snapmirror" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="snapmirror" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Title order={5} mb="sm">SnapMirror-Beziehungen</Title>
           <StatRibbon>
             <StatCard label="Anzahl Beziehungen" value={visibleRelationships.length} />
@@ -1474,7 +1478,7 @@ export function StoragePage() {
               Neue SnapMirror-Beziehung
             </Button>
           </Group>
-          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
@@ -1575,8 +1579,8 @@ export function StoragePage() {
           </Paper>
         </Tabs.Panel>
 
-        <Tabs.Panel value="platforms" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="platforms" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Title order={5} mb="sm">Nodes</Title>
           <StatRibbon>
             <StatCard label="Anzahl Nodes" value={platforms?.length ?? 0} />
@@ -1587,7 +1591,7 @@ export function StoragePage() {
           <Group justify="flex-start" mb="xs">
             <SearchInput value={platformSearch} onChange={setPlatformSearch} />
           </Group>
-          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
@@ -1632,8 +1636,8 @@ export function StoragePage() {
           </Paper>
         </Tabs.Panel>
 
-        <Tabs.Panel value="aggregates" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="aggregates" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Title order={5} mb="sm">Aggregate</Title>
           <StatRibbon>
             <StatCard label="Anzahl Aggregate" value={aggregates?.length ?? 0} />
@@ -1656,7 +1660,7 @@ export function StoragePage() {
               onClose={() => setHistoryAggregate(null)}
             />
           )}
-          <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+          <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
               <Table.Tr>
@@ -1725,15 +1729,15 @@ export function StoragePage() {
           </Paper>
         </Tabs.Panel>
 
-        <Tabs.Panel value="snapmirror-policies" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="snapmirror-policies" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <Group justify="space-between" mb="sm">
               <Title order={5}>SnapMirror-Policies</Title>
               <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setPolicyFormOpen(true)}>
                 Policy anlegen
               </Button>
             </Group>
-            <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+            <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             <Table striped highlightOnHover stickyHeader>
               <Table.Thead>
                 <Table.Tr>
@@ -1806,15 +1810,15 @@ export function StoragePage() {
           />
         </Tabs.Panel>
 
-        <Tabs.Panel value="schedules" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="schedules" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <Group justify="space-between" mb="sm">
               <Title order={5}>Schedules</Title>
               <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setNetappScheduleFormOpen(true)}>
                 Schedule anlegen
               </Button>
             </Group>
-            <Box style={{ maxHeight: 520, overflowY: "auto" }}>
+            <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             <Table striped highlightOnHover stickyHeader>
               <Table.Thead>
                 <Table.Tr>
@@ -1861,8 +1865,8 @@ export function StoragePage() {
           />
         </Tabs.Panel>
 
-        <Tabs.Panel value="metrocluster" pt="md">
-          <Paper p="md">
+        <Tabs.Panel value="metrocluster" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <Title order={5} mb="sm">MetroCluster</Title>
             <Stack gap="xs" maw={480}>
               <Group justify="space-between">
