@@ -13,6 +13,12 @@ export interface NavChild {
   label: string;
   path: string;
   searchContext?: string;
+  // Ohne Wert immer sichtbar -- gesetzt, wenn die zugehoerige Seite ohne
+  // diese Berechtigung buchstaeblich nichts anzuzeigen/zu tun hat (siehe
+  // AppShellLayout.tsx fuer die Filterung). Nur auf die Menuepunkte
+  // gesetzt, deren Backend-Endpunkte tatsaechlich mehr als *_VIEW
+  // verlangen -- nicht pauschal auf alles.
+  requiredPermission?: string;
 }
 
 export interface NavItem {
@@ -21,6 +27,7 @@ export interface NavItem {
   path?: string;
   searchContext?: string;
   children?: NavChild[];
+  requiredPermission?: string;
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -63,6 +70,11 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Restore",
     icon: IconDatabaseImport,
     searchContext: "restore",
+    // Selbst das reine Auflisten vergangener Restores verlangt
+    // RESTORE_RUN (restore.py::list_runs), keine eigene Ansichts-
+    // Berechtigung -- ein Viewer hat hier buchstaeblich nichts zu sehen,
+    // daher der ganze Menuepunkt statt einzelner Buttons ausgeblendet.
+    requiredPermission: "restore:run",
     children: [
       { label: "Wiederherstellen", path: "/restore?tab=overview" },
       { label: "Setup", path: "/restore?tab=setup" },
@@ -92,19 +104,25 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Settings",
     icon: IconSettings,
     searchContext: "settings",
+    // Kein requiredPermission auf dem Elternpunkt selbst -- "Ansicht"
+    // (rein lokal, kein Backend-Call) und "Hyper-V-Hosts"/"SnapMirror-
+    // Labels" (eigene Endpunkte nur *_VIEW) bleiben fuer alle drei
+    // Rollen sichtbar, auch wenn die meisten anderen Kinder hier fuer
+    // Operator/Viewer per Kind-Filter verschwinden (siehe
+    // AppShellLayout.tsx).
     children: [
-      { label: "Benutzer & Rollen", path: "/settings?tab=users" },
-      { label: "SnapMirror-Labels", path: "/settings?tab=snapmirror-labels" },
-      { label: "Active-Directory-Integration", path: "/settings?tab=ad" },
-      { label: "Hyper-V-Hosts", path: "/settings?tab=hyperv" },
-      { label: "WinRM-Zertifikate", path: "/settings?tab=winrm-certs" },
-      { label: "Kerberos", path: "/settings?tab=kerberos" },
-      { label: "Storage", path: "/settings?tab=storage" },
-      { label: "E-Mail", path: "/settings?tab=email" },
-      { label: "Hintergrundjobs", path: "/settings?tab=scheduler" },
-      { label: "Alarms", path: "/settings?tab=alerts" },
+      { label: "Benutzer & Rollen", path: "/settings?tab=users", requiredPermission: "user:manage" },
+      { label: "SnapMirror-Labels", path: "/settings?tab=snapmirror-labels", requiredPermission: "backup:view" },
+      { label: "Active-Directory-Integration", path: "/settings?tab=ad", requiredPermission: "settings:manage" },
+      { label: "Hyper-V-Hosts", path: "/settings?tab=hyperv", requiredPermission: "hyperv:view" },
+      { label: "WinRM-Zertifikate", path: "/settings?tab=winrm-certs", requiredPermission: "settings:manage" },
+      { label: "Kerberos", path: "/settings?tab=kerberos", requiredPermission: "settings:manage" },
+      { label: "Storage", path: "/settings?tab=storage", requiredPermission: "settings:manage" },
+      { label: "E-Mail", path: "/settings?tab=email", requiredPermission: "settings:manage" },
+      { label: "Hintergrundjobs", path: "/settings?tab=scheduler", requiredPermission: "settings:manage" },
+      { label: "Alarms", path: "/settings?tab=alerts", requiredPermission: "settings:manage" },
       { label: "Ansicht", path: "/settings?tab=display" },
-      { label: "Updates (Git)", path: "/settings?tab=updates" },
+      { label: "Updates (Git)", path: "/settings?tab=updates", requiredPermission: "settings:manage" },
     ],
   },
 ];

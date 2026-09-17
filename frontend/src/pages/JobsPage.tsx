@@ -41,6 +41,7 @@ import { ResourceGroupFormModal } from "@/components/ResourceGroupFormModal";
 import { ResourceGroupPickerModal } from "@/components/ResourceGroupPickerModal";
 import { ScheduleFormModal } from "@/components/ScheduleFormModal";
 import type { BackupJobRun, BackupPolicy, JobStatus, ResourceGroup, Schedule } from "@/api/types";
+import { useAuthStore } from "@/store/authStore";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatRetention, formatSchedule, lunShortName } from "@/utils/format";
@@ -68,6 +69,12 @@ const SCHEDULE_TYPE_LABEL: Record<string, string> = {
 };
 
 export function JobsPage() {
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  // RBAC (Backlog #12, 2026-09-17): Operator hat backup:create/run, aber
+  // NICHT backup:delete (wie schon die vormalige Rolle "BackupOperator").
+  const canCreateBackup = hasPermission("backup:create");
+  const canRunBackup = hasPermission("backup:run");
+  const canDeleteBackup = hasPermission("backup:delete");
   const [params, setParams] = useSearchParams();
   const tabParam = params.get("tab");
   const activeTab =
@@ -353,7 +360,7 @@ export function JobsPage() {
           <Paper p="md">
             <Group justify="space-between" mb="sm">
               <Title order={5}>Policies</Title>
-              <Button leftSection={<IconPlus size={16} />} onClick={openCreate}>
+              <Button leftSection={<IconPlus size={16} />} disabled={!canCreateBackup} onClick={openCreate}>
                 Neue Policy
               </Button>
             </Group>
@@ -417,22 +424,27 @@ export function JobsPage() {
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">
                         <Tooltip label="Jetzt ausführen">
-                          <ActionIcon variant="light" onClick={() => runNow(policy)}>
+                          <ActionIcon variant="light" disabled={!canRunBackup} onClick={() => runNow(policy)}>
                             <IconBolt size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label={policy.enabled ? "Backup pausieren" : "Backup fortsetzen"}>
-                          <ActionIcon variant="light" color={policy.enabled ? "gray" : "green"} onClick={() => togglePolicyPause(policy)}>
+                          <ActionIcon
+                            variant="light"
+                            color={policy.enabled ? "gray" : "green"}
+                            disabled={!canCreateBackup}
+                            onClick={() => togglePolicyPause(policy)}
+                          >
                             {policy.enabled ? <IconPlayerPause size={16} /> : <IconPlayerPlay size={16} />}
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Bearbeiten">
-                          <ActionIcon variant="light" onClick={() => openEdit(policy)}>
+                          <ActionIcon variant="light" disabled={!canCreateBackup} onClick={() => openEdit(policy)}>
                             <IconEdit size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Duplizieren">
-                          <ActionIcon variant="light" onClick={() => openDuplicatePolicy(policy)}>
+                          <ActionIcon variant="light" disabled={!canCreateBackup} onClick={() => openDuplicatePolicy(policy)}>
                             <IconCopy size={16} />
                           </ActionIcon>
                         </Tooltip>
@@ -442,7 +454,7 @@ export function JobsPage() {
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Löschen">
-                          <ActionIcon variant="light" color="red" onClick={() => removePolicy(policy)}>
+                          <ActionIcon variant="light" color="red" disabled={!canDeleteBackup} onClick={() => removePolicy(policy)}>
                             <IconTrash size={16} />
                           </ActionIcon>
                         </Tooltip>
@@ -459,7 +471,7 @@ export function JobsPage() {
           <Paper p="md">
             <Group justify="space-between" mb="sm">
               <Title order={5}>Protection Groups</Title>
-              <Button leftSection={<IconPlus size={16} />} onClick={openCreateGroup}>
+              <Button leftSection={<IconPlus size={16} />} disabled={!canCreateBackup} onClick={openCreateGroup}>
                 Protection Group anlegen
               </Button>
             </Group>
@@ -521,27 +533,32 @@ export function JobsPage() {
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">
                         <Tooltip label="Jetzt ausführen">
-                          <ActionIcon variant="light" onClick={() => runGroupNow(group)}>
+                          <ActionIcon variant="light" disabled={!canRunBackup} onClick={() => runGroupNow(group)}>
                             <IconBolt size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label={group.paused ? "Backup fortsetzen" : "Backup pausieren"}>
-                          <ActionIcon variant="light" color={group.paused ? "green" : "gray"} onClick={() => toggleGroupPause(group)}>
+                          <ActionIcon
+                            variant="light"
+                            color={group.paused ? "green" : "gray"}
+                            disabled={!canCreateBackup}
+                            onClick={() => toggleGroupPause(group)}
+                          >
                             {group.paused ? <IconPlayerPlay size={16} /> : <IconPlayerPause size={16} />}
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Bearbeiten">
-                          <ActionIcon variant="light" onClick={() => openEditGroup(group)}>
+                          <ActionIcon variant="light" disabled={!canCreateBackup} onClick={() => openEditGroup(group)}>
                             <IconEdit size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Duplizieren">
-                          <ActionIcon variant="light" onClick={() => openDuplicateGroup(group)}>
+                          <ActionIcon variant="light" disabled={!canCreateBackup} onClick={() => openDuplicateGroup(group)}>
                             <IconCopy size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Löschen">
-                          <ActionIcon variant="light" color="red" onClick={() => removeGroup(group)}>
+                          <ActionIcon variant="light" color="red" disabled={!canDeleteBackup} onClick={() => removeGroup(group)}>
                             <IconTrash size={16} />
                           </ActionIcon>
                         </Tooltip>
@@ -563,7 +580,7 @@ export function JobsPage() {
           <Paper p="md">
             <Group justify="space-between" mb="sm">
               <Title order={5}>Zeitpläne</Title>
-              <Button leftSection={<IconPlus size={16} />} onClick={openCreateSchedule}>
+              <Button leftSection={<IconPlus size={16} />} disabled={!canCreateBackup} onClick={openCreateSchedule}>
                 Zeitplan erstellen
               </Button>
             </Group>
@@ -603,22 +620,27 @@ export function JobsPage() {
                     <Table.Td>
                       <Group gap="xs">
                         <Tooltip label={s.paused ? "Backup fortsetzen" : "Backup pausieren"}>
-                          <ActionIcon variant="light" color={s.paused ? "green" : "gray"} onClick={() => toggleSchedulePause(s)}>
+                          <ActionIcon
+                            variant="light"
+                            color={s.paused ? "green" : "gray"}
+                            disabled={!canCreateBackup}
+                            onClick={() => toggleSchedulePause(s)}
+                          >
                             {s.paused ? <IconPlayerPlay size={16} /> : <IconPlayerPause size={16} />}
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Bearbeiten">
-                          <ActionIcon variant="light" onClick={() => openEditSchedule(s)}>
+                          <ActionIcon variant="light" disabled={!canCreateBackup} onClick={() => openEditSchedule(s)}>
                             <IconEdit size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Duplizieren">
-                          <ActionIcon variant="light" onClick={() => openDuplicateSchedule(s)}>
+                          <ActionIcon variant="light" disabled={!canCreateBackup} onClick={() => openDuplicateSchedule(s)}>
                             <IconCopy size={16} />
                           </ActionIcon>
                         </Tooltip>
                         <Tooltip label="Löschen">
-                          <ActionIcon variant="light" color="red" onClick={() => removeSchedule(s)}>
+                          <ActionIcon variant="light" color="red" disabled={!canDeleteBackup} onClick={() => removeSchedule(s)}>
                             <IconTrash size={16} />
                           </ActionIcon>
                         </Tooltip>
@@ -711,6 +733,7 @@ export function JobsPage() {
                           variant="subtle"
                           color="red"
                           leftSection={<IconX size={14} />}
+                          disabled={!canRunBackup}
                           onClick={() => cancelJob(run)}
                         >
                           Job abbrechen

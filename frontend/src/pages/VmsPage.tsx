@@ -33,6 +33,7 @@ import type { BackupScope, Csv, ResourceGroup, Vm } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, lunShortName } from "@/utils/format";
+import { useAuthStore } from "@/store/authStore";
 import { useRunPolicy } from "@/utils/runPolicy";
 import { matchesAllColumns } from "@/utils/search";
 
@@ -383,6 +384,11 @@ function CsvChainHeader({
 }
 
 export function VmsPage() {
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  // RBAC (Backlog #12, 2026-09-17): "Backup jetzt" braucht backup:run,
+  // Checkpoint-Loeschen/VM-Discovery braucht hyperv:manage.
+  const canRunBackup = hasPermission("backup:run");
+  const canManageHyperv = hasPermission("hyperv:manage");
   const [params, setParams] = useSearchParams();
   const activeTab = params.get("tab") === "csv" ? "csv" : "vms";
   const { data: vms } = useVms();
@@ -713,7 +719,7 @@ export function VmsPage() {
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
                       <Tooltip label="Backup jetzt starten">
-                        <ActionIcon variant="light" onClick={() => runBackupNow(vm)}>
+                        <ActionIcon variant="light" disabled={!canRunBackup} onClick={() => runBackupNow(vm)}>
                           <IconBolt size={16} />
                         </ActionIcon>
                       </Tooltip>
@@ -729,7 +735,7 @@ export function VmsPage() {
                       </Tooltip>
                       {visibleCheckpoints.length > 0 && (
                         <Tooltip label="Checkpoint löschen">
-                          <ActionIcon variant="light" color="red" onClick={() => deleteVmCheckpoints(vm)}>
+                          <ActionIcon variant="light" color="red" disabled={!canManageHyperv} onClick={() => deleteVmCheckpoints(vm)}>
                             <IconTrash size={16} />
                           </ActionIcon>
                         </Tooltip>
@@ -738,6 +744,7 @@ export function VmsPage() {
                         <Tooltip label="VM Discovery -- Stand jetzt aktualisieren">
                           <ActionIcon
                             variant="light"
+                            disabled={!canManageHyperv}
                             loading={discoverVm.isPending}
                             onClick={() => discoverVmNow(vm)}
                           >
@@ -848,7 +855,7 @@ export function VmsPage() {
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
                         <Tooltip label="Backup jetzt starten (CSV-Scope)">
-                          <ActionIcon variant="light" onClick={() => runBackupNowForCsv(csv)}>
+                          <ActionIcon variant="light" disabled={!canRunBackup} onClick={() => runBackupNowForCsv(csv)}>
                             <IconBolt size={16} />
                           </ActionIcon>
                         </Tooltip>

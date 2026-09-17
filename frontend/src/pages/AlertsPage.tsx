@@ -16,6 +16,7 @@ import {
 } from "@/api/hooks";
 import { SearchInput } from "@/components/SearchInput";
 import type { Alert, AlertType } from "@/api/types";
+import { useAuthStore } from "@/store/authStore";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { matchesAllColumns } from "@/utils/search";
@@ -179,6 +180,7 @@ function DeleteOrphanCheckpointButton({
   checkpointId: string;
 }) {
   const deleteCheckpoint = useDeleteVmCheckpoint();
+  const canManage = useAuthStore((s) => s.hasPermission("hyperv:manage"));
 
   function handleDelete() {
     confirmAction({
@@ -203,7 +205,7 @@ function DeleteOrphanCheckpointButton({
   }
 
   return (
-    <Button size="xs" variant="light" color="red" onClick={handleDelete} loading={deleteCheckpoint.isPending}>
+    <Button size="xs" variant="light" color="red" disabled={!canManage} onClick={handleDelete} loading={deleteCheckpoint.isPending}>
       Checkpoint löschen
     </Button>
   );
@@ -211,6 +213,7 @@ function DeleteOrphanCheckpointButton({
 
 function DiscoverVmButton({ clusterId, vmName }: { clusterId: string; vmName: string }) {
   const discoverVm = useDiscoverVm();
+  const canManage = useAuthStore((s) => s.hasPermission("hyperv:manage"));
 
   function handleDiscover() {
     // Der Endpunkt loest den zugehoerigen Alarm serverseitig direkt mit auf
@@ -229,7 +232,7 @@ function DiscoverVmButton({ clusterId, vmName }: { clusterId: string; vmName: st
   }
 
   return (
-    <Button size="xs" variant="light" onClick={handleDiscover} loading={discoverVm.isPending}>
+    <Button size="xs" variant="light" disabled={!canManage} onClick={handleDiscover} loading={discoverVm.isPending}>
       VM Discovery
     </Button>
   );
@@ -237,6 +240,7 @@ function DiscoverVmButton({ clusterId, vmName }: { clusterId: string; vmName: st
 
 function AllowCollisionButton({ alertId }: { alertId: string }) {
   const allowCollision = useAllowScheduleCollision();
+  const canManage = useAuthStore((s) => s.hasPermission("backup:create"));
 
   function handleAllow() {
     confirmAction({
@@ -255,7 +259,7 @@ function AllowCollisionButton({ alertId }: { alertId: string }) {
   }
 
   return (
-    <Button size="xs" variant="light" onClick={handleAllow} loading={allowCollision.isPending}>
+    <Button size="xs" variant="light" disabled={!canManage} onClick={handleAllow} loading={allowCollision.isPending}>
       Erlauben
     </Button>
   );
@@ -264,6 +268,7 @@ function AllowCollisionButton({ alertId }: { alertId: string }) {
 function CatchUpMissedBackupButton({ alertId, policyId, resourceGroupId }: { alertId: string; policyId: string; resourceGroupId: string }) {
   const triggerRun = useTriggerJobRun();
   const dismissAlert = useDismissAlert();
+  const canRun = useAuthStore((s) => s.hasPermission("backup:run"));
 
   function handleCatchUp() {
     confirmAction({
@@ -289,7 +294,7 @@ function CatchUpMissedBackupButton({ alertId, policyId, resourceGroupId }: { ale
   }
 
   return (
-    <Button size="xs" variant="light" onClick={handleCatchUp} loading={triggerRun.isPending}>
+    <Button size="xs" variant="light" disabled={!canRun} onClick={handleCatchUp} loading={triggerRun.isPending}>
       Jetzt nachholen
     </Button>
   );
@@ -297,6 +302,7 @@ function CatchUpMissedBackupButton({ alertId, policyId, resourceGroupId }: { ale
 
 function DismissAlertButton({ alertId }: { alertId: string }) {
   const dismissAlert = useDismissAlert();
+  const canManage = useAuthStore((s) => s.hasPermission("backup:create"));
 
   function handleDismiss() {
     confirmAction({
@@ -314,7 +320,7 @@ function DismissAlertButton({ alertId }: { alertId: string }) {
   }
 
   return (
-    <Button size="xs" variant="light" onClick={handleDismiss} loading={dismissAlert.isPending}>
+    <Button size="xs" variant="light" disabled={!canManage} onClick={handleDismiss} loading={dismissAlert.isPending}>
       Quittieren
     </Button>
   );
@@ -322,6 +328,7 @@ function DismissAlertButton({ alertId }: { alertId: string }) {
 
 function DismissBackupFailedButton({ runId }: { runId: string }) {
   const dismissAlert = useDismissBackupFailedAlert();
+  const canManage = useAuthStore((s) => s.hasPermission("backup:create"));
 
   function handleDismiss() {
     confirmAction({
@@ -339,7 +346,7 @@ function DismissBackupFailedButton({ runId }: { runId: string }) {
   }
 
   return (
-    <Button size="xs" variant="light" onClick={handleDismiss} loading={dismissAlert.isPending}>
+    <Button size="xs" variant="light" disabled={!canManage} onClick={handleDismiss} loading={dismissAlert.isPending}>
       Quittieren
     </Button>
   );

@@ -42,6 +42,8 @@ export function AppShellLayout() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const isVisible = (permission?: string) => !permission || hasPermission(permission);
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const isDark = colorScheme === "dark";
   // Nutzer-Vorgabe: die Schriftgroesse soll die GESAMTE App betreffen, nicht
@@ -128,7 +130,7 @@ export function AppShellLayout() {
 
       <AppShell.Navbar p="xs">
         <AppShell.Section grow component={ScrollArea}>
-          {NAV_ITEMS.map((item) => {
+          {NAV_ITEMS.filter((item) => isVisible(item.requiredPermission)).map((item) => {
             const Icon = item.icon;
             if (!item.children) {
               return (
@@ -142,7 +144,13 @@ export function AppShellLayout() {
                 />
               );
             }
-            const anyChildActive = item.children.some((c) => isActive(c.path));
+            // Kinder zuerst nach Berechtigung filtern -- verschwinden ALLE
+            // (z.B. Operator/Viewer auf "Settings"), verschwindet auch der
+            // Elternpunkt, statt einen leeren aufklappbaren Menuepunkt
+            // anzuzeigen.
+            const visibleChildren = item.children.filter((c) => isVisible(c.requiredPermission));
+            if (visibleChildren.length === 0) return null;
+            const anyChildActive = visibleChildren.some((c) => isActive(c.path));
             return (
               <NavLink
                 key={item.label}
@@ -151,7 +159,7 @@ export function AppShellLayout() {
                 defaultOpened={anyChildActive}
                 childrenOffset={28}
               >
-                {item.children.map((child) => (
+                {visibleChildren.map((child) => (
                   <NavLink
                     key={child.path}
                     label={child.label}

@@ -90,6 +90,7 @@ import type {
   NetAppVolume,
   SnapMirrorRelationship,
 } from "@/api/types";
+import { useAuthStore } from "@/store/authStore";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, formatLagTime, lunShortName } from "@/utils/format";
@@ -351,7 +352,15 @@ function CapacityDetailHeader({
   );
 }
 
-function ClusterTab({ locked }: { locked: boolean }) {
+function ClusterTab({
+  locked,
+  canManageStorage,
+  canManageClusterLifecycle,
+}: {
+  locked: boolean;
+  canManageStorage: boolean;
+  canManageClusterLifecycle: boolean;
+}) {
   const { data: clusters } = useNetAppClusters();
   const verifyCluster = useVerifyNetAppCluster();
   const enrollCert = useEnrollNetAppClusterCertificate();
@@ -436,9 +445,11 @@ function ClusterTab({ locked }: { locked: boolean }) {
 
       <Group justify="space-between" mb="xs" mt="md">
         <SearchInput value={clusterSearch} onChange={setClusterSearch} />
-        <Button leftSection={<IconPlus size={16} />} onClick={() => setAddOpen(true)}>
-          System hinzufügen
-        </Button>
+        <Tooltip label="Keine Berechtigung, ein System hinzuzufügen" disabled={canManageClusterLifecycle}>
+          <Button leftSection={<IconPlus size={16} />} disabled={!canManageClusterLifecycle} onClick={() => setAddOpen(true)}>
+            System hinzufügen
+          </Button>
+        </Tooltip>
       </Group>
 
       <div>
@@ -495,18 +506,18 @@ function ClusterTab({ locked }: { locked: boolean }) {
                 <Table.Td>
                   <Group gap="xs" wrap="nowrap">
                     <Tooltip label="Verbindung erneut prüfen">
-                      <ActionIcon variant="light" disabled={locked} onClick={() => handleVerify(cluster)}>
+                      <ActionIcon variant="light" disabled={locked || !canManageStorage} onClick={() => handleVerify(cluster)}>
                         <IconRefresh size={16} />
                       </ActionIcon>
                     </Tooltip>
                     <Tooltip label="Discovery erneut ausführen">
-                      <ActionIcon variant="light" disabled={locked} onClick={() => runDiscovery(cluster)}>
+                      <ActionIcon variant="light" disabled={locked || !canManageStorage} onClick={() => runDiscovery(cluster)}>
                         <IconRadar2 size={16} />
                       </ActionIcon>
                     </Tooltip>
                     {cluster.auth_method === "password" && (
                       <Tooltip label="Auf Zertifikat umstellen">
-                        <ActionIcon variant="light" disabled={locked} onClick={() => handleEnrollCertificate(cluster)}>
+                        <ActionIcon variant="light" disabled={locked || !canManageStorage} onClick={() => handleEnrollCertificate(cluster)}>
                           <IconCertificate size={16} />
                         </ActionIcon>
                       </Tooltip>
@@ -517,13 +528,15 @@ function ClusterTab({ locked }: { locked: boolean }) {
                           Verbindungsdaten ist keine Storage-Mutation im eigentlichen Sinn,
                           sondern noetig um die Verbindung selbst herzustellen/zu warten
                           (z.B. eine Passwort-Rotation), auch waehrend Storage-Aktionen
-                          gesperrt sind. Backend-seitig ebenso ohne require_storage_unlocked. */}
-                      <ActionIcon variant="light" onClick={() => setEditingCluster(cluster)}>
+                          gesperrt sind. Backend-seitig ebenso ohne require_storage_unlocked.
+                          Wohl aber disabled={!canManageStorage} -- die Berechtigung selbst
+                          gilt unabhaengig vom Lock. */}
+                      <ActionIcon variant="light" disabled={!canManageStorage} onClick={() => setEditingCluster(cluster)}>
                         <IconEdit size={16} />
                       </ActionIcon>
                     </Tooltip>
                     <Tooltip label="Entfernen">
-                      <ActionIcon variant="light" color="red" disabled={locked} onClick={() => handleDelete(cluster)}>
+                      <ActionIcon variant="light" color="red" disabled={locked || !canManageClusterLifecycle} onClick={() => handleDelete(cluster)}>
                         <IconTrash size={16} />
                       </ActionIcon>
                     </Tooltip>
@@ -569,6 +582,7 @@ function ClusterTab({ locked }: { locked: boolean }) {
 }
 
 export function StoragePage() {
+  const hasPermission = useAuthStore((s) => s.hasPermission);
   const [params, setParams] = useSearchParams();
   const activeTab = params.get("tab") ?? "clusters";
   const { data: svms } = useSvms();
@@ -597,6 +611,15 @@ export function StoragePage() {
   const { data: storageAccess } = useStorageAccess();
   const updateStorageAccess = useUpdateStorageAccess();
   const locked = storageAccess?.actions_enabled === false;
+  // RBAC (Backlog #12, 2026-09-17): bisher war `locked` die EINZIGE
+  // Bedingung an jedem mutierenden Button hier -- ein Viewer sah bei
+  // offenem Lock volle Klickbarkeit und erfuhr seine Einschraenkung erst
+  // an einem 403 nach dem Klick. STORAGE_MANAGE deckt Objekte innerhalb
+  // eines Systems ab (Volumes/LUNs/IGroups/SnapMirror/Peers/Bearbeiten),
+  // STORAGE_CLUSTER_MANAGE nur das Hinzufuegen/Entfernen eines ganzen
+  // Systems (Operator hat ersteres, aber nicht letzteres).
+  const canManageStorage = hasPermission("storage:manage");
+  const canManageClusterLifecycle = hasPermission("storage:cluster_manage");
   const [policyFormOpen, setPolicyFormOpen] = useState(false);
   const [policyEditOpen, setPolicyEditOpen] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<NetAppSnapMirrorPolicy | null>(null);
@@ -900,7 +923,7 @@ export function StoragePage() {
         </Tabs.List>
 
         <Tabs.Panel value="clusters" pt="md">
-          <ClusterTab locked={locked} />
+          <ClusterTab locked={locked} canManageStorage={canManageStorage} canManageClusterLifecycle={canManageClusterLifecycle} />
         </Tabs.Panel>
 
         <Tabs.Panel value="svms" pt="md">
@@ -965,7 +988,7 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={volumeSearch} onChange={setVolumeSearch} />
-            <Button leftSection={<IconPlus size={16} />} disabled={locked} onClick={() => setVolumeFormOpen(true)}>
+            <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setVolumeFormOpen(true)}>
               Volume anlegen
             </Button>
           </Group>
@@ -1086,7 +1109,7 @@ export function StoragePage() {
                       <Tooltip label="Bearbeiten">
                         <ActionIcon
                           variant="light"
-                          disabled={locked}
+                          disabled={locked || !canManageStorage}
                           onClick={() => {
                             setSelectedVolume(vol);
                             setVolumeEditOpen(true);
@@ -1096,12 +1119,12 @@ export function StoragePage() {
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="SnapMirror-Replikation erstellen">
-                        <ActionIcon variant="light" disabled={locked} onClick={() => openSnapmirrorForVolume(vol)}>
+                        <ActionIcon variant="light" disabled={locked || !canManageStorage} onClick={() => openSnapmirrorForVolume(vol)}>
                           <IconLink size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Löschen">
-                        <ActionIcon variant="light" color="red" disabled={locked} onClick={() => handleDeleteVolume(vol)}>
+                        <ActionIcon variant="light" color="red" disabled={locked || !canManageStorage} onClick={() => handleDeleteVolume(vol)}>
                           <IconTrash size={16} />
                         </ActionIcon>
                       </Tooltip>
@@ -1135,7 +1158,7 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={lunSearch} onChange={setLunSearch} />
-            <Button leftSection={<IconPlus size={16} />} disabled={locked} onClick={() => setLunFormOpen(true)}>
+            <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setLunFormOpen(true)}>
               LUN anlegen
             </Button>
           </Group>
@@ -1226,7 +1249,7 @@ export function StoragePage() {
                       <Tooltip label="Bearbeiten">
                         <ActionIcon
                           variant="light"
-                          disabled={locked}
+                          disabled={locked || !canManageStorage}
                           onClick={() => {
                             setSelectedLun(lun);
                             setLunEditOpen(true);
@@ -1236,7 +1259,7 @@ export function StoragePage() {
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Löschen">
-                        <ActionIcon variant="light" color="red" disabled={locked} onClick={() => handleDeleteLun(lun)}>
+                        <ActionIcon variant="light" color="red" disabled={locked || !canManageStorage} onClick={() => handleDeleteLun(lun)}>
                           <IconTrash size={16} />
                         </ActionIcon>
                       </Tooltip>
@@ -1270,7 +1293,7 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={igroupSearch} onChange={setIgroupSearch} />
-            <Button leftSection={<IconPlus size={16} />} disabled={locked} onClick={() => setIgroupFormOpen(true)}>
+            <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setIgroupFormOpen(true)}>
               IGroup anlegen
             </Button>
           </Group>
@@ -1321,7 +1344,7 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={clusterPeerSearch} onChange={setClusterPeerSearch} />
-            <Button leftSection={<IconLink size={16} />} disabled={locked} onClick={() => setClusterPeerFormOpen(true)}>
+            <Button leftSection={<IconLink size={16} />} disabled={locked || !canManageStorage} onClick={() => setClusterPeerFormOpen(true)}>
               Cluster Peer erstellen
             </Button>
           </Group>
@@ -1380,7 +1403,7 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={svmPeerSearch} onChange={setSvmPeerSearch} />
-            <Button leftSection={<IconLink size={16} />} disabled={locked} onClick={() => setSvmPeerFormOpen(true)}>
+            <Button leftSection={<IconLink size={16} />} disabled={locked || !canManageStorage} onClick={() => setSvmPeerFormOpen(true)}>
               SVM Peer erstellen
             </Button>
           </Group>
@@ -1442,7 +1465,7 @@ export function StoragePage() {
             <SearchInput value={snapmirrorSearch} onChange={setSnapmirrorSearch} />
             <Button
               leftSection={<IconLink size={16} />}
-              disabled={locked}
+              disabled={locked || !canManageStorage}
               onClick={() => {
                 setSnapmirrorInitialSource(null);
                 setSnapmirrorFormOpen(true);
@@ -1513,7 +1536,7 @@ export function StoragePage() {
                       <Tooltip label="Bearbeiten">
                         <ActionIcon
                           variant="light"
-                          disabled={locked}
+                          disabled={locked || !canManageStorage}
                           onClick={() => {
                             setSelectedRelationship(rel);
                             setSnapmirrorEditOpen(true);
@@ -1525,7 +1548,7 @@ export function StoragePage() {
                       <Tooltip label="SnapMirror-Update erzwingen">
                         <ActionIcon
                           variant="light"
-                          disabled={locked}
+                          disabled={locked || !canManageStorage}
                           loading={triggerSnapmirrorUpdate.isPending}
                           onClick={() => triggerUpdate(rel)}
                         >
@@ -1706,7 +1729,7 @@ export function StoragePage() {
           <Paper p="md">
             <Group justify="space-between" mb="sm">
               <Title order={5}>SnapMirror-Policies</Title>
-              <Button leftSection={<IconPlus size={16} />} disabled={locked} onClick={() => setPolicyFormOpen(true)}>
+              <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setPolicyFormOpen(true)}>
                 Policy anlegen
               </Button>
             </Group>
@@ -1740,7 +1763,7 @@ export function StoragePage() {
                       <Tooltip label="Bearbeiten">
                         <ActionIcon
                           variant="light"
-                          disabled={locked}
+                          disabled={locked || !canManageStorage}
                           onClick={() => {
                             setEditingPolicy(p);
                             setPolicyEditOpen(true);
@@ -1787,7 +1810,7 @@ export function StoragePage() {
           <Paper p="md">
             <Group justify="space-between" mb="sm">
               <Title order={5}>Schedules</Title>
-              <Button leftSection={<IconPlus size={16} />} disabled={locked} onClick={() => setNetappScheduleFormOpen(true)}>
+              <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setNetappScheduleFormOpen(true)}>
                 Schedule anlegen
               </Button>
             </Group>

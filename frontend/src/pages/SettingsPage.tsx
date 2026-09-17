@@ -59,6 +59,7 @@ import type { HyperVCluster, SnapMirrorLabel } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { buildHyperVClusterCreationSteps, buildHyperVClusterUpdateSteps } from "@/utils/hypervSteps";
+import { useAuthStore } from "@/store/authStore";
 import { LOG_FONT_SIZE_OPTIONS, useDisplayStore, type ContentFontSize } from "@/store/displayStore";
 
 const HYPERV_HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
@@ -299,6 +300,15 @@ function ChangePasswordModal({ user, onClose }: { user: UserRead | null; onClose
 }
 
 export function SettingsPage() {
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  // RBAC (Backlog #12, 2026-09-17): Hyper-V-Cluster-Aktionen hier hatten
+  // bisher ueberhaupt kein disabled -- jede Rolle sah volle Klickbarkeit
+  // und erfuhr die Einschraenkung erst an einem 403. HYPERV_MANAGE deckt
+  // Bearbeiten/Verify/Discovery ab, HYPERV_CLUSTER_MANAGE nur das
+  // Hinzufuegen/Entfernen eines ganzen Clusters (Operator hat ersteres,
+  // aber nicht letzteres).
+  const canManageHyperv = hasPermission("hyperv:manage");
+  const canManageHypervClusterLifecycle = hasPermission("hyperv:cluster_manage");
   const [params, setParams] = useSearchParams();
   const contentFontSize = useDisplayStore((s) => s.contentFontSize);
   const setContentFontSize = useDisplayStore((s) => s.setContentFontSize);
@@ -589,7 +599,7 @@ export function SettingsPage() {
             <Paper p="md">
               <Group justify="space-between" mb="sm">
                 <Title order={5}>Hyper-V-Cluster</Title>
-                <Button leftSection={<IconPlus size={16} />} onClick={() => setHyperVFormOpen(true)}>
+                <Button leftSection={<IconPlus size={16} />} disabled={!canManageHypervClusterLifecycle} onClick={() => setHyperVFormOpen(true)}>
                   Hyper-V-Cluster hinzufügen
                 </Button>
               </Group>
@@ -655,22 +665,22 @@ export function SettingsPage() {
                       <Table.Td>
                         <Group gap="xs">
                           <Tooltip label="Verbindung erneut prüfen">
-                            <ActionIcon variant="light" onClick={() => handleVerifyHyperVCluster(c)}>
+                            <ActionIcon variant="light" disabled={!canManageHyperv} onClick={() => handleVerifyHyperVCluster(c)}>
                               <IconRefresh size={16} />
                             </ActionIcon>
                           </Tooltip>
                           <Tooltip label="Discovery erneut ausführen">
-                            <ActionIcon variant="light" onClick={() => runHyperVDiscovery(c.id, c.name)}>
+                            <ActionIcon variant="light" disabled={!canManageHyperv} onClick={() => runHyperVDiscovery(c.id, c.name)}>
                               <IconRadar2 size={16} />
                             </ActionIcon>
                           </Tooltip>
                           <Tooltip label="Bearbeiten (z.B. Kennwort-Rotation)">
-                            <ActionIcon variant="light" onClick={() => setEditingHyperVCluster(c)}>
+                            <ActionIcon variant="light" disabled={!canManageHyperv} onClick={() => setEditingHyperVCluster(c)}>
                               <IconEdit size={16} />
                             </ActionIcon>
                           </Tooltip>
                           <Tooltip label="Entfernen">
-                            <ActionIcon variant="light" color="red" onClick={() => handleDeleteHyperVCluster(c)}>
+                            <ActionIcon variant="light" color="red" disabled={!canManageHypervClusterLifecycle} onClick={() => handleDeleteHyperVCluster(c)}>
                               <IconTrash size={16} />
                             </ActionIcon>
                           </Tooltip>
