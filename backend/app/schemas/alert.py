@@ -42,6 +42,7 @@ class AlertConfigRead(BaseModel):
     orphan_checkpoint_grace_minutes: int
     avhdx_without_checkpoint_grace_minutes: int
     alert_check_interval_minutes: int
+    backup_missed_auto_dismiss_days: int
     scope: str
 
 
@@ -54,6 +55,8 @@ class AlertConfigUpdate(BaseModel):
     orphan_checkpoint_grace_minutes: int = Field(ge=5, le=1440)
     avhdx_without_checkpoint_grace_minutes: int = Field(ge=5, le=1440)
     alert_check_interval_minutes: int = Field(ge=1, le=1440)
+    # 0 = deaktiviert (kein automatisches Quittieren, siehe AlertConfig)
+    backup_missed_auto_dismiss_days: int = Field(ge=0, le=365)
     scope: str
 
 

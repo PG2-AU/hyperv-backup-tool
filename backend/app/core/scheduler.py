@@ -653,7 +653,9 @@ def run_alert_check() -> None:
     Teil dieses Checks, siehe app.models.alert.
 
     Prueft ausserdem verpasste geplante Laeufe (BACKUP_MISSED, bewusst NICHT
-    Teil der automatischen Aufloesung) sowie Zeitplan-Kollisionen
+    Teil der automatischen "Problem behoben"-Aufloesung -- optional aber
+    per AlertConfig.backup_missed_auto_dismiss_days rein alter-basiert
+    automatisch quittierbar, 0 = deaktiviert) sowie Zeitplan-Kollisionen
     (SCHEDULE_COLLISION, siehe _find_schedule_collisions -- IST Teil der
     automatischen Aufloesung, aber vom Nutzer bestaetigte Kollisionen werden
     dauerhaft uebersprungen, siehe AllowedScheduleCollision) sowie verwaiste
@@ -1083,6 +1085,26 @@ def run_alert_check() -> None:
                 alert.status = AlertStatus.RESOLVED
                 alert.resolved_at = now
                 _log(db, f"Warnung aufgeloest ({alert_type.value}): {alert.object_name}")
+
+        # Separates, rein alter-basiertes Aufraeumen fuer BACKUP_MISSED
+        # (Nutzerwunsch, 2026-09-17) -- bewusst KEIN "Problem behoben"-Signal
+        # wie bei der seen_keys-Aufloesung oben (das gibt es fuer einen
+        # verpassten Termin nicht, siehe Docstring), sondern nur ein Ausweg
+        # aus dem sonst dauerhaften manuellen Wegklicken. config.
+        # backup_missed_auto_dismiss_days == 0 (Standard) laesst das
+        # bisherige Verhalten unveraendert -- bestehende Installationen
+        # sollen nicht ungefragt anfangen, Alarme automatisch verschwinden
+        # zu lassen.
+        auto_dismiss_days = config.backup_missed_auto_dismiss_days if config else 0
+        if auto_dismiss_days > 0:
+            cutoff = now - timedelta(days=auto_dismiss_days)
+            for (alert_type, key), alert in active_by_key.items():
+                if alert_type != AlertType.BACKUP_MISSED:
+                    continue
+                if alert.triggered_at < cutoff:
+                    alert.status = AlertStatus.RESOLVED
+                    alert.resolved_at = now
+                    _log(db, f"Verpasster Lauf automatisch quittiert (aelter als {auto_dismiss_days} Tage): {alert.object_name}")
 
         db.commit()
     finally:

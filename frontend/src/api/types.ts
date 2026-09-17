@@ -589,6 +589,8 @@ export interface AlertConfig {
   orphan_checkpoint_grace_minutes: number;
   avhdx_without_checkpoint_grace_minutes: number;
   alert_check_interval_minutes: number;
+  // 0 = deaktiviert (kein automatisches Quittieren verpasster Laeufe)
+  backup_missed_auto_dismiss_days: number;
   scope: AlertScope;
 }
 
@@ -601,6 +603,7 @@ export interface AlertConfigWritePayload {
   orphan_checkpoint_grace_minutes: number;
   avhdx_without_checkpoint_grace_minutes: number;
   alert_check_interval_minutes: number;
+  backup_missed_auto_dismiss_days: number;
   scope: AlertScope;
 }
 

@@ -123,6 +123,7 @@ def update_alert_config(
     config.orphan_checkpoint_grace_minutes = payload.orphan_checkpoint_grace_minutes
     config.avhdx_without_checkpoint_grace_minutes = payload.avhdx_without_checkpoint_grace_minutes
     config.alert_check_interval_minutes = payload.alert_check_interval_minutes
+    config.backup_missed_auto_dismiss_days = payload.backup_missed_auto_dismiss_days
     config.scope = AlertScope(payload.scope)
     config.updated_at = datetime.now(timezone.utc)
     db.commit()

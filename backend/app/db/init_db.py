@@ -387,6 +387,12 @@ def init_db(db: Session) -> None:
         engine, "alerts",
         {"resource_group_id": "VARCHAR(36)", "policy_id": "VARCHAR(36)", "vm_name": "VARCHAR(255)", "checkpoint_id": "VARCHAR(36)"},
     )
+    _add_missing_columns(engine, "alert_config", {"backup_missed_auto_dismiss_days": "INTEGER"})
+    with engine.connect() as conn:
+        conn.execute(
+            text("UPDATE alert_config SET backup_missed_auto_dismiss_days = 0 WHERE backup_missed_auto_dismiss_days IS NULL")
+        )
+        conn.commit()
     with engine.connect() as conn:
         conn.execute(text("UPDATE alert_config SET volume_threshold_percent = 90 WHERE volume_threshold_percent IS NULL"))
         conn.execute(text("UPDATE alert_config SET lun_threshold_percent = 90 WHERE lun_threshold_percent IS NULL"))

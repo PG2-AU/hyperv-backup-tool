@@ -20,6 +20,7 @@ export function AlertSettingsTab() {
   const [orphanCheckpointGraceMinutes, setOrphanCheckpointGraceMinutes] = useState<number | string>(60);
   const [avhdxGraceMinutes, setAvhdxGraceMinutes] = useState<number | string>(30);
   const [alertCheckIntervalMinutes, setAlertCheckIntervalMinutes] = useState<number | string>(5);
+  const [missedAutoDismissDays, setMissedAutoDismissDays] = useState<number | string>(0);
   const [scope, setScope] = useState<AlertScope>("all");
 
   useEffect(() => {
@@ -32,6 +33,7 @@ export function AlertSettingsTab() {
     setOrphanCheckpointGraceMinutes(config.orphan_checkpoint_grace_minutes);
     setAvhdxGraceMinutes(config.avhdx_without_checkpoint_grace_minutes);
     setAlertCheckIntervalMinutes(config.alert_check_interval_minutes);
+    setMissedAutoDismissDays(config.backup_missed_auto_dismiss_days);
     setScope(config.scope);
   }, [config]);
 
@@ -45,6 +47,7 @@ export function AlertSettingsTab() {
       orphan_checkpoint_grace_minutes: Number(orphanCheckpointGraceMinutes),
       avhdx_without_checkpoint_grace_minutes: Number(avhdxGraceMinutes),
       alert_check_interval_minutes: Number(alertCheckIntervalMinutes),
+      backup_missed_auto_dismiss_days: Number(missedAutoDismissDays),
       scope,
     };
     updateConfig
@@ -100,6 +103,15 @@ export function AlertSettingsTab() {
           value={missedGraceMinutes}
           onChange={setMissedGraceMinutes}
           suffix=" min"
+        />
+        <NumberInput
+          label="Automatisches Quittieren verpasster Backups"
+          description="Ein verpasster Lauf wird nach dieser Anzahl Tage automatisch quittiert, unabhängig davon, ob spätere Läufe erfolgreich waren -- 0 = deaktiviert (nur manuelles Quittieren, bisheriges Verhalten)"
+          min={0}
+          max={365}
+          value={missedAutoDismissDays}
+          onChange={setMissedAutoDismissDays}
+          suffix=" Tage"
         />
         <NumberInput
           label="Kollisions-Schwellwert"

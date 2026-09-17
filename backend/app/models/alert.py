@@ -131,5 +131,15 @@ class AlertConfig(Base):
     # Container-Neustart noetig (siehe update_alert_config in
     # app.api.routes.alerts, analog zu SchedulerConfig).
     alert_check_interval_minutes: Mapped[int] = mapped_column(Integer, default=5)
+    # backup_missed loest sich (bewusste Design-Entscheidung, siehe
+    # run_alert_check) nie automatisch auf, sobald ein spaeterer Lauf
+    # erfolgreich war -- ein verpasster Termin bleibt eine abgeschlossene
+    # historische Tatsache. Nutzerwunsch: trotzdem nach einer konfigurierbaren
+    # Anzahl Tage automatisch quittieren (nicht "aufloesen" im Sinne von
+    # "Problem behoben", sondern ein reines Alter-basiertes Aufraeumen, damit
+    # sie nicht auf ewig manuell weggeklickt werden muessen). 0 = deaktiviert
+    # (Standard -- bestehende Installationen sollen nicht ungefragt anfangen,
+    # Alarme automatisch verschwinden zu lassen).
+    backup_missed_auto_dismiss_days: Mapped[int] = mapped_column(Integer, default=0)
     scope: Mapped[AlertScope] = mapped_column(Enum(AlertScope), default=AlertScope.ALL)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
