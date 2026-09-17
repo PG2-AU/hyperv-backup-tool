@@ -64,23 +64,39 @@ from app.services.netapp_service import DiscoveryData, NetAppConnectionError, Ne
 router = APIRouter(prefix="/api/netapp/clusters", tags=["netapp-clusters"])
 
 
-def require_storage_unlocked(
-    user: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
-    db: Session = Depends(get_db),
-) -> User:
-    """Globaler Sicherheits-Schalter (Settings > Storage, siehe
-    app.models.storage_access.StorageAccessConfig) OBEN AUF der normalen
-    STORAGE_MANAGE-Berechtigung -- eine Aktion braucht beides. Bewusst NICHT
-    auf create_cluster (NetApp-Cluster hinzufuegen) angewendet: ein Storage-
-    Admin soll trotz gesperrter Storage-Aktionen die initiale Anbindung
-    eines neuen Clusters vornehmen koennen (Nutzer-Vorgabe)."""
-    config = db.query(StorageAccessConfig).first()
-    if config is not None and not config.actions_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Storage-Aktionen sind aktuell gesperrt (Settings > Storage).",
-        )
-    return user
+def _make_storage_unlocked_checker(permission: Permission):
+    """Baut eine Dependency, die den globalen Sicherheits-Schalter (Settings
+    > Storage, siehe app.models.storage_access.StorageAccessConfig) OBEN AUF
+    der angegebenen Berechtigung prueft -- eine Aktion braucht beides. Als
+    Factory, damit `delete_cluster` (Systeme entfernen) eine ANDERE
+    Berechtigung als der Rest der Datei verlangen kann (STORAGE_CLUSTER_MANAGE
+    statt STORAGE_MANAGE, Nutzer-Vorgabe 2026-09-17: Operator soll Storage-
+    Objekte verwalten, aber keine Systeme an-/abbauen duerfen), ohne die
+    ~17 anderen Aufrufstellen von require_storage_unlocked (bare Referenz,
+    kein Aufruf) anfassen zu muessen -- deren Bindung an STORAGE_MANAGE
+    bleibt unten unveraendert erhalten."""
+
+    def _checker(
+        user: User = Depends(require_permission(permission)),
+        db: Session = Depends(get_db),
+    ) -> User:
+        config = db.query(StorageAccessConfig).first()
+        if config is not None and not config.actions_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Storage-Aktionen sind aktuell gesperrt (Settings > Storage).",
+            )
+        return user
+
+    return _checker
+
+
+# Bewusst NICHT auf create_cluster (NetApp-Cluster hinzufuegen) angewendet:
+# ein Storage-Admin soll trotz gesperrter Storage-Aktionen die initiale
+# Anbindung eines neuen Clusters vornehmen koennen (Nutzer-Vorgabe).
+require_storage_unlocked = _make_storage_unlocked_checker(Permission.STORAGE_MANAGE)
+# Nur fuer delete_cluster (ganzes System entfernen) -- siehe Docstring oben.
+require_storage_unlocked_for_cluster_lifecycle = _make_storage_unlocked_checker(Permission.STORAGE_CLUSTER_MANAGE)
 
 
 def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData, step_success: dict[str, bool]) -> None:
@@ -344,8 +360,11 @@ def create_cluster(
     db: Session = Depends(get_db),
     # Bewusst OHNE require_storage_unlocked (siehe dort) -- das Anlegen
     # eines neuen NetApp-Clusters bleibt auch bei gesperrten Storage-
-    # Aktionen moeglich (Nutzer-Vorgabe).
-    user=Depends(require_permission(Permission.STORAGE_MANAGE)),
+    # Aktionen moeglich (Nutzer-Vorgabe). STORAGE_CLUSTER_MANAGE statt
+    # STORAGE_MANAGE, da nur Administrator ein ganzes System an-/abbauen
+    # darf (Operator verwaltet nur Objekte innerhalb bereits registrierter
+    # Systeme, Nutzer-Vorgabe 2026-09-17).
+    user=Depends(require_permission(Permission.STORAGE_CLUSTER_MANAGE)),
 ) -> NetAppCluster:
     if db.query(NetAppCluster).filter(NetAppCluster.name == payload.name).first() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ein Cluster mit diesem Namen existiert bereits")
@@ -495,7 +514,7 @@ def discover_cluster(
 
 @router.delete("/{cluster_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_cluster(
-    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_storage_unlocked),
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_storage_unlocked_for_cluster_lifecycle),
 ) -> None:
     cluster = _get_cluster_or_404(db, cluster_id)
     cluster_name = cluster.name

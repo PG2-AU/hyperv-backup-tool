@@ -271,6 +271,63 @@ def _add_missing_columns(engine, table: str, column_defs: dict[str, str]) -> Non
         conn.commit()
 
 
+# Alt-Name -> Neuer Name fuer System-Rollen, deren Name sich im Code
+# geaendert hat (siehe DEFAULT_ROLES in app.core.rbac). Kuenftige
+# Umbenennungen brauchen nur einen weiteren Eintrag hier.
+_ROLE_RENAMES: dict[str, str] = {"BackupOperator": "Operator"}
+
+
+def _rename_legacy_system_roles(db: Session) -> None:
+    """Benennt System-Rollen um, deren Name sich im Code geaendert hat (siehe
+    _ROLE_RENAMES oben) -- per UPDATE, NICHT Delete+Recreate, damit
+    Role.id erhalten bleibt und bestehende RoleAssignment-Zeilen
+    weiterhin korrekt auf dieselbe Rolle zeigen. Idempotent: eine bereits
+    umbenannte DB hat keine Zeile mehr mit dem alten Namen, der Lauf ist
+    dann ein No-Op. Laeuft bei JEDEM Start.
+
+    WICHTIG: eine Umbenennung eines DEFAULT_ROLES-Schluessels im Code
+    MUSS hier gespiegelt werden -- sonst legt die Seed-Schleife unten
+    stattdessen eine ZUSAETZLICHE neue Rolle mit dem neuen Namen an,
+    waehrend die alte als verwaister, nie mehr synchronisierter
+    Datensatz stehen bleibt (siehe auch _sync_default_role_permissions
+    direkt darunter, die dasselbe Problem fuer Permission-Aenderungen
+    loest)."""
+    for old_name, new_name in _ROLE_RENAMES.items():
+        old_role = db.query(Role).filter(Role.name == old_name, Role.is_system_role.is_(True)).first()
+        if old_role is None:
+            continue
+        if db.query(Role).filter(Role.name == new_name).first() is not None:
+            continue  # beide Namen existieren bereits (z.B. Altlast) -- nicht automatisch zusammenfuehren
+        if old_role.description == f"Standardrolle: {old_name}":
+            old_role.description = f"Standardrolle: {new_name}"
+        old_role.name = new_name
+    db.commit()
+
+
+def _sync_default_role_permissions(db: Session) -> None:
+    """Gleicht Role.permissions bereits existierender System-Rollen mit dem
+    aktuellen DEFAULT_ROLES ab. Die Seed-Schleife unten legt nur eine
+    FEHLENDE Rolle frisch an -- eine bereits vorhandene wird dort nie
+    wieder beruehrt. Ohne diesen Schritt bliebe eine laengst
+    initialisierte Installation (Referenz-/Produktivumgebung liefen mit
+    den DEFAULT_ROLES ihres jeweiligen Ersteinrichtungs-Standes) dauerhaft
+    auf einem veralteten Berechtigungsstand, egal welche spaetere
+    Aenderung im Code an DEFAULT_ROLES vorgenommen wird (z.B. Operator um
+    STORAGE_MANAGE/HYPERV_MANAGE erweitert, 2026-09-17). Laeuft bei JEDEM
+    Start, idempotent -- wirkt nur, wenn der gespeicherte Satz vom
+    Code-Stand abweicht. Nur is_system_role=True Zeilen werden angefasst,
+    eine etwaige eigene (aktuell ueber die GUI gar nicht anlegbare)
+    Nutzer-Rolle bliebe unberuehrt."""
+    for role_name, permissions in DEFAULT_ROLES.items():
+        role = db.query(Role).filter(Role.name == role_name, Role.is_system_role.is_(True)).first()
+        if role is None:
+            continue  # wird von der Seed-Schleife unten frisch angelegt, bereits mit korrektem Stand
+        desired = sorted(p.value for p in permissions)
+        if role.permissions != desired:
+            role.permissions = desired
+    db.commit()
+
+
 def init_db(db: Session) -> None:
     _migrate_legacy_backup_policies_start(engine)
     Base.metadata.create_all(bind=engine)
@@ -450,6 +507,8 @@ def init_db(db: Session) -> None:
     _reap_orphaned_in_progress_runs(engine)
     _migrate_resource_group_members(db)
     _migrate_resource_group_policy_link_schedules(db)
+    _rename_legacy_system_roles(db)
+    _sync_default_role_permissions(db)
 
     for role_name, permissions in DEFAULT_ROLES.items():
         existing = db.query(Role).filter(Role.name == role_name).first()

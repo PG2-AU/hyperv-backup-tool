@@ -268,7 +268,11 @@ def check_reachability_route(
 def create_cluster(
     payload: HyperVClusterCreate,
     db: Session = Depends(get_db),
-    user=Depends(require_permission(Permission.HYPERV_MANAGE)),
+    # HYPERV_CLUSTER_MANAGE statt HYPERV_MANAGE, da nur Administrator einen
+    # ganzen Cluster an-/abbauen darf (Operator verwaltet nur VMs/
+    # Checkpoints/Discovery innerhalb bereits registrierter Cluster,
+    # Nutzer-Vorgabe 2026-09-17).
+    user=Depends(require_permission(Permission.HYPERV_CLUSTER_MANAGE)),
 ) -> HyperVCluster:
     if db.query(HyperVCluster).filter(HyperVCluster.name == payload.name).first() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ein Cluster mit diesem Namen existiert bereits")
@@ -348,7 +352,7 @@ def verify_cluster(
 
 @router.delete("/{cluster_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_cluster(
-    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_MANAGE)),
+    cluster_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_CLUSTER_MANAGE)),
 ) -> None:
     cluster = _get_cluster_or_404(db, cluster_id)
     # HyperVVm/-Vhd/-Csv sind zwar mit ForeignKey(..., ondelete="CASCADE")
