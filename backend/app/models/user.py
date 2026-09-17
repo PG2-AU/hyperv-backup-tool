@@ -28,3 +28,23 @@ class User(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     role_assignments = relationship("RoleAssignment", back_populates="user", cascade="all, delete-orphan")
+
+    @property
+    def global_role_assignment(self):
+        """Erste Rollenzuweisung mit scope_type='global'. Scoping (VM-/CSV-/
+        Host-Ebene) ist aktuell ohnehin wirkungslos (siehe get_user_
+        permissions in app.api.deps) und die GUI bietet ausschliesslich
+        globale Zuweisungen an -- ein Benutzer hat also praktisch hoechstens
+        eine Zuweisung, dieses Property macht sie fuer UserRead.role_id/
+        role_name (schemas/user.py) direkt lesbar."""
+        return next((a for a in self.role_assignments if a.scope_type == "global"), None)
+
+    @property
+    def role_id(self) -> str | None:
+        assignment = self.global_role_assignment
+        return assignment.role_id if assignment else None
+
+    @property
+    def role_name(self) -> str | None:
+        assignment = self.global_role_assignment
+        return assignment.role.name if assignment and assignment.role else None

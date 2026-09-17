@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActionIcon,
   Alert,
@@ -20,7 +20,18 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconEdit, IconInfoCircle, IconKey, IconPlus, IconRadar2, IconRefresh, IconSearch, IconTrash, IconUserPlus } from "@tabler/icons-react";
+import {
+  IconEdit,
+  IconInfoCircle,
+  IconKey,
+  IconPlus,
+  IconRadar2,
+  IconRefresh,
+  IconSearch,
+  IconTrash,
+  IconUserCog,
+  IconUserPlus,
+} from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -41,6 +52,7 @@ import {
   useRoles,
   useSearchAdUsers,
   useUpdateUserPassword,
+  useUpdateUserRole,
   useUsers,
   type ADUserSearchResult,
   type UserRead,
@@ -299,6 +311,60 @@ function ChangePasswordModal({ user, onClose }: { user: UserRead | null; onClose
   );
 }
 
+// Nutzerwunsch 2026-09-18: Administrator muss die Rolle eines Benutzers
+// auch NACH dem Anlegen aendern koennen -- bisher liess sich eine Rolle
+// nur einmalig ueber CreateUserModal setzen. leerer Wert ("") entfernt die
+// Rolle wieder (kein Select-Wert moeglich fuer null, siehe onChange unten).
+const NO_ROLE_VALUE = "__none__";
+
+function ChangeRoleModal({ user, onClose }: { user: UserRead | null; onClose: () => void }) {
+  const { data: roles } = useRoles();
+  const updateRole = useUpdateUserRole();
+  const [roleId, setRoleId] = useState<string>(NO_ROLE_VALUE);
+
+  useEffect(() => {
+    if (user) setRoleId(user.role_id ?? NO_ROLE_VALUE);
+  }, [user]);
+
+  function handleSubmit() {
+    if (!user) return;
+    updateRole.mutate(
+      { userId: user.id, roleId: roleId === NO_ROLE_VALUE ? null : roleId },
+      {
+        onSuccess: () => {
+          notifications.show({ title: "Rolle geändert", message: `Rolle für '${user.username}' wurde aktualisiert.`, color: "green" });
+          onClose();
+        },
+        onError: (err) => {
+          notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Rolle konnte nicht geändert werden."), color: "red" });
+        },
+      },
+    );
+  }
+
+  return (
+    <Modal opened={!!user} onClose={onClose} title={`Rolle ändern: ${user?.username ?? ""}`}>
+      <Stack>
+        <Select
+          label="Rolle"
+          data={[{ value: NO_ROLE_VALUE, label: "Keine Rolle" }, ...(roles ?? []).map((r) => ({ value: r.id, label: r.name }))]}
+          value={roleId}
+          onChange={(v) => v && setRoleId(v)}
+          allowDeselect={false}
+        />
+        <Group justify="flex-end" mt="sm">
+          <Button variant="default" onClick={onClose}>
+            Abbrechen
+          </Button>
+          <Button onClick={handleSubmit} loading={updateRole.isPending}>
+            Speichern
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
 export function SettingsPage() {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   // RBAC (Backlog #12, 2026-09-17): Hyper-V-Cluster-Aktionen hier hatten
@@ -326,6 +392,7 @@ export function SettingsPage() {
   const { data: settings } = usePublicSettings();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [passwordModalUser, setPasswordModalUser] = useState<UserRead | null>(null);
+  const [roleModalUser, setRoleModalUser] = useState<UserRead | null>(null);
   const { data: labels } = useSnapMirrorLabels();
   const deleteLabel = useDeleteSnapMirrorLabel();
   const [labelModalOpen, setLabelModalOpen] = useState(false);
@@ -438,6 +505,7 @@ export function SettingsPage() {
                     <Table.Th>Benutzername</Table.Th>
                     <Table.Th>Anzeigename</Table.Th>
                     <Table.Th>Quelle</Table.Th>
+                    <Table.Th>Rolle</Table.Th>
                     <Table.Th>Status</Table.Th>
                     <Table.Th>Letzte Anmeldung</Table.Th>
                     <Table.Th>Aktionen</Table.Th>
@@ -454,21 +522,35 @@ export function SettingsPage() {
                         </Badge>
                       </Table.Td>
                       <Table.Td>
+                        {u.role_name ?? (
+                          <Text c="dimmed" size="sm">
+                            keine
+                          </Text>
+                        )}
+                      </Table.Td>
+                      <Table.Td>
                         <Badge color={u.is_active ? "green" : "gray"} variant="light">
                           {u.is_active ? "aktiv" : "deaktiviert"}
                         </Badge>
                       </Table.Td>
                       <Table.Td>{u.last_login_at ? new Date(u.last_login_at).toLocaleString("de-DE") : "nie"}</Table.Td>
                       <Table.Td>
-                        <Tooltip label={u.source === "active_directory" ? "AD-Benutzer verwalten ihr Kennwort selbst" : "Kennwort ändern"}>
-                          <ActionIcon
-                            variant="light"
-                            disabled={u.source === "active_directory"}
-                            onClick={() => setPasswordModalUser(u)}
-                          >
-                            <IconKey size={16} />
-                          </ActionIcon>
-                        </Tooltip>
+                        <Group gap="xs" wrap="nowrap">
+                          <Tooltip label="Rolle ändern">
+                            <ActionIcon variant="light" onClick={() => setRoleModalUser(u)}>
+                              <IconUserCog size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label={u.source === "active_directory" ? "AD-Benutzer verwalten ihr Kennwort selbst" : "Kennwort ändern"}>
+                            <ActionIcon
+                              variant="light"
+                              disabled={u.source === "active_directory"}
+                              onClick={() => setPasswordModalUser(u)}
+                            >
+                              <IconKey size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        </Group>
                       </Table.Td>
                     </Table.Tr>
                   ))}
@@ -478,6 +560,7 @@ export function SettingsPage() {
 
             <CreateUserModal opened={createModalOpen} onClose={() => setCreateModalOpen(false)} />
             <ChangePasswordModal user={passwordModalUser} onClose={() => setPasswordModalUser(null)} />
+            <ChangeRoleModal user={roleModalUser} onClose={() => setRoleModalUser(null)} />
 
             <Paper p="md">
               <Group gap="xs" mb={4}>

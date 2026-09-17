@@ -11,6 +11,8 @@ export interface UserRead {
   is_active: boolean;
   created_at: string;
   last_login_at?: string | null;
+  role_id?: string | null;
+  role_name?: string | null;
 }
 
 export interface RoleRead {
@@ -123,6 +125,15 @@ export function useUpdateUserPassword() {
   return useMutation({
     mutationFn: async ({ userId, password }: { userId: string; password: string }) =>
       (await apiClient.put(`/users/${userId}/password`, { password })).data,
+  });
+}
+
+export function useUpdateUserRole() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, roleId }: { userId: string; roleId: string | null }) =>
+      (await apiClient.put<UserRead>(`/users/${userId}/role`, { role_id: roleId })).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
   });
 }
 

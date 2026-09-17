@@ -10,7 +10,15 @@ from app.models.ad_config import AdConfig
 from app.models.role import Role, RoleAssignment
 from app.models.system_log import SystemLogEvent
 from app.models.user import User, UserSource
-from app.schemas.user import ADUserAddRequest, ADUserSearchRequest, ADUserSearchResult, UserCreate, UserPasswordUpdate, UserRead
+from app.schemas.user import (
+    ADUserAddRequest,
+    ADUserSearchRequest,
+    ADUserSearchResult,
+    UserCreate,
+    UserPasswordUpdate,
+    UserRead,
+    UserRoleUpdate,
+)
 from app.services.ad_service import ActiveDirectoryService
 from pydantic import BaseModel
 
@@ -170,6 +178,71 @@ def update_user_password(
     db.commit()
 
     _log_user_action(db, user, f"Kennwort geaendert fuer Benutzer '{target.username}'")
+
+
+@router.put("/users/{user_id}/role", response_model=UserRead)
+def update_user_role(
+    user_id: str,
+    payload: UserRoleUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission(Permission.USER_MANAGE)),
+) -> User:
+    """Aendert die Rollenzuweisung eines bestehenden Benutzers (Nutzerwunsch
+    2026-09-18: Administrator muss die Rolle eines Benutzers auch NACH dem
+    Anlegen aendern koennen -- bisher liess sich eine Rolle nur einmalig
+    beim Anlegen setzen). Ersetzt die bestehende GLOBALE Zuweisung durch
+    eine neue (payload.role_id) bzw. entfernt sie (payload.role_id=None) --
+    Scoping ist aktuell ohnehin wirkungslos (siehe get_user_permissions),
+    die GUI bietet nur globale Zuweisungen an."""
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Benutzer nicht gefunden")
+
+    new_role = None
+    if payload.role_id is not None:
+        new_role = db.get(Role, payload.role_id)
+        if new_role is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rolle nicht gefunden")
+
+    existing = (
+        db.query(RoleAssignment)
+        .filter(RoleAssignment.user_id == target.id, RoleAssignment.scope_type == "global")
+        .first()
+    )
+    previous_role_name = existing.role.name if existing and existing.role else None
+
+    # Sicherheitsnetz: den letzten Administrator nicht degradieren, sonst
+    # kann niemand mehr Rollen verwalten (auch nicht ueber die API selbst --
+    # ohne diesen Guard waere ein Aussperren durch einen simplen
+    # Bedienfehler moeglich).
+    if previous_role_name == "Administrator" and (new_role is None or new_role.name != "Administrator"):
+        other_admins = (
+            db.query(RoleAssignment)
+            .join(Role, RoleAssignment.role_id == Role.id)
+            .filter(
+                Role.name == "Administrator",
+                RoleAssignment.user_id != target.id,
+                RoleAssignment.scope_type == "global",
+            )
+            .count()
+        )
+        if other_admins == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Der letzte Administrator kann nicht degradiert werden",
+            )
+
+    if existing is not None:
+        db.delete(existing)
+    if new_role is not None:
+        db.add(RoleAssignment(user_id=target.id, role_id=new_role.id, scope_type="global"))
+    db.commit()
+    db.refresh(target)
+
+    new_role_name = new_role.name if new_role else "keine"
+    _log_user_action(db, user, f"Rolle von Benutzer '{target.username}' geaendert: {previous_role_name or 'keine'} -> {new_role_name}")
+
+    return target
 
 
 @router.get("/roles", response_model=list[RoleRead])

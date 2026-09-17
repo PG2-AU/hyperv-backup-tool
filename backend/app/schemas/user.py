@@ -16,6 +16,11 @@ class UserRead(BaseModel):
     is_active: bool
     created_at: datetime
     last_login_at: datetime | None = None
+    # Ueber die gleichnamigen Properties auf app.models.user.User gelesen
+    # (leitet aus der globalen RoleAssignment ab, nicht aus einer eigenen
+    # Spalte) -- None, wenn dem Benutzer aktuell keine Rolle zugewiesen ist.
+    role_id: str | None = None
+    role_name: str | None = None
 
 
 class UserCreate(BaseModel):
@@ -28,6 +33,13 @@ class UserCreate(BaseModel):
 
 class UserPasswordUpdate(BaseModel):
     password: str
+
+
+class UserRoleUpdate(BaseModel):
+    # None entfernt die aktuelle Rollenzuweisung (Benutzer hat dann keine
+    # Rolle mehr -- kann sich noch anmelden, aber ueberall abgewiesen
+    # werden, siehe get_user_permissions).
+    role_id: str | None = None
 
 
 class ADUserSearchRequest(BaseModel):
