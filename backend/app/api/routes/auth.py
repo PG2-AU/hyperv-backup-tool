@@ -7,11 +7,23 @@ from app.api.deps import get_current_user, get_user_permissions
 from app.core.security import create_access_token, verify_password
 from app.db.session import get_db
 from app.models.ad_config import AdConfig
+from app.models.system_log import SystemLogEvent
 from app.models.user import User, UserSource
 from app.schemas.auth import CurrentUser, LoginRequest, TokenResponse
 from app.services.ad_service import ActiveDirectoryService, _bare_username
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _log_auth_event(db: Session, level: str, message: str) -> None:
+    """Persistiert ein Login-Ereignis (erfolgreich oder fehlgeschlagen) im
+    System Log (Nutzerwunsch: mehr Log-Eintraege, konkret genannt "wenn
+    sich ein User anmeldet") -- bisher wurden Logins ueberhaupt nicht
+    geloggt. Committet sofort statt erst am Ende von login(), da ein
+    fehlgeschlagener Versuch die Funktion sofort per Exception verlaesst,
+    ohne dass ein spaeterer db.commit() noch folgen wuerde."""
+    db.add(SystemLogEvent(level=level, source="auth", message=message))
+    db.commit()
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -35,15 +47,18 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
     # und AD-Benutzer muessen nebeneinander funktionieren).
     if user is not None and user.source == UserSource.LOCAL:
         if user.hashed_password is None or not verify_password(payload.password, user.hashed_password):
+            _log_auth_event(db, "WARNING", f"Login fehlgeschlagen (falsches Passwort): {username}")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ungueltige Anmeldedaten")
     else:
         ad_config = db.query(AdConfig).first()
         if ad_config is None or not ad_config.enabled:
+            _log_auth_event(db, "WARNING", f"Login fehlgeschlagen (unbekannter Benutzer): {username}")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ungueltige Anmeldedaten")
 
         ad_service = ActiveDirectoryService(ad_config.server, ad_config.domain, ad_config.base_dn, ad_config.use_ssl)
         result = ad_service.authenticate(username, payload.password)
         if not result.success:
+            _log_auth_event(db, "WARNING", f"Login fehlgeschlagen (AD): {username} -- {result.error or 'Login fehlgeschlagen'}")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error or "Login fehlgeschlagen")
 
         if user is None:
@@ -59,11 +74,14 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
             user.email = result.email or user.email
 
     if not user.is_active:
+        _log_auth_event(db, "WARNING", f"Login verweigert (Konto deaktiviert): {user.display_name or user.username}")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Benutzer ist deaktiviert")
 
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(user)
+
+    _log_auth_event(db, "INFO", f"Login erfolgreich: {user.display_name or user.username}")
 
     token = create_access_token(subject=user.id)
     return TokenResponse(access_token=token)

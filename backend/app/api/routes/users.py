@@ -8,6 +8,7 @@ from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.ad_config import AdConfig
 from app.models.role import Role, RoleAssignment
+from app.models.system_log import SystemLogEvent
 from app.models.user import User, UserSource
 from app.schemas.user import ADUserAddRequest, ADUserSearchRequest, ADUserSearchResult, UserCreate, UserPasswordUpdate, UserRead
 from app.services.ad_service import ActiveDirectoryService
@@ -16,6 +17,15 @@ from pydantic import BaseModel
 router = APIRouter(prefix="/api", tags=["users"])
 
 MIN_PASSWORD_LENGTH = 8
+
+
+def _log_user_action(db: Session, actor: User, message: str, level: str = "INFO") -> None:
+    """Persistiert eine Benutzerverwaltungs-Aktion im System Log (Nutzerwunsch:
+    mehr Log-Eintraege) -- gleiches Muster wie _log_storage_action in
+    netapp_clusters.py, eigene source="users" statt "storage"."""
+    actor_name = actor.display_name or actor.username
+    db.add(SystemLogEvent(level=level, source="users", message=f"{message} (durch {actor_name})"))
+    db.commit()
 
 
 class RoleRead(BaseModel):
@@ -70,6 +80,8 @@ def create_user(
     if role is not None:
         db.add(RoleAssignment(user_id=new_user.id, role_id=role.id, scope_type="global"))
         db.commit()
+
+    _log_user_action(db, user, f"Lokaler Benutzer '{new_user.username}' angelegt" + (f" (Rolle: {role.name})" if role else ""))
 
     return new_user
 
@@ -131,6 +143,8 @@ def add_ad_user(
         db.add(RoleAssignment(user_id=new_user.id, role_id=role.id, scope_type="global"))
         db.commit()
 
+    _log_user_action(db, user, f"AD-Benutzer '{new_user.username}' hinzugefuegt" + (f" (Rolle: {role.name})" if role else " (ohne Rolle)"))
+
     return new_user
 
 
@@ -154,6 +168,8 @@ def update_user_password(
 
     target.hashed_password = hash_password(payload.password)
     db.commit()
+
+    _log_user_action(db, user, f"Kennwort geaendert fuer Benutzer '{target.username}'")
 
 
 @router.get("/roles", response_model=list[RoleRead])
