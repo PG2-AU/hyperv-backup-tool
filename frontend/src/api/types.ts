@@ -208,6 +208,16 @@ export interface NetAppLun extends NetAppDiscoveredBase {
   mapped_igroups?: string | null;
 }
 
+export interface NetAppCifsShare extends NetAppDiscoveredBase {
+  name: string;
+  svm_name?: string | null;
+  volume_name?: string | null;
+  path?: string | null;
+  size_bytes?: number | null;
+  used_bytes?: number | null;
+  percent_used?: number | null;
+}
+
 export interface NetAppIgroup extends NetAppDiscoveredBase {
   name: string;
   svm_name?: string | null;

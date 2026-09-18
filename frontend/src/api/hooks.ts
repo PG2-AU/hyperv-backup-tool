@@ -20,6 +20,7 @@ import type {
   KerberosTestResult,
   MetroClusterStatus,
   NetAppAggregate,
+  NetAppCifsShare,
   NetAppCluster,
   NetAppClusterPeer,
   NetAppIgroup,
@@ -150,6 +151,13 @@ export function useLuns() {
   return useQuery({
     queryKey: ["luns"],
     queryFn: async () => (await apiClient.get<NetAppLun[]>("/storage/luns")).data,
+  });
+}
+
+export function useCifsShares() {
+  return useQuery({
+    queryKey: ["cifs-shares"],
+    queryFn: async () => (await apiClient.get<NetAppCifsShare[]>("/storage/cifs-shares")).data,
   });
 }
 
@@ -761,6 +769,7 @@ export const DISCOVERY_QUERY_KEYS = [
   "svms",
   "volumes",
   "luns",
+  "cifs-shares",
   "igroups",
   "cluster-peers",
   "svm-peers",

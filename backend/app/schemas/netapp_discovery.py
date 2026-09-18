@@ -161,6 +161,25 @@ class NetAppLunRead(BaseModel):
     last_seen_at: datetime
 
 
+class NetAppCifsShareRead(BaseModel):
+    id: str
+    cluster_id: str
+    cluster_name: str
+    uuid: str | None = None
+    name: str
+    svm_name: str | None = None
+    volume_name: str | None = None
+    path: str | None = None
+    # Eine CIFS-Freigabe hat keine eigene ONTAP-Groesse -- anders als bei
+    # LUN/Volume kommen size_bytes/used_bytes/percent_used hier vom
+    # zugrunde liegenden Volume (siehe list_cifs_shares in storage.py,
+    # gleicher Korrelationsansatz wie _refresh_smb_share_rows).
+    size_bytes: int | None = None
+    used_bytes: int | None = None
+    percent_used: int | None = None
+    last_seen_at: datetime
+
+
 class NetAppIgroupRead(BaseModel):
     id: str
     cluster_id: str

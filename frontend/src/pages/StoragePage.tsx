@@ -40,6 +40,7 @@ import { useSearchParams } from "react-router-dom";
 
 import {
   useAggregates,
+  useCifsShares,
   useClusterPeers,
   useCreateNetAppCluster,
   useDeleteNetAppCluster,
@@ -588,6 +589,7 @@ export function StoragePage() {
   const { data: svms } = useSvms();
   const { data: volumes } = useVolumes();
   const { data: luns } = useLuns();
+  const { data: cifsShares } = useCifsShares();
   const { data: igroups } = useIgroups();
   const { data: clusterPeers } = useClusterPeers();
   const { data: svmPeers } = useSvmPeers();
@@ -628,6 +630,7 @@ export function StoragePage() {
   const [svmSearch, setSvmSearch] = useState("");
   const [volumeSearch, setVolumeSearch] = useState("");
   const [lunSearch, setLunSearch] = useState("");
+  const [cifsShareSearch, setCifsShareSearch] = useState("");
   const [igroupSearch, setIgroupSearch] = useState("");
   const [clusterPeerSearch, setClusterPeerSearch] = useState("");
   const [svmPeerSearch, setSvmPeerSearch] = useState("");
@@ -662,6 +665,7 @@ export function StoragePage() {
   const visibleSvms = (svms ?? []).filter((s) => !hiddenSvmNames.has(s.name));
   const visibleVolumes = (volumes ?? []).filter((v) => !v.svm_name || !hiddenSvmNames.has(v.svm_name));
   const visibleLuns = (luns ?? []).filter((l) => !l.svm_name || !hiddenSvmNames.has(l.svm_name));
+  const visibleCifsShares = (cifsShares ?? []).filter((s) => !s.svm_name || !hiddenSvmNames.has(s.svm_name));
   const visibleIgroups = (igroups ?? []).filter((ig) => !ig.svm_name || !hiddenSvmNames.has(ig.svm_name));
   const visibleSvmPeers = (svmPeers ?? []).filter(
     (p) => !(p.svm_name && hiddenSvmNames.has(p.svm_name)) && !(p.peer_svm_name && hiddenSvmNames.has(p.peer_svm_name)),
@@ -702,6 +706,11 @@ export function StoragePage() {
     visibleLuns.filter((l) => matchesAllColumns(l, lunSearch)),
     (l) => l.svm_name ?? "",
     (l) => l.name,
+  );
+  const filteredCifsShares = byClusterThen(
+    visibleCifsShares.filter((s) => matchesAllColumns(s, cifsShareSearch)),
+    (s) => s.svm_name ?? "",
+    (s) => s.name,
   );
   const filteredIgroups = byClusterThen(
     visibleIgroups.filter((ig) => matchesAllColumns(ig, igroupSearch)),
@@ -819,6 +828,11 @@ export function StoragePage() {
     };
   }, [luns]);
 
+  const cifsShareStats = useMemo(
+    () => ({ svms: groupCount(cifsShares, (s) => s.svm_name) }),
+    [cifsShares],
+  );
+
   const snapmirrorStats = useMemo(
     () => ({
       states: groupCount(relationships, (r) => r.state),
@@ -917,6 +931,7 @@ export function StoragePage() {
           <Tabs.Tab value="svms">Storage Virtual Machines</Tabs.Tab>
           <Tabs.Tab value="volumes">Volumes</Tabs.Tab>
           <Tabs.Tab value="luns">LUNs</Tabs.Tab>
+          <Tabs.Tab value="cifs-shares">CIFS-Freigaben</Tabs.Tab>
           <Tabs.Tab value="igroups">IGroups</Tabs.Tab>
           {hasClusterTypeSystem && <Tabs.Tab value="cluster-peers">Cluster Peer</Tabs.Tab>}
           <Tabs.Tab value="svm-peers">SVM Peer</Tabs.Tab>
@@ -1282,6 +1297,81 @@ export function StoragePage() {
           {visibleLuns.length > 0 && filteredLuns.length === 0 && (
             <Text c="dimmed" size="sm" ta="center" py="md">
               Keine LUN passt zur Suche „{lunSearch}".
+            </Text>
+          )}
+          </Paper>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="cifs-shares" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Title order={5} mb="sm">CIFS-Freigaben</Title>
+          <StatRibbon>
+            <StatCard label="Anzahl Freigaben" value={visibleCifsShares.length} />
+            <DistributionCard label="SVM" items={cifsShareStats.svms} />
+          </StatRibbon>
+          <Group justify="flex-start" mb="xs">
+            <SearchInput value={cifsShareSearch} onChange={setCifsShareSearch} />
+          </Group>
+          <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <Table striped highlightOnHover horizontalSpacing="sm" stickyHeader>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>System</Table.Th>
+                <Table.Th>SVM</Table.Th>
+                <Table.Th>Volume</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Pfad</Table.Th>
+                <Table.Th>Größe</Table.Th>
+                <Table.Th>Belegung</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {filteredCifsShares.map((share) => (
+                <Table.Tr key={share.id}>
+                  <Table.Td>{share.cluster_name}</Table.Td>
+                  <Table.Td>{share.svm_name ?? "-"}</Table.Td>
+                  <Table.Td>
+                    <Tooltip label={share.volume_name ?? ""} openDelay={300} disabled={!share.volume_name}>
+                      <Text size="sm" truncate maw={160} style={{ cursor: "default" }}>
+                        {share.volume_name ?? "-"}
+                      </Text>
+                    </Tooltip>
+                  </Table.Td>
+                  <Table.Td>{share.name}</Table.Td>
+                  <Table.Td>
+                    <Tooltip label={share.path ?? ""} openDelay={300} disabled={!share.path}>
+                      <Text size="sm" truncate maw={220} style={{ cursor: "default" }}>
+                        {share.path ?? "-"}
+                      </Text>
+                    </Tooltip>
+                  </Table.Td>
+                  <Table.Td>{formatBytes(share.size_bytes)}</Table.Td>
+                  <Table.Td miw={140}>
+                    <Text size="xs" c="dimmed">
+                      {formatBytes(share.used_bytes)} {share.percent_used != null ? `(${share.percent_used}%)` : ""}
+                    </Text>
+                    {share.percent_used != null && (
+                      <Progress
+                        value={share.percent_used}
+                        size={6}
+                        mt={2}
+                        color={share.percent_used >= 90 ? "red" : share.percent_used >= 75 ? "yellow" : "blue"}
+                      />
+                    )}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          </Box>
+          {cifsShares?.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Noch keine CIFS-Freigaben erkannt. Führe eine Discovery unter System aus.
+            </Text>
+          )}
+          {visibleCifsShares.length > 0 && filteredCifsShares.length === 0 && (
+            <Text c="dimmed" size="sm" ta="center" py="md">
+              Keine Freigabe passt zur Suche „{cifsShareSearch}".
             </Text>
           )}
           </Paper>

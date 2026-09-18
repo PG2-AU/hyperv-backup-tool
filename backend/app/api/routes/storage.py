@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import (
     NetAppAggregate,
+    NetAppCifsShare,
     NetAppClusterPeer,
     NetAppIgroup,
     NetAppLun,
@@ -26,6 +27,7 @@ from app.models.netapp_discovery import (
 )
 from app.schemas.netapp_discovery import (
     NetAppAggregateRead,
+    NetAppCifsShareRead,
     NetAppClusterPeerRead,
     NetAppIgroupRead,
     NetAppLunRead,
@@ -93,6 +95,26 @@ def list_luns(db: Session = Depends(get_db), user=Depends(require_permission(Per
         )
         for l in db.query(NetAppLun).order_by(NetAppLun.name).all()
     ]
+
+
+@router.get("/cifs-shares", response_model=list[NetAppCifsShareRead])
+def list_cifs_shares(db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW))) -> list[NetAppCifsShareRead]:
+    names = _cluster_names(db)
+    volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
+    result: list[NetAppCifsShareRead] = []
+    for sh in db.query(NetAppCifsShare).order_by(NetAppCifsShare.name).all():
+        volume = volumes_by_key.get((sh.cluster_id, sh.svm_name, sh.volume_name))
+        result.append(
+            NetAppCifsShareRead(
+                id=sh.id, cluster_id=sh.cluster_id, cluster_name=names.get(sh.cluster_id, "?"),
+                uuid=sh.uuid, name=sh.name, svm_name=sh.svm_name, volume_name=sh.volume_name, path=sh.path,
+                size_bytes=volume.size_bytes if volume else None,
+                used_bytes=volume.used_bytes if volume else None,
+                percent_used=volume.percent_used if volume else None,
+                last_seen_at=sh.last_seen_at,
+            )
+        )
+    return result
 
 
 @router.get("/igroups", response_model=list[NetAppIgroupRead])
