@@ -21,6 +21,8 @@ const STEP_META: Record<string, { emoji: string; label: string }> = {
   aggregates: { emoji: "🪨", label: "Sammle Informationen über Aggregate" },
   vms: { emoji: "💻", label: "Sammle Informationen über VMs" },
   csvs: { emoji: "🗄️", label: "Sammle Informationen über CSVs" },
+  "smb-shares": { emoji: "📁", label: "Ordne SMB3-Freigaben zu" },
+  "cifs-shares": { emoji: "📁", label: "Sammle Informationen über CIFS-Freigaben" },
 };
 
 const REVEAL_DELAY_MS = 550;

@@ -27,6 +27,7 @@ from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead, H
 from app.schemas.netapp_cluster import DiscoveryStepRead
 from app.services.hyperv_service import (
     ClusterSharedVolumeInfo,
+    DiscoveryStepResult,
     HyperVConnectionError,
     HyperVService,
     VirtualMachineInfo,
@@ -529,8 +530,15 @@ def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
         # Discovery-Laufs abgeleitet -- braucht mindestens einen
         # erfolgreichen "vms"-Schritt (siehe all_vhds oben), unabhaengig
         # vom CSV-Schritt-Erfolg (ein Cluster kann ausschliesslich SMB3-
-        # gehostete VMs haben, ganz ohne CSV).
+        # gehostete VMs haben, ganz ohne CSV). Bisher ohne eigenen
+        # sichtbaren Schritt in der Discovery-Ergebnisliste -- Nutzer
+        # hatte dadurch keine Rueckmeldung, ob/wie viele SMB3-Freigaben
+        # gefunden wurden (live bemaengelt 2026-09-18).
         _refresh_smb_share_rows(db, cluster.id, all_vhds)
+        smb_share_count = db.query(HyperVSmbShare).filter(HyperVSmbShare.cluster_id == cluster.id).count()
+        steps.append(
+            DiscoveryStepResult("smb-shares", True, f"{smb_share_count} SMB3-Freigabe(n) gefunden", smb_share_count)
+        )
 
     if any(s.success for s in steps if s.step == "csvs"):
         _refresh_csv_rows(db, cluster.id, data.csvs)
