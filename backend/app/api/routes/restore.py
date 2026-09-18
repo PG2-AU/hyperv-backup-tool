@@ -62,6 +62,32 @@ from app.services.netapp_service import NetAppConnectionError, NetAppOntapServic
 router = APIRouter(prefix="/api/restore", tags=["restore"])
 
 _CSV_NAME_RE = re.compile(r"ClusterStorage\\([^\\]+)\\", re.IGNORECASE)
+# Backlog #22 (SMB3-Restore) -- lokale Kopie von _SMB_PATH_RE aus
+# hyperv_clusters.py, gleiches Muster wie bei _CSV_NAME_RE oben (dieses
+# Modul haelt seine eigenen, einfachen Parsing-Regexe statt sie zu
+# importieren, auch wenn andere -- korrelationsschwere -- Helfer aus
+# hyperv_clusters.py importiert werden, siehe Imports oben).
+_SMB_PATH_RE = re.compile(r"^\\\\([^\\]+)\\([^\\]+)\\")
+
+
+def _parse_smb_share(vhd_path: str) -> tuple[str, str] | None:
+    match = _SMB_PATH_RE.match(vhd_path)
+    return (match.group(1), match.group(2)) if match else None
+
+
+def _smb_snapshot_source_path(server: str, share: str, snapshot_name: str, vhd_path: str) -> str:
+    """Baut den UNC-Pfad einer Datei INNERHALB von ONTAPs `~snapshot`-
+    Ordner (Backlog #22) -- ONTAP spiegelt die Ordnerstruktur des Volumes
+    1:1 unter `~snapshot\\<snapshot_name>`, daher reicht es, den
+    Freigabe-Wurzel-Praefix von `vhd_path` durch
+    `\\<server>\\<share>\\~snapshot\\<snapshot_name>\\` zu ersetzen. Der
+    Ordner ist inhaerent schreibgeschuetzt -- kein Klon/Mount noetig, um
+    ihn zu lesen."""
+    prefix = f"\\\\{server}\\{share}\\"
+    if not vhd_path.lower().startswith(prefix.lower()):
+        raise RuntimeError(f"VHD-Pfad '{vhd_path}' liegt nicht auf der erwarteten Freigabe '{prefix}'")
+    relative = vhd_path[len(prefix):]
+    return f"\\\\{server}\\{share}\\~snapshot\\{snapshot_name}\\{relative}"
 
 
 def _restore_settings() -> Settings:
@@ -1038,6 +1064,89 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
         db.close()
 
 
+def _execute_smb_restore_add(run_id: str) -> None:
+    """Backlog #22 (SMB3-Restore, Option 1/ADD): haengt eine VHDX DIREKT
+    aus ONTAPs schreibgeschuetztem `~snapshot`-Ordner als Zusatzdisk an --
+    kein LUN-Klon, kein iSCSI, kein Restore-Proxy-Host, kein Kopieren.
+    Nur fuer eine gesicherte Datei OHNE aktiven Checkpoint zum Backup-
+    Zeitpunkt (reine VHDX) -- eine AVHDX-Kette aufzuloesen wuerde
+    Schreibzugriff auf die Elterndatei brauchen (Set-VHDParent), den
+    `~snapshot` nicht hergibt (Nutzer-Vorgabe: fuer diesen Fall bewusst
+    kein Restore in dieser Runde, siehe cleanup_restore fuer den
+    zugehoerigen Cleanup-Sonderfall via RestoreRun.source_is_snapshot_direct)."""
+    db = SessionLocal()
+    try:
+        run = db.get(RestoreRun, run_id)
+        if run is None:
+            return
+
+        try:
+            with _StepCtx(db, run.id, "resolve", "Ziel auflösen") as ctx:
+                if run.source_vhd_path.lower().endswith(".avhdx"):
+                    raise RuntimeError(
+                        "Restore nicht möglich: Die VM hatte zum Sicherungszeitpunkt einen aktiven "
+                        "Checkpoint (AVHDX). Diese Restore-Art wird für diesen Fall aktuell nicht "
+                        "unterstützt."
+                    )
+                smb = _parse_smb_share(run.source_vhd_path)
+                if smb is None:
+                    raise RuntimeError(f"SMB3-Freigabe konnte nicht aus '{run.source_vhd_path}' ermittelt werden")
+                server, share = smb
+
+                snapshot = db.get(BackupRunSnapshot, run.source_snapshot_id) if run.source_snapshot_id else None
+                if snapshot is None or not snapshot.snapshot_name:
+                    raise RuntimeError("Gewählter Snapshot nicht gefunden")
+
+                hv_cluster = db.get(HyperVCluster, run.hyperv_cluster_id)
+                if hv_cluster is None:
+                    raise RuntimeError("Hyper-V-Cluster nicht gefunden")
+                vm = db.query(HyperVVm).filter(
+                    HyperVVm.cluster_id == run.hyperv_cluster_id, HyperVVm.name == run.vm_name,
+                ).first()
+                if vm is None or not vm.host_name:
+                    raise RuntimeError(f"VM '{run.vm_name}' bzw. deren Knoten nicht gefunden")
+
+                snapshot_path = _smb_snapshot_source_path(server, share, snapshot.snapshot_name, run.source_vhd_path)
+                ctx.row.message = snapshot_path
+
+            settings = _restore_settings()
+            hv_service = HyperVService(
+                settings, hv_cluster.management_address, use_https=hv_cluster.use_https,
+                node_hostname=hv_cluster.hyperv_cluster_name,
+            )
+            hv_password = decrypt_secret(hv_cluster.encrypted_password)
+
+            with _StepCtx(db, run.id, "connect-node", f"Verbindung zu Knoten '{vm.host_name}'") as ctx:
+                cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
+                owner_node = hv_service.get_vm_owner_node(cno_session, run.vm_name) or vm.host_name
+                node_address = hv_service.resolve_node_address(cno_session, owner_node)
+                node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node)
+                node_session = node_service.connect(hv_cluster.username, hv_password)
+                ctx.row.message = node_address
+
+            with _StepCtx(db, run.id, "attach", "VHDX als Zusatzdisk anhängen (read-only aus Snapshot)") as ctx:
+                info = node_service.attach_vhd(node_session, run.vm_name, snapshot_path)
+                run.attached_controller_type = str(info.get("controller_type"))
+                run.attached_controller_number = str(info.get("controller_number"))
+                run.attached_controller_location = str(info.get("controller_location"))
+                run.restored_vhd_path = snapshot_path
+                run.source_is_snapshot_direct = True
+                run.cleanup_needed = True
+                ctx.row.message = f"{info.get('controller_type')} {info.get('controller_number')}:{info.get('controller_location')}"
+
+            run.status = RestoreStatus.SUCCEEDED
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+        except Exception as exc:
+            run.status = RestoreStatus.FAILED
+            run.error_message = str(exc)[:2000]
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+            notify_restore_failure(db, "Restore", run.vm_name, run.id, run.error_message)
+    finally:
+        db.close()
+
+
 def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
     """Erstellt eine komplett geloeschte VM aus einer gespeicherten
     BackupRunVmConfig neu: pro VHD derselbe LUN-Klon/iSCSI/Kopier-Zyklus wie
@@ -1468,7 +1577,21 @@ def trigger_restore(
     db.commit()
     db.refresh(run)
 
-    background_tasks.add_task(_execute_restore, run.id)
+    # Backlog #22: eine VHD auf einem SMB3-Export (statt ClusterStorage)
+    # nutzt eine komplett andere, viel einfachere Ausfuehrung (kein LUN-
+    # Klon/iSCSI/Proxy-Host, siehe _execute_smb_restore_add) -- fuer
+    # 'replace' mit SMB-Quelle gibt es diese Runde noch keine eigene
+    # Ausfuehrung, siehe Plan Phase "Option 2".
+    if _parse_csv_name(run.source_vhd_path) is None and _parse_smb_share(run.source_vhd_path) is not None:
+        if run.mode == RestoreMode.ADD:
+            background_tasks.add_task(_execute_smb_restore_add, run.id)
+        else:
+            run.status = RestoreStatus.FAILED
+            run.error_message = "Replace-Restore für SMB3-gehostete VMs wird noch nicht unterstützt."
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+    else:
+        background_tasks.add_task(_execute_restore, run.id)
     return run
 
 
@@ -1508,9 +1631,14 @@ def cleanup_restore(
         result = node_service.detach_vhd(node_session, run.vm_name, run.restored_vhd_path)
         if not result.success:
             raise RuntimeError(result.error)
-        result = node_service.delete_file(node_session, run.restored_vhd_path)
-        if not result.success:
-            raise RuntimeError(result.error)
+        # source_is_snapshot_direct (Backlog #22): restored_vhd_path zeigt
+        # in diesem Fall auf ONTAPs schreibgeschuetzten `~snapshot`-Ordner
+        # selbst, nicht auf eine eigene Kopie -- kein delete_file, ein
+        # Loeschversuch wuerde ohnehin nur fehlschlagen.
+        if not run.source_is_snapshot_direct:
+            result = node_service.delete_file(node_session, run.restored_vhd_path)
+            if not result.success:
+                raise RuntimeError(result.error)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

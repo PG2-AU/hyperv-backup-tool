@@ -1051,6 +1051,35 @@ class NetAppOntapService:
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"Volume konnte nicht gelöscht werden: {exc}") from exc
 
+    def create_cifs_share(
+        self, svm_name: str, volume_name: str, share_name: str, *, path: str = "/", acls: list[dict] | None = None,
+    ) -> None:
+        """Legt eine CIFS-Freigabe an (Backlog #22, isolierte Side-by-side-
+        Wiederherstellung: eine temporaere Freigabe auf einem per
+        clone_volume_from_snapshot erzeugten Volume-Klon). Anders als
+        LUN/Volume wird eine CIFS-Freigabe ueber (SVM, Name) identifiziert,
+        nicht ueber eine UUID -- siehe DiscoveredCifsShare-Kommentar oben
+        und delete_cifs_share(). `acls` (optional): Liste von ONTAP-ACL-
+        Eintraegen (z.B. `[{"user_or_group": "<Domain>\\<User>",
+        "permission": "full_control", "type": "windows"}]`) -- ohne eigene
+        ACL erbt eine neue Freigabe ONTAPs Default (i.d.R. 'Everyone/Read'),
+        was fuer den Backup-Zugangsdaten-Account nicht reicht."""
+        with self._connection():
+            payload: dict = {"svm": {"name": svm_name}, "volume": {"name": volume_name}, "name": share_name, "path": path}
+            if acls:
+                payload["acls"] = acls
+            try:
+                CifsShare.from_dict(payload).post(poll=True, poll_timeout=60)
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"CIFS-Freigabe '{share_name}' konnte nicht angelegt werden: {exc}") from exc
+
+    def delete_cifs_share(self, svm_name: str, share_name: str) -> None:
+        with self._connection():
+            try:
+                CifsShare.from_dict({"svm": {"name": svm_name}, "name": share_name}).delete(poll=True, poll_timeout=60)
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"CIFS-Freigabe '{share_name}' konnte nicht gelöscht werden: {exc}") from exc
+
     def create_lun(
         self, svm_name: str, volume_name: str, lun_name: str, os_type: str, size_bytes: int,
         *, space_allocation_enabled: bool = False,

@@ -67,6 +67,12 @@ class RestoreRun(Base):
     attached_controller_number: Mapped[str | None] = mapped_column(String(10), nullable=True)
     attached_controller_location: Mapped[str | None] = mapped_column(String(10), nullable=True)
     cleanup_needed: Mapped[bool] = mapped_column(default=False)
+    # Backlog #22 (SMB3-Restore, Option 1/ADD): restored_vhd_path zeigt in
+    # diesem Fall auf ONTAPs schreibgeschuetzten `~snapshot`-Ordner selbst
+    # (keine eigene Kopie) -- cleanup_restore() darf hier NUR detach_vhd
+    # aufrufen, niemals delete_file (waere ohnehin schreibgeschuetzt,
+    # aber ein Delete-Versuch soll gar nicht erst unternommen werden).
+    source_is_snapshot_direct: Mapped[bool] = mapped_column(default=False)
     cleanup_done_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

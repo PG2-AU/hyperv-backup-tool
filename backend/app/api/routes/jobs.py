@@ -919,13 +919,18 @@ class _NoTargetsError(RuntimeError):
 
 
 def _build_vhd_entries(
-    vhds: list[HyperVVhd], cluster_ids_by_name: dict[str, str], hyperv_csv_by_name: dict[str, HyperVCsv],
+    vhds: list[HyperVVhd],
+    cluster_ids_by_name: dict[str, str],
+    hyperv_csv_by_name: dict[str, HyperVCsv],
+    hyperv_smb_share_by_key: dict[str, HyperVSmbShare] | None = None,
+    cifs_shares_by_key: dict[str, NetAppCifsShare] | None = None,
 ) -> list[dict]:
     """Baut die in BackupRunVmConfig.vhds gespeicherten Eintraege (Name/
-    Pfad/Groesse + CSV/LUN/SVM/Volume-Aufloesung) aus HyperVVhd-DB-Zeilen --
-    gemeinsame Logik fuer die initiale Erfassung in _start_job_run UND den
-    Refresh nach der Checkpoint-Entfernung einer anwendungskonsistenten VM
-    in _execute_job_run (siehe [[avhdx-without-checkpoint-discovery-freeze]],
+    Pfad/Groesse + CSV/LUN/SVM/Volume- bzw. SMB3-Freigabe/SVM/Volume-
+    Aufloesung) aus HyperVVhd-DB-Zeilen -- gemeinsame Logik fuer die
+    initiale Erfassung in _start_job_run UND den Refresh nach der
+    Checkpoint-Entfernung einer anwendungskonsistenten VM in
+    _execute_job_run (siehe [[avhdx-without-checkpoint-discovery-freeze]],
     Teil 3 -- verhindert, dass beide Stellen unbemerkt auseinanderlaufen).
 
     `base_size_bytes`/`base_used_bytes` (Groesse der Basis-VHDX bei einer
@@ -934,10 +939,27 @@ def _build_vhd_entries(
     HyperVService._query_vms), kein separater WinRM-Aufruf hier noetig
     (bis 2026-09-14 gab es dafuer noch einen eigenen Python-seitigen
     Get-VHD-Kettenlauf, _resolve_base_vhd_size -- durch die PS-seitige
-    Aufloesung ueberfluessig geworden und entfernt)."""
+    Aufloesung ueberfluessig geworden und entfernt).
+
+    `hyperv_smb_share_by_key`/`cifs_shares_by_key` (Backlog #22, Restore
+    Phase 3): analog zur CSV-Aufloesung oben, aber fuer eine VHD auf einem
+    NetApp-CIFS-Export (vhd.smb_server/vhd.smb_share statt csv_name) --
+    ohne diese Aufloesung waere `svm_name`/`volume_name` fuer eine SMB3-
+    VM immer leer und jeder spaetere Restore koennte das Quell-Volume
+    nicht finden. Optional (Default None -> alte Aufrufer ohne SMB3-
+    Unterstuetzung funktionieren unveraendert, liefern dann einfach keine
+    SMB3-Aufloesung -- fuer normale CSV-VMs ohnehin irrelevant)."""
     entries = []
     for vhd in vhds:
         csv = hyperv_csv_by_name.get(vhd.csv_name) if vhd.csv_name else None
+        smb_share = (
+            hyperv_smb_share_by_key.get(_smb_share_key(vhd.smb_server, vhd.smb_share))
+            if hyperv_smb_share_by_key and vhd.smb_server and vhd.smb_share
+            else None
+        )
+        smb_volume_key = (
+            _smb_share_volume_key(smb_share, cifs_shares_by_key) if smb_share and cifs_shares_by_key is not None else None
+        )
         entries.append(
             {
                 "name": win_basename(vhd.path),
@@ -947,10 +969,15 @@ def _build_vhd_entries(
                 "base_size_bytes": vhd.base_size_bytes,
                 "base_used_bytes": vhd.base_used_bytes,
                 "csv_name": vhd.csv_name,
-                "netapp_cluster_id": cluster_ids_by_name.get(csv.netapp_cluster_name) if csv and csv.netapp_cluster_name else None,
-                "netapp_cluster_name": csv.netapp_cluster_name if csv else None,
-                "svm_name": csv.netapp_svm_name if csv else None,
-                "volume_name": csv.netapp_volume_name if csv else None,
+                "smb_server": vhd.smb_server,
+                "smb_share": vhd.smb_share,
+                "netapp_cluster_id": (
+                    cluster_ids_by_name.get(csv.netapp_cluster_name) if csv and csv.netapp_cluster_name
+                    else (smb_volume_key[0] if smb_volume_key else None)
+                ),
+                "netapp_cluster_name": csv.netapp_cluster_name if csv else (smb_share.netapp_cluster_name if smb_share else None),
+                "svm_name": csv.netapp_svm_name if csv else (smb_volume_key[1] if smb_volume_key else None),
+                "volume_name": csv.netapp_volume_name if csv else (smb_volume_key[2] if smb_volume_key else None),
                 "lun_name": csv.netapp_lun_name if csv else None,
             }
         )
@@ -1049,12 +1076,14 @@ def _start_job_run(
             if vhd.vm_uuid:
                 hyperv_vhds_by_vm_uuid[vhd.vm_uuid].append(vhd)
         hyperv_csv_by_name = {c.name: c for c in db.query(HyperVCsv).all()}
+        hyperv_smb_share_by_key = {_smb_share_key(s.server, s.share): s for s in db.query(HyperVSmbShare).all()}
+        _, cifs_shares_by_key = _smb_share_index(db)
 
         for vm_name in vm_names_in_run:
             hv_vm = hyperv_vms_by_name.get(vm_name)
             vhd_entries = _build_vhd_entries(
                 hyperv_vhds_by_vm_uuid.get(hv_vm.vm_uuid, []) if hv_vm and hv_vm.vm_uuid else [],
-                cluster_ids_by_name, hyperv_csv_by_name,
+                cluster_ids_by_name, hyperv_csv_by_name, hyperv_smb_share_by_key, cifs_shares_by_key,
             )
             db.add(
                 BackupRunVmConfig(
@@ -1561,12 +1590,19 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                                         )
                                         if cfg is not None:
                                             hyperv_csv_by_name = {c.name: c for c in db.query(HyperVCsv).filter(HyperVCsv.cluster_id == res.cluster_id).all()}
+                                            hyperv_smb_share_by_key = {
+                                                _smb_share_key(s.server, s.share): s
+                                                for s in db.query(HyperVSmbShare).filter(HyperVSmbShare.cluster_id == res.cluster_id).all()
+                                            }
+                                            _, cifs_shares_by_key = _smb_share_index(db)
                                             fresh_vhds = (
                                                 db.query(HyperVVhd)
                                                 .filter(HyperVVhd.cluster_id == res.cluster_id, HyperVVhd.vm_uuid == hv_vm_fresh.vm_uuid)
                                                 .all()
                                             )
-                                            cfg.vhds = _build_vhd_entries(fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name)
+                                            cfg.vhds = _build_vhd_entries(
+                                                fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name, hyperv_smb_share_by_key, cifs_shares_by_key,
+                                            )
                                             cfg.checkpoints = list(hv_vm_fresh.checkpoints or [])
                                 except Exception:
                                     # Best-effort -- BackupRunVmConfig.vhds/
@@ -1849,6 +1885,11 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                     )
                     if cfg is not None:
                         hyperv_csv_by_name = {c.name: c for c in db.query(HyperVCsv).filter(HyperVCsv.cluster_id == vm_cluster_id).all()}
+                        hyperv_smb_share_by_key = {
+                            _smb_share_key(s.server, s.share): s
+                            for s in db.query(HyperVSmbShare).filter(HyperVSmbShare.cluster_id == vm_cluster_id).all()
+                        }
+                        _, cifs_shares_by_key = _smb_share_index(db)
                         fresh_vhds = (
                             db.query(HyperVVhd)
                             .filter(HyperVVhd.cluster_id == vm_cluster_id, HyperVVhd.vm_uuid == hv_vm_fresh.vm_uuid)
@@ -1861,7 +1902,9 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                         # HyperVVhd-Zeilen, serverseitig im selben Get-VM-
                         # Aufruf aufgeloest -- kein zusaetzlicher WinRM-Call
                         # noetig (siehe _build_vhd_entries).
-                        cfg.vhds = _build_vhd_entries(fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name)
+                        cfg.vhds = _build_vhd_entries(
+                            fresh_vhds, cluster_ids_by_name, hyperv_csv_by_name, hyperv_smb_share_by_key, cifs_shares_by_key,
+                        )
                         cfg.checkpoints = list(hv_vm_fresh.checkpoints or [])
                 elif hv_vm_fresh is not None and hv_vm_fresh.checkpoints:
                     # Refresh nicht verfuegbar (Timeout/Fehler) -- exakt der

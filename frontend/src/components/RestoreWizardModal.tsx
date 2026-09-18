@@ -54,6 +54,14 @@ function csvMountFolderFromVhdPath(path: string | undefined | null): string | nu
   return m ? m[1] : null;
 }
 
+// Backlog #22: eine VHD auf einem NetApp-CIFS-Export statt ClusterStorage
+// (gleiches Muster wie parseSmbShare in VmsPage.tsx). Nur als bool
+// gebraucht (ADD-Modus-Sperre unten) -- die Server-/Freigaben-Teile
+// selbst braucht das Frontend hier (noch) nicht.
+function isSmbUncPath(path: string | undefined | null): boolean {
+  return !!path && /^\\\\[^\\]+\\[^\\]+\\/.test(path);
+}
+
 // Letztes Pfadsegment (ohne abschliessende Trenner). csv.volume_path ist
 // z.B. "C:\ClusterStorage\Volume25" -- ohne Sub-Pfad und ohne
 // abschliessenden Backslash, csvMountFolderFromVhdPath greift darauf also
@@ -725,27 +733,48 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                 label="Welche VHDX sollen wiederhergestellt werden? (Mehrfachauswahl möglich)"
               >
                 <Stack gap="xs" mt="xs">
-                  {vhdOptions.map((vhd) => (
-                    <Checkbox
-                      key={vhd.path}
-                      value={vhd.path}
-                      label={
-                        <Group gap="xs">
-                          <Text size="sm">{vhd.display_name}</Text>
-                          <Text size="xs" c="dimmed">
-                            (belegt: {formatBytes(occupiedBytes(vhd))} / Größe: {formatBytes(vhd.size_bytes)})
-                          </Text>
-                          {vhd.is_avhdx && (
-                            <Tooltip label="Checkpoint zum Backup-Zeitpunkt aktiv -- wird beim Restore automatisch mit der Basis-VHDX zusammengeführt.">
-                              <Badge color="orange" size="sm" variant="light">
-                                Enthält Checkpoint
-                              </Badge>
-                            </Tooltip>
-                          )}
-                        </Group>
-                      }
-                    />
-                  ))}
+                  {vhdOptions.map((vhd) => {
+                    // Backlog #22: eine SMB3-hostete VHD mit aktivem
+                    // Checkpoint zum Backup-Zeitpunkt kann im ADD-Modus
+                    // (noch) nicht wiederhergestellt werden -- der
+                    // Direkt-Attach aus ONTAPs schreibgeschuetztem
+                    // `~snapshot`-Ordner braucht Schreibzugriff, um die
+                    // AVHDX-Kette aufzuloesen (Set-VHDParent), den es dort
+                    // nicht gibt (Nutzer-Vorgabe: kein Kopieren in dieser
+                    // Restore-Art). Replace/Side-by-side sind davon nicht
+                    // betroffen (andere Mechanik).
+                    const smbCheckpointBlocked = restoreKind === "add" && vhd.is_avhdx && isSmbUncPath(vhd.path);
+                    return (
+                      <Checkbox
+                        key={vhd.path}
+                        value={vhd.path}
+                        disabled={smbCheckpointBlocked}
+                        label={
+                          <Group gap="xs">
+                            <Text size="sm">{vhd.display_name}</Text>
+                            <Text size="xs" c="dimmed">
+                              (belegt: {formatBytes(occupiedBytes(vhd))} / Größe: {formatBytes(vhd.size_bytes)})
+                            </Text>
+                            {smbCheckpointBlocked ? (
+                              <Tooltip label="Die VM hatte beim Sichern einen aktiven Checkpoint -- Anhängen aus dem Snapshot wird für diesen Stand aktuell nicht unterstützt.">
+                                <Badge color="red" size="sm" variant="light">
+                                  Restore nicht möglich
+                                </Badge>
+                              </Tooltip>
+                            ) : (
+                              vhd.is_avhdx && (
+                                <Tooltip label="Checkpoint zum Backup-Zeitpunkt aktiv -- wird beim Restore automatisch mit der Basis-VHDX zusammengeführt.">
+                                  <Badge color="orange" size="sm" variant="light">
+                                    Enthält Checkpoint
+                                  </Badge>
+                                </Tooltip>
+                              )
+                            )}
+                          </Group>
+                        }
+                      />
+                    );
+                  })}
                 </Stack>
               </Checkbox.Group>
             )}

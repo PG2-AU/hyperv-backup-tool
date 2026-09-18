@@ -10,6 +10,7 @@ Checkpoints" (VSS-basiert) verwendet, fuer crash-konsistente Sicherungen
 from __future__ import annotations
 
 import json
+import re
 import socket
 import threading
 from dataclasses import dataclass, field
@@ -21,6 +22,15 @@ from app.core.config import Settings
 from app.core.kerberos_auth import KerberosTicketError, ensure_ticket
 from app.core.kerberos_config import resolved_realm
 from app.core.winrm_trust import resolved_trust_path
+
+
+# UNC-Freigabe-Wurzel ("\\server\share", ohne den restlichen Pfad) --
+# fuer copy_unc_to_unc (Backlog #22, SMB3-Restore), um genau die
+# Freigabe(n) per 'net use' einzubinden, in denen Quell-/Zielpfad liegen.
+# Gleiches Muster wie _SMB_PATH_RE in app.api.routes.hyperv_clusters,
+# hier aber ohne Gruppen -- match(...).group(0) liefert direkt die
+# Wurzel selbst.
+_UNC_SHARE_ROOT_RE = re.compile(r"^\\\\[^\\]+\\[^\\]+")
 
 
 class ConsistencyType(StrEnum):
@@ -1241,6 +1251,56 @@ class HyperVService:
         source_size = self.get_file_size(session, source_path)
         if source_size != remote_size:
             raise RuntimeError(f"Groessenabweichung nach Kopieren: Quelle {source_size} Bytes, Ziel {remote_size} Bytes")
+        return remote_size
+
+    def copy_unc_to_unc(
+        self, session: winrm.Session, source_path: str, dest_path: str, share_username: str, share_password: str,
+    ) -> int:
+        """Kopiert eine Datei zwischen zwei UNC-Pfaden auf einem NetApp-
+        CIFS-Export (Backlog #22, SMB3-Restore) -- Quelle typischerweise
+        ONTAPs schreibgeschuetzter `~snapshot`-Ordner, Ziel die aktuelle
+        Freigabe. Anders als copy_file_to_share (Kopie auf die C$-Freigabe
+        eines DRITTEN Hosts) bindet diese Methode die Freigabe(n) EIN, in
+        denen Quelle/Ziel liegen -- meist derselbe CIFS-Server, dann reicht
+        ein 'net use'. Gleicher Double-Hop-Grund wie dort (siehe dortiger
+        Kommentar): die WinRM-Sitzungsidentitaet dieses Knotens laesst sich
+        nicht an den CIFS-Server weiterreichen, daher explizite
+        Zugangsdaten statt Delegation, per net.exe statt New-SmbMapping
+        (CIM/WMI-basiert, scheitert sonst mit Windows-Fehler 1312)."""
+        escaped_src = source_path.replace("'", "''")
+        escaped_dest = dest_path.replace("'", "''")
+        escaped_user = share_username.replace("'", "''")
+        escaped_pw = share_password.replace("'", "''")
+        share_roots = {
+            m.group(0).replace("'", "''")
+            for m in (_UNC_SHARE_ROOT_RE.match(p) for p in (source_path, dest_path))
+            if m
+        }
+        if not share_roots:
+            raise RuntimeError(f"Kein UNC-Freigabepfad erkannt (Quelle '{source_path}', Ziel '{dest_path}')")
+        dest_dir = dest_path.rsplit("\\", 1)[0].replace("'", "''")
+        map_lines = "".join(
+            f"net use '{root}' /delete /y 2>&1 | Out-Null; "
+            f"net use '{root}' '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1 | Out-Null; "
+            f"if ($LASTEXITCODE -ne 0) {{ throw \"net use fehlgeschlagen fuer '{root}' (Exit $LASTEXITCODE)\" }}; "
+            for root in share_roots
+        )
+        cleanup_lines = "".join(f"net use '{root}' /delete /y 2>&1 | Out-Null; " for root in share_roots)
+        script = (
+            map_lines
+            + "try { "
+            f"New-Item -ItemType Directory -Force -Path '{dest_dir}' -ErrorAction Stop | Out-Null; "
+            f"Copy-Item -Path '{escaped_src}' -Destination '{escaped_dest}' -Force -ErrorAction Stop; "
+            f"(Get-Item -Path '{escaped_dest}').Length "
+            "} finally { " + cleanup_lines + "}"
+        )
+        result = self._run_ps(session, script)
+        if not result.success or not result.output.strip():
+            raise RuntimeError(f"Kopieren von '{source_path}' nach '{dest_path}' fehlgeschlagen: {result.error or result.output}")
+        try:
+            remote_size = int(result.output.strip().splitlines()[-1])
+        except ValueError as exc:
+            raise RuntimeError(f"Unerwartete Antwort beim Kopieren: {result.output}") from exc
         return remote_size
 
     # --- Datei-Restore: VHDX direkt auf dem Restore-Proxy-Host mounten und
