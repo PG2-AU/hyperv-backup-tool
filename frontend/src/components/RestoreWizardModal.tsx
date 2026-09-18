@@ -28,6 +28,7 @@ import {
   useFileRestoreRun,
   useRecreateVm,
   useRestoreRun,
+  useSmbShares,
   useTriggerFileRestore,
   useTriggerRestore,
   useVmRecreateRun,
@@ -35,7 +36,7 @@ import {
 } from "@/api/hooks";
 import { FileBrowser } from "@/components/FileBrowser";
 import { SelectedFileList } from "@/components/SelectedFileList";
-import type { Csv, RestoreMode, RestoreRun, VmWithBackups } from "@/api/types";
+import type { Csv, RestoreMode, RestoreRun, SmbShare, VmWithBackups } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
 
@@ -72,16 +73,27 @@ function lastPathSegment(path: string | undefined | null): string | null {
   return parts.length ? parts[parts.length - 1] || null : null;
 }
 
+// Backlog #22: das Ziel eines Restore-Kopiervorgangs ist entweder eine CSV
+// oder eine SMB3-Freigabe (nie beides) -- genau wie bei HyperVVhd.csv_name
+// vs. smb_server/smb_share im Backend. Ein gemeinsamer Name/Kapazitaets-
+// Zugriff (targetLabel/targetCapacityBytes/targetUsedBytes) haelt die
+// Anzeige (CapacityBar) fuer beide Faelle identisch.
 interface CapacityEstimate {
-  csv: Csv;
+  csv?: Csv;
+  share?: SmbShare;
   addedBytes: number;
   removedBytes: number;
 }
 
-function CsvCapacityBar({ estimate }: { estimate: CapacityEstimate }) {
-  const { csv, addedBytes, removedBytes } = estimate;
-  const total = csv.capacity_bytes ?? 0;
-  const before = csv.used_bytes ?? 0;
+function targetLabel(estimate: CapacityEstimate): string {
+  return estimate.csv ? estimate.csv.name : estimate.share ? `\\\\${estimate.share.server}\\${estimate.share.share}` : "";
+}
+
+function CapacityBar({ estimate }: { estimate: CapacityEstimate }) {
+  const { addedBytes, removedBytes } = estimate;
+  const label = targetLabel(estimate);
+  const total = estimate.csv?.capacity_bytes ?? estimate.share?.capacity_bytes ?? 0;
+  const before = estimate.csv?.used_bytes ?? estimate.share?.used_bytes ?? 0;
   const after = Math.max(0, before + addedBytes - removedBytes);
   // Restore kopiert (ein Copy-Item) die wiederhergestellte VHDX unter einem
   // NEUEN Dateinamen direkt auf das Ziel-CSV; im Ersetzen-Modus liegt
@@ -94,7 +106,7 @@ function CsvCapacityBar({ estimate }: { estimate: CapacityEstimate }) {
   if (total <= 0) {
     return (
       <Text size="xs" c="dimmed">
-        {csv.name}: Kapazität unbekannt (noch keine Discovery-Daten).
+        {label}: Kapazität unbekannt (noch keine Discovery-Daten).
       </Text>
     );
   }
@@ -112,7 +124,7 @@ function CsvCapacityBar({ estimate }: { estimate: CapacityEstimate }) {
     <div>
       <Group justify="space-between" mb={4}>
         <Text size="xs" fw={600}>
-          {csv.name}
+          {label}
         </Text>
         <Text size="xs" c="dimmed">
           {formatBytes(before)} → {formatBytes(after)}
@@ -131,8 +143,8 @@ function CsvCapacityBar({ estimate }: { estimate: CapacityEstimate }) {
       )}
       {overshoots && (
         <Text size="xs" c="red" fw={600} mt={2}>
-          Achtung: die Spitzenbelegung übersteigt die Kapazität dieses CSV ({formatBytes(peak)} &gt; {formatBytes(total)}), auch
-          wenn der Endzustand passt.
+          Achtung: die Spitzenbelegung übersteigt die Kapazität {estimate.share ? "dieser Freigabe" : "dieses CSV"} (
+          {formatBytes(peak)} &gt; {formatBytes(total)}), auch wenn der Endzustand passt.
         </Text>
       )}
     </div>
@@ -204,6 +216,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
   );
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
+  const { data: smbShares } = useSmbShares();
   const triggerRestore = useTriggerRestore();
   const { data: run } = useRestoreRun(currentRunId ?? undefined, true);
 
@@ -215,6 +228,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
   const { data: cloneRun } = useVmRecreateRun(cloneRunId ?? undefined, true);
   const cloneDone = cloneRun?.status === "succeeded" || cloneRun?.status === "failed";
   const clusterCsvs = (csvs ?? []).filter((c) => c.hyperv_cluster_name === vm?.cluster);
+  const clusterSmbShares = (smbShares ?? []).filter((s) => s.hyperv_cluster_name === vm?.cluster);
 
   const vmFull = vms?.find((v) => v.name === vm?.name);
   // Fuer den "Checkpoint geht verloren"-Hinweis bei REPLACE: nur ein
@@ -266,6 +280,17 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
       clusterCsvs.find((c) => c.name.toLowerCase() === lc)
     );
   };
+  // Backlog #22: Pendant zu resolveCsvForVhdPath fuer eine VHD auf einem
+  // NetApp-CIFS-Export statt ClusterStorage -- gleiches Muster wie
+  // parseSmbShare in VmsPage.tsx.
+  const resolveSmbShareForVhdPath = (vhdPath: string | undefined | null) => {
+    const match = vhdPath?.match(/^\\\\([^\\]+)\\([^\\]+)\\/);
+    if (!match) return undefined;
+    const [, server, share] = match;
+    return clusterSmbShares.find(
+      (s) => s.server.toLowerCase() === server.toLowerCase() && s.share.toLowerCase() === share.toLowerCase(),
+    );
+  };
   const liveSizeByVhdName = new Map((vmFull?.vhds ?? []).map((v) => [v.name, occupiedBytes(v)]));
 
   let capacityEstimates: CapacityEstimate[] = [];
@@ -286,18 +311,24 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
       capacityEstimates = Array.from(byCsv.values());
     }
   } else if (restoreKind === "add" || restoreKind === "replace") {
-    const byCsv = new Map<string, CapacityEstimate>();
+    const byTarget = new Map<string, CapacityEstimate>();
     for (const path of selectedVhdPaths) {
       const vhd = vhdOptions.find((v) => v.path === path);
       if (!vhd) continue;
       const csv = resolveCsvForVhdPath(path);
-      if (!csv) continue;
-      const entry = byCsv.get(csv.name) ?? { csv, addedBytes: 0, removedBytes: 0 };
+      // Backlog #22: eine VHD liegt entweder auf einer CSV ODER einer
+      // SMB3-Freigabe, nie beides -- SMB nur als Fallback pruefen, wenn
+      // CSV-Aufloesung nichts liefert (spiegelt _resolve_vhd_location im
+      // Backend).
+      const share = csv ? undefined : resolveSmbShareForVhdPath(path);
+      if (!csv && !share) continue;
+      const key = csv ? `csv:${csv.name}` : `smb:${share!.server}|${share!.share}`;
+      const entry = byTarget.get(key) ?? { csv, share, addedBytes: 0, removedBytes: 0 };
       entry.addedBytes += occupiedBytes(vhd);
       if (restoreKind === "replace") entry.removedBytes += liveSizeByVhdName.get(vhd.name) ?? 0;
-      byCsv.set(csv.name, entry);
+      byTarget.set(key, entry);
     }
-    capacityEstimates = Array.from(byCsv.values());
+    capacityEstimates = Array.from(byTarget.values());
   }
 
   useEffect(() => {
@@ -653,7 +684,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                       CSV-Auslastung nach dem Restore
                     </Text>
                     {capacityEstimates.map((e) => (
-                      <CsvCapacityBar key={e.csv.name} estimate={e} />
+                      <CapacityBar key={targetLabel(e)} estimate={e} />
                     ))}
                   </Stack>
                 )}
@@ -786,10 +817,10 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
             {(restoreKind === "add" || restoreKind === "replace") && capacityEstimates.length > 0 && (
               <Stack gap="xs">
                 <Text size="xs" fw={600} c="dimmed">
-                  CSV-Auslastung nach dem Restore
+                  Auslastung nach dem Restore
                 </Text>
                 {capacityEstimates.map((e) => (
-                  <CsvCapacityBar key={e.csv.name} estimate={e} />
+                  <CapacityBar key={targetLabel(e)} estimate={e} />
                 ))}
               </Stack>
             )}
