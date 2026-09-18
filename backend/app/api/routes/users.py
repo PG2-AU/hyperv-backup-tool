@@ -245,6 +245,56 @@ def update_user_role(
     return target
 
 
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission(Permission.USER_MANAGE)),
+) -> None:
+    """Entfernt einen Benutzer (lokal oder AD-Quelle) aus der App. Betrifft
+    NUR die eigene User-Tabelle -- fuer einen AD-Benutzer wird dabei
+    NICHTS im eigentlichen Active Directory geloescht (diese App hat
+    ohnehin keine AD-Schreibrechte, siehe app.services.ad_service, nur
+    Bind+Suche); er kann sich danach schlicht nicht mehr anmelden bzw.
+    wuerde sich bei erneuter Anmeldung als neuer, rechtelosen JIT-Account
+    wieder anlegen. RoleAssignment-Zeilen werden per ORM-Cascade
+    (User.role_assignments, cascade='all, delete-orphan') automatisch mit
+    entfernt."""
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Benutzer nicht gefunden")
+
+    if target.id == user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sie koennen sich nicht selbst loeschen")
+
+    # Sicherheitsnetz: nicht den letzten Administrator loeschen, sonst kann
+    # niemand mehr Benutzer/Rollen verwalten (gleiches Muster wie in
+    # update_user_role oben).
+    if target.role_name == "Administrator":
+        other_admins = (
+            db.query(RoleAssignment)
+            .join(Role, RoleAssignment.role_id == Role.id)
+            .filter(
+                Role.name == "Administrator",
+                RoleAssignment.user_id != target.id,
+                RoleAssignment.scope_type == "global",
+            )
+            .count()
+        )
+        if other_admins == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Der letzte Administrator kann nicht geloescht werden",
+            )
+
+    username = target.username
+    source_label = "AD" if target.source == UserSource.ACTIVE_DIRECTORY else "lokal"
+    db.delete(target)
+    db.commit()
+
+    _log_user_action(db, user, f"Benutzer '{username}' ({source_label}) geloescht")
+
+
 @router.get("/roles", response_model=list[RoleRead])
 def list_roles(db: Session = Depends(get_db), user=Depends(require_permission(Permission.ROLE_MANAGE))) -> list[Role]:
     return db.query(Role).order_by(Role.name).all()

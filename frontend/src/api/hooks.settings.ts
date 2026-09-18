@@ -137,6 +137,16 @@ export function useUpdateUserRole() {
   });
 }
 
+export function useDeleteUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      await apiClient.delete(`/users/${userId}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
 export function useRoles() {
   return useQuery({
     queryKey: ["roles"],

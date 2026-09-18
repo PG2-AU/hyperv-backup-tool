@@ -48,6 +48,7 @@ import {
   useAddAdUser,
   useAdConfig,
   useCreateUser,
+  useDeleteUser,
   usePublicSettings,
   useRoles,
   useSearchAdUsers,
@@ -390,6 +391,8 @@ export function SettingsPage() {
   const { data: users } = useUsers();
   const { data: roles } = useRoles();
   const { data: settings } = usePublicSettings();
+  const deleteUser = useDeleteUser();
+  const currentUserId = useAuthStore((s) => s.user?.id);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [passwordModalUser, setPasswordModalUser] = useState<UserRead | null>(null);
   const [roleModalUser, setRoleModalUser] = useState<UserRead | null>(null);
@@ -401,6 +404,29 @@ export function SettingsPage() {
   function openCreateLabel() {
     setEditingLabel(null);
     setLabelModalOpen(true);
+  }
+
+  function handleDeleteUser(u: UserRead) {
+    confirmAction({
+      title: "Benutzer entfernen",
+      message:
+        u.source === "active_directory" ? (
+          <>
+            Benutzer &apos;{u.username}&apos; wirklich aus dieser Anwendung entfernen? Der Active-Directory-Benutzer selbst bleibt
+            davon unberührt (diese App hat keine Schreibrechte in AD) -- er verliert nur den Zugriff auf diese Anwendung, bis er ggf.
+            erneut hinzugefügt wird.
+          </>
+        ) : (
+          `Benutzer '${u.username}' wirklich unwiderruflich entfernen?`
+        ),
+      confirmLabel: "Entfernen",
+      onConfirm: () =>
+        deleteUser.mutate(u.id, {
+          onSuccess: () => notifications.show({ title: "Benutzer entfernt", message: u.username, color: "blue" }),
+          onError: (err) =>
+            notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Benutzer konnte nicht entfernt werden."), color: "red" }),
+        }),
+    });
   }
 
   function openEditLabel(label: SnapMirrorLabel) {
@@ -548,6 +574,16 @@ export function SettingsPage() {
                               onClick={() => setPasswordModalUser(u)}
                             >
                               <IconKey size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label={u.id === currentUserId ? "Der eigene Benutzer kann nicht entfernt werden" : "Entfernen"}>
+                            <ActionIcon
+                              variant="light"
+                              color="red"
+                              disabled={u.id === currentUserId}
+                              onClick={() => handleDeleteUser(u)}
+                            >
+                              <IconTrash size={16} />
                             </ActionIcon>
                           </Tooltip>
                         </Group>
