@@ -588,6 +588,59 @@ def _merge_avhdx_chain(
     return base_remote, base_original_filename
 
 
+def _merge_avhdx_chain_smb(
+    node_service: HyperVService, node_session,
+    server: str, share: str, snapshot_name: str, dest_dir: str, leaf_remote_path: str,
+    hv_username: str, hv_password: str, suffix: str,
+) -> tuple[str, str]:
+    """SMB3-Pendant zu _merge_avhdx_chain (Backlog #22, Restore Option 2/
+    Replace): derselbe Ablauf, aber jeder Vorfahre wird nicht von einem
+    gemounteten LUN-Klon kopiert, sondern direkt aus ONTAPs `~snapshot`-
+    Ordner -- dessen im VHDX-Header aufgezeichneter Elternpfad ist der
+    LIVE-Pfad zum Backup-Zeitpunkt (i.d.R. identisch mit dem heute noch
+    gueltigen Pfad, da die Kette waehrend der Sicherung nicht umbenannt
+    wird), wird per _smb_snapshot_source_path() in seinen eigenen
+    Snapshot-relativen Pfad uebersetzt -- derselbe Kniff wie fuer den
+    Leaf selbst in _execute_smb_restore_replace. Alle Kopien landen (wie
+    beim CSV-Pfad) im selben Ordner wie die zu ersetzende Original-Datei,
+    unter dem '_restore_<suffix>'-Namen. Sonst identisches Verhalten wie
+    _merge_avhdx_chain (Rueckgabewert, Fehlerfaelle, Docstring dort gilt
+    sinngemaess)."""
+    chain_remote_paths = [leaf_remote_path]
+    current_remote = leaf_remote_path
+    base_original_filename: str | None = None
+    for _ in range(8):
+        parent = node_service.get_vhd_parent_path(node_session, current_remote, hv_username, hv_password)
+        if not parent:
+            break
+        parent_filename = parent.split("\\")[-1]
+        base_original_filename = parent_filename
+        parent_snapshot_path = _smb_snapshot_source_path(server, share, snapshot_name, parent)
+        parent_unique_filename = f"{Path(parent_filename).stem}_restore_{suffix}{Path(parent_filename).suffix}"
+        parent_remote = f"{dest_dir}\\{parent_unique_filename}"
+        node_service.copy_unc_to_unc(node_session, parent_snapshot_path, parent_remote, hv_username, hv_password)
+        result = node_service.set_vhd_parent(node_session, current_remote, parent_remote, hv_username, hv_password)
+        if not result.success:
+            raise RuntimeError(f"Elternpfad konnte nicht korrigiert werden: {result.error}")
+        chain_remote_paths.append(parent_remote)
+        current_remote = parent_remote
+    else:
+        raise RuntimeError("AVHDX-Kette zu lang oder nicht auflösbar (Abbruch nach 8 Ebenen)")
+
+    if len(chain_remote_paths) < 2 or base_original_filename is None:
+        raise RuntimeError("Keine Basis-VHDX in der Kette gefunden")
+
+    base_remote = chain_remote_paths[-1]
+    result = node_service.merge_vhd(node_session, leaf_remote_path, base_remote, hv_username, hv_password)
+    if not result.success:
+        raise RuntimeError(f"Merge-VHD fehlgeschlagen: {result.error}")
+
+    for p in chain_remote_paths[:-1]:
+        node_service.delete_file(node_session, p, hv_username, hv_password)
+
+    return base_remote, base_original_filename
+
+
 def _execute_restore(run_id: str) -> None:  # noqa: C901
     db = SessionLocal()
     clone_lun_uuid: str | None = None
@@ -1185,6 +1238,209 @@ def _execute_smb_restore_add(run_id: str) -> None:
         db.close()
 
 
+def _execute_smb_restore_replace(run_id: str) -> None:  # noqa: C901
+    """Backlog #22 (SMB3-Restore, Option 2/REPLACE): kopiert die
+    ausgewaehlte VHDX aus ONTAPs `~snapshot`-Ordner direkt an den
+    ORIGINAL-Speicherort der VM (Nutzer-Vorgabe: identisch zum
+    bestehenden CSV-Replace, kein separater Ablageort wie bei Option 1/
+    ADD) und ersetzt damit die aktuell angehaengte Datei -- inkl. voller
+    AVHDX-Ketten-Aufloesung (_merge_avhdx_chain_smb), da hier ohnehin
+    kopiert wird.
+
+    Kein LUN-Klon/iSCSI/Restore-Proxy-Host noetig (wie bei
+    _execute_smb_restore_add). Anders als dort aber: Add-/Remove-
+    VMHardDiskDrive brauchen fuer eine SMB3-Disk einen echten WinRM-
+    Double-Hop (VMMS authentifiziert selbst beim NetApp-CIFS-Server,
+    live verifiziert 2026-09-18, siehe _execute_smb_restore_add) -- nur
+    fuer den Attach/Detach-Schritt wird deshalb auf eine separate
+    CredSSP-Session gewechselt, alles andere (Kopieren, Checkpoints,
+    Umbenennen) laeuft auf der normalen NTLM-Session weiter."""
+    db = SessionLocal()
+    try:
+        run = db.get(RestoreRun, run_id)
+        if run is None:
+            return
+
+        try:
+            with _StepCtx(db, run.id, "resolve", "Ziel auflösen") as ctx:
+                smb = _parse_smb_share(run.source_vhd_path)
+                if smb is None:
+                    raise RuntimeError(f"SMB3-Freigabe konnte nicht aus '{run.source_vhd_path}' ermittelt werden")
+                server, share = smb
+
+                snapshot = db.get(BackupRunSnapshot, run.source_snapshot_id) if run.source_snapshot_id else None
+                if snapshot is None or not snapshot.snapshot_name:
+                    raise RuntimeError("Gewählter Snapshot nicht gefunden")
+
+                hv_cluster = db.get(HyperVCluster, run.hyperv_cluster_id)
+                if hv_cluster is None:
+                    raise RuntimeError("Hyper-V-Cluster nicht gefunden")
+                vm = db.query(HyperVVm).filter(
+                    HyperVVm.cluster_id == run.hyperv_cluster_id, HyperVVm.name == run.vm_name,
+                ).first()
+                if vm is None or not vm.host_name:
+                    raise RuntimeError(f"VM '{run.vm_name}' bzw. deren Knoten nicht gefunden")
+
+                vm_config = (
+                    db.query(BackupRunVmConfig)
+                    .filter(BackupRunVmConfig.run_id == snapshot.run_id, BackupRunVmConfig.vm_name == run.vm_name)
+                    .first()
+                )
+                copy_source_path = _resolve_checkpoint_source_path(vm_config, run.source_vhd_path, run.avhdx_checkpoint_id)
+                snapshot_path = _smb_snapshot_source_path(server, share, snapshot.snapshot_name, copy_source_path)
+                dest_dir = run.source_vhd_path.rsplit("\\", 1)[0]
+                original_filename = copy_source_path.rsplit("\\", 1)[-1]
+                suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                temp_filename = f"{Path(original_filename).stem}_restore_{suffix}{Path(original_filename).suffix}"
+                temp_path = f"{dest_dir}\\{temp_filename}"
+                ctx.row.message = f"{snapshot_path} -> {temp_path}"
+
+            settings = _restore_settings()
+            hv_service = HyperVService(
+                settings, hv_cluster.management_address, use_https=hv_cluster.use_https,
+                node_hostname=hv_cluster.hyperv_cluster_name,
+            )
+            hv_password = decrypt_secret(hv_cluster.encrypted_password)
+
+            with _StepCtx(db, run.id, "connect-node", f"Verbindung zu Knoten '{vm.host_name}'") as ctx:
+                cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
+                owner_node = hv_service.get_vm_owner_node(cno_session, run.vm_name) or vm.host_name
+                node_address = hv_service.resolve_node_address(cno_session, owner_node)
+                node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node)
+                node_session = node_service.connect(hv_cluster.username, hv_password)
+                ctx.row.message = node_address
+
+            with _StepCtx(db, run.id, "copy", "VHDX aus Snapshot kopieren") as ctx:
+                node_service.copy_unc_to_unc(node_session, snapshot_path, temp_path, hv_cluster.username, hv_password)
+                ctx.row.message = temp_path
+
+            restored_vhd_path = temp_path
+            base_original_filename: str | None = None
+            if copy_source_path.lower().endswith(".avhdx"):
+                with _StepCtx(db, run.id, "merge", "AVHDX-Kette auflösen und zusammenführen") as ctx:
+                    try:
+                        restored_vhd_path, base_original_filename = _merge_avhdx_chain_smb(
+                            node_service, node_session, server, share, snapshot.snapshot_name, dest_dir, temp_path,
+                            hv_cluster.username, hv_password, suffix,
+                        )
+                    except RuntimeError as exc:
+                        raise RuntimeError(
+                            "Diese Sicherung enthält für dieses Laufwerk keine gültige Basis-VHDX "
+                            "(AVHDX statt VHDX gesichert) und konnte auch nicht automatisch zusammengeführt "
+                            f"werden: {exc}"
+                        ) from exc
+                    run.restored_vhd_path = restored_vhd_path
+                    db.commit()
+                    ctx.row.message = restored_vhd_path
+
+            was_running = node_service.get_vm_state(node_session, run.vm_name) == "Running"
+            if was_running:
+                with _StepCtx(db, run.id, "stop-vm", "VM stoppen"):
+                    result = node_service.stop_vm(node_session, run.vm_name)
+                    if not result.success:
+                        raise RuntimeError(result.error)
+
+            with _StepCtx(db, run.id, "remove-checkpoints", "Vorhandene Checkpoints der VM entfernen") as ctx:
+                live_vm = node_service.get_vm(node_session, run.vm_name)
+                checkpoints = live_vm.checkpoints if live_vm else []
+                if not checkpoints:
+                    ctx.row.status = RestoreStepStatus.SKIPPED
+                    ctx.row.message = "Kein Checkpoint vorhanden"
+                else:
+                    for cp in checkpoints:
+                        result = node_service.remove_checkpoint(node_session, run.vm_name, cp.name)
+                        if not result.success:
+                            raise RuntimeError(f"Checkpoint '{cp.name}' konnte nicht entfernt werden: {result.error}")
+                    ctx.row.message = f"Entfernt: {', '.join(cp.name for cp in checkpoints)}"
+                    live_vm = node_service.get_vm(node_session, run.vm_name)
+                # Wie beim CSV-Pfad: den tatsaechlich aktuell angehaengten
+                # Pfad im selben Ordner frisch abfragen statt dem
+                # aufgezeichneten Pfad blind zu vertrauen.
+                source_dir = run.source_vhd_path.rsplit("\\", 1)[0].lower()
+                current_source_path = next(
+                    (v.path for v in (live_vm.vhds if live_vm else []) if v.path.rsplit("\\", 1)[0].lower() == source_dir),
+                    run.source_vhd_path,
+                )
+
+            # Add-/Remove-VMHardDiskDrive brauchen fuer eine SMB3-Disk
+            # CredSSP (echter Double-Hop, siehe Docstring oben) --
+            # verbunden mit dem tatsaechlichen Besitzer-Knoten statt dem CNO.
+            credssp_settings = copy.copy(settings)
+            credssp_settings.winrm_transport = "credssp"
+            credssp_service = HyperVService(
+                credssp_settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node,
+            )
+            credssp_session = credssp_service.connect(hv_cluster.username, hv_password)
+
+            with _StepCtx(db, run.id, "detach-old", "Alte VHDX abhängen und löschen"):
+                result = credssp_service.detach_vhd(credssp_session, run.vm_name, current_source_path)
+                if not result.success:
+                    raise RuntimeError(result.error)
+                result = node_service.delete_file(node_session, current_source_path, hv_cluster.username, hv_password)
+                if not result.success:
+                    raise RuntimeError(result.error)
+
+            with _StepCtx(db, run.id, "rename", "Wiederhergestellte VHDX umbenennen") as ctx:
+                final_filename = base_original_filename or original_filename
+                final_path = f"{dest_dir}\\{final_filename}"
+                result = node_service.rename_file(
+                    node_session, restored_vhd_path, final_path, hv_cluster.username, hv_password,
+                )
+                if not result.success:
+                    raise RuntimeError(result.error)
+                restored_vhd_path = final_path
+                run.restored_vhd_path = restored_vhd_path
+                db.commit()
+                ctx.row.message = restored_vhd_path
+
+            with _StepCtx(db, run.id, "attach", "Wiederhergestellte VHDX anhängen"):
+                credssp_service.attach_vhd(credssp_session, run.vm_name, restored_vhd_path)
+
+            if was_running:
+                with _StepCtx(db, run.id, "start-vm", "VM starten"):
+                    result = node_service.start_vm(node_session, run.vm_name)
+                    if not result.success:
+                        raise RuntimeError(result.error)
+
+            with _StepCtx(db, run.id, "refresh-inventory", "Inventory-Stand aktualisieren") as ctx:
+                messages = []
+                try:
+                    refreshed_vm = node_service.get_vm(node_session, run.vm_name)
+                    hv_vm_fresh = (
+                        db.query(HyperVVm)
+                        .filter(HyperVVm.name == run.vm_name, HyperVVm.cluster_id == run.hyperv_cluster_id)
+                        .first()
+                    )
+                    if refreshed_vm is not None and hv_vm_fresh is not None:
+                        _apply_vm_discovery_refresh(db, run.hyperv_cluster_id, hv_vm_fresh, refreshed_vm)
+                        messages.append("Disk-/Checkpoint-Stand aktualisiert")
+                    else:
+                        messages.append("VM-Stand nicht aktualisiert -- nächste periodische Discovery übernimmt das")
+                except Exception as exc:
+                    db.rollback()
+                    messages.append(f"VM-Stand nicht aktualisiert ({exc})")
+                try:
+                    all_vhds = db.query(HyperVVhd).filter(HyperVVhd.cluster_id == run.hyperv_cluster_id).all()
+                    _refresh_smb_share_rows(db, run.hyperv_cluster_id, all_vhds)
+                    messages.append("SMB3-Freigaben aktualisiert")
+                except Exception as exc:
+                    db.rollback()
+                    messages.append(f"SMB3-Freigaben nicht aktualisiert ({exc})")
+                ctx.row.message = "; ".join(messages)
+
+            run.status = RestoreStatus.SUCCEEDED
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+        except Exception as exc:
+            run.status = RestoreStatus.FAILED
+            run.error_message = str(exc)[:2000]
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+            notify_restore_failure(db, "Restore", run.vm_name, run.id, run.error_message)
+    finally:
+        db.close()
+
+
 def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
     """Erstellt eine komplett geloeschte VM aus einer gespeicherten
     BackupRunVmConfig neu: pro VHD derselbe LUN-Klon/iSCSI/Kopier-Zyklus wie
@@ -1616,18 +1872,13 @@ def trigger_restore(
     db.refresh(run)
 
     # Backlog #22: eine VHD auf einem SMB3-Export (statt ClusterStorage)
-    # nutzt eine komplett andere, viel einfachere Ausfuehrung (kein LUN-
-    # Klon/iSCSI/Proxy-Host, siehe _execute_smb_restore_add) -- fuer
-    # 'replace' mit SMB-Quelle gibt es diese Runde noch keine eigene
-    # Ausfuehrung, siehe Plan Phase "Option 2".
+    # nutzt eine komplett andere Ausfuehrung (kein LUN-Klon/iSCSI/Proxy-
+    # Host, siehe _execute_smb_restore_add/_execute_smb_restore_replace).
     if _parse_csv_name(run.source_vhd_path) is None and _parse_smb_share(run.source_vhd_path) is not None:
         if run.mode == RestoreMode.ADD:
             background_tasks.add_task(_execute_smb_restore_add, run.id)
         else:
-            run.status = RestoreStatus.FAILED
-            run.error_message = "Replace-Restore für SMB3-gehostete VMs wird noch nicht unterstützt."
-            run.finished_at = datetime.now(timezone.utc)
-            db.commit()
+            background_tasks.add_task(_execute_smb_restore_replace, run.id)
     else:
         background_tasks.add_task(_execute_restore, run.id)
     return run

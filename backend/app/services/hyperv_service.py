@@ -964,9 +964,15 @@ class HyperVService:
         )
         return self._run_ps(session, script)
 
-    def delete_file(self, session: winrm.Session, path: str) -> CommandResult:
+    def delete_file(
+        self, session: winrm.Session, path: str, share_username: str | None = None, share_password: str | None = None,
+    ) -> CommandResult:
+        """'share_username'/'share_password' (optional, Backlog #22): fuer
+        eine Datei auf einem SMB3-Export -- siehe get_vhd_parent_path."""
         escaped = path.replace("'", "''")
-        return self._run_ps(session, f"Remove-Item -Path '{escaped}' -Force -ErrorAction Stop")
+        body = f"Remove-Item -Path '{escaped}' -Force -ErrorAction Stop"
+        script = self._wrap_smb_net_use(body, [path], share_username, share_password) if share_username else body
+        return self._run_ps(session, script)
 
     def remove_empty_directory(self, session: winrm.Session, path: str) -> None:
         """Best-effort: entfernt einen (erwartungsgemaess leeren) Ordner,
@@ -977,15 +983,23 @@ class HyperVService:
         escaped = path.replace("'", "''")
         self._run_ps(session, f"Remove-Item -Path '{escaped}' -Force -ErrorAction SilentlyContinue")
 
-    def rename_file(self, session: winrm.Session, old_path: str, new_path: str) -> CommandResult:
+    def rename_file(
+        self, session: winrm.Session, old_path: str, new_path: str,
+        share_username: str | None = None, share_password: str | None = None,
+    ) -> CommandResult:
         """Benennt die wiederhergestellte VHDX im Replace-Modus auf den
         Originalnamen um, nachdem die alte Datei geloescht wurde -- die
         Kopie traegt bis dahin den '_restore_<Zeitstempel>'-Suffix (siehe
         restore.py), damit sie waehrend des Kopierens nicht mit der noch
-        vorhandenen alten Datei kollidiert."""
+        vorhandenen alten Datei kollidiert.
+
+        'share_username'/'share_password' (optional, Backlog #22): siehe
+        get_vhd_parent_path -- fuer eine Datei auf einem SMB3-Export."""
         old_escaped = old_path.replace("'", "''")
         new_escaped = new_path.replace("'", "''")
-        return self._run_ps(session, f"Move-Item -Path '{old_escaped}' -Destination '{new_escaped}' -Force -ErrorAction Stop")
+        body = f"Move-Item -Path '{old_escaped}' -Destination '{new_escaped}' -Force -ErrorAction Stop"
+        script = self._wrap_smb_net_use(body, [old_path, new_path], share_username, share_password) if share_username else body
+        return self._run_ps(session, script)
 
     # --- AVHDX-Merge beim Restore (siehe restore.py, _copy_and_merge_vhd) ---
     # Ein bei Backup-Zeitpunkt aktiver Checkpoint sichert sowohl die
@@ -997,9 +1011,18 @@ class HyperVService:
     # hat garantiert Hyper-V (echter Cluster-Node), der Proxy braucht so
     # keine neue Voraussetzung.
 
-    def get_vhd_parent_path(self, session: winrm.Session, path: str) -> str | None:
+    def get_vhd_parent_path(
+        self, session: winrm.Session, path: str, share_username: str | None = None, share_password: str | None = None,
+    ) -> str | None:
+        """'share_username'/'share_password' (optional, Backlog #22): fuer
+        eine VHD auf einem SMB3-Export -- Get-VHD laeuft im Sicherheits-
+        kontext dieser Session, ohne explizite Zugangsdaten (Double-Hop,
+        siehe copy_unc_to_unc) liefert es fuer einen UNC-Pfad still $null
+        statt eines Fehlers."""
         escaped = path.replace("'", "''")
-        result = self._run_ps(session, f"(Get-VHD -Path '{escaped}' -ErrorAction Stop).ParentPath")
+        body = f"(Get-VHD -Path '{escaped}' -ErrorAction Stop).ParentPath"
+        script = self._wrap_smb_net_use(body, [path], share_username, share_password) if share_username else body
+        result = self._run_ps(session, script)
         if not result.success:
             raise RuntimeError(f"Get-VHD fuer '{path}' fehlgeschlagen: {result.error}")
         parent = (result.output or "").strip()
@@ -1021,15 +1044,27 @@ class HyperVService:
         parent = (data.get("ParentPath") or "").strip() or None
         return parent, int(data.get("Size") or 0), int(data.get("FileSize") or 0)
 
-    def set_vhd_parent(self, session: winrm.Session, path: str, parent_path: str) -> CommandResult:
+    def set_vhd_parent(
+        self, session: winrm.Session, path: str, parent_path: str,
+        share_username: str | None = None, share_password: str | None = None,
+    ) -> CommandResult:
+        """'share_username'/'share_password': siehe get_vhd_parent_path."""
         escaped = path.replace("'", "''")
         parent_escaped = parent_path.replace("'", "''")
-        return self._run_ps(session, f"Set-VHD -Path '{escaped}' -ParentPath '{parent_escaped}' -ErrorAction Stop")
+        body = f"Set-VHD -Path '{escaped}' -ParentPath '{parent_escaped}' -ErrorAction Stop"
+        script = self._wrap_smb_net_use(body, [path, parent_path], share_username, share_password) if share_username else body
+        return self._run_ps(session, script)
 
-    def merge_vhd(self, session: winrm.Session, path: str, destination_path: str) -> CommandResult:
+    def merge_vhd(
+        self, session: winrm.Session, path: str, destination_path: str,
+        share_username: str | None = None, share_password: str | None = None,
+    ) -> CommandResult:
+        """'share_username'/'share_password': siehe get_vhd_parent_path."""
         escaped = path.replace("'", "''")
         dest_escaped = destination_path.replace("'", "''")
-        return self._run_ps(session, f"Merge-VHD -Path '{escaped}' -DestinationPath '{dest_escaped}' -ErrorAction Stop")
+        body = f"Merge-VHD -Path '{escaped}' -DestinationPath '{dest_escaped}' -ErrorAction Stop"
+        script = self._wrap_smb_net_use(body, [path, destination_path], share_username, share_password) if share_username else body
+        return self._run_ps(session, script)
 
     # --- VM-Restore: nativer Windows-iSCSI-Initiator auf dem Restore-Proxy-Host ---
     # Ersetzt die fruehere Linux-Variante (iscsiadm/ntfs-3g/smbclient im
@@ -1262,6 +1297,31 @@ class HyperVService:
             raise RuntimeError(f"Groessenabweichung nach Kopieren: Quelle {source_size} Bytes, Ziel {remote_size} Bytes")
         return remote_size
 
+    def _wrap_smb_net_use(self, script_body: str, paths: list[str], share_username: str, share_password: str) -> str:
+        """Umschliesst ein PowerShell-Skript mit 'net use'-Setup/-Teardown
+        fuer die Freigabe-Wurzel(n) der uebergebenen UNC-Pfade -- gemeinsamer
+        Double-Hop-Workaround (Backlog #22, siehe copy_unc_to_unc) fuer JEDE
+        Methode, die direkt (nicht ueber VMMS, siehe attach_vhd/detach_vhd,
+        die einen echten CredSSP-Double-Hop brauchen) auf eine SMB3-Datei
+        zugreift -- Get-VHD/Set-VHD/Merge-VHD/Remove-Item laufen alle im
+        Sicherheitskontext DIESER Session, net.exe (nicht New-SmbMapping,
+        CIM-basiert, scheitert siehe copy_unc_to_unc) reicht hier aus."""
+        escaped_user = share_username.replace("'", "''")
+        escaped_pw = share_password.replace("'", "''")
+        share_roots = {
+            m.group(0).replace("'", "''") for m in (_UNC_SHARE_ROOT_RE.match(p) for p in paths) if m
+        }
+        if not share_roots:
+            return script_body
+        map_lines = "".join(
+            f"net use '{root}' /delete /y 2>&1 | Out-Null; "
+            f"net use '{root}' '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1 | Out-Null; "
+            f"if ($LASTEXITCODE -ne 0) {{ throw \"net use fehlgeschlagen fuer '{root}' (Exit $LASTEXITCODE)\" }}; "
+            for root in share_roots
+        )
+        cleanup_lines = "".join(f"net use '{root}' /delete /y 2>&1 | Out-Null; " for root in share_roots)
+        return map_lines + "try { " + script_body + " } finally { " + cleanup_lines + "}"
+
     def copy_unc_to_unc(
         self, session: winrm.Session, source_path: str, dest_path: str, share_username: str, share_password: str,
     ) -> int:
@@ -1278,26 +1338,8 @@ class HyperVService:
         (CIM/WMI-basiert, scheitert sonst mit Windows-Fehler 1312)."""
         escaped_src = source_path.replace("'", "''")
         escaped_dest = dest_path.replace("'", "''")
-        escaped_user = share_username.replace("'", "''")
-        escaped_pw = share_password.replace("'", "''")
-        share_roots = {
-            m.group(0).replace("'", "''")
-            for m in (_UNC_SHARE_ROOT_RE.match(p) for p in (source_path, dest_path))
-            if m
-        }
-        if not share_roots:
-            raise RuntimeError(f"Kein UNC-Freigabepfad erkannt (Quelle '{source_path}', Ziel '{dest_path}')")
         dest_dir = dest_path.rsplit("\\", 1)[0].replace("'", "''")
-        map_lines = "".join(
-            f"net use '{root}' /delete /y 2>&1 | Out-Null; "
-            f"net use '{root}' '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1 | Out-Null; "
-            f"if ($LASTEXITCODE -ne 0) {{ throw \"net use fehlgeschlagen fuer '{root}' (Exit $LASTEXITCODE)\" }}; "
-            for root in share_roots
-        )
-        cleanup_lines = "".join(f"net use '{root}' /delete /y 2>&1 | Out-Null; " for root in share_roots)
-        script = (
-            map_lines
-            + "try { "
+        body = (
             f"New-Item -ItemType Directory -Force -Path '{dest_dir}' -ErrorAction Stop | Out-Null; "
             f"Copy-Item -Path '{escaped_src}' -Destination '{escaped_dest}' -Force -ErrorAction Stop; "
             # Hyper-V-ueber-SMB3 prueft beim Anhaengen einer Disk NICHT nur
@@ -1321,8 +1363,8 @@ class HyperVService:
             f"icacls '{escaped_dest}' /grant 'NT VIRTUAL MACHINE\\Virtual Machines:(M)' | Out-Null; "
             f"icacls '{escaped_dest}' /grant \"$env:COMPUTERNAME`$:(M)\" | Out-Null; "
             f"(Get-Item -Path '{escaped_dest}').Length "
-            "} finally { " + cleanup_lines + "}"
         )
+        script = self._wrap_smb_net_use(body, [source_path, dest_path], share_username, share_password)
         result = self._run_ps(session, script)
         if not result.success or not result.output.strip():
             raise RuntimeError(f"Kopieren von '{source_path}' nach '{dest_path}' fehlgeschlagen: {result.error or result.output}")
