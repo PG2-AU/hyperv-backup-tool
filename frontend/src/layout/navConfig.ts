@@ -52,6 +52,7 @@ export const NAV_ITEMS: NavItem[] = [
     children: [
       { label: "Virtuelle Maschinen", path: "/vms?tab=vms" },
       { label: "Cluster Shared Volumes", path: "/vms?tab=csv" },
+      { label: "SMB3-Freigaben", path: "/vms?tab=smb" },
     ],
   },
   {
