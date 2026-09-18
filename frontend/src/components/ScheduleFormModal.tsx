@@ -24,6 +24,11 @@ const TYPE_OPTIONS: { value: ScheduleType; label: string }[] = [
   { value: "monthly", label: "Monatlich" },
 ];
 
+// "HH:MM" sortiert als Zeichenkette bereits korrekt chronologisch.
+function sortTimes(list: string[]): string[] {
+  return [...list].sort();
+}
+
 interface ScheduleFormModalProps {
   opened: boolean;
   onClose: () => void;
@@ -57,7 +62,7 @@ export function ScheduleFormModal({ opened, onClose, schedule, duplicateFrom, on
       // ein neuer, eigener Name gewaehlt werden sollte.
       setName(schedule ? source.name : `${source.name} (Kopie)`);
       setType(source.schedule_type);
-      setTimes(source.times.length ? source.times : ["02:00"]);
+      setTimes(source.times.length ? sortTimes(source.times) : ["02:00"]);
       setWeekday(source.weekday != null ? String(source.weekday) : "0");
       setDayOfMonth(source.day_of_month ?? 1);
     } else {
@@ -73,7 +78,14 @@ export function ScheduleFormModal({ opened, onClose, schedule, duplicateFrom, on
     setTimes((prev) => prev.map((t, i) => (i === index ? value : t)));
   }
   function addTime() {
-    setTimes((prev) => [...prev, "12:00"]);
+    setTimes((prev) => sortTimes([...prev, "12:00"]));
+  }
+  // Nach dem Verlassen eines Uhrzeit-Felds neu sortieren -- NICHT schon
+  // bei jedem Tastendruck in updateTime(), sonst wuerde die Zeile waehrend
+  // des Tippens einer unvollstaendigen Uhrzeit (z.B. "1" -> "12" -> "12:3")
+  // an eine andere Position springen und den Fokus verlieren.
+  function handleTimeBlur() {
+    setTimes((prev) => sortTimes(prev));
   }
   function removeTime(index: number) {
     setTimes((prev) => prev.filter((_, i) => i !== index));
@@ -83,7 +95,7 @@ export function ScheduleFormModal({ opened, onClose, schedule, duplicateFrom, on
     const payload: ScheduleWritePayload = {
       name,
       schedule_type: type,
-      times: type === "hourly" ? times : [times[0] ?? "02:00"],
+      times: type === "hourly" ? sortTimes(times) : [times[0] ?? "02:00"],
       weekday: type === "weekly" ? Number(weekday) : null,
       day_of_month: type === "monthly" ? Number(dayOfMonth) : null,
     };
@@ -124,7 +136,13 @@ export function ScheduleFormModal({ opened, onClose, schedule, duplicateFrom, on
             </Text>
             {times.map((t, i) => (
               <Group key={i} gap="xs">
-                <TextInput placeholder="HH:MM" value={t} onChange={(e) => updateTime(i, e.currentTarget.value)} style={{ flex: 1 }} />
+                <TextInput
+                  placeholder="HH:MM"
+                  value={t}
+                  onChange={(e) => updateTime(i, e.currentTarget.value)}
+                  onBlur={handleTimeBlur}
+                  style={{ flex: 1 }}
+                />
                 <ActionIcon color="red" variant="subtle" onClick={() => removeTime(i)} disabled={times.length <= 1}>
                   <IconTrash size={16} />
                 </ActionIcon>

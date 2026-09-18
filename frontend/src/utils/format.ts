@@ -18,7 +18,11 @@ export function formatSchedule(schedule?: Schedule | null): string {
 
   switch (schedule.schedule_type) {
     case "hourly":
-      return `Mehrmals täglich: ${schedule.times.join(", ")} Uhr`;
+      // Live gefunden (2026-09-18): times steht in der Reihenfolge, in der
+      // die Uhrzeiten im Bearbeiten-Dialog hinzugefuegt/editiert wurden,
+      // nicht chronologisch -- vor der Anzeige sortieren ("HH:MM" sortiert
+      // als Zeichenkette bereits korrekt chronologisch).
+      return `Mehrmals täglich: ${[...schedule.times].sort().join(", ")} Uhr`;
     case "daily":
       return `Täglich um ${schedule.times[0]} Uhr`;
     case "weekly":
