@@ -1758,9 +1758,24 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             # hyperv_vm_meta weiter oben / [[backup-vs-discovery-orm-race]])
             # -- eine zwischenzeitlich gelaufene volle Discovery hat die
             # Zeile sonst laengst geloescht+neu angelegt.
+            # username/password: siehe HyperVService.list_vms -- ohne sie
+            # scheitert Get-VHD fuer eine SMB3-hostete VM (#22) am WinRM-
+            # Double-Hop und liefert still 0 Bytes zurueck. Live gefunden
+            # 2026-09-18: der erste Backup-Lauf ueber PG_SMB3 hat die zuvor
+            # per Discovery korrekt gesetzte Groesse von RestoreTestVM_PG2-
+            # restored wieder auf 0 zurueckgesetzt, weil genau dieser
+            # Refresh-Aufruf (anders als Discovery/vms.py) noch ohne
+            # Zugangsdaten lief. hv_cluster kann theoretisch fehlen (Cluster
+            # zwischenzeitlich geloescht) -- dann bleibt es best-effort ohne
+            # Zugangsdaten wie zuvor.
             refreshed_vm = None
             try:
-                refreshed_vm = node_service.get_vm(node_session, vm_name)
+                hv_cluster = hyperv_clusters_by_id.get(vm_cluster_id) if vm_cluster_id else None
+                refreshed_vm = node_service.get_vm(
+                    node_session, vm_name,
+                    username=hv_cluster.username if hv_cluster else None,
+                    password=decrypt_secret(hv_cluster.encrypted_password) if hv_cluster else None,
+                )
             except Exception:
                 refreshed_vm = None
 

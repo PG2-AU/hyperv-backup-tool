@@ -1157,7 +1157,7 @@ export function VmsPage() {
                           <Tooltip label="Backups anzeigen">
                             <ActionIcon
                               variant="light"
-                              onClick={() => showBackups("smb_share", `\\\\${share.server}\\${share.share}`, share.cluster_id)}
+                              onClick={() => showBackups("smb_share", `${share.server}|${share.share}`, share.cluster_id)}
                             >
                               <IconHistory size={16} />
                             </ActionIcon>

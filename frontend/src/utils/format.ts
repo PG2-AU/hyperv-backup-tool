@@ -82,6 +82,16 @@ export function lunShortName(fullPathOrName?: string | null): string {
   return parts[parts.length - 1] || fullPathOrName;
 }
 
+// Backend-Schluessel fuer eine SMB3-Freigabe (Backlog #22) ist "server|share"
+// (siehe _smb_share_key in jobs.py, bewusst "|" statt "::" wie bei Resource-
+// Group-Membern) -- fuer die Anzeige als UNC-Pfad formatiert, wie Inventory >
+// SMB3-Freigaben es zeigt. Nicht betroffene Strings (kein "|") kommen
+// unveraendert zurueck.
+export function formatSmbShareKey(key: string): string {
+  const sepIdx = key.indexOf("|");
+  return sepIdx === -1 ? key : `\\\\${key.slice(0, sepIdx)}\\${key.slice(sepIdx + 1)}`;
+}
+
 export function formatLagTime(lagTime?: string | null): string {
   if (!lagTime) return "-";
   const match = LAG_TIME_PATTERN.exec(lagTime);

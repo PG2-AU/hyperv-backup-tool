@@ -1,3 +1,5 @@
+import { formatSmbShareKey } from "@/utils/format";
+
 /** ResourceGroup.members speichert VM-/CSV-Zugehoerigkeit cluster-
  * qualifiziert ("<cluster_id>::<name>") statt als reinen Namen -- zwei
  * verschiedene Hyper-V-Cluster koennen (und tun das in der Praxis) ein CSV
@@ -29,6 +31,5 @@ export function makeMemberKey(clusterId: string, name: string): string {
 export function memberDisplayName(member: string): string {
   const idx = member.indexOf(MEMBER_SEP);
   const name = idx === -1 ? member : member.slice(idx + MEMBER_SEP.length);
-  const sepIdx = name.indexOf("|");
-  return sepIdx === -1 ? name : `\\\\${name.slice(0, sepIdx)}\\${name.slice(sepIdx + 1)}`;
+  return formatSmbShareKey(name);
 }

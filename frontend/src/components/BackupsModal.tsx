@@ -6,6 +6,7 @@ import { useBackupsForObject, useDeleteBackupSnapshot, useDetachVmFromBackupSnap
 import type { BackupScope, BackupSnapshot } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
+import { formatSmbShareKey } from "@/utils/format";
 
 interface BackupsModalProps {
   opened: boolean;
@@ -62,8 +63,14 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
     });
   }
 
+  // Bei scope "smb_share" ist 'name' der rohe "server|share"-Schluessel
+  // (siehe _smb_share_key in jobs.py) -- fuer die Query/Mutations-Hooks
+  // oben unveraendert noetig, im Titel aber als UNC-Pfad angezeigt, wie
+  // Inventory > SMB3-Freigaben es tut.
+  const displayName = name && scope === "smb_share" ? formatSmbShareKey(name) : name;
+
   return (
-    <Modal opened={opened} onClose={onClose} title={`Vorhandene Backups: ${name ?? ""}`} size="min(1400px, 95vw)">
+    <Modal opened={opened} onClose={onClose} title={`Vorhandene Backups: ${displayName ?? ""}`} size="min(1400px, 95vw)">
       <Stack>
         {isLoading && <Loader size="sm" />}
         {!isLoading && backups?.length === 0 && (
