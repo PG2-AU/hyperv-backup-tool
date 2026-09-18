@@ -1300,6 +1300,16 @@ class HyperVService:
             + "try { "
             f"New-Item -ItemType Directory -Force -Path '{dest_dir}' -ErrorAction Stop | Out-Null; "
             f"Copy-Item -Path '{escaped_src}' -Destination '{escaped_dest}' -Force -ErrorAction Stop; "
+            # Hyper-V-ueber-SMB3 prueft beim Anhaengen einer Disk NICHT nur
+            # die normale Windows-ACL (ein 'Everyone: FullControl' reicht
+            # NICHT, live verifiziert 2026-09-18) -- VMMS braucht explizit
+            # entweder den Rechner-Account des Compute-Knotens ODER die
+            # wohlbekannte Gruppe 'NT VIRTUAL MACHINE\\Virtual Machines'
+            # (deckt automatisch JEDE VM ab, kein Domaenen-/Knotenname
+            # noetig) in der ACL der Datei -- exakt das fehlt einer frisch
+            # per Copy-Item angelegten Datei. Siehe Microsofts eigene
+            # Hyper-V-over-SMB-Dokumentation zu genau diesem Setup-Schritt.
+            f"icacls '{escaped_dest}' /grant 'NT VIRTUAL MACHINE\\Virtual Machines:(M)' | Out-Null; "
             f"(Get-Item -Path '{escaped_dest}').Length "
             "} finally { " + cleanup_lines + "}"
         )
