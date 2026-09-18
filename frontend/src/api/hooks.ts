@@ -982,6 +982,18 @@ export function useRestoreRuns() {
   });
 }
 
+export interface CopySpeedEstimate {
+  csv_bytes_per_second: number | null;
+  smb3_bytes_per_second: number | null;
+}
+
+export function useCopySpeedEstimate() {
+  return useQuery({
+    queryKey: ["restore-copy-speed-estimate"],
+    queryFn: async () => (await apiClient.get<CopySpeedEstimate>("/restore/copy-speed-estimate")).data,
+  });
+}
+
 export function useCleanupRestoreRun() {
   const queryClient = useQueryClient();
   return useMutation({

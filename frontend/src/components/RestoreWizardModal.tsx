@@ -24,6 +24,7 @@ import { IconAlertTriangle, IconCheck, IconMinus, IconX } from "@tabler/icons-re
 import {
   useBackupsForObject,
   useCopyFileRestoreSelection,
+  useCopySpeedEstimate,
   useCsvs,
   useFileRestoreRun,
   useRecreateVm,
@@ -75,6 +76,19 @@ function folderOf(path: string | undefined | null): string | null {
   if (!path) return null;
   const idx = path.lastIndexOf("\\");
   return idx === -1 ? null : path.slice(0, idx).toLowerCase();
+}
+
+// Nutzer-Vorgabe 2026-09-18: ungefaehre Restore-Dauer aus der pro
+// storage_type ("csv"/"smb3") gemessenen durchschnittlichen Kopier-
+// geschwindigkeit (siehe GET /restore/copy-speed-estimate) und der
+// Groesse der zu kopierenden VHD(s) schaetzen.
+function formatEstimatedDuration(seconds: number): string {
+  if (seconds < 45) return "unter 1 Minute";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `ca. ${minutes} Minute${minutes === 1 ? "" : "n"}`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return `ca. ${hours} Std.${remMinutes ? ` ${remMinutes} Min.` : ""}`;
 }
 
 // Letztes Pfadsegment (ohne abschliessende Trenner). csv.volume_path ist
@@ -239,6 +253,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
   const { data: smbShares } = useSmbShares();
+  const { data: copySpeedEstimate } = useCopySpeedEstimate();
   const triggerRestore = useTriggerRestore();
   const { data: run } = useRestoreRun(currentRunId ?? undefined, true);
 
@@ -363,6 +378,20 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
     }
     capacityEstimates = Array.from(byTarget.values());
   }
+
+  // Nutzer-Vorgabe 2026-09-18: ungefaehre Restore-Dauer aus der Groesse
+  // der zu kopierenden VHD(s) und der zuletzt gemessenen durchschnitt-
+  // lichen Kopiergeschwindigkeit dieses storage_type schaetzen -- "smb3",
+  // sobald mindestens eine betroffene VHD auf einer SMB3-Freigabe liegt
+  // (eine gemischte VM waere technisch zwar moeglich, aber selten genug,
+  // dass ein einziger storage_type fuer die Schaetzung reicht).
+  const estimatedTotalBytes = capacityEstimates.reduce((sum, e) => sum + e.addedBytes, 0);
+  const estimatedUsesSmb = capacityEstimates.some((e) => e.share);
+  const estimatedBytesPerSecond = estimatedUsesSmb
+    ? copySpeedEstimate?.smb3_bytes_per_second
+    : copySpeedEstimate?.csv_bytes_per_second;
+  const estimatedDurationSeconds =
+    estimatedTotalBytes > 0 && estimatedBytesPerSecond ? estimatedTotalBytes / estimatedBytesPerSecond : null;
 
   useEffect(() => {
     if (!opened) {
@@ -736,6 +765,12 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                     {capacityEstimates.map((e) => (
                       <CapacityBar key={targetLabel(e)} estimate={e} />
                     ))}
+                    {estimatedDurationSeconds != null && (
+                      <Text size="xs" c="dimmed">
+                        Ungefähre Restore-Dauer: <strong>{formatEstimatedDuration(estimatedDurationSeconds)}</strong> (basierend
+                        auf früheren Kopiervorgängen)
+                      </Text>
+                    )}
                   </Stack>
                 )}
               </Stack>
@@ -872,6 +907,12 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                 {capacityEstimates.map((e) => (
                   <CapacityBar key={targetLabel(e)} estimate={e} />
                 ))}
+                {estimatedDurationSeconds != null && (
+                  <Text size="xs" c="dimmed">
+                    Ungefähre Restore-Dauer: <strong>{formatEstimatedDuration(estimatedDurationSeconds)}</strong> (basierend auf
+                    früheren Kopiervorgängen)
+                  </Text>
+                )}
               </Stack>
             )}
 

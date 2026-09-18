@@ -18,6 +18,7 @@ from app.models.hyperv_discovery import HyperVCsv, HyperVVm
 from app.models.kerberos_config import KerberosConfig  # noqa: F401  (nur fuer create_all)
 from app.models.ad_config import AdConfig  # noqa: F401  (nur fuer create_all)
 from app.models.resource_group import ResourceGroup, ResourceGroupPolicyLink, make_member_key
+from app.models.restore_copy_speed import RestoreCopySpeedSample  # noqa: F401  (nur fuer create_all)
 from app.models.role import Role, RoleAssignment
 from app.models.scheduler_config import SchedulerConfig
 from app.models.snapmirror_label import DEFAULT_SNAPMIRROR_LABELS, SnapMirrorLabel

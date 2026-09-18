@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import copy
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -51,6 +52,7 @@ from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, Hy
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun
 from app.models.restore_infra import RestoreInfraConfig
+from app.models.restore_copy_speed import RestoreCopySpeedSample
 from app.models.restore_proxy_host import RestoreProxyHost
 from app.models.restore_run import RestoreMode, RestoreRun, RestoreRunStep, RestoreStatus, RestoreStepStatus
 from app.schemas.backup import BackupSnapshotCheckpointRead
@@ -409,6 +411,41 @@ def get_run(run_id: str, db: Session = Depends(get_db), user=Depends(require_per
     return run
 
 
+class CopySpeedEstimateRead(BaseModel):
+    # Bytes/Sekunde, aus den letzten (max. 20) tatsaechlich gemessenen
+    # Kopiervorgaengen dieses storage_type (siehe _record_copy_speed) --
+    # None, solange noch kein einziger Restore dieses Typs gemessen wurde.
+    csv_bytes_per_second: float | None = None
+    smb3_bytes_per_second: float | None = None
+
+
+@router.get("/copy-speed-estimate", response_model=CopySpeedEstimateRead)
+def get_copy_speed_estimate(
+    db: Session = Depends(get_db), user=Depends(require_permission(Permission.RESTORE_RUN)),
+) -> CopySpeedEstimateRead:
+    """Durchschnittliche Kopiergeschwindigkeit aus den zuletzt gemessenen
+    Restore-Kopiervorgaengen (Nutzer-Vorgabe 2026-09-18) -- Grundlage fuer
+    die im Wizard vor dem Start angezeigte ungefaehre Restore-Dauer. Ein
+    gewichteter Durchschnitt (Summe Bytes / Summe Sekunden ueber die
+    letzten Messungen) statt eines Mittels der Einzelgeschwindigkeiten,
+    damit ein einzelner sehr kleiner/kurzer Kopiervorgang das Ergebnis
+    nicht unverhaeltnismaessig verzerrt."""
+    def _average(storage_type: str) -> float | None:
+        samples = (
+            db.query(RestoreCopySpeedSample)
+            .filter(RestoreCopySpeedSample.storage_type == storage_type)
+            .order_by(RestoreCopySpeedSample.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        total_seconds = sum(s.duration_seconds for s in samples)
+        if total_seconds <= 0:
+            return None
+        return sum(s.bytes_copied for s in samples) / total_seconds
+
+    return CopySpeedEstimateRead(csv_bytes_per_second=_average("csv"), smb3_bytes_per_second=_average("smb3"))
+
+
 class _StepCtx:
     """Persistiert Start/Ende eines Restore-Schritts live in die DB, damit
     das Frontend per Polling den Fortschritt sieht, waehrend der
@@ -455,6 +492,23 @@ def _netapp_service_for(cluster: NetAppCluster) -> NetAppOntapService:
         username=cluster.username,
         password=decrypt_secret(cluster.encrypted_password) if cluster.encrypted_password else None,
     )
+
+
+def _record_copy_speed(db: Session, storage_type: str, bytes_copied: int, duration_seconds: float) -> None:
+    """Speichert einen Messpunkt fuer die Kopiergeschwindigkeit eines
+    Restore-Laufs (Nutzer-Vorgabe 2026-09-18) -- Grundlage fuer die im
+    Wizard vor dem Start angezeigte ungefaehre Restore-Dauer (siehe
+    GET /copy-speed-estimate). Erfasst bewusst nur die Basis-/Leaf-Datei,
+    keine zusaetzlich kopierten AVHDX-Vorfahren (siehe Modul-Docstring in
+    app.models.restore_copy_speed). Best-effort: ein Fehler hier darf den
+    eigentlichen Restore nicht gefaehrden."""
+    if bytes_copied <= 0 or duration_seconds <= 0:
+        return
+    try:
+        db.add(RestoreCopySpeedSample(storage_type=storage_type, bytes_copied=bytes_copied, duration_seconds=duration_seconds))
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 _AVHDX_CHECKPOINT_SUFFIX_RE = re.compile(
@@ -893,10 +947,12 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
             restored_vhd_path = f"C:\\{remote_dir}\\{new_filename}"
 
             with _StepCtx(db, run.id, "copy", f"VHDX auf CSV kopieren ({new_filename})") as ctx:
+                copy_started_at = time.monotonic()
                 remote_size = proxy_service.copy_file_to_share(
                     proxy_session, local_path, node_address, remote_dir, new_filename,
                     hv_cluster.username, hv_password,
                 )
+                _record_copy_speed(db, "csv", remote_size, time.monotonic() - copy_started_at)
                 ctx.row.message = f"{remote_size} Bytes kopiert"
             run.restored_vhd_path = restored_vhd_path
             db.commit()
@@ -1225,7 +1281,9 @@ def _execute_smb_restore_add(run_id: str) -> None:
                 ctx.row.message = node_address
 
             with _StepCtx(db, run.id, "copy", "VHDX aus Snapshot in Staging-Ordner kopieren") as ctx:
-                node_service.copy_unc_to_unc(node_session, snapshot_path, staging_path, hv_cluster.username, hv_password)
+                copy_started_at = time.monotonic()
+                copied_bytes = node_service.copy_unc_to_unc(node_session, snapshot_path, staging_path, hv_cluster.username, hv_password)
+                _record_copy_speed(db, "smb3", copied_bytes, time.monotonic() - copy_started_at)
                 ctx.row.message = staging_path
 
             with _StepCtx(db, run.id, "attach", "VHDX als Zusatzdisk anhängen") as ctx:
@@ -1343,7 +1401,9 @@ def _execute_smb_restore_replace(run_id: str) -> None:  # noqa: C901
                 ctx.row.message = node_address
 
             with _StepCtx(db, run.id, "copy", "VHDX aus Snapshot kopieren") as ctx:
-                node_service.copy_unc_to_unc(node_session, snapshot_path, temp_path, hv_cluster.username, hv_password)
+                copy_started_at = time.monotonic()
+                copied_bytes = node_service.copy_unc_to_unc(node_session, snapshot_path, temp_path, hv_cluster.username, hv_password)
+                _record_copy_speed(db, "smb3", copied_bytes, time.monotonic() - copy_started_at)
                 ctx.row.message = temp_path
 
             restored_vhd_path = temp_path
@@ -1598,7 +1658,9 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                     dest_path = f"{dest_dir}\\{filename}"
 
                     with _StepCtx(db, run.id, f"copy-{i}", f"{vhd_name} aus Snapshot kopieren", step_model=VmRecreateRunStep) as ctx:
-                        node_service.copy_unc_to_unc(node_session, snapshot_path, dest_path, hv_cluster.username, hv_password)
+                        copy_started_at = time.monotonic()
+                        copied_bytes = node_service.copy_unc_to_unc(node_session, snapshot_path, dest_path, hv_cluster.username, hv_password)
+                        _record_copy_speed(db, "smb3", copied_bytes, time.monotonic() - copy_started_at)
                         ctx.row.message = dest_path
                     restored_path = dest_path
 
@@ -1750,10 +1812,12 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                     remote_dir = f"ClusterStorage\\{dest_csv}\\{target_name}\\Virtual Hard Disks"
 
                     with _StepCtx(db, run.id, f"copy-{i}", f"{vhd_name} auf CSV kopieren", step_model=VmRecreateRunStep) as ctx:
+                        copy_started_at = time.monotonic()
                         remote_size = proxy_service.copy_file_to_share(
                             proxy_session, local_path, node_address, remote_dir, filename,
                             hv_cluster.username, hv_password,
                         )
+                        _record_copy_speed(db, "csv", remote_size, time.monotonic() - copy_started_at)
                         ctx.row.message = f"{remote_size} Bytes kopiert"
                     restored_path = f"C:\\{remote_dir}\\{filename}"
 
