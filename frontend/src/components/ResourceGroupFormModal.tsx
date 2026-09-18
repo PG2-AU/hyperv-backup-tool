@@ -8,6 +8,7 @@ import {
   useCsvs,
   usePolicies,
   useSchedules,
+  useSmbShares,
   useUpdateResourceGroup,
   useVms,
   type ResourceGroupWritePayload,
@@ -21,10 +22,11 @@ import { formatSchedule } from "@/utils/format";
 import { makeMemberKey } from "@/utils/resourceGroupMember";
 import { dedupeOptions } from "@/utils/selectOptions";
 
-const SCOPE_OPTIONS: { value: BackupScope; label: string }[] = [
+const BASE_SCOPE_OPTIONS: { value: BackupScope; label: string }[] = [
   { value: "vm", label: "Virtuelle Maschinen" },
   { value: "csv", label: "Cluster Shared Volumes" },
 ];
+const SMB_SCOPE_OPTION: { value: BackupScope; label: string } = { value: "smb_share", label: "SMB3-Freigaben" };
 
 const NEW_POLICY_VALUE = "__new_policy__";
 const NEW_SCHEDULE_VALUE = "__new_schedule__";
@@ -50,6 +52,7 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
   const updateGroup = useUpdateResourceGroup();
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
+  const { data: smbShares } = useSmbShares();
   const { data: policies } = usePolicies();
   const { data: schedules } = useSchedules();
   const isEdit = !!group;
@@ -110,6 +113,8 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
   // hyperv_clusters.py) -- Mantine wirft sonst einen harten, von keinem
   // Error Boundary abgefangenen Rendering-Fehler und reisst die gesamte
   // Seite mit (live beobachtet).
+  const scopeOptions = (smbShares?.length ?? 0) > 0 ? [...BASE_SCOPE_OPTIONS, SMB_SCOPE_OPTION] : BASE_SCOPE_OPTIONS;
+
   const memberOptions = dedupeOptions(
     scope === "vm"
       ? (() => {
@@ -121,15 +126,32 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
               label: (nameCounts.get(v.name) ?? 0) > 1 && v.cluster ? `${v.name} (${v.cluster})` : v.name,
             }));
         })()
-      : (() => {
-          const nameCounts = countByName(csvs ?? []);
-          return (csvs ?? [])
-            .filter((c) => c.cluster_id)
-            .map((c) => ({
-              value: makeMemberKey(c.cluster_id!, c.name),
-              label: (nameCounts.get(c.name) ?? 0) > 1 && c.hyperv_cluster_name ? `${c.name} (${c.hyperv_cluster_name})` : c.name,
-            }));
-        })(),
+      : scope === "smb_share"
+        ? (() => {
+            // Schluessel 'server|share' -- dasselbe Format wie _smb_share_key()
+            // im Backend (jobs.py), damit die Mitgliedschaft dort korrekt
+            // aufgeloest wird (Backlog #22).
+            const shareName = (s: { server: string; share: string }) => `${s.server}|${s.share}`;
+            const nameCounts = countByName((smbShares ?? []).map((s) => ({ name: shareName(s) })));
+            return (smbShares ?? [])
+              .filter((s) => s.cluster_id)
+              .map((s) => ({
+                value: makeMemberKey(s.cluster_id!, shareName(s)),
+                label:
+                  (nameCounts.get(shareName(s)) ?? 0) > 1 && s.hyperv_cluster_name
+                    ? `\\\\${s.server}\\${s.share} (${s.hyperv_cluster_name})`
+                    : `\\\\${s.server}\\${s.share}`,
+              }));
+          })()
+        : (() => {
+            const nameCounts = countByName(csvs ?? []);
+            return (csvs ?? [])
+              .filter((c) => c.cluster_id)
+              .map((c) => ({
+                value: makeMemberKey(c.cluster_id!, c.name),
+                label: (nameCounts.get(c.name) ?? 0) > 1 && c.hyperv_cluster_name ? `${c.name} (${c.hyperv_cluster_name})` : c.name,
+              }));
+          })(),
   );
 
   function handleScopeChange(value: string | null) {
@@ -189,7 +211,7 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
             <Stack mt="md">
               <TextInput label="Name" placeholder="z.B. Bronze" required value={name} onChange={(e) => setName(e.currentTarget.value)} />
 
-              <Select label="Typ" data={SCOPE_OPTIONS} value={scope} onChange={handleScopeChange} allowDeselect={false} disabled={isEdit} />
+              <Select label="Typ" data={scopeOptions} value={scope} onChange={handleScopeChange} allowDeselect={false} disabled={isEdit} />
 
               {scope === "csv" && (
                 <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
@@ -197,9 +219,15 @@ export function ResourceGroupFormModal({ opened, onClose, group, duplicateFrom }
                   sichern, erschweren aber eine spätere gezielte Wiederherstellung genau dieses einen CSVs.
                 </Alert>
               )}
+              {scope === "smb_share" && (
+                <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
+                  Empfohlen: nur eine SMB3-Freigabe pro Protection Group. Mehrere Freigaben in derselben Gruppe lassen
+                  sich zwar sichern, erschweren aber eine spätere gezielte Wiederherstellung genau dieser einen Freigabe.
+                </Alert>
+              )}
 
               <MultiSelect
-                label={scope === "vm" ? "Virtuelle Maschinen" : "Cluster Shared Volumes"}
+                label={scope === "vm" ? "Virtuelle Maschinen" : scope === "smb_share" ? "SMB3-Freigaben" : "Cluster Shared Volumes"}
                 placeholder="Objekte auswaehlen"
                 data={memberOptions}
                 value={members}

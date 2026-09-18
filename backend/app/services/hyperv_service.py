@@ -395,24 +395,44 @@ class HyperVService:
                 results.append(HyperVNodeReachability(name=name, address=address, reachable=False, error=str(exc)))
         return results
 
-    def list_vms(self, session: winrm.Session) -> list[VirtualMachineInfo]:
+    def list_vms(
+        self, session: winrm.Session, username: str | None = None, password: str | None = None
+    ) -> list[VirtualMachineInfo]:
         # Get-VM liefert nur die auf DIESEM Host lokalen VMs -- fuer eine
         # clusterweite Sicht wird diese Methode daher pro Knoten einzeln
         # aufgerufen (siehe run_discovery), nicht einmalig gegen den CNO.
-        return self._query_vms(session)
+        #
+        # 'username'/'password' sind optional und NICHT dieselben Zugangs-
+        # daten wie die der WinRM-Session selbst (die steht schon -- 'session'
+        # ist bereits verbunden) -- sie werden nur gebraucht, falls eine VHD
+        # auf einem SMB3-Share liegt (siehe _query_vms), um dort per 'net use'
+        # explizit einzuloggen. Werden sie weggelassen, verhaelt sich diese
+        # Methode exakt wie zuvor (Get-VHD auf einem UNC-Pfad schlaegt dann
+        # stumm fehl, siehe Kommentar in _query_vms).
+        return self._query_vms(session, username=username, password=password)
 
-    def get_vm(self, session: winrm.Session, vm_name: str) -> VirtualMachineInfo | None:
+    def get_vm(
+        self, session: winrm.Session, vm_name: str, username: str | None = None, password: str | None = None
+    ) -> VirtualMachineInfo | None:
         """Gezielte Abfrage EINER VM (Get-VM -Name), statt wie list_vms alle
         VMs des Knotens zu discovern -- fuer Faelle, in denen ein einzelner
         Vorgang (z.B. eine Checkpoint-Loeschung) den discoverten Zustand
         gezielt und sofort aktualisieren soll, ohne auf den naechsten vollen
         Discovery-Lauf zu warten (siehe delete_vm_checkpoint in
         app.api.routes.vms). Liefert None, falls die VM nicht (mehr)
-        existiert oder auf diesem Knoten nicht (mehr) liegt."""
-        results = self._query_vms(session, name_filter=vm_name)
+        existiert oder auf diesem Knoten nicht (mehr) liegt.
+
+        'username'/'password': siehe list_vms."""
+        results = self._query_vms(session, name_filter=vm_name, username=username, password=password)
         return results[0] if results else None
 
-    def _query_vms(self, session: winrm.Session, name_filter: str | None = None) -> list[VirtualMachineInfo]:
+    def _query_vms(
+        self,
+        session: winrm.Session,
+        name_filter: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+    ) -> list[VirtualMachineInfo]:
         # $env:COMPUTERNAME statt $vm.ComputerName, da wir wissen, mit
         # welchem Knoten diese Session tatsaechlich verbunden ist.
         #
@@ -426,13 +446,51 @@ class HyperVService:
         # statt den gesamten Discovery-Lauf daran scheitern zu lassen.
         escaped_name = name_filter.replace("'", "''") if name_filter else None
         name_clause = f" -Name '{escaped_name}' -ErrorAction SilentlyContinue" if escaped_name else ""
+
+        # SMB3-Freigaben (siehe HyperVSmbShare/#22) sind ein DRITTER Host aus
+        # Sicht dieser WinRM-Session -- dieselbe Double-Hop-Problematik wie
+        # bei copy_file_to_share (siehe dortiger Kommentar): die eingehende
+        # WinRM-Authentifizierung dieses Knotens laesst sich nicht an den
+        # CIFS-Server der SVM weiterreichen, weder unter NTLM noch (ohne AD
+        # Constrained Delegation) unter Kerberos. Get-VHD auf einem
+        # \\server\share-Pfad liefert dann still $null (-ErrorAction
+        # SilentlyContinue), und SizeBytes/UsedBytes fallen unbemerkt auf 0
+        # zurueck -- live gefunden 2026-09-18 (RestoreTestVM_PG2-restored).
+        # Fix nach demselben Muster wie dort: mit den (separat mitgegebenen,
+        # NICHT aus der Session delegierten) Cluster-Zugangsdaten per 'net
+        # use' explizit an der Freigabe anmelden, bevor Get-VHD sie liest --
+        # pro Freigabe nur einmal (HashSet), unabhaengig von der Zahl der
+        # VMs/VHDs darauf. Nur aktiv, wenn der Aufrufer Zugangsdaten
+        # mitgibt (username ist None: identisch zum bisherigen Verhalten,
+        # z.B. wenn diese Session selbst schon fuer einen anderen Zweck ohne
+        # Passwort im Klartext aufgebaut wurde).
+        smb_setup = ""
+        smb_map = ""
+        smb_cleanup = ""
+        if username is not None and password is not None:
+            escaped_user = username.replace("'", "''")
+            escaped_pass = password.replace("'", "''")
+            smb_setup = (
+                f"$smbUser = '{escaped_user}'; $smbPass = '{escaped_pass}'; "
+                "$smbMapped = New-Object System.Collections.Generic.HashSet[string]; "
+            )
+            smb_map = (
+                r"if ($leafPath -match '^\\\\([^\\]+)\\([^\\]+)\\') { "
+                r"$smbRoot = '\\' + $Matches[1] + '\' + $Matches[2]; "
+                "if ($smbMapped.Add($smbRoot)) { net use $smbRoot $smbPass /user:$smbUser /persistent:no 2>&1 | Out-Null }; "
+                "}; "
+            )
+            smb_cleanup = "foreach ($s in $smbMapped) { net use $s /delete /y 2>&1 | Out-Null }; "
+
         script = (
+            smb_setup +
             f"$vms = Get-VM{name_clause}; "
             "$hostName = $env:COMPUTERNAME; "
-            "$vms | ForEach-Object { "
+            "$__hvnbResult = $vms | ForEach-Object { "
             "$vm = $_; "
             "$vhds = @($vm.HardDrives | ForEach-Object { "
             "$leafPath = $_.Path; "
+            + smb_map +
             "$info = Get-VHD -Path $leafPath -ErrorAction SilentlyContinue; "
             "$baseSize = $null; $baseUsed = $null; "
             "if ($info -and $leafPath -like '*.avhdx') { "
@@ -460,7 +518,9 @@ class HyperVService:
             "MemoryStartupBytes = $vm.MemoryStartup; MemoryMinimumBytes = $vm.MemoryMinimum; MemoryMaximumBytes = $vm.MemoryMaximum; "
             "DynamicMemoryEnabled = $vm.DynamicMemoryEnabled; NetworkAdapters = $nics; PciDevices = $pci; Checkpoints = $checkpoints "
             "} "
-            "} | ConvertTo-Json -Depth 6"
+            "}; "
+            + smb_cleanup +
+            "$__hvnbResult | ConvertTo-Json -Depth 6"
         )
         result = self._run_ps(session, script)
         if not result.success:
@@ -629,7 +689,7 @@ class HyperVService:
             try:
                 node_service = HyperVService(self._settings, target, use_https=self._use_https, node_hostname=node.name)
                 session = node_service._session(username, password)
-                vms = node_service.list_vms(session)
+                vms = node_service.list_vms(session, username=username, password=password)
                 data.vms.extend(vms)
                 results.append(DiscoveryStepResult("vms", True, f"{len(vms)} VM(s) auf '{node.name}' gefunden", len(vms)))
             except Exception as exc:

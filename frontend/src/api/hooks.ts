@@ -51,6 +51,7 @@ import type {
   FileEntry,
   FileRestoreRun,
   TriggerFileRestorePayload,
+  SmbShare,
   SnapMirrorCheckGroup,
   SnapMirrorCheckResult,
   VmBackupRun,
@@ -121,6 +122,13 @@ export function useCsvs() {
   return useQuery({
     queryKey: ["csvs"],
     queryFn: async () => (await apiClient.get<Csv[]>("/vms/csvs")).data,
+  });
+}
+
+export function useSmbShares() {
+  return useQuery({
+    queryKey: ["smb-shares"],
+    queryFn: async () => (await apiClient.get<SmbShare[]>("/vms/smb-shares")).data,
   });
 }
 

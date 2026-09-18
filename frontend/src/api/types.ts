@@ -30,6 +30,9 @@ export interface Vm {
   cluster?: string | null;
   cluster_id?: string | null;
   csv_paths: string[];
+  // UNC-Pfade ('\\server\share') der NetApp-CIFS-Freigaben, auf denen VHDs
+  // dieser VM liegen (Backlog #22) -- parallel zu csv_paths.
+  smb_share_paths: string[];
   vhdx_size_bytes?: number | null;
   vhdx_used_bytes?: number | null;
   vhds: VhdInfo[];
@@ -63,6 +66,22 @@ export interface Csv {
   volume_name?: string | null;
   volume_capacity_bytes?: number | null;
   volume_used_bytes?: number | null;
+  svm_name?: string | null;
+  netapp_cluster_name?: string | null;
+  resource_group_names: string[];
+  policy_names: string[];
+  policy_ids: string[];
+  protected: boolean;
+}
+
+export interface SmbShare {
+  server: string;
+  share: string;
+  hyperv_cluster_name?: string | null;
+  cluster_id?: string | null;
+  capacity_bytes?: number | null;
+  used_bytes?: number | null;
+  volume_name?: string | null;
   svm_name?: string | null;
   netapp_cluster_name?: string | null;
   resource_group_names: string[];
@@ -471,7 +490,7 @@ export interface MetroClusterStatus {
   switchover_in_progress: boolean;
 }
 
-export type BackupScope = "vm" | "csv" | "lun";
+export type BackupScope = "vm" | "csv" | "lun" | "smb_share";
 
 export interface SnapMirrorCheckGroup {
   scope: BackupScope;
@@ -1082,7 +1101,7 @@ export interface KerberosTestResult {
 // Aggregate, siehe GET /api/capacity-history. object_key ist der stabile,
 // serverseitig abgeleitete Schluessel (siehe capacity_key im Backend) --
 // NICHT die id des jeweiligen Discovery-Objekts.
-export type CapacityObjectType = "vhd" | "csv" | "lun" | "volume" | "aggregate";
+export type CapacityObjectType = "vhd" | "csv" | "lun" | "volume" | "aggregate" | "smb_share";
 
 export interface CapacitySamplePoint {
   sampled_at: string;

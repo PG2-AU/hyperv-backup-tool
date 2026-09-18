@@ -17,18 +17,21 @@ abgeleitet:
   aufgeloeste Mount-Ordner.
 - LUN/Volume/Aggregat: ONTAPs eigene UUID ist stabil ueber die gesamte
   Lebensdauer des Objekts -- Fallback auf den Namen, falls uuid
-  ausnahmsweise fehlt (laut Modell nullable)."""
+  ausnahmsweise fehlt (laut Modell nullable).
+- SMB3-Freigabe (Backlog #22): analog zu CSV -- Server+Freigabename sind
+  die stabile Kennung (kein separates Windows-Ressourcenobjekt, siehe
+  HyperVSmbShare)."""
 
 from typing import Literal
 
-CapacityObjectType = Literal["vhd", "csv", "lun", "volume", "aggregate"]
+CapacityObjectType = Literal["vhd", "csv", "lun", "volume", "aggregate", "smb_share"]
 
 
 def capacity_key(object_type: CapacityObjectType, cluster_id: str, **kwargs: str | None) -> str:
     if object_type == "vhd":
         path = kwargs.get("path") or ""
         return f"{cluster_id}::{path}"
-    if object_type == "csv":
+    if object_type in ("csv", "smb_share"):
         name = kwargs.get("name") or ""
         return f"{cluster_id}::{name}"
     if object_type in ("lun", "volume", "aggregate"):

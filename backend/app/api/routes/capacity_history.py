@@ -1,12 +1,13 @@
-"""Kapazitaetsverlauf (Liniendiagramm) fuer VHDs, CSVs, LUNs, Volumes,
-Aggregate -- ein einziger Endpunkt fuer alle fuenf Objekttypen, siehe
-app.core.capacity_history fuer die Schluesselableitung und
+"""Kapazitaetsverlauf (Liniendiagramm) fuer VHDs, CSVs, SMB3-Freigaben,
+LUNs, Volumes, Aggregate -- ein einziger Endpunkt fuer alle Objekttypen,
+siehe app.core.capacity_history fuer die Schluesselableitung und
 app.core.scheduler.run_capacity_history_sampling fuer den taeglichen
 Sammel-Job, der die hier abgefragten CapacitySample-Zeilen schreibt.
 
-Leserechte richten sich nach dem jeweiligen Objekttyp: vhd/csv gehoeren
-zu Hyper-V (HYPERV_VIEW), lun/volume/aggregate zu NetApp (STORAGE_VIEW)
--- dieselbe Aufteilung wie bei den jeweiligen Listen-Endpunkten."""
+Leserechte richten sich nach dem jeweiligen Objekttyp: vhd/csv/smb_share
+gehoeren zu Hyper-V (HYPERV_VIEW), lun/volume/aggregate zu NetApp
+(STORAGE_VIEW) -- dieselbe Aufteilung wie bei den jeweiligen
+Listen-Endpunkten."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/api/capacity-history", tags=["capacity-history"])
 
 def _require_view(object_type: CapacityObjectType, user: User, db: Session) -> None:
     permissions = get_user_permissions(user, db)
-    required = Permission.HYPERV_VIEW if object_type in ("vhd", "csv") else Permission.STORAGE_VIEW
+    required = Permission.HYPERV_VIEW if object_type in ("vhd", "csv", "smb_share") else Permission.STORAGE_VIEW
     if required not in permissions:
         raise HTTPException(status_code=403, detail=f"Fehlende Berechtigung: {required.value}")
 
@@ -72,11 +73,11 @@ def get_capacity_history(
             for vhd in vhds
         ]
 
-    if object_type == "csv":
+    if object_type in ("csv", "smb_share"):
         if not name:
-            raise HTTPException(status_code=400, detail="name ist fuer object_type=csv erforderlich")
-        key = capacity_key("csv", cluster_id, name=name)
-        return [_series_for_key(db, "csv", key, name, since)]
+            raise HTTPException(status_code=400, detail=f"name ist fuer object_type={object_type} erforderlich")
+        key = capacity_key(object_type, cluster_id, name=name)
+        return [_series_for_key(db, object_type, key, name, since)]
 
     if object_type in ("lun", "volume", "aggregate"):
         model = {"lun": NetAppLun, "volume": NetAppVolume, "aggregate": NetAppAggregate}[object_type]

@@ -238,7 +238,13 @@ def _apply_vm_discovery_refresh(db: Session, cluster_id: str, vm: HyperVVm, refr
 
 
 def _get_vm_settled(
-    node_service: HyperVService, node_session, vm_name: str, attempts: int = 4, delay_sec: float = 5.0
+    node_service: HyperVService,
+    node_session,
+    vm_name: str,
+    attempts: int = 4,
+    delay_sec: float = 5.0,
+    username: str | None = None,
+    password: str | None = None,
 ) -> VirtualMachineInfo | None:
     """get_vm() mit kurzem, begrenztem Retry -- fuer eine LAUFENDE VM laeuft
     der AVHDX->VHDX-Merge nach Remove-VMSnapshot asynchron im Hintergrund
@@ -255,15 +261,19 @@ def _get_vm_settled(
     NICHT im automatisierten Backup-Pfad verwendet, dort soll ein
     haengender/langsamer Merge nicht die Laufzeit des gesamten Laufs
     verlaengern (das Sicherheitsnetz dort ist der Alarm hyperv_vm_avhdx_
-    without_checkpoint, siehe scheduler.py)."""
-    result = node_service.get_vm(node_session, vm_name)
+    without_checkpoint, siehe scheduler.py).
+
+    'username'/'password' (optional): siehe HyperVService.list_vms --
+    noetig, damit Get-VHD fuer eine SMB3-hostete VM (#22) nicht am
+    Double-Hop-Problem scheitert und dabei still 0 Bytes liefert."""
+    result = node_service.get_vm(node_session, vm_name, username=username, password=password)
     for _ in range(attempts - 1):
         if result is None or result.checkpoints:
             break
         if not any(v.path.lower().endswith(".avhdx") for v in result.vhds):
             break
         time.sleep(delay_sec)
-        result = node_service.get_vm(node_session, vm_name)
+        result = node_service.get_vm(node_session, vm_name, username=username, password=password)
     return result
 
 

@@ -23,13 +23,13 @@ import {
 } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useCsvs, useDeleteVmCheckpoint, useDiscoverVm, useResourceGroups, useRunningJobRuns, useVms } from "@/api/hooks";
+import { useCsvs, useDeleteVmCheckpoint, useDiscoverVm, useResourceGroups, useRunningJobRuns, useSmbShares, useVms } from "@/api/hooks";
 import { BackupsModal } from "@/components/BackupsModal";
 import { CapacityHistoryPanel } from "@/components/CapacityHistoryPanel";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
-import type { BackupScope, Csv, ResourceGroup, Vm } from "@/api/types";
+import type { BackupScope, Csv, ResourceGroup, SmbShare, Vm } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, lunShortName } from "@/utils/format";
@@ -66,6 +66,11 @@ function formatCheckpointAge(creationTime: string): string {
 // ResourceGroup.members (siehe app.models.resource_group).
 function csvIdentity(csv: Csv): string {
   return `${csv.cluster_id ?? ""}::${csv.name}`;
+}
+
+// Analog zu csvIdentity, fuer SMB3-Freigaben (Backlog #22).
+function smbShareIdentity(share: SmbShare): string {
+  return `${share.cluster_id ?? ""}::${share.server}::${share.share}`;
 }
 
 const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
@@ -154,11 +159,35 @@ function ChainNode({
   );
 }
 
-function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined; onClose: () => void }) {
+// Backlog #22: '\\server\share\...' -> {server, share}, sonst null (lokaler/
+// ClusterStorage-Pfad). Gemeinsam von VmChainHeader (Speicherkette) und
+// vmsOnSmbShare (SMB3-Freigaben-Tab) genutzt.
+function parseSmbShare(path: string): { server: string; share: string } | null {
+  const match = /^\\\\([^\\]+)\\([^\\]+)\\/.exec(path);
+  return match ? { server: match[1], share: match[2] } : null;
+}
+
+function VmChainHeader({
+  vm,
+  csvs,
+  smbShares,
+  onClose,
+}: {
+  vm: Vm;
+  csvs: Csv[] | undefined;
+  smbShares: SmbShare[] | undefined;
+  onClose: () => void;
+}) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const vhds = vm.vhds.length
     ? vm.vhds
-    : vm.csv_paths.map((p) => ({ name: `${vm.name}.vhdx`, size_bytes: vm.vhdx_size_bytes ?? 0, used_bytes: vm.vhdx_used_bytes, csv_path: p }));
+    : [...vm.csv_paths, ...vm.smb_share_paths].map((p) => ({
+        name: `${vm.name}.vhdx`,
+        size_bytes: vm.vhdx_size_bytes ?? 0,
+        used_bytes: vm.vhdx_used_bytes,
+        csv_path: p,
+        full_path: p,
+      }));
 
   return (
     <Paper withBorder p="md">
@@ -217,8 +246,16 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
 
       <Stack gap="sm">
         {vhds.map((vhd, i) => {
-          const csvName = vhd.csv_path.split(/[\\/]/).pop();
-          const csv = csvs?.find((c) => c.name === csvName && c.cluster_id === vm.cluster_id);
+          // Backlog #22: eine VHD liegt entweder auf einer CSV ODER einem
+          // SMB3-Export -- full_path ist der einzige verlaesslich fuer beide
+          // Faelle vorhandene Pfad (csv_path faellt fuer SMB auf den vollen
+          // Dateipfad zurueck, ungeeignet fuer eine Freigaben-Aufloesung).
+          const smb = parseSmbShare(vhd.full_path);
+          const csvName = !smb ? vhd.csv_path.split(/[\\/]/).pop() : null;
+          const csv = csvName ? csvs?.find((c) => c.name === csvName && c.cluster_id === vm.cluster_id) : undefined;
+          const share = smb
+            ? smbShares?.find((s) => s.server === smb.server && s.share === smb.share && s.cluster_id === vm.cluster_id)
+            : undefined;
           return (
             <Box key={i} style={{ overflowX: "auto" }}>
               <Group gap={6} wrap="nowrap">
@@ -263,9 +300,25 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
                     <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
                     <ChainNode icon={<IconServer size={14} />} label="Cluster" title={csv.netapp_cluster_name ?? "-"} />
                   </>
+                ) : share ? (
+                  <>
+                    <ChainNode
+                      icon={<IconFolder size={14} />}
+                      label="SMB3-Freigabe"
+                      title={`\\\\${share.server}\\${share.share}`}
+                      usedBytes={share.used_bytes}
+                      capacityBytes={share.capacity_bytes}
+                    />
+                    <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+                    <ChainNode icon={<IconDatabase size={14} />} label="Volume" title={share.volume_name ?? "-"} />
+                    <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+                    <ChainNode icon={<IconServerCog size={14} />} label="SVM" title={share.svm_name ?? "-"} />
+                    <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+                    <ChainNode icon={<IconServer size={14} />} label="Cluster" title={share.netapp_cluster_name ?? "-"} />
+                  </>
                 ) : (
                   <Text c="dimmed" size="sm">
-                    CSV-Details nicht verfügbar
+                    {smb ? "SMB3-Freigaben-Details nicht verfügbar" : "CSV-Details nicht verfügbar"}
                   </Text>
                 )}
               </Group>
@@ -282,6 +335,21 @@ function VmChainHeader({ vm, csvs, onClose }: { vm: Vm; csvs: Csv[] | undefined;
 // vm.csv_paths (Ordnername je VHD-Pfad) rueckwaerts aufgeloest.
 function vmsOnCsv(csv: Csv, vms: Vm[] | undefined): Vm[] {
   return vms?.filter((vm) => vm.cluster_id === csv.cluster_id && vm.csv_paths.some((p) => p.split(/[\\/]/).pop() === csv.name)) ?? [];
+}
+
+// Analog zu vmsOnCsv, fuer SMB3-Freigaben (Backlog #22) -- eine Freigabe
+// traegt ebenfalls keine eigene VM-Liste.
+function vmsOnSmbShare(share: SmbShare, vms: Vm[] | undefined): Vm[] {
+  return (
+    vms?.filter(
+      (vm) =>
+        vm.cluster_id === share.cluster_id &&
+        vm.smb_share_paths.some((p) => {
+          const parsed = parseSmbShare(p + "\\");
+          return parsed?.server === share.server && parsed?.share === share.share;
+        }),
+    ) ?? []
+  );
 }
 
 function CsvChainHeader({
@@ -383,6 +451,94 @@ function CsvChainHeader({
   );
 }
 
+// SMB3-Pendant zu CsvChainHeader (Backlog #22) -- gleiches Muster, aber ohne
+// LUN-Knoten (eine SMB3-Freigabe liegt direkt auf einem NetApp-Volume, kein
+// Block-LUN-Umweg).
+function SmbShareChainHeader({
+  share,
+  vms,
+  onClose,
+  onVmClick,
+}: {
+  share: SmbShare;
+  vms: Vm[] | undefined;
+  onClose: () => void;
+  onVmClick: (vm: Vm) => void;
+}) {
+  const vmsOnThisShare = vmsOnSmbShare(share, vms);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const uncPath = `\\\\${share.server}\\${share.share}`;
+
+  return (
+    <Paper withBorder p="md">
+      <Group justify="space-between" mb="xs">
+        <Text size="sm" fw={600}>
+          Speicherkette: {uncPath}
+        </Text>
+        <Group gap={4}>
+          <Tooltip label="Kapazitätsverlauf">
+            <ActionIcon variant={historyOpen ? "light" : "subtle"} size="sm" onClick={() => setHistoryOpen((v) => !v)}>
+              <IconChartLine size={14} />
+            </ActionIcon>
+          </Tooltip>
+          <ActionIcon variant="subtle" size="sm" onClick={onClose}>
+            <IconX size={14} />
+          </ActionIcon>
+        </Group>
+      </Group>
+
+      {historyOpen && (
+        <Box mb="sm">
+          <CapacityHistoryPanel objectType="smb_share" clusterId={share.cluster_id} name={uncPath} />
+        </Box>
+      )}
+
+      <Stack gap="sm">
+        <Group gap={6} wrap="nowrap">
+          <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+            VMs auf dieser Freigabe:
+          </Text>
+          {vmsOnThisShare.length ? (
+            vmsOnThisShare.map((vm) => (
+              <Badge
+                key={vm.id}
+                component="button"
+                color="teal"
+                variant="light"
+                style={{ cursor: "pointer", border: "none" }}
+                onClick={() => onVmClick(vm)}
+              >
+                {vm.name}
+              </Badge>
+            ))
+          ) : (
+            <Text size="xs" c="dimmed">
+              keine
+            </Text>
+          )}
+        </Group>
+        <Box style={{ overflowX: "auto" }}>
+          <Group gap={6} wrap="nowrap">
+            <ChainNode
+              icon={<IconFolder size={14} />}
+              label="SMB3-Freigabe"
+              title={uncPath}
+              usedBytes={share.used_bytes}
+              capacityBytes={share.capacity_bytes}
+            />
+            <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+            <ChainNode icon={<IconDatabase size={14} />} label="Volume" title={share.volume_name ?? "-"} />
+            <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+            <ChainNode icon={<IconServerCog size={14} />} label="SVM" title={share.svm_name ?? "-"} />
+            <IconChevronsRight size={16} style={{ flexShrink: 0 }} />
+            <ChainNode icon={<IconServer size={14} />} label="Cluster" title={share.netapp_cluster_name ?? "-"} />
+          </Group>
+        </Box>
+      </Stack>
+    </Paper>
+  );
+}
+
 export function VmsPage() {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   // RBAC (Backlog #12, 2026-09-17): "Backup jetzt" braucht backup:run,
@@ -390,11 +546,14 @@ export function VmsPage() {
   const canRunBackup = hasPermission("backup:run");
   const canManageHyperv = hasPermission("hyperv:manage");
   const [params, setParams] = useSearchParams();
-  const activeTab = params.get("tab") === "csv" ? "csv" : "vms";
+  const tabParam = params.get("tab");
+  const activeTab = tabParam === "csv" ? "csv" : tabParam === "smb" ? "smb" : "vms";
   const { data: vms } = useVms();
   const { data: csvs } = useCsvs();
+  const { data: smbShares } = useSmbShares();
   const [selectedVm, setSelectedVm] = useState<Vm | null>(null);
   const [selectedCsv, setSelectedCsv] = useState<Csv | null>(null);
+  const [selectedSmbShare, setSelectedSmbShare] = useState<SmbShare | null>(null);
   const [backupsTarget, setBackupsTarget] = useState<{ scope: BackupScope; name: string; clusterId: string | null } | null>(null);
   const [restoreWizardTarget, setRestoreWizardTarget] = useState<{ vmName: string; snapshotId: string; clusterId: string | null } | null>(
     null,
@@ -403,6 +562,8 @@ export function VmsPage() {
   const filteredVms = (vms ?? []).filter((vm) => matchesAllColumns(vm, vmSearch));
   const [csvSearch, setCsvSearch] = useState("");
   const filteredCsvs = (csvs ?? []).filter((csv) => matchesAllColumns(csv, csvSearch));
+  const [smbShareSearch, setSmbShareSearch] = useState("");
+  const filteredSmbShares = (smbShares ?? []).filter((share) => matchesAllColumns(share, smbShareSearch));
 
   // Deep-Link von einem VM-Badge in CsvChainHeader ("VMs auf diesem CSV") --
   // setParams({ tab: "vms", vm: vm.id }) setzt den Query-Param, dieser
@@ -542,12 +703,20 @@ export function VmsPage() {
 
   function toggleSelectedVm(vm: Vm) {
     setSelectedCsv(null);
+    setSelectedSmbShare(null);
     setSelectedVm((prev) => (prev?.id === vm.id ? null : vm));
   }
 
   function toggleSelectedCsv(csv: Csv) {
     setSelectedVm(null);
+    setSelectedSmbShare(null);
     setSelectedCsv((prev) => (prev && csvIdentity(prev) === csvIdentity(csv) ? null : csv));
+  }
+
+  function toggleSelectedSmbShare(share: SmbShare) {
+    setSelectedVm(null);
+    setSelectedCsv(null);
+    setSelectedSmbShare((prev) => (prev && smbShareIdentity(prev) === smbShareIdentity(share) ? null : share));
   }
 
   // Eine VM/ein CSV kann gleichzeitig in mehreren Protection Groups
@@ -568,11 +737,15 @@ export function VmsPage() {
     runOrPickForGroups(protectingGroupsOf(csv.resource_group_names));
   }
 
+  function runBackupNowForSmbShare(share: SmbShare) {
+    runOrPickForGroups(protectingGroupsOf(share.resource_group_names));
+  }
+
   return (
     <Stack style={{ height: "calc(100vh - 112px)" }} gap="md">
       <Title order={3}>Inventory</Title>
 
-      {selectedVm && <VmChainHeader vm={selectedVm} csvs={csvs} onClose={() => setSelectedVm(null)} />}
+      {selectedVm && <VmChainHeader vm={selectedVm} csvs={csvs} smbShares={smbShares} onClose={() => setSelectedVm(null)} />}
       {selectedCsv && (
         <CsvChainHeader
           csv={selectedCsv}
@@ -580,6 +753,17 @@ export function VmsPage() {
           onClose={() => setSelectedCsv(null)}
           onVmClick={(vm) => {
             setSelectedCsv(null);
+            setParams({ tab: "vms", vm: vm.id });
+          }}
+        />
+      )}
+      {selectedSmbShare && (
+        <SmbShareChainHeader
+          share={selectedSmbShare}
+          vms={vms}
+          onClose={() => setSelectedSmbShare(null)}
+          onVmClick={(vm) => {
+            setSelectedSmbShare(null);
             setParams({ tab: "vms", vm: vm.id });
           }}
         />
@@ -593,6 +777,7 @@ export function VmsPage() {
         <Tabs.List>
           <Tabs.Tab value="vms">Virtuelle Maschinen</Tabs.Tab>
           <Tabs.Tab value="csv">Cluster Shared Volumes</Tabs.Tab>
+          {(smbShares?.length ?? 0) > 0 && <Tabs.Tab value="smb">SMB3-Freigaben</Tabs.Tab>}
         </Tabs.List>
 
         <Tabs.Panel value="vms" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -609,7 +794,7 @@ export function VmsPage() {
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Host</Table.Th>
                 <Table.Th>Cluster</Table.Th>
-                <Table.Th>CSV-Pfade</Table.Th>
+                <Table.Th>Speicherort</Table.Th>
                 <Table.Th>Belegung</Table.Th>
                 <Table.Th>Protection Group</Table.Th>
                 <Table.Th>Protected</Table.Th>
@@ -653,23 +838,23 @@ export function VmsPage() {
                           </Badge>
                         </Tooltip>
                       )}
-                      {vm.csv_paths.length > 1 && (
+                      {vm.csv_paths.length + vm.smb_share_paths.length > 1 && (
                         <Tooltip
                           multiline
                           w={280}
                           label={
                             <Stack gap={2}>
                               <Text size="xs">Festplatten verteilt auf:</Text>
-                              {vm.csv_paths.map((p) => (
+                              {[...vm.csv_paths, ...vm.smb_share_paths].map((p) => (
                                 <Text key={p} size="xs">
-                                  {p.split(/[\\/]/).pop()}
+                                  {p}
                                 </Text>
                               ))}
                             </Stack>
                           }
                         >
                           <Badge color="orange" variant="filled" leftSection={<IconAlertTriangle size={12} />}>
-                            {vm.csv_paths.length} CSVs
+                            {vm.csv_paths.length + vm.smb_share_paths.length} Speicherorte
                           </Badge>
                         </Tooltip>
                       )}
@@ -700,7 +885,7 @@ export function VmsPage() {
                   </Table.Td>
                   <Table.Td>{vm.host}</Table.Td>
                   <Table.Td>{vm.cluster ?? "-"}</Table.Td>
-                  <Table.Td>{vm.csv_paths.join(", ")}</Table.Td>
+                  <Table.Td>{[...vm.csv_paths, ...vm.smb_share_paths].join(", ") || "-"}</Table.Td>
                   <Table.Td miw={140}>
                     <Text size="xs" c="dimmed">
                       {formatBytes(vm.vhdx_used_bytes)} / {formatBytes(vm.vhdx_size_bytes)}
@@ -884,6 +1069,115 @@ export function VmsPage() {
           </div>
           </Paper>
         </Tabs.Panel>
+
+        {(smbShares?.length ?? 0) > 0 && (
+          <Tabs.Panel value="smb" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <Title order={5} mb="sm">
+                SMB3-Freigaben
+              </Title>
+              <Group justify="flex-start" mb="sm">
+                <SearchInput value={smbShareSearch} onChange={setSmbShareSearch} />
+              </Group>
+              <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+              <Table striped highlightOnHover>
+              <Table.Thead style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--mantine-color-body)" }}>
+                <Table.Tr>
+                  <Table.Th>Freigabe</Table.Th>
+                  <Table.Th>Cluster</Table.Th>
+                  <Table.Th>Größe</Table.Th>
+                  <Table.Th>Belegung</Table.Th>
+                  <Table.Th>Volume</Table.Th>
+                  <Table.Th>SVM</Table.Th>
+                  <Table.Th>Anzahl VMs</Table.Th>
+                  <Table.Th>Protection Group</Table.Th>
+                  <Table.Th>Protected</Table.Th>
+                  <Table.Th>Aktionen</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {filteredSmbShares.map((share) => {
+                  const usedPct =
+                    share.capacity_bytes && share.capacity_bytes > 0
+                      ? Math.round(((share.used_bytes ?? 0) / share.capacity_bytes) * 100)
+                      : null;
+                  return (
+                    <Table.Tr
+                      key={smbShareIdentity(share)}
+                      onClick={() => toggleSelectedSmbShare(share)}
+                      style={{
+                        cursor: "pointer",
+                        backgroundColor:
+                          selectedSmbShare && smbShareIdentity(selectedSmbShare) === smbShareIdentity(share)
+                            ? "var(--mantine-color-blue-light)"
+                            : undefined,
+                      }}
+                    >
+                      <Table.Td>{`\\\\${share.server}\\${share.share}`}</Table.Td>
+                      <Table.Td>{share.hyperv_cluster_name ?? "-"}</Table.Td>
+                      <Table.Td>{formatBytes(share.capacity_bytes)}</Table.Td>
+                      <Table.Td miw={160}>
+                        {usedPct === null ? (
+                          "-"
+                        ) : (
+                          <Stack gap={2}>
+                            <Progress value={usedPct} color={usedPct >= 90 ? "red" : usedPct >= 75 ? "yellow" : "blue"} size="sm" />
+                            <Group justify="space-between">
+                              <Text size="xs" c="dimmed">
+                                {formatBytes(share.used_bytes)} / {formatBytes(share.capacity_bytes)}
+                              </Text>
+                              <Text size="xs" c="dimmed">
+                                {usedPct}%
+                              </Text>
+                            </Group>
+                          </Stack>
+                        )}
+                      </Table.Td>
+                      <Table.Td>{share.volume_name ?? "-"}</Table.Td>
+                      <Table.Td>{share.svm_name ?? "-"}</Table.Td>
+                      <Table.Td>{vmsOnSmbShare(share, vms).length}</Table.Td>
+                      <Table.Td>
+                        <ResourceGroupCell groups={share.resource_group_names} policies={share.policy_names} />
+                      </Table.Td>
+                      <Table.Td>
+                        <ProtectedBadge protected={share.protected} />
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
+                          <Tooltip label="Backup jetzt starten (SMB3-Scope)">
+                            <ActionIcon variant="light" disabled={!canRunBackup} onClick={() => runBackupNowForSmbShare(share)}>
+                              <IconBolt size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Details anzeigen">
+                            <ActionIcon variant="light" onClick={() => setSelectedSmbShare(share)}>
+                              <IconInfoCircle size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Backups anzeigen">
+                            <ActionIcon
+                              variant="light"
+                              onClick={() => showBackups("smb_share", `\\\\${share.server}\\${share.share}`, share.cluster_id)}
+                            >
+                              <IconHistory size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        </Group>
+                      </Table.Td>
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+            {(smbShares?.length ?? 0) > 0 && filteredSmbShares.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Keine SMB3-Freigabe passt zur Suche „{smbShareSearch}".
+              </Text>
+            )}
+            </div>
+            </Paper>
+          </Tabs.Panel>
+        )}
       </Tabs>
 
       <BackupsModal

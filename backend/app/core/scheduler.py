@@ -42,7 +42,7 @@ from app.models.capacity_history import CapacitySample
 from app.models.email_config import EmailConfig
 from app.models.file_restore_run import FileRestoreRun
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
-from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import NetAppAggregate, NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink
@@ -1257,6 +1257,18 @@ def run_capacity_history_sampling() -> None:
                     object_name=csv.name,
                     capacity_bytes=csv.capacity_bytes,
                     used_bytes=csv.used_bytes,
+                    sampled_at=now,
+                )
+            )
+        for share in db.query(HyperVSmbShare).all():
+            unc_path = f"\\\\{share.server}\\{share.share}"
+            db.add(
+                CapacitySample(
+                    object_type="smb_share",
+                    object_key=capacity_key("smb_share", share.cluster_id, name=unc_path),
+                    object_name=unc_path,
+                    capacity_bytes=share.capacity_bytes,
+                    used_bytes=share.used_bytes,
                     sampled_at=now,
                 )
             )

@@ -44,6 +44,10 @@ class VmRead(BaseModel):
     # Cluster eine VM mit demselben Namen haben (siehe app.models.resource_group).
     cluster_id: str | None = None
     csv_paths: list[str] = []
+    # UNC-Pfade ('\\server\share') der NetApp-CIFS-Freigaben, auf denen VHDs
+    # dieser VM liegen (Backlog #22) -- parallel zu csv_paths, eine VHD hat
+    # nie beides gleichzeitig gesetzt.
+    smb_share_paths: list[str] = []
     vhdx_size_bytes: int | None = None
     vhdx_used_bytes: int | None = None
     vhds: list[VhdInfo] = []
@@ -79,6 +83,26 @@ class CsvRead(BaseModel):
     volume_name: str | None = None
     volume_capacity_bytes: int | None = None
     volume_used_bytes: int | None = None
+    svm_name: str | None = None
+    netapp_cluster_name: str | None = None
+    resource_group_names: list[str] = []
+    policy_names: list[str] = []
+    policy_ids: list[str] = []
+    protected: bool = False
+
+
+class SmbShareRead(BaseModel):
+    """SMB3/CIFS-Freigabe, auf der Hyper-V-VMs direkt liegen (Backlog #22) --
+    Pendant zu CsvRead, aber ohne LUN-Konzept (der NetApp-Volume-Bezug ist
+    direkt, kein Seriennummer-Umweg ueber eine Block-LUN)."""
+
+    server: str
+    share: str
+    hyperv_cluster_name: str | None = None
+    cluster_id: str | None = None
+    capacity_bytes: int | None = None
+    used_bytes: int | None = None
+    volume_name: str | None = None
     svm_name: str | None = None
     netapp_cluster_name: str | None = None
     resource_group_names: list[str] = []

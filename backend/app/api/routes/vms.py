@@ -33,10 +33,10 @@ from app.db.session import get_db
 from app.models.alert import Alert, AlertStatus, AlertType
 from app.models.backup_policy import BackupPolicy, BackupScope
 from app.models.hyperv_cluster import HyperVCluster
-from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
 from app.models.netapp_discovery import NetAppLun, NetAppVolume
 from app.models.resource_group import ResourceGroup, make_member_key
-from app.schemas.vm import CheckpointRead, CsvRead, NetworkAdapterRead, VhdInfo, VmRead
+from app.schemas.vm import CheckpointRead, CsvRead, NetworkAdapterRead, SmbShareRead, VhdInfo, VmRead
 from app.services.hyperv_service import HyperVService
 
 router = APIRouter(prefix="/api/vms", tags=["vms"])
@@ -44,6 +44,20 @@ router = APIRouter(prefix="/api/vms", tags=["vms"])
 
 def _csv_names_for_vm(vm: VmRead) -> set[str]:
     return {win_basename(p.rstrip("\\/")) for p in vm.csv_paths}
+
+
+def _smb_share_keys_for_vm(vm: VmRead) -> set[str]:
+    """Parst '\\\\server\\share'-Eintraege aus vm.smb_share_paths zurueck zu
+    'server|share'-Schluesseln (Backlog #22) -- dasselbe Format wie
+    _smb_share_key() in jobs.py, damit die Mitgliedschaftspruefung unten
+    (_member_matches) mit den in ResourceGroup.members gespeicherten
+    SMB_SHARE-Mitgliedern uebereinstimmt."""
+    keys = set()
+    for p in vm.smb_share_paths:
+        parts = [seg for seg in p.split("\\") if seg]
+        if len(parts) >= 2:
+            keys.add(f"{parts[0]}|{parts[1]}")
+    return keys
 
 
 def _member_matches(members: list[str], cluster_id: str | None, name: str) -> bool:
@@ -78,16 +92,36 @@ def _annotate_csv(csv: CsvRead, groups: list[ResourceGroup]) -> CsvRead:
     )
 
 
+def _annotate_smb_share(share: SmbShareRead, groups: list[ResourceGroup]) -> SmbShareRead:
+    share_key = f"{share.server}|{share.share}"
+    matching = [g for g in groups if g.scope == BackupScope.SMB_SHARE and _member_matches(g.members, share.cluster_id, share_key)]
+    group_names = sorted({g.name for g in matching})
+    policies = _matching_policies(matching)
+    return share.model_copy(
+        update={
+            "resource_group_names": group_names,
+            "policy_names": [p.name for p in policies],
+            "policy_ids": [p.id for p in policies],
+            "protected": bool(group_names),
+        }
+    )
+
+
 def _annotate_vm(vm: VmRead, groups: list[ResourceGroup]) -> VmRead:
     direct = [g for g in groups if g.scope == BackupScope.VM and _member_matches(g.members, vm.cluster_id, vm.name)]
 
     csv_names = _csv_names_for_vm(vm)
-    indirect = [
+    indirect_csv = [
         g for g in groups
         if g.scope == BackupScope.CSV and any(_member_matches(g.members, vm.cluster_id, csv_name) for csv_name in csv_names)
     ]
+    smb_share_keys = _smb_share_keys_for_vm(vm)
+    indirect_smb = [
+        g for g in groups
+        if g.scope == BackupScope.SMB_SHARE and any(_member_matches(g.members, vm.cluster_id, key) for key in smb_share_keys)
+    ]
 
-    matching = direct + indirect
+    matching = direct + indirect_csv + indirect_smb
     group_names = sorted({g.name for g in matching})
     policies = _matching_policies(matching)
     return vm.model_copy(
@@ -116,6 +150,7 @@ def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Perm
         # bestehende Basename-Logik (_csv_names_for_vm, Frontend-CSV-Gruppierung)
         # unveraendert weiterfunktioniert.
         csv_paths = sorted({f"C:\\ClusterStorage\\{v.csv_name}" for v in vhds if v.csv_name})
+        smb_share_paths = sorted({f"\\\\{v.smb_server}\\{v.smb_share}" for v in vhds if v.smb_server and v.smb_share})
         vm_read = VmRead(
             id=vm.id,
             name=vm.name,
@@ -124,6 +159,7 @@ def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Perm
             cluster=cluster_names.get(vm.cluster_id),
             cluster_id=vm.cluster_id,
             csv_paths=csv_paths,
+            smb_share_paths=smb_share_paths,
             vhdx_size_bytes=sum((v.base_size_bytes or v.size_bytes or 0) for v in vhds),
             vhdx_used_bytes=sum((v.base_used_bytes or v.used_bytes or 0) for v in vhds),
             vhds=[
@@ -205,6 +241,32 @@ def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Per
     return csvs
 
 
+@router.get("/smb-shares", response_model=list[SmbShareRead])
+def list_smb_shares(db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_VIEW))) -> list[SmbShareRead]:
+    """SMB3/CIFS-Freigaben, auf denen Hyper-V-VMs liegen (Backlog #22) --
+    Pendant zu list_csvs(). HyperVSmbShare wird rein aus den bereits
+    discoverten VHD-Pfaden abgeleitet (siehe _refresh_smb_share_rows in
+    hyperv_clusters.py), hier nur noch in die SmbShareRead-Form gebracht."""
+    groups = db.query(ResourceGroup).all()
+    cluster_names = {c.id: c.name for c in db.query(HyperVCluster).all()}
+
+    shares: list[SmbShareRead] = []
+    for share in db.query(HyperVSmbShare).order_by(HyperVSmbShare.server, HyperVSmbShare.share).all():
+        share_read = SmbShareRead(
+            server=share.server,
+            share=share.share,
+            hyperv_cluster_name=cluster_names.get(share.cluster_id),
+            cluster_id=share.cluster_id,
+            capacity_bytes=share.capacity_bytes,
+            used_bytes=share.used_bytes,
+            volume_name=share.netapp_volume_name,
+            svm_name=share.netapp_svm_name,
+            netapp_cluster_name=share.netapp_cluster_name,
+        )
+        shares.append(_annotate_smb_share(share_read, groups))
+    return shares
+
+
 @router.post("/{cluster_id}/{vm_name}/checkpoints/{checkpoint_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 def delete_vm_checkpoint(
     cluster_id: str,
@@ -267,7 +329,7 @@ def delete_vm_checkpoint(
         # weg), bleibt der alte VHD-Stand bestehen -- kein Grund, die ganze
         # Aktion als fehlgeschlagen zu melden.
         try:
-            refreshed_vm = _get_vm_settled(node_service, node_session, vm_name)
+            refreshed_vm = _get_vm_settled(node_service, node_session, vm_name, username=cluster.username, password=password)
         except Exception:
             refreshed_vm = None
     except Exception as exc:
@@ -332,7 +394,7 @@ def discover_vm(
         # Kurzer, begrenzter Retry statt nur einer Abfrage -- derselbe Grund
         # wie bei delete_vm_checkpoint: der AVHDX->VHDX-Merge einer
         # LAUFENDEN VM kann noch kurz nachlaufen, siehe _get_vm_settled.
-        refreshed_vm = _get_vm_settled(node_service, node_session, vm_name)
+        refreshed_vm = _get_vm_settled(node_service, node_session, vm_name, username=cluster.username, password=password)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"VM konnte nicht aktualisiert werden: {exc}") from exc
     if refreshed_vm is None:
