@@ -63,6 +63,20 @@ function isSmbUncPath(path: string | undefined | null): boolean {
   return !!path && /^\\\\[^\\]+\\[^\\]+\\/.test(path);
 }
 
+// Ordner-Anteil eines Pfads (klein geschrieben, fuer case-insensitiven
+// Vergleich) -- fuer die "wie viel wird beim Replace frei/belegt"-
+// Schaetzung im Wizard: bei einem Backup mit aktivem Checkpoint zum
+// Sicherungszeitpunkt ist der Snapshot-VHD-Name der rohe AVHDX-Name
+// (name, NICHT display_name -- siehe BackupSnapshotVhdRead), der nie mit
+// dem Namen der aktuell live angehaengten Basis-VHDX uebereinstimmt. Der
+// Ordner stimmt dagegen immer ueberein -- exakt das Kriterium, das das
+// Backend selbst fuer current_source_path nutzt (siehe restore.py).
+function folderOf(path: string | undefined | null): string | null {
+  if (!path) return null;
+  const idx = path.lastIndexOf("\\");
+  return idx === -1 ? null : path.slice(0, idx).toLowerCase();
+}
+
 // Letztes Pfadsegment (ohne abschliessende Trenner). csv.volume_path ist
 // z.B. "C:\ClusterStorage\Volume25" -- ohne Sub-Pfad und ohne
 // abschliessenden Backslash, csvMountFolderFromVhdPath greift darauf also
@@ -291,7 +305,11 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
       (s) => s.server.toLowerCase() === server.toLowerCase() && s.share.toLowerCase() === share.toLowerCase(),
     );
   };
-  const liveSizeByVhdName = new Map((vmFull?.vhds ?? []).map((v) => [v.name, occupiedBytes(v)]));
+  const liveSizeByFolder = new Map(
+    (vmFull?.vhds ?? [])
+      .map((v) => [folderOf(v.full_path), occupiedBytes(v)] as const)
+      .filter((entry): entry is [string, number] => entry[0] !== null),
+  );
 
   let capacityEstimates: CapacityEstimate[] = [];
   if (restoreKind === "clone") {
@@ -325,7 +343,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
       const key = csv ? `csv:${csv.name}` : `smb:${share!.server}|${share!.share}`;
       const entry = byTarget.get(key) ?? { csv, share, addedBytes: 0, removedBytes: 0 };
       entry.addedBytes += occupiedBytes(vhd);
-      if (restoreKind === "replace") entry.removedBytes += liveSizeByVhdName.get(vhd.name) ?? 0;
+      if (restoreKind === "replace") entry.removedBytes += liveSizeByFolder.get(folderOf(vhd.path) ?? "") ?? 0;
       byTarget.set(key, entry);
     }
     capacityEstimates = Array.from(byTarget.values());
