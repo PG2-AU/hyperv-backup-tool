@@ -961,7 +961,14 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 # asynchronen Merge-Race bei einer laufenden VM).
                 current_source_path = run.source_vhd_path
                 with _StepCtx(db, run.id, "remove-checkpoints", "Vorhandene Checkpoints der VM entfernen") as ctx:
-                    live_vm = node_service.get_vm(node_session, run.vm_name)
+                    # username/password: siehe HyperVService.list_vms -- eine
+                    # gemischte VM (manche Disks CSV, manche SMB3, Backlog
+                    # #22) braucht sie, damit Get-VHD fuer die SMB3-Disks
+                    # nicht am Double-Hop scheitert (live gefunden 2026-09-18
+                    # im reinen SMB3-Replace-Pfad, hier zur Konsistenz
+                    # ebenfalls ergaenzt -- fuer eine rein CSV-basierte VM
+                    # ohne Effekt).
+                    live_vm = node_service.get_vm(node_session, run.vm_name, hv_cluster.username, hv_password)
                     checkpoints = live_vm.checkpoints if live_vm else []
                     if not checkpoints:
                         ctx.row.status = RestoreStepStatus.SKIPPED
@@ -976,7 +983,7 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                         # AVHDX dieser Checkpoints in ihre jeweilige Basis --
                         # die davor abgefragte live_vm ist damit veraltet,
                         # frisch nachladen (siehe unten).
-                        live_vm = node_service.get_vm(node_session, run.vm_name)
+                        live_vm = node_service.get_vm(node_session, run.vm_name, hv_cluster.username, hv_password)
                     # Der zum Backup-Zeitpunkt aufgezeichnete source_vhd_path
                     # kann JETZT bereits nicht mehr existieren -- nicht nur
                     # durch die Checkpoint-Entfernung oben, sondern z.B. auch,
@@ -1038,7 +1045,12 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 with _StepCtx(db, run.id, "refresh-inventory", "Inventory-Stand aktualisieren") as ctx:
                     messages = []
                     try:
-                        refreshed_vm = node_service.get_vm(node_session, run.vm_name)
+                        # username/password: siehe HyperVService.list_vms --
+                        # fuer eine gemischte VM (Backlog #22) braucht die
+                        # Groessenaufloesung der SMB3-Disks das, sonst
+                        # 0 Bytes (live gefunden 2026-09-18, siehe
+                        # _execute_smb_restore_replace).
+                        refreshed_vm = node_service.get_vm(node_session, run.vm_name, hv_cluster.username, hv_password)
                         hv_vm_fresh = (
                             db.query(HyperVVm)
                             .filter(HyperVVm.name == run.vm_name, HyperVVm.cluster_id == run.hyperv_cluster_id)
@@ -1357,7 +1369,12 @@ def _execute_smb_restore_replace(run_id: str) -> None:  # noqa: C901
                         raise RuntimeError(result.error)
 
             with _StepCtx(db, run.id, "remove-checkpoints", "Vorhandene Checkpoints der VM entfernen") as ctx:
-                live_vm = node_service.get_vm(node_session, run.vm_name)
+                # username/password: siehe HyperVService.list_vms -- ohne sie
+                # scheitert Get-VHD fuer die SMB3-Disks dieser VM am Double-
+                # Hop und liefert 0 Bytes (live gefunden 2026-09-18, hier
+                # zwar nur fuer die Pfad-Aufloesung unten relevant, aus
+                # Konsistenz trotzdem mitgegeben).
+                live_vm = node_service.get_vm(node_session, run.vm_name, hv_cluster.username, hv_password)
                 checkpoints = live_vm.checkpoints if live_vm else []
                 if not checkpoints:
                     ctx.row.status = RestoreStepStatus.SKIPPED
@@ -1368,7 +1385,7 @@ def _execute_smb_restore_replace(run_id: str) -> None:  # noqa: C901
                         if not result.success:
                             raise RuntimeError(f"Checkpoint '{cp.name}' konnte nicht entfernt werden: {result.error}")
                     ctx.row.message = f"Entfernt: {', '.join(cp.name for cp in checkpoints)}"
-                    live_vm = node_service.get_vm(node_session, run.vm_name)
+                    live_vm = node_service.get_vm(node_session, run.vm_name, hv_cluster.username, hv_password)
                 # Wie beim CSV-Pfad: den tatsaechlich aktuell angehaengten
                 # Pfad im selben Ordner frisch abfragen statt dem
                 # aufgezeichneten Pfad blind zu vertrauen.
@@ -1421,7 +1438,11 @@ def _execute_smb_restore_replace(run_id: str) -> None:  # noqa: C901
             with _StepCtx(db, run.id, "refresh-inventory", "Inventory-Stand aktualisieren") as ctx:
                 messages = []
                 try:
-                    refreshed_vm = node_service.get_vm(node_session, run.vm_name)
+                    # username/password: siehe HyperVService.list_vms --
+                    # ohne sie scheitert Get-VHD fuer diese SMB3-Disk am
+                    # Double-Hop und liefert 0 Bytes (live gefunden
+                    # 2026-09-18).
+                    refreshed_vm = node_service.get_vm(node_session, run.vm_name, hv_cluster.username, hv_password)
                     hv_vm_fresh = (
                         db.query(HyperVVm)
                         .filter(HyperVVm.name == run.vm_name, HyperVVm.cluster_id == run.hyperv_cluster_id)
