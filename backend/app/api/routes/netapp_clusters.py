@@ -28,6 +28,7 @@ from app.db.session import get_db
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import (
     NetAppAggregate,
+    NetAppCifsShare,
     NetAppClusterPeer,
     NetAppIgroup,
     NetAppLun,
@@ -112,7 +113,18 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
             db.add(
                 NetAppSvm(
                     cluster_id=cluster.id, uuid=svm.uuid, name=svm.name, state=svm.state, subtype=svm.subtype,
-                    allowed_protocols=svm.allowed_protocols, data_services=svm.data_services, last_seen_at=now,
+                    allowed_protocols=svm.allowed_protocols, data_services=svm.data_services,
+                    cifs_server_name=svm.cifs_server_name, last_seen_at=now,
+                )
+            )
+
+    if step_success.get("cifs-shares"):
+        db.query(NetAppCifsShare).filter(NetAppCifsShare.cluster_id == cluster.id).delete()
+        for share in data.cifs_shares:
+            db.add(
+                NetAppCifsShare(
+                    cluster_id=cluster.id, uuid=share.uuid, name=share.name, svm_name=share.svm_name,
+                    volume_name=share.volume_name, path=share.path, last_seen_at=now,
                 )
             )
 
@@ -529,7 +541,7 @@ def delete_cluster(
     # siehe auch die Selbstheilung _cleanup_orphaned_netapp_discovery_rows
     # in init_db.py fuer bereits so entstandene Alt-Staende).
     for model in (
-        NetAppSvm, NetAppVolume, NetAppLun, NetAppIgroup, NetAppClusterPeer, NetAppSvmPeer,
+        NetAppSvm, NetAppVolume, NetAppLun, NetAppCifsShare, NetAppIgroup, NetAppClusterPeer, NetAppSvmPeer,
         NetAppSnapMirrorRelationship, NetAppNetworkInterface, NetAppSnapMirrorPolicy,
         NetAppSchedule, NetAppPlatform, NetAppAggregate,
     ):

@@ -15,7 +15,7 @@ from app.db.session import get_db
 from collections import defaultdict
 
 from app.models.backup_policy import BackupPolicy, BackupScope
-from app.models.hyperv_discovery import HyperVCsv, HyperVVhd
+from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd
 from app.models.netapp_discovery import NetAppSnapMirrorRelationship
 from app.models.resource_group import ResourceGroup, ResourceGroupPolicyLink, parse_member_key
 from app.models.schedule import Schedule
@@ -188,12 +188,21 @@ def check_snapmirror(
         # wird -- ein noch nicht migrierter/mehrdeutiger Alt-Eintrag
         # (cluster_id is None) wird bewusst uebersprungen statt zu raten.
         csv_to_names: dict[tuple[str, str], set[str]] = {}
+        # (cluster_id, "server|share") -> Menge der urspruenglich ausgewaehlten
+        # Namen, analog zu csv_to_names (Backlog #22, SMB3-Freigaben).
+        smb_to_names: dict[tuple[str, str], set[str]] = {}
         if group.scope == BackupScope.CSV:
             for member in group.members:
                 cluster_id, name = parse_member_key(member)
                 if cluster_id is None:
                     continue
                 csv_to_names.setdefault((cluster_id, name), set()).add(name)
+        elif group.scope == BackupScope.SMB_SHARE:
+            for member in group.members:
+                cluster_id, name = parse_member_key(member)
+                if cluster_id is None:
+                    continue
+                smb_to_names.setdefault((cluster_id, name), set()).add(name)
         else:
             names_by_cluster: dict[str, set[str]] = defaultdict(set)
             for member in group.members:
@@ -202,7 +211,7 @@ def check_snapmirror(
                     names_by_cluster[cluster_id].add(vm_name)
             for cluster_id, vm_names in names_by_cluster.items():
                 rows = (
-                    db.query(HyperVVhd.vm_name, HyperVVhd.csv_name)
+                    db.query(HyperVVhd.vm_name, HyperVVhd.csv_name, HyperVVhd.smb_server, HyperVVhd.smb_share)
                     .filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_name.in_(vm_names))
                     .distinct()
                     .all()
@@ -210,18 +219,30 @@ def check_snapmirror(
                 for row in rows:
                     if row.csv_name:
                         csv_to_names.setdefault((cluster_id, row.csv_name), set()).add(row.vm_name)
+                    elif row.smb_server and row.smb_share:
+                        smb_to_names.setdefault((cluster_id, f"{row.smb_server}|{row.smb_share}"), set()).add(row.vm_name)
 
-        if not csv_to_names:
-            continue
-        cluster_ids = {key[0] for key in csv_to_names}
-        csvs = db.query(HyperVCsv).filter(HyperVCsv.cluster_id.in_(cluster_ids)).all()
-        for csv in csvs:
-            key = (csv.cluster_id, csv.name)
-            names = csv_to_names.get(key)
-            if names is None or not csv.netapp_svm_name or not csv.netapp_volume_name:
-                continue
-            vol_key = (csv.netapp_svm_name, csv.netapp_volume_name)
-            volume_members.setdefault(vol_key, set()).update(names)
+        if csv_to_names:
+            cluster_ids = {key[0] for key in csv_to_names}
+            csvs = db.query(HyperVCsv).filter(HyperVCsv.cluster_id.in_(cluster_ids)).all()
+            for csv in csvs:
+                key = (csv.cluster_id, csv.name)
+                names = csv_to_names.get(key)
+                if names is None or not csv.netapp_svm_name or not csv.netapp_volume_name:
+                    continue
+                vol_key = (csv.netapp_svm_name, csv.netapp_volume_name)
+                volume_members.setdefault(vol_key, set()).update(names)
+
+        if smb_to_names:
+            cluster_ids = {key[0] for key in smb_to_names}
+            shares = db.query(HyperVSmbShare).filter(HyperVSmbShare.cluster_id.in_(cluster_ids)).all()
+            for share in shares:
+                key = (share.cluster_id, f"{share.server}|{share.share}")
+                names = smb_to_names.get(key)
+                if names is None or not share.netapp_svm_name or not share.netapp_volume_name:
+                    continue
+                vol_key = (share.netapp_svm_name, share.netapp_volume_name)
+                volume_members.setdefault(vol_key, set()).update(names)
 
     if not volume_members:
         return []

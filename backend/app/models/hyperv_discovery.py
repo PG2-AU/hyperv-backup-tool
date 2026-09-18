@@ -57,6 +57,14 @@ class HyperVVhd(Base):
     vm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     path: Mapped[str] = mapped_column(String(1000))
     csv_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Gegenseitig exklusiv zu csv_name -- eine VHD liegt ENTWEDER auf einer
+    # Cluster Shared Volume ODER direkt auf einem NetApp-CIFS-Export (SMB3,
+    # Backlog #22), nie beides. Aus dem VHD-Pfad selbst geparst (siehe
+    # _parse_smb_share in hyperv_clusters.py), kein zusaetzlicher WinRM-
+    # Aufruf noetig -- anders als eine CSV ist ein SMB3-Share kein
+    # Windows-Cluster-Ressourcenobjekt, nur ein UNC-Pfad in der VM-Konfig.
+    smb_server: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    smb_share: Mapped[str | None] = mapped_column(String(255), nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Groesse der aufgeloesten Basis-VHDX, falls path eine aktive .avhdx ist
@@ -91,6 +99,33 @@ class HyperVCsv(Base):
     disk_serial_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     netapp_lun_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     netapp_lun_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    netapp_volume_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    netapp_svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    netapp_cluster_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class HyperVSmbShare(Base):
+    """SMB3-Freigaben, auf denen Hyper-V-VMs direkt liegen (statt auf einer
+    Cluster Shared Volume), Backlog #22. Anders als HyperVCsv gibt es dafuer
+    KEIN eigenes Windows-Cluster-Ressourcenobjekt -- die Zeilen hier werden
+    rein aus den bereits discoverten VHD-Pfaden abgeleitet (Gruppierung
+    nach Server+Freigabename, siehe _refresh_smb_share_rows in
+    hyperv_clusters.py). Die Zuordnung zum NetApp-Volume erfolgt ueber
+    einen direkten Server+Freigabename-Abgleich gegen NetAppCifsShare/
+    NetAppSvm.cifs_server_name -- kein Seriennummer-Umweg wie bei CSV/LUN
+    noetig, da eine SMB3-Freigabe (anders als eine Block-LUN) ihren
+    ONTAP-Namen direkt im UNC-Pfad traegt."""
+
+    __tablename__ = "hyperv_smb_shares"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    cluster_id: Mapped[str] = mapped_column(String(36), ForeignKey("hyperv_clusters.id", ondelete="CASCADE"))
+    server: Mapped[str] = mapped_column(String(255))
+    share: Mapped[str] = mapped_column(String(255))
+    capacity_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    netapp_cifs_share_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     netapp_volume_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     netapp_svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     netapp_cluster_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

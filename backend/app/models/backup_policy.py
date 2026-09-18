@@ -13,6 +13,9 @@ class BackupScope(str, enum.Enum):
     VM = "vm"
     CSV = "csv"
     LUN = "lun"
+    # SMB3/CIFS-gehostete VMs (Backlog #22) -- gebuendelt nach NetApp-CIFS-
+    # Freigabe, gleiches Batching-Prinzip wie CSV.
+    SMB_SHARE = "smb_share"
 
 
 class ConsistencyType(str, enum.Enum):

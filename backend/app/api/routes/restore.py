@@ -39,7 +39,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _refresh_csv_rows, _resolve_csv_name
+from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _refresh_csv_rows, _refresh_smb_share_rows, _resolve_csv_name
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
 from app.core.config import Settings, get_settings
 from app.core.crypto import decrypt_secret
@@ -47,7 +47,7 @@ from app.core.rbac import Permission
 from app.db.session import SessionLocal, get_db
 from app.models.backup_run import BackupRunSnapshot, BackupRunVmConfig
 from app.models.hyperv_cluster import HyperVCluster
-from app.models.hyperv_discovery import HyperVCsv, HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun
 from app.models.restore_infra import RestoreInfraConfig
@@ -989,6 +989,18 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                     except Exception as exc:
                         db.rollback()
                         messages.append(f"CSV-Auslastung nicht aktualisiert ({exc})")
+                    # Analog fuer SMB3-Freigaben (Backlog #22) -- keine eigene
+                    # WinRM-Abfrage noetig (siehe _refresh_smb_share_rows-
+                    # Docstring), nur der aktuelle VHD-Stand des gesamten
+                    # Clusters (der VM-Refresh oben hat diese VM bereits
+                    # aktualisiert).
+                    try:
+                        all_vhds = db.query(HyperVVhd).filter(HyperVVhd.cluster_id == run.hyperv_cluster_id).all()
+                        _refresh_smb_share_rows(db, run.hyperv_cluster_id, all_vhds)
+                        messages.append("SMB3-Freigaben aktualisiert")
+                    except Exception as exc:
+                        db.rollback()
+                        messages.append(f"SMB3-Freigaben nicht aktualisiert ({exc})")
                     ctx.row.message = "; ".join(messages)
 
             run.status = RestoreStatus.SUCCEEDED

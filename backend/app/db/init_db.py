@@ -97,7 +97,7 @@ def _cleanup_orphaned_hyperv_discovery_rows(engine) -> None:
         existing_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(hyperv_clusters)"))]
         if not existing_cols:
             return  # Tabellen existieren noch nicht -- frischer Erststart
-        for table in ("hyperv_vhds", "hyperv_vms", "hyperv_csvs"):
+        for table in ("hyperv_vhds", "hyperv_vms", "hyperv_csvs", "hyperv_smb_shares"):
             conn.execute(text(f"DELETE FROM {table} WHERE cluster_id NOT IN (SELECT id FROM hyperv_clusters)"))
         conn.commit()
 
@@ -122,7 +122,7 @@ def _cleanup_orphaned_netapp_discovery_rows(engine) -> None:
         if not existing_cols:
             return  # Tabellen existieren noch nicht -- frischer Erststart
         for table in (
-            "netapp_svms", "netapp_volumes", "netapp_luns", "netapp_igroups",
+            "netapp_svms", "netapp_volumes", "netapp_luns", "netapp_cifs_shares", "netapp_igroups",
             "netapp_cluster_peers", "netapp_svm_peers", "netapp_snapmirror_relationships",
             "netapp_network_interfaces", "netapp_snapmirror_policies", "netapp_schedules",
             "netapp_platforms", "netapp_aggregates",
@@ -404,6 +404,7 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     _add_missing_columns(engine, "netapp_aggregates", {"efficiency_ratio_wo_snapshots_flexclones": "FLOAT"})
     _add_missing_columns(engine, "netapp_clusters", {"system_type": "VARCHAR(20)"})
+    _add_missing_columns(engine, "netapp_svms", {"cifs_server_name": "VARCHAR(255)"})
     _add_missing_columns(engine, "storage_access_config", {"hide_metrocluster_mirrors": "BOOLEAN"})
     with engine.connect() as conn:
         conn.execute(text("UPDATE storage_access_config SET hide_metrocluster_mirrors = 0 WHERE hide_metrocluster_mirrors IS NULL"))
@@ -418,6 +419,7 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "hyperv_clusters", {"unreachable_nodes_json": "VARCHAR(2000)"})
     _add_missing_columns(engine, "hyperv_vms", {"checkpoints": "JSON"})
     _add_missing_columns(engine, "hyperv_vhds", {"base_size_bytes": "INTEGER", "base_used_bytes": "INTEGER"})
+    _add_missing_columns(engine, "hyperv_vhds", {"smb_server": "VARCHAR(255)", "smb_share": "VARCHAR(255)"})
     _add_missing_columns(engine, "backup_policies", {"paused_since": "DATETIME", "paused_until": "DATETIME"})
     _add_missing_columns(
         engine, "schedules", {"paused": "BOOLEAN", "paused_since": "DATETIME", "paused_until": "DATETIME"}

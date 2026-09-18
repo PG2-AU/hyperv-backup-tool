@@ -33,6 +33,12 @@ class NetAppSvm(Base):
     subtype: Mapped[str | None] = mapped_column(String(50), nullable=True)
     allowed_protocols: Mapped[str | None] = mapped_column(String(255), nullable=True)
     data_services: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # NetBIOS/CIFS-Servername (ONTAP: vserver cifs show), UNABHAENGIG vom
+    # ONTAP-internen SVM-Namen (name oben) konfigurierbar -- fuer die
+    # Korrelation von SMB3-gehosteten Hyper-V-VMs benoetigt (UNC-Pfad
+    # \\<cifs_server_name>\<share>\..., siehe HyperVSmbShare). None, wenn
+    # kein CIFS-Server auf dieser SVM konfiguriert ist.
+    cifs_server_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -73,6 +79,24 @@ class NetAppLun(Base):
     os_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     mapped_igroups: Mapped[str | None] = mapped_column(String(500), nullable=True)
     serial_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class NetAppCifsShare(Base):
+    """SMB3/CIFS-Freigaben je SVM -- Grundlage fuer die Korrelation von
+    Hyper-V-VMs, die direkt auf einem NetApp-CIFS-Export liegen (statt auf
+    einer LUN-backed Cluster Shared Volume), siehe HyperVSmbShare in
+    hyperv_discovery.py und Backlog #22."""
+
+    __tablename__ = "netapp_cifs_shares"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    cluster_id: Mapped[str] = mapped_column(String(36), ForeignKey("netapp_clusters.id", ondelete="CASCADE"))
+    uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    name: Mapped[str] = mapped_column(String(255))
+    svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    volume_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

@@ -30,6 +30,8 @@ from netapp_ontap.resources import (
     Account,
     Aggregate,
     BroadcastDomain,
+    CifsService,
+    CifsShare,
     Cluster,
     ClusterPeer,
     Igroup,
@@ -165,6 +167,18 @@ class DiscoveredSvm:
     subtype: str | None
     allowed_protocols: str | None = None
     data_services: str | None = None
+    # NetBIOS/CIFS-Servername (ONTAP: vserver cifs show) -- unabhaengig
+    # vom SVM-Namen 'name' oben konfigurierbar. None ohne CIFS-Server.
+    cifs_server_name: str | None = None
+
+
+@dataclass
+class DiscoveredCifsShare:
+    uuid: str | None
+    name: str
+    svm_name: str | None
+    volume_name: str | None
+    path: str | None = None
 
 
 @dataclass
@@ -292,6 +306,7 @@ class DiscoveredAggregate:
 class DiscoveryData:
     svms: list[DiscoveredSvm] = field(default_factory=list)
     volumes: list[DiscoveredVolume] = field(default_factory=list)
+    cifs_shares: list[DiscoveredCifsShare] = field(default_factory=list)
     luns: list[DiscoveredLun] = field(default_factory=list)
     cluster_peers: list[DiscoveredClusterPeer] = field(default_factory=list)
     svm_peers: list[DiscoveredSvmPeer] = field(default_factory=list)
@@ -432,6 +447,24 @@ class NetAppOntapService:
                     results.append(DiscoveryStepResult("login", False, str(exc)))
                     return results, data  # ohne erfolgreichen Login sind weitere Schritte zwecklos
 
+                # CIFS-Servername je SVM (ONTAP: vserver cifs show) -- getrennt
+                # von 'name' auf der SVM selbst konfigurierbar, fuer die
+                # spaetere Korrelation SMB3-gehosteter Hyper-V-VMs benoetigt
+                # (siehe HyperVSmbShare, Backlog #22). Bewusst OHNE eigenen
+                # sichtbaren Discovery-Schritt und mit stillem Fallback auf
+                # ein leeres Dict bei Fehlschlag (z.B. CIFS nicht lizenziert)
+                # -- reine Metadaten-Anreicherung fuer den SVM-Schritt unten,
+                # kein eigenstaendig gezaehltes Objekt.
+                cifs_server_by_svm_uuid: dict[str, str] = {}
+                try:
+                    for cs in CifsService.get_collection(fields="**"):
+                        svm_uuid = _get_nested(cs, "svm.uuid")
+                        server_name = _get_nested(cs, "name")
+                        if svm_uuid and server_name:
+                            cifs_server_by_svm_uuid[svm_uuid] = server_name
+                except NetAppRestError:
+                    pass
+
                 try:
                     svms = list(Svm.get_collection(fields="**"))
                     protocol_names = ("nfs", "cifs", "iscsi", "fcp", "nvme", "s3")
@@ -446,11 +479,33 @@ class NetAppOntapService:
                                 subtype=_get_nested(s, "subtype"),
                                 allowed_protocols=", ".join(allowed) or None,
                                 data_services=", ".join(enabled) or None,
+                                cifs_server_name=cifs_server_by_svm_uuid.get(_get_nested(s, "uuid", "")),
                             )
                         )
                     results.append(DiscoveryStepResult("svms", True, f"{len(svms)} Storage Virtual Machine(s) gefunden", len(svms)))
                 except NetAppRestError as exc:
                     results.append(DiscoveryStepResult("svms", False, str(exc)))
+
+                try:
+                    shares = list(CifsShare.get_collection(fields="**"))
+                    for sh in shares:
+                        data.cifs_shares.append(
+                            DiscoveredCifsShare(
+                                # ONTAP identifiziert eine CIFS-Freigabe ueber
+                                # (SVM, Name), nicht ueber eine eigene UUID wie
+                                # Volume/LUN -- 'uuid' bleibt hier typischerweise
+                                # None, das Feld existiert nur fuers gleiche
+                                # Modell-Muster wie die anderen Discovery-Typen.
+                                uuid=_get_nested(sh, "uuid"),
+                                name=_get_nested(sh, "name", ""),
+                                svm_name=_get_nested(sh, "svm.name"),
+                                volume_name=_get_nested(sh, "volume.name"),
+                                path=_get_nested(sh, "path"),
+                            )
+                        )
+                    results.append(DiscoveryStepResult("cifs-shares", True, f"{len(shares)} CIFS-Freigabe(n) gefunden", len(shares)))
+                except NetAppRestError as exc:
+                    results.append(DiscoveryStepResult("cifs-shares", False, str(exc)))
 
                 try:
                     volumes = list(Volume.get_collection(fields="**"))

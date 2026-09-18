@@ -20,9 +20,9 @@ from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.backup_run import BackupRun, JobStatus
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
-from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppCluster
-from app.models.netapp_discovery import NetAppLun
+from app.models.netapp_discovery import NetAppCifsShare, NetAppLun, NetAppSvm, NetAppVolume
 from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead, HyperVClusterUpdate, HyperVReachabilityCheck
 from app.schemas.netapp_cluster import DiscoveryStepRead
 from app.services.hyperv_service import (
@@ -41,6 +41,18 @@ _CSV_NAME_RE = re.compile(r"ClusterStorage\\([^\\]+)\\", re.IGNORECASE)
 def _parse_csv_name(vhd_path: str) -> str | None:
     match = _CSV_NAME_RE.search(vhd_path)
     return match.group(1) if match else None
+
+
+# Backlog #22: eine VHD auf einem NetApp-CIFS-Export liegt als UNC-Pfad vor
+# (z.B. '\\DEMO7\vol_hv1_smb3\VM01\VM01.vhdx', live verifiziert) statt unter
+# 'ClusterStorage\'. Server + Freigabename sind die ersten zwei
+# Pfadsegmente.
+_SMB_PATH_RE = re.compile(r"^\\\\([^\\]+)\\([^\\]+)\\")
+
+
+def _parse_smb_share(vhd_path: str) -> tuple[str, str] | None:
+    match = _SMB_PATH_RE.match(vhd_path)
+    return (match.group(1), match.group(2)) if match else None
 
 
 def _folder_name_from_csv_path(csv_path: str | None) -> str | None:
@@ -86,6 +98,70 @@ def _resolve_csv_name(folder_name: str | None, csvs) -> str | None:
         if csv_folder is not None and csv_folder.lower() == folder_name_lower:
             return csv.name
     return folder_name
+
+
+def _resolve_vhd_location(vhd_path: str, csvs) -> tuple[str | None, str | None, str | None]:
+    """Loest den Speicherort einer VHD auf -- entweder eine Cluster Shared
+    Volume (csv_name gesetzt) ODER ein NetApp-CIFS-Export (smb_server/
+    smb_share gesetzt), nie beides (siehe HyperVVhd). CSV wird zuerst
+    versucht (der bisherige, weit verbreitetere Fall); nur wenn das
+    fehlschlaegt, wird auf einen UNC-Pfad geprueft (Backlog #22)."""
+    csv_name = _resolve_csv_name(_parse_csv_name(vhd_path), csvs)
+    if csv_name:
+        return csv_name, None, None
+    smb = _parse_smb_share(vhd_path)
+    if smb:
+        return None, smb[0], smb[1]
+    return None, None, None
+
+
+def _refresh_smb_share_rows(db: Session, cluster_id: str, vhds: list[HyperVVhd]) -> None:
+    """Leitet HyperVSmbShare-Zeilen rein aus den bereits discoverten VHD-
+    Zeilen ab (Gruppierung nach Server+Freigabe) -- anders als
+    _refresh_csv_rows gibt es keine eigene WinRM-Abfrage dafuer, ein
+    SMB3-Share ist kein Windows-Cluster-Ressourcenobjekt (siehe
+    HyperVSmbShare-Docstring). Die Zuordnung zum NetApp-Volume erfolgt
+    ueber einen direkten Server+Freigabename-Abgleich, kein Seriennummer-
+    Umweg wie bei CSV/LUN."""
+    now = datetime.now(timezone.utc)
+    netapp_cluster_names = {c.id: c.ontap_cluster_name or c.name for c in db.query(NetAppCluster).all()}
+    cifs_server_by_svm: dict[tuple[str, str], str] = {
+        (svm.cluster_id, svm.name): svm.cifs_server_name for svm in db.query(NetAppSvm).all() if svm.cifs_server_name
+    }
+    shares_by_server_and_name: dict[str, NetAppCifsShare] = {}
+    for share in db.query(NetAppCifsShare).all():
+        server = cifs_server_by_svm.get((share.cluster_id, share.svm_name or ""))
+        if server:
+            shares_by_server_and_name[f"{server.lower()}::{share.name.lower()}"] = share
+
+    volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
+
+    groups: set[tuple[str, str]] = set()
+    for vhd in vhds:
+        if vhd.smb_server and vhd.smb_share:
+            groups.add((vhd.smb_server, vhd.smb_share))
+
+    db.query(HyperVSmbShare).filter(HyperVSmbShare.cluster_id == cluster_id).delete()
+    for server, share_name in groups:
+        share = shares_by_server_and_name.get(f"{server.lower()}::{share_name.lower()}")
+        # Kapazitaet kommt (wie bei HyperVCsv) vom zugrunde liegenden
+        # NetApp-Objekt -- fuer SMB3 gibt es kein Windows-Cluster-
+        # Ressourcenobjekt, das eine eigene Groesse melden koennte, daher
+        # direkt vom korrelierten NetAppVolume uebernommen.
+        volume = volumes_by_key.get((share.cluster_id, share.svm_name, share.volume_name)) if share else None
+        db.add(
+            HyperVSmbShare(
+                cluster_id=cluster_id, server=server, share=share_name,
+                capacity_bytes=volume.size_bytes if volume else None,
+                used_bytes=volume.used_bytes if volume else None,
+                netapp_cifs_share_id=share.id if share else None,
+                netapp_volume_name=share.volume_name if share else None,
+                netapp_svm_name=share.svm_name if share else None,
+                netapp_cluster_name=netapp_cluster_names.get(share.cluster_id) if share else None,
+                last_seen_at=now,
+            )
+        )
+    db.commit()
 
 
 def _refresh_csv_rows(db: Session, cluster_id: str, csvs: list[ClusterSharedVolumeInfo]) -> None:
@@ -139,14 +215,22 @@ def _apply_vm_discovery_refresh(db: Session, cluster_id: str, vm: HyperVVm, refr
         {"name": c.name, "id": c.id, "creation_time": c.creation_time, "hard_drive_paths": c.hard_drive_paths}
         for c in refreshed.checkpoints
     ]
+    # HyperVSmbShare selbst wird hier bewusst NICHT aktualisiert (anders als
+    # HyperVCsv-Zeilen bereits vorher, siehe existing_csvs) -- das ist ein
+    # Einzel-VM-Refresh, _refresh_smb_share_rows braucht aber den VHD-Stand
+    # DES GESAMTEN Clusters (sonst wuerden die Shares aller anderen VMs
+    # faelschlich verworfen). Bleibt der vollen Discovery (_run_discovery)
+    # vorbehalten, exakt analog zu _refresh_csv_rows, das hier ebenfalls
+    # nicht aufgerufen wird.
     existing_csvs = db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).all()
     db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_uuid == vm.vm_uuid).delete()
     now = datetime.now(timezone.utc)
     for vhd in refreshed.vhds:
+        csv_name, smb_server, smb_share = _resolve_vhd_location(vhd.path, existing_csvs)
         db.add(
             HyperVVhd(
                 cluster_id=cluster_id, vm_uuid=vm.vm_uuid, vm_name=vm.name, path=vhd.path,
-                csv_name=_resolve_csv_name(_parse_csv_name(vhd.path), existing_csvs),
+                csv_name=csv_name, smb_server=smb_server, smb_share=smb_share,
                 size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
                 base_size_bytes=vhd.base_size_bytes, base_used_bytes=vhd.base_used_bytes, last_seen_at=now,
             )
@@ -366,6 +450,7 @@ def delete_cluster(
     db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster_id).delete()
     db.query(HyperVVm).filter(HyperVVm.cluster_id == cluster_id).delete()
     db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).delete()
+    db.query(HyperVSmbShare).filter(HyperVSmbShare.cluster_id == cluster_id).delete()
     db.delete(cluster)
     db.commit()
 
@@ -401,6 +486,7 @@ def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
         # einen harten, von keinem Error Boundary abgefangenen Rendering-
         # Fehler -- das gesamte Fenster wurde weiss.
         deduped_vms = list({vm.id: vm for vm in data.vms}.values())
+        all_vhds: list[HyperVVhd] = []
         for vm in deduped_vms:
             db.add(
                 HyperVVm(
@@ -417,16 +503,24 @@ def _run_discovery(db: Session, cluster: HyperVCluster) -> list:
                 )
             )
             for vhd in vm.vhds:
-                db.add(
-                    HyperVVhd(
-                        cluster_id=cluster.id, vm_uuid=vm.id, vm_name=vm.name, path=vhd.path,
-                        csv_name=_resolve_csv_name(_parse_csv_name(vhd.path), data.csvs),
-                        size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
-                        base_size_bytes=vhd.base_size_bytes, base_used_bytes=vhd.base_used_bytes,
-                        last_seen_at=now,
-                    )
+                csv_name, smb_server, smb_share = _resolve_vhd_location(vhd.path, data.csvs)
+                vhd_row = HyperVVhd(
+                    cluster_id=cluster.id, vm_uuid=vm.id, vm_name=vm.name, path=vhd.path,
+                    csv_name=csv_name, smb_server=smb_server, smb_share=smb_share,
+                    size_bytes=vhd.size_bytes, used_bytes=vhd.used_bytes,
+                    base_size_bytes=vhd.base_size_bytes, base_used_bytes=vhd.base_used_bytes,
+                    last_seen_at=now,
                 )
+                db.add(vhd_row)
+                all_vhds.append(vhd_row)
         db.commit()
+
+        # SMB3-Freigaben (Backlog #22) rein aus dem VHD-Stand dieses
+        # Discovery-Laufs abgeleitet -- braucht mindestens einen
+        # erfolgreichen "vms"-Schritt (siehe all_vhds oben), unabhaengig
+        # vom CSV-Schritt-Erfolg (ein Cluster kann ausschliesslich SMB3-
+        # gehostete VMs haben, ganz ohne CSV).
+        _refresh_smb_share_rows(db, cluster.id, all_vhds)
 
     if any(s.success for s in steps if s.step == "csvs"):
         _refresh_csv_rows(db, cluster.id, data.csvs)

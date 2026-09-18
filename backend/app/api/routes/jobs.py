@@ -47,9 +47,9 @@ from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
 from app.api.routes.restore import _StepCtx, _avhdx_display_name, _find_plain_checkpoint_id
 from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunStep, BackupRunVmConfig, JobStatus
 from app.models.hyperv_cluster import HyperVCluster
-from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
-from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
+from app.models.netapp_discovery import NetAppCifsShare, NetAppLun, NetAppSnapMirrorRelationship, NetAppSvm, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink, parse_member_key, resolve_member_key
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_run import RestoreStepStatus
@@ -406,6 +406,7 @@ class _VolumeTarget:
     csv_names: set[str] = field(default_factory=set)
     lun_names: set[str] = field(default_factory=set)
     vm_names: set[str] = field(default_factory=set)
+    smb_share_names: set[str] = field(default_factory=set)
 
 
 def _csv_index(db: Session) -> tuple[dict[tuple[str, str], HyperVCsv], dict[str, NetAppLun], dict[str, str]]:
@@ -431,17 +432,30 @@ def _csv_index(db: Session) -> tuple[dict[tuple[str, str], HyperVCsv], dict[str,
     return csv_by_key, luns_by_serial, cluster_names_by_id
 
 
-def _vhd_maps(db: Session) -> tuple[dict[tuple[str, str], set[str]], dict[tuple[str, str], set[str]]]:
+def _vhd_maps(
+    db: Session,
+) -> tuple[dict[tuple[str, str], set[str]], dict[tuple[str, str], set[str]], dict[tuple[str, str], set[str]], dict[tuple[str, str], set[str]]]:
     """(Cluster-ID, VM-Name) -> Menge der CSV-Namen, auf denen seine VHDs
     liegen, und umgekehrt (Cluster-ID, CSV-Name) -> Menge der VM-Namen
-    darauf -- cluster-qualifiziert aus demselben Grund wie _csv_index."""
+    darauf -- cluster-qualifiziert aus demselben Grund wie _csv_index.
+    Zusaetzlich dasselbe fuer SMB3-Freigaben (Backlog #22, Schluessel siehe
+    _smb_share_key): vm_smb/smb_vms. Eine VHD hat entweder csv_name ODER
+    smb_server+smb_share gesetzt (siehe HyperVVhd), nie beides."""
     vm_csvs: dict[tuple[str, str], set[str]] = defaultdict(set)
     csv_vms: dict[tuple[str, str], set[str]] = defaultdict(set)
+    vm_smb: dict[tuple[str, str], set[str]] = defaultdict(set)
+    smb_vms: dict[tuple[str, str], set[str]] = defaultdict(set)
     for vhd in db.query(HyperVVhd).all():
-        if vhd.vm_name and vhd.csv_name:
+        if not vhd.vm_name:
+            continue
+        if vhd.csv_name:
             vm_csvs[(vhd.cluster_id, vhd.vm_name)].add(vhd.csv_name)
             csv_vms[(vhd.cluster_id, vhd.csv_name)].add(vhd.vm_name)
-    return vm_csvs, csv_vms
+        elif vhd.smb_server and vhd.smb_share:
+            share_key = _smb_share_key(vhd.smb_server, vhd.smb_share)
+            vm_smb[(vhd.cluster_id, vhd.vm_name)].add(share_key)
+            smb_vms[(vhd.cluster_id, share_key)].add(vhd.vm_name)
+    return vm_csvs, csv_vms, vm_smb, smb_vms
 
 
 def _csv_volume_key(csv: HyperVCsv, luns_by_serial: dict[str, NetAppLun]) -> tuple[str, str, str] | None:
@@ -454,6 +468,46 @@ def _csv_volume_key(csv: HyperVCsv, luns_by_serial: dict[str, NetAppLun]) -> tup
     if lun is None or not lun.volume_name:
         return None
     return (lun.cluster_id, lun.svm_name or "", lun.volume_name)
+
+
+def _smb_share_key(server: str, share: str) -> str:
+    """Zusammengesetzter Schluessel fuer eine SMB3-Freigabe (Backlog #22),
+    genutzt als 'Name'-Teil eines Resource-Group-Members (siehe
+    make_member_key) -- bewusst NICHT '::' als Trenner (kollidiert sonst
+    optisch mit _MEMBER_SEP in resource_group.py, auch wenn parse_member_key
+    dank maxsplit=1 technisch unproblematisch waere)."""
+    return f"{server}|{share}"
+
+
+def _smb_share_index(db: Session) -> tuple[dict[tuple[str, str], HyperVSmbShare], dict[str, NetAppCifsShare]]:
+    """smb_share_by_key (Cluster-ID, Freigaben-Schluessel) -> HyperVSmbShare
+    (analog zu csv_by_key in _csv_index), sowie cifs_shares_by_key
+    (Freigaben-Schluessel -> aktuelle NetAppCifsShare) fuer die
+    LIVE-Aufloesung in _smb_share_volume_key -- HyperVSmbShare speichert
+    bewusst KEINE netapp_cluster_id (nur den Anzeigenamen), analog dazu, dass
+    HyperVCsv auch keine speichert (siehe _csv_volume_key-Docstring)."""
+    smb_share_by_key = {(s.cluster_id, _smb_share_key(s.server, s.share)): s for s in db.query(HyperVSmbShare).all()}
+    cifs_server_by_svm: dict[tuple[str, str], str] = {
+        (svm.cluster_id, svm.name): svm.cifs_server_name for svm in db.query(NetAppSvm).all() if svm.cifs_server_name
+    }
+    cifs_shares_by_key: dict[str, NetAppCifsShare] = {}
+    for share in db.query(NetAppCifsShare).all():
+        server = cifs_server_by_svm.get((share.cluster_id, share.svm_name or ""))
+        if server:
+            cifs_shares_by_key[_smb_share_key(server, share.name)] = share
+    return smb_share_by_key, cifs_shares_by_key
+
+
+def _smb_share_volume_key(
+    share: HyperVSmbShare, cifs_shares_by_key: dict[str, NetAppCifsShare]
+) -> tuple[str, str, str] | None:
+    """Loest eine SMB3-Freigabe LIVE (nicht ueber gespeicherte IDs) zu ihrem
+    aktuellen NetApp-Volume auf (netapp_cluster_id, svm_name, volume_name) --
+    analog zu _csv_volume_key."""
+    cifs_share = cifs_shares_by_key.get(_smb_share_key(share.server, share.share))
+    if cifs_share is None or not cifs_share.volume_name:
+        return None
+    return (cifs_share.cluster_id, cifs_share.svm_name or "", cifs_share.volume_name)
 
 
 def _resolve_targets(
@@ -481,7 +535,8 @@ def _resolve_targets(
     targets: dict[tuple[str, str, str], _VolumeTarget] = {}
 
     csv_by_key, luns_by_serial, cluster_names_by_id = _csv_index(db)
-    vm_csvs, csv_vms = _vhd_maps(db)
+    vm_csvs, csv_vms, vm_smb, smb_vms = _vhd_maps(db)
+    smb_share_by_key, cifs_shares_by_key = _smb_share_index(db)
 
     def _add(cluster_id: str, csv_name: str, vm_names: set[str]) -> None:
         csv = csv_by_key.get((cluster_id, csv_name))
@@ -514,6 +569,30 @@ def _resolve_targets(
             target.lun_names.add(lun.name)
         target.vm_names |= vm_names
 
+    def _add_smb(cluster_id: str, share_key: str, vm_names: set[str]) -> None:
+        share = smb_share_by_key.get((cluster_id, share_key))
+        if share is None:
+            warnings.append(f"SMB3-Freigabe '{share_key}' nicht gefunden (Hyper-V-Discovery pruefen)")
+            return
+        volume_key = _smb_share_volume_key(share, cifs_shares_by_key)
+        if volume_key is None:
+            warnings.append(
+                f"SMB3-Freigabe '{share_key}': kein passendes NetApp-Volume gefunden -- NetApp-Cluster erneut discovern?"
+            )
+            return
+
+        target = targets.get(volume_key)
+        if target is None:
+            target = _VolumeTarget(
+                netapp_cluster_id=volume_key[0],
+                netapp_cluster_name=cluster_names_by_id.get(volume_key[0]),
+                svm_name=volume_key[1] or None,
+                volume_name=volume_key[2],
+            )
+            targets[volume_key] = target
+        target.smb_share_names.add(share_key)
+        target.vm_names |= vm_names
+
     # Cluster-qualifiziert aufgeloest (siehe app.models.resource_group) --
     # ein noch nicht migrierter/mehrdeutiger Alt-Eintrag (Name ohne
     # Cluster-Zuordnung, z.B. weil er unter zwei Clustern gleich heisst)
@@ -522,14 +601,16 @@ def _resolve_targets(
     for group in resource_groups:
         if group.scope == BackupScope.VM:
             for member in group.members:
-                resolved = resolve_member_key(member, set(vm_csvs.keys()))
+                resolved = resolve_member_key(member, set(vm_csvs.keys()) | set(vm_smb.keys()))
                 if resolved is None:
                     vm_name = parse_member_key(member)[1]
-                    warnings.append(f"VM '{vm_name}': keine CSV/VHD-Zuordnung gefunden oder mehrdeutig (Hyper-V-Discovery pruefen)")
+                    warnings.append(f"VM '{vm_name}': keine CSV/SMB3-Freigaben-Zuordnung gefunden oder mehrdeutig (Hyper-V-Discovery pruefen)")
                     continue
                 cluster_id, vm_name = resolved
-                for csv_name in vm_csvs[resolved]:
+                for csv_name in vm_csvs.get(resolved, set()):
                     _add(cluster_id, csv_name, {vm_name})
+                for share_key in vm_smb.get(resolved, set()):
+                    _add_smb(cluster_id, share_key, {vm_name})
         elif group.scope == BackupScope.CSV:
             for member in group.members:
                 resolved = resolve_member_key(member, set(csv_by_key.keys()))
@@ -539,6 +620,15 @@ def _resolve_targets(
                     continue
                 cluster_id, csv_name = resolved
                 _add(cluster_id, csv_name, csv_vms.get(resolved, set()))
+        elif group.scope == BackupScope.SMB_SHARE:
+            for member in group.members:
+                resolved = resolve_member_key(member, set(smb_share_by_key.keys()))
+                if resolved is None:
+                    share_key = parse_member_key(member)[1]
+                    warnings.append(f"SMB3-Freigabe '{share_key}' nicht gefunden oder mehrdeutig (Hyper-V-Discovery pruefen)")
+                    continue
+                cluster_id, share_key = resolved
+                _add_smb(cluster_id, share_key, smb_vms.get(resolved, set()))
         else:
             warnings.append(f"Resource Group '{group.name}': Scope '{group.scope}' wird fuer Backup-Jobs nicht unterstuetzt")
 
@@ -578,10 +668,11 @@ def _resolve_volume_keys_for_object(
     eines ANDEREN Clusters). Ohne cluster_id (Alt-Aufrufer) bleibt die
     bisherige mehrdeutige Bestfall-Aufloesung als Fallback bestehen."""
     csv_by_key, luns_by_serial, _ = _csv_index(db)
+    smb_share_by_key, cifs_shares_by_key = _smb_share_index(db)
 
     keys: set[tuple[str, str, str]] = set()
     if cluster_id is not None:
-        vm_csvs, _ = _vhd_maps(db)
+        vm_csvs, _, vm_smb, _ = _vhd_maps(db)
         csv_names = {name} if scope == BackupScope.CSV else vm_csvs.get((cluster_id, name), set())
         for csv_name in csv_names:
             csv = csv_by_key.get((cluster_id, csv_name))
@@ -590,24 +681,46 @@ def _resolve_volume_keys_for_object(
             key = _csv_volume_key(csv, luns_by_serial)
             if key is not None:
                 keys.add(key)
+        share_keys = {name} if scope == BackupScope.SMB_SHARE else vm_smb.get((cluster_id, name), set())
+        for share_key in share_keys:
+            share = smb_share_by_key.get((cluster_id, share_key))
+            if share is None:
+                continue
+            key = _smb_share_volume_key(share, cifs_shares_by_key)
+            if key is not None:
+                keys.add(key)
         return list(keys)
 
     # Fallback ohne Cluster-Kontext (Alt-Aufrufer) -- mehrdeutig bei
     # gleichnamigen CSVs/VMs ueber mehrere Cluster hinweg, siehe Docstring.
     csv_by_any_name: dict[str, HyperVCsv] = {name_: csv for (_, name_), csv in csv_by_key.items()}
+    smb_share_by_any_key: dict[str, HyperVSmbShare] = {key_: share for (_, key_), share in smb_share_by_key.items()}
     csv_names = set()
+    share_keys = set()
     if scope == BackupScope.VM:
-        vm_csvs, _ = _vhd_maps(db)
+        vm_csvs, _, vm_smb, _ = _vhd_maps(db)
         for (_, vm_name), names in vm_csvs.items():
             if vm_name == name:
                 csv_names |= names
+        for (_, vm_name), keys_ in vm_smb.items():
+            if vm_name == name:
+                share_keys |= keys_
     elif scope == BackupScope.CSV:
         csv_names = {name}
+    elif scope == BackupScope.SMB_SHARE:
+        share_keys = {name}
     for csv_name in csv_names:
         csv = csv_by_any_name.get(csv_name)
         if csv is None:
             continue
         key = _csv_volume_key(csv, luns_by_serial)
+        if key is not None:
+            keys.add(key)
+    for share_key in share_keys:
+        share = smb_share_by_any_key.get(share_key)
+        if share is None:
+            continue
+        key = _smb_share_volume_key(share, cifs_shares_by_key)
         if key is not None:
             keys.add(key)
     return list(keys)
