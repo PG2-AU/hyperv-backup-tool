@@ -1065,15 +1065,28 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
 
 
 def _execute_smb_restore_add(run_id: str) -> None:
-    """Backlog #22 (SMB3-Restore, Option 1/ADD): haengt eine VHDX DIREKT
-    aus ONTAPs schreibgeschuetztem `~snapshot`-Ordner als Zusatzdisk an --
-    kein LUN-Klon, kein iSCSI, kein Restore-Proxy-Host, kein Kopieren.
+    """Backlog #22 (SMB3-Restore, Option 1/ADD): kopiert eine VHDX aus
+    ONTAPs schreibgeschuetztem `~snapshot`-Ordner in einen dedizierten
+    Staging-Unterordner auf DERSELBEN Freigabe (`_hvnb_restores\\<run-id>\\`,
+    NICHT den Original-VM-Ordner -- Nutzer-Vorgabe) und haengt die Kopie
+    dort als Zusatzdisk an.
+
+    Kein LUN-Klon/iSCSI/Restore-Proxy-Host noetig (anders als beim CSV-
+    Pfad) -- ABER trotzdem eine Kopie, kein echtes Zero-Copy: live
+    verifiziert (2026-09-18), dass Add-VMHardDiskDrive beim Anhaengen
+    einer SMB3-Disk selbst noch versucht, Ordner-Berechtigungen auf dem
+    Zielordner zu SETZEN ('Failed to set folder permission... Access is
+    denied'), was in einem inhaerent schreibgeschuetzten ONTAP-Snapshot
+    IMMER fehlschlaegt -- unabhaengig von Freigabe-ACLs (Snapshots sind
+    architektonisch unveraenderbar, nicht nur per Berechtigung
+    eingeschraenkt). Ein direkter Read-only-Attach aus `~snapshot` ist
+    damit ueber die Hyper-V-PowerShell-API nicht moeglich.
+
     Nur fuer eine gesicherte Datei OHNE aktiven Checkpoint zum Backup-
     Zeitpunkt (reine VHDX) -- eine AVHDX-Kette aufzuloesen wuerde
-    Schreibzugriff auf die Elterndatei brauchen (Set-VHDParent), den
-    `~snapshot` nicht hergibt (Nutzer-Vorgabe: fuer diesen Fall bewusst
-    kein Restore in dieser Runde, siehe cleanup_restore fuer den
-    zugehoerigen Cleanup-Sonderfall via RestoreRun.source_is_snapshot_direct)."""
+    zusaetzlich Set-VHDParent auf der (jetzt kopierten, also
+    beschreibbaren) Elterndatei brauchen; bewusst nicht in dieser Runde
+    gebaut (Nutzer-Vorgabe)."""
     db = SessionLocal()
     try:
         run = db.get(RestoreRun, run_id)
@@ -1107,7 +1120,9 @@ def _execute_smb_restore_add(run_id: str) -> None:
                     raise RuntimeError(f"VM '{run.vm_name}' bzw. deren Knoten nicht gefunden")
 
                 snapshot_path = _smb_snapshot_source_path(server, share, snapshot.snapshot_name, run.source_vhd_path)
-                ctx.row.message = snapshot_path
+                filename = run.source_vhd_path.rsplit("\\", 1)[-1]
+                staging_path = f"\\\\{server}\\{share}\\_hvnb_restores\\{run.id}\\{filename}"
+                ctx.row.message = f"{snapshot_path} -> {staging_path}"
 
             settings = _restore_settings()
             hv_service = HyperVService(
@@ -1124,13 +1139,16 @@ def _execute_smb_restore_add(run_id: str) -> None:
                 node_session = node_service.connect(hv_cluster.username, hv_password)
                 ctx.row.message = node_address
 
-            with _StepCtx(db, run.id, "attach", "VHDX als Zusatzdisk anhängen (read-only aus Snapshot)") as ctx:
-                info = node_service.attach_vhd(node_session, run.vm_name, snapshot_path)
+            with _StepCtx(db, run.id, "copy", "VHDX aus Snapshot in Staging-Ordner kopieren") as ctx:
+                node_service.copy_unc_to_unc(node_session, snapshot_path, staging_path, hv_cluster.username, hv_password)
+                ctx.row.message = staging_path
+
+            with _StepCtx(db, run.id, "attach", "VHDX als Zusatzdisk anhängen") as ctx:
+                info = node_service.attach_vhd(node_session, run.vm_name, staging_path)
                 run.attached_controller_type = str(info.get("controller_type"))
                 run.attached_controller_number = str(info.get("controller_number"))
                 run.attached_controller_location = str(info.get("controller_location"))
-                run.restored_vhd_path = snapshot_path
-                run.source_is_snapshot_direct = True
+                run.restored_vhd_path = staging_path
                 run.cleanup_needed = True
                 ctx.row.message = f"{info.get('controller_type')} {info.get('controller_number')}:{info.get('controller_location')}"
 
@@ -1631,14 +1649,17 @@ def cleanup_restore(
         result = node_service.detach_vhd(node_session, run.vm_name, run.restored_vhd_path)
         if not result.success:
             raise RuntimeError(result.error)
-        # source_is_snapshot_direct (Backlog #22): restored_vhd_path zeigt
-        # in diesem Fall auf ONTAPs schreibgeschuetzten `~snapshot`-Ordner
-        # selbst, nicht auf eine eigene Kopie -- kein delete_file, ein
-        # Loeschversuch wuerde ohnehin nur fehlschlagen.
-        if not run.source_is_snapshot_direct:
-            result = node_service.delete_file(node_session, run.restored_vhd_path)
-            if not result.success:
-                raise RuntimeError(result.error)
+        result = node_service.delete_file(node_session, run.restored_vhd_path)
+        if not result.success:
+            raise RuntimeError(result.error)
+        # Backlog #22: bei einem SMB3-ADD-Restore liegt restored_vhd_path
+        # in einem eigenen, pro-Lauf Staging-Unterordner
+        # ('_hvnb_restores\<run-id>\...', siehe _execute_smb_restore_add)
+        # -- nach dem Loeschen der Datei ist der Ordner leer und wird
+        # best-effort gleich mit entfernt, sonst sammeln sich mit jedem
+        # ADD-Restore leere Ordner auf der Freigabe an.
+        if "\\_hvnb_restores\\" in run.restored_vhd_path.lower():
+            node_service.remove_empty_directory(node_session, run.restored_vhd_path.rsplit("\\", 1)[0])
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

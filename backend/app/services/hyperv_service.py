@@ -968,6 +968,15 @@ class HyperVService:
         escaped = path.replace("'", "''")
         return self._run_ps(session, f"Remove-Item -Path '{escaped}' -Force -ErrorAction Stop")
 
+    def remove_empty_directory(self, session: winrm.Session, path: str) -> None:
+        """Best-effort: entfernt einen (erwartungsgemaess leeren) Ordner,
+        z.B. den pro-Lauf Staging-Unterordner eines SMB3-ADD-Restores
+        (Backlog #22) nach dem Cleanup der darin kopierten VHDX --
+        schlaegt bewusst NICHT fehlschlagend durch (SilentlyContinue),
+        falls der Ordner doch noch etwas enthaelt oder schon weg ist."""
+        escaped = path.replace("'", "''")
+        self._run_ps(session, f"Remove-Item -Path '{escaped}' -Force -ErrorAction SilentlyContinue")
+
     def rename_file(self, session: winrm.Session, old_path: str, new_path: str) -> CommandResult:
         """Benennt die wiederhergestellte VHDX im Replace-Modus auf den
         Originalnamen um, nachdem die alte Datei geloescht wurde -- die
