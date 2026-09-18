@@ -953,6 +953,8 @@ export interface RecreateVmPayload {
   new_vm_name?: string;
   disconnect_network?: boolean;
   destination_csv_name?: string;
+  destination_smb_server?: string;
+  destination_smb_share?: string;
   avhdx_checkpoint_id?: string | null;
 }
 

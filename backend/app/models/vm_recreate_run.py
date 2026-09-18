@@ -47,6 +47,12 @@ class VmRecreateRun(Base):
     # geloeschten VM bleiben beide auf Default (False/None).
     disconnect_network: Mapped[bool] = mapped_column(Boolean, default=False)
     destination_csv_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Backlog #22: Alternative zu destination_csv_name fuer eine VHD auf
+    # einem NetApp-CIFS-Export -- mutuell exklusiv (nie beides gesetzt),
+    # analog zu HyperVVhd.csv_name vs. smb_server/smb_share. Nur relevant,
+    # wenn die Quell-VHDs SMB3-gehostet sind (siehe _execute_vm_recreate).
+    destination_smb_server: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    destination_smb_share: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_run_id: Mapped[str] = mapped_column(String(36))
     # Siehe RestoreRun.avhdx_checkpoint_id -- ein Wert fuer den ganzen
     # Lauf (nicht pro VHD, Checkpoints betreffen die ganze VM).

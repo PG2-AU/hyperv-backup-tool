@@ -47,7 +47,7 @@ from app.core.rbac import Permission
 from app.db.session import SessionLocal, get_db
 from app.models.backup_run import BackupRunSnapshot, BackupRunVmConfig
 from app.models.hyperv_cluster import HyperVCluster
-from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
 from app.models.netapp_discovery import NetAppLun
 from app.models.restore_infra import RestoreInfraConfig
@@ -256,6 +256,10 @@ class RecreateVmRequest(BaseModel):
     # Side-by-side-Restore-Optionen, nur relevant zusammen mit new_vm_name:
     disconnect_network: bool = False
     destination_csv_name: str | None = None
+    # Backlog #22: Alternative zu destination_csv_name fuer SMB3-gehostete
+    # Quell-VHDs (mutuell exklusiv, siehe VmRecreateRun).
+    destination_smb_server: str | None = None
+    destination_smb_share: str | None = None
     # Siehe TriggerRestoreRequest.avhdx_checkpoint_id -- ein Wert fuer den
     # ganzen Lauf (Checkpoints betreffen die ganze VM, nicht einzelne
     # VHDs).
@@ -1535,8 +1539,15 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 hv_password = decrypt_secret(hv_cluster.encrypted_password)
                 name_note = f", Ziel-Name '{target_name}'" if target_name != run.vm_name else ""
                 csv_note = f", Ziel-CSV '{run.destination_csv_name}'" if run.destination_csv_name else ""
+                smb_note = (
+                    f", Ziel-Freigabe '\\\\{run.destination_smb_server}\\{run.destination_smb_share}'"
+                    if run.destination_smb_server and run.destination_smb_share else ""
+                )
                 net_note = ", Netzwerk getrennt" if run.disconnect_network else ""
-                ctx.row.message = f"{len(vm_config.vhds)} VHD(s), urspruenglicher Host {vm_config.host_name}{name_note}{csv_note}{net_note}"
+                ctx.row.message = (
+                    f"{len(vm_config.vhds)} VHD(s), urspruenglicher Host {vm_config.host_name}"
+                    f"{name_note}{csv_note}{smb_note}{net_note}"
+                )
 
             with _StepCtx(db, run.id, "connect-node", f"Verbindung zu Knoten '{vm_config.host_name}'", step_model=VmRecreateRunStep) as ctx:
                 cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
@@ -1553,14 +1564,66 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
                 proxy_session = proxy_service.connect(proxy.username, proxy_password)
                 ctx.row.message = proxy.address
 
+            suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
             restored_paths: list[str] = []
             for i, vhd in enumerate(vm_config.vhds, start=1):
+                vhd_name = vhd.get("name") or f"disk{i}.vhdx"
+                vhd_smb_server = vhd.get("smb_server")
+                vhd_smb_share = vhd.get("smb_share")
+
+                if vhd_smb_server and vhd_smb_share:
+                    # Backlog #22 (SMB3-Restore, Side-by-side/Variante B):
+                    # kein LUN-Klon/iSCSI/Proxy-Host noetig -- direkte Kopie
+                    # aus ONTAPs `~snapshot`-Ordner, exakt wie bei
+                    # _execute_smb_restore_add/_execute_smb_restore_replace.
+                    smb_cluster_id = vhd.get("netapp_cluster_id")
+                    smb_svm = vhd.get("svm_name")
+                    smb_volume = vhd.get("volume_name")
+                    if not (smb_cluster_id and smb_svm and smb_volume):
+                        raise RuntimeError(f"VHD '{vhd_name}': unvollstaendige gespeicherte Zuordnung")
+                    snapshot = snapshot_by_volume.get((smb_cluster_id, smb_svm, smb_volume))
+                    if snapshot is None or not snapshot.snapshot_name:
+                        raise RuntimeError(f"VHD '{vhd_name}': kein passender Snapshot in diesem Backup-Lauf gefunden")
+
+                    original_path = vhd.get("path") or ""
+                    copy_source_path = _resolve_checkpoint_source_path(vm_config, original_path, run.avhdx_checkpoint_id)
+                    snapshot_path = _smb_snapshot_source_path(vhd_smb_server, vhd_smb_share, snapshot.snapshot_name, copy_source_path)
+                    # Ziel-Freigabe: die gewaehlte destination_smb_*, sonst
+                    # die urspruengliche Freigabe dieser VHD (analog zu
+                    # dest_csv weiter unten fuer den CSV-Fall).
+                    dest_server = run.destination_smb_server or vhd_smb_server
+                    dest_share = run.destination_smb_share or vhd_smb_share
+                    filename = copy_source_path.rsplit("\\", 1)[-1]
+                    dest_dir = f"\\\\{dest_server}\\{dest_share}\\{target_name}"
+                    dest_path = f"{dest_dir}\\{filename}"
+
+                    with _StepCtx(db, run.id, f"copy-{i}", f"{vhd_name} aus Snapshot kopieren", step_model=VmRecreateRunStep) as ctx:
+                        node_service.copy_unc_to_unc(node_session, snapshot_path, dest_path, hv_cluster.username, hv_password)
+                        ctx.row.message = dest_path
+                    restored_path = dest_path
+
+                    if filename.lower().endswith(".avhdx"):
+                        with _StepCtx(db, run.id, f"merge-{i}", f"{vhd_name}: Checkpoint-Kette zusammenführen", step_model=VmRecreateRunStep) as ctx:
+                            try:
+                                restored_path, _base_filename = _merge_avhdx_chain_smb(
+                                    node_service, node_session, vhd_smb_server, vhd_smb_share, snapshot.snapshot_name,
+                                    dest_dir, dest_path, hv_cluster.username, hv_password, f"{suffix}_{i}",
+                                )
+                            except RuntimeError as exc:
+                                raise RuntimeError(
+                                    f"VHD '{vhd_name}': diese Sicherung enthält keine gültige Basis-VHDX "
+                                    "(AVHDX statt VHDX gesichert) und konnte auch nicht automatisch "
+                                    f"zusammengeführt werden: {exc}"
+                                ) from exc
+                            ctx.row.message = restored_path
+                    restored_paths.append(restored_path)
+                    continue
+
                 vhd_svm = vhd.get("svm_name")
                 vhd_volume = vhd.get("volume_name")
                 vhd_lun_path = vhd.get("lun_name")
                 vhd_cluster_id = vhd.get("netapp_cluster_id")
                 vhd_csv = vhd.get("csv_name")
-                vhd_name = vhd.get("name") or f"disk{i}.vhdx"
                 if not (vhd_svm and vhd_volume and vhd_lun_path and vhd_cluster_id and vhd_csv):
                     raise RuntimeError(f"VHD '{vhd_name}': unvollstaendige gespeicherte Zuordnung")
 
@@ -1755,17 +1818,45 @@ def _execute_vm_recreate(run_id: str) -> None:  # noqa: C901
             # darf den Zielnamen deshalb NICHT bereits enthalten, sonst
             # entsteht eine doppelt verschachtelte Struktur
             # ({csv}\{name}\{name}\Virtual Machines\..., live beobachtet).
-            first_csv = run.destination_csv_name or vm_config.vhds[0].get("csv_name")
-            storage_path = f"C:\\ClusterStorage\\{first_csv}"
+            #
+            # Backlog #22: war die erste VHD SMB3-gehostet, ist storage_path
+            # ein UNC-Pfad auf die (ggf. per destination_smb_* gewaehlte)
+            # Ziel-Freigabe -- New-VM unterstuetzt das genauso wie einen
+            # lokalen ClusterStorage-Pfad.
+            first_vhd = vm_config.vhds[0]
+            if first_vhd.get("smb_server") and first_vhd.get("smb_share"):
+                storage_path = f"\\\\{run.destination_smb_server or first_vhd['smb_server']}\\{run.destination_smb_share or first_vhd['smb_share']}"
+            else:
+                first_csv = run.destination_csv_name or first_vhd.get("csv_name")
+                storage_path = f"C:\\ClusterStorage\\{first_csv}"
+
+            # New-VM/Add-VMHardDiskDrive brauchen fuer eine SMB3-Disk
+            # CredSSP (echter Double-Hop, siehe _execute_smb_restore_add) --
+            # nur aufbauen, wenn tatsaechlich eine UNC-Disk im Spiel ist.
+            uses_smb_destination = storage_path.startswith("\\\\") or any(p.startswith("\\\\") for p in restored_paths)
+            if uses_smb_destination:
+                credssp_settings = copy.copy(settings)
+                credssp_settings.winrm_transport = "credssp"
+                credssp_service = HyperVService(
+                    credssp_settings, node_address, use_https=hv_cluster.use_https, node_hostname=vm_config.host_name,
+                )
+                credssp_session = credssp_service.connect(hv_cluster.username, hv_password)
+                vm_service, vm_session = credssp_service, credssp_session
+            else:
+                vm_service, vm_session = node_service, node_session
+
             with _StepCtx(db, run.id, "create-vm", "VM anlegen", step_model=VmRecreateRunStep) as ctx:
-                new_vm_uuid = node_service.create_vm(node_session, target_name, vm_config.generation or 2, storage_path)
+                new_vm_uuid = vm_service.create_vm(vm_session, target_name, vm_config.generation or 2, storage_path)
                 run.new_vm_uuid = new_vm_uuid
                 db.commit()
                 ctx.row.message = new_vm_uuid
 
             with _StepCtx(db, run.id, "attach-disks", "Wiederhergestellte VHDs anhaengen", step_model=VmRecreateRunStep):
                 for path in restored_paths:
-                    node_service.attach_vhd(node_session, target_name, path)
+                    if path.startswith("\\\\"):
+                        credssp_service.attach_vhd(credssp_session, target_name, path)
+                    else:
+                        node_service.attach_vhd(node_session, target_name, path)
 
             with _StepCtx(db, run.id, "configure-hardware", "CPU/RAM konfigurieren", step_model=VmRecreateRunStep):
                 node_service.configure_vm_hardware(
@@ -1866,9 +1957,25 @@ def recreate_vm(
         if csv is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"CSV '{destination_csv_name}' nicht gefunden")
 
+    # Backlog #22: Alternative zu destination_csv_name -- mutuell exklusiv,
+    # dieselbe Validierung wie oben, nur gegen HyperVSmbShare.
+    destination_smb_server = (payload.destination_smb_server or "").strip() or None
+    destination_smb_share = (payload.destination_smb_share or "").strip() or None
+    if destination_smb_server and destination_smb_share:
+        share = db.query(HyperVSmbShare).filter(
+            HyperVSmbShare.cluster_id == vm_config.hyperv_cluster_id,
+            HyperVSmbShare.server == destination_smb_server, HyperVSmbShare.share == destination_smb_share,
+        ).first()
+        if share is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"SMB3-Freigabe '\\\\{destination_smb_server}\\{destination_smb_share}' nicht gefunden",
+            )
+
     run = VmRecreateRun(
         hyperv_cluster_id=vm_config.hyperv_cluster_id, vm_name=vm_name, target_vm_name=target_name,
         disconnect_network=payload.disconnect_network, destination_csv_name=destination_csv_name,
+        destination_smb_server=destination_smb_server, destination_smb_share=destination_smb_share,
         avhdx_checkpoint_id=payload.avhdx_checkpoint_id,
         source_run_id=payload.run_id, status=RestoreStatus.RUNNING, started_at=datetime.now(timezone.utc),
     )

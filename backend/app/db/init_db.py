@@ -366,6 +366,9 @@ def init_db(db: Session) -> None:
             "avhdx_checkpoint_id": "VARCHAR(64)",
         },
     )
+    _add_missing_columns(
+        engine, "vm_recreate_runs", {"destination_smb_server": "VARCHAR(255)", "destination_smb_share": "VARCHAR(255)"},
+    )
     _add_missing_columns(engine, "restore_runs", {"avhdx_checkpoint_id": "VARCHAR(64)"})
     _add_missing_columns(engine, "restore_infra_configs", {"initiator_portal_address": "VARCHAR(100)"})
     _add_missing_columns(engine, "restore_proxy_host", {"hostname": "VARCHAR(255)"})

@@ -218,7 +218,15 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
   // explizitem Zielnamen + optionaler Ziel-CSV/Netzwerk-Trennung.
   const [cloneName, setCloneName] = useState("");
   const [cloneDisconnectNetwork, setCloneDisconnectNetwork] = useState(true);
-  const [cloneDestinationCsv, setCloneDestinationCsv] = useState<string | null>(null);
+  // Backlog #22: Speicherort ist entweder eine CSV oder eine SMB3-
+  // Freigabe -- ein einziger, kodierter Auswahlwert ("csv:<name>" /
+  // "smb:<server>|<share>") speist EINEN gemeinsamen Select mit zwei
+  // Gruppen, statt zwei parallele Zustaende zu pflegen.
+  const [cloneDestination, setCloneDestination] = useState<string | null>(null);
+  const cloneDestinationCsv = cloneDestination?.startsWith("csv:") ? cloneDestination.slice(4) : null;
+  const cloneDestinationSmbParts = cloneDestination?.startsWith("smb:") ? cloneDestination.slice(4).split("|") : null;
+  const cloneDestinationSmbServer = cloneDestinationSmbParts?.[0] ?? null;
+  const cloneDestinationSmbShare = cloneDestinationSmbParts?.[1] ?? null;
   const [cloneRunId, setCloneRunId] = useState<string | null>(null);
 
   // Normalerweise nur auf Schritt "Snapshot" geladen -- bei Direkteinstieg
@@ -317,16 +325,23 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
     if (cloneDestinationCsv) {
       const csv = findCsvByName(cloneDestinationCsv);
       capacityEstimates = csv ? [{ csv, addedBytes: totalAdded, removedBytes: 0 }] : [];
+    } else if (cloneDestinationSmbServer && cloneDestinationSmbShare) {
+      const share = clusterSmbShares.find(
+        (s) => s.server.toLowerCase() === cloneDestinationSmbServer.toLowerCase() && s.share.toLowerCase() === cloneDestinationSmbShare.toLowerCase(),
+      );
+      capacityEstimates = share ? [{ share, addedBytes: totalAdded, removedBytes: 0 }] : [];
     } else {
-      const byCsv = new Map<string, CapacityEstimate>();
+      const byTarget = new Map<string, CapacityEstimate>();
       for (const v of selectedSnapshot?.vhds ?? []) {
         const csv = resolveCsvForVhdPath(v.path);
-        if (!csv) continue;
-        const entry = byCsv.get(csv.name) ?? { csv, addedBytes: 0, removedBytes: 0 };
+        const share = csv ? undefined : resolveSmbShareForVhdPath(v.path);
+        if (!csv && !share) continue;
+        const key = csv ? `csv:${csv.name}` : `smb:${share!.server}|${share!.share}`;
+        const entry = byTarget.get(key) ?? { csv, share, addedBytes: 0, removedBytes: 0 };
         entry.addedBytes += occupiedBytes(v);
-        byCsv.set(csv.name, entry);
+        byTarget.set(key, entry);
       }
-      capacityEstimates = Array.from(byCsv.values());
+      capacityEstimates = Array.from(byTarget.values());
     }
   } else if (restoreKind === "add" || restoreKind === "replace") {
     const byTarget = new Map<string, CapacityEstimate>();
@@ -365,7 +380,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
       setLastCopyResult(null);
       setCloneName("");
       setCloneDisconnectNetwork(true);
-      setCloneDestinationCsv(null);
+      setCloneDestination(null);
       setCloneRunId(null);
     } else if (initialSnapshotId) {
       // Direkteinstieg mit bereits gewaehltem Snapshot (siehe
@@ -443,6 +458,8 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
           new_vm_name: cloneName.trim(),
           disconnect_network: cloneDisconnectNetwork,
           destination_csv_name: cloneDestinationCsv ?? undefined,
+          destination_smb_server: cloneDestinationSmbServer ?? undefined,
+          destination_smb_share: cloneDestinationSmbShare ?? undefined,
           avhdx_checkpoint_id: avhdxCheckpointId,
         },
         {
@@ -679,11 +696,26 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                 />
                 <Select
                   label="Speicherort der VM"
-                  description="CSV, auf der alle VHDs der neuen VM abgelegt werden. Ohne Auswahl bleibt die ursprüngliche CSV je VHD erhalten."
+                  description="CSV oder SMB3-Freigabe, auf der alle VHDs der neuen VM abgelegt werden. Ohne Auswahl bleibt der ursprüngliche Speicherort je VHD erhalten."
                   placeholder="Wie im Original"
-                  data={clusterCsvs.map((c) => ({ value: c.name, label: c.name }))}
-                  value={cloneDestinationCsv}
-                  onChange={setCloneDestinationCsv}
+                  data={[
+                    ...(clusterCsvs.length > 0
+                      ? [{ group: "Cluster Shared Volumes", items: clusterCsvs.map((c) => ({ value: `csv:${c.name}`, label: c.name })) }]
+                      : []),
+                    ...(clusterSmbShares.length > 0
+                      ? [
+                          {
+                            group: "SMB3-Freigaben",
+                            items: clusterSmbShares.map((s) => ({
+                              value: `smb:${s.server}|${s.share}`,
+                              label: `\\\\${s.server}\\${s.share}`,
+                            })),
+                          },
+                        ]
+                      : []),
+                  ]}
+                  value={cloneDestination}
+                  onChange={setCloneDestination}
                   clearable
                 />
                 {selectedSnapshot?.vhds.some((v) => v.is_avhdx) && (
@@ -699,7 +731,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                 {capacityEstimates.length > 0 && (
                   <Stack gap="xs">
                     <Text size="xs" fw={600} c="dimmed">
-                      CSV-Auslastung nach dem Restore
+                      Auslastung nach dem Restore
                     </Text>
                     {capacityEstimates.map((e) => (
                       <CapacityBar key={targetLabel(e)} estimate={e} />
@@ -894,7 +926,13 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                   Neuer Name: <strong>{cloneName}</strong>
                 </Text>
                 <Text size="sm">
-                  Speicherort: <strong>{cloneDestinationCsv ?? "wie im Original"}</strong>
+                  Speicherort:{" "}
+                  <strong>
+                    {cloneDestinationCsv ??
+                      (cloneDestinationSmbServer && cloneDestinationSmbShare
+                        ? `\\\\${cloneDestinationSmbServer}\\${cloneDestinationSmbShare}`
+                        : "wie im Original")}
+                  </strong>
                 </Text>
                 <Text size="sm">
                   Netzwerk: <strong>{cloneDisconnectNetwork ? "getrennt" : "verbunden"}</strong>
