@@ -1302,14 +1302,24 @@ class HyperVService:
             f"Copy-Item -Path '{escaped_src}' -Destination '{escaped_dest}' -Force -ErrorAction Stop; "
             # Hyper-V-ueber-SMB3 prueft beim Anhaengen einer Disk NICHT nur
             # die normale Windows-ACL (ein 'Everyone: FullControl' reicht
-            # NICHT, live verifiziert 2026-09-18) -- VMMS braucht explizit
-            # entweder den Rechner-Account des Compute-Knotens ODER die
-            # wohlbekannte Gruppe 'NT VIRTUAL MACHINE\\Virtual Machines'
-            # (deckt automatisch JEDE VM ab, kein Domaenen-/Knotenname
-            # noetig) in der ACL der Datei -- exakt das fehlt einer frisch
-            # per Copy-Item angelegten Datei. Siehe Microsofts eigene
-            # Hyper-V-over-SMB-Dokumentation zu genau diesem Setup-Schritt.
+            # NICHT, live verifiziert 2026-09-18) -- eine per Copy-Item
+            # neu angelegte Datei bekommt keine der beiden ACL-Eintraege,
+            # die die funktionierende Original-Datei per Get-Acl-Vergleich
+            # zeigte: 'NT VIRTUAL MACHINE\\Virtual Machines' (deckt jede
+            # VM ab -- ABER: dies ist eine rein LOKALE virtuelle SID im
+            # Token des VM-Worker-Prozesses, wird nie ueber eine
+            # Kerberos-authentifizierte SMB-Verbindung zum NetApp-CIFS-
+            # Server uebertragen, daher zusaetzlich gesetzt, aber allein
+            # nicht ausreichend -- live verifiziert 2026-09-18: schlug
+            # trotzdem fehl) UND der Rechner-Account des Compute-Knotens
+            # selbst (z.B. 'HYPERVDEMO\\SVAUDEMO7-HV101$') -- DAS ist die
+            # Identitaet, mit der VMMS tatsaechlich per Kerberos ueber das
+            # Netzwerk beim NetApp-Server authentifiziert, wenn es die
+            # Datei zum Anhaengen oeffnet. $env:COMPUTERNAME wird INNERHALB
+            # dieser Session aufgeloest (laeuft ja bereits auf dem
+            # richtigen Knoten), kein Domaenenname noetig (lokal auflösbar).
             f"icacls '{escaped_dest}' /grant 'NT VIRTUAL MACHINE\\Virtual Machines:(M)' | Out-Null; "
+            f"icacls '{escaped_dest}' /grant \"$env:COMPUTERNAME`$:(M)\" | Out-Null; "
             f"(Get-Item -Path '{escaped_dest}').Length "
             "} finally { " + cleanup_lines + "}"
         )
