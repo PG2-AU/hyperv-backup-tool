@@ -14,6 +14,7 @@ import {
   useRestoreInfraConfigs,
   useRestoreProxyHost,
   useRestoreRuns,
+  useVms,
   useVmsWithBackups,
 } from "@/api/hooks";
 import { FileRestoreSessionModal } from "@/components/FileRestoreSessionModal";
@@ -34,6 +35,7 @@ export function RestorePage() {
   const activeTab = params.get("tab") ?? "overview";
 
   const { data: vms } = useVmsWithBackups();
+  const { data: liveVms } = useVms();
   const { data: runs } = useRestoreRuns();
   const cleanupRun = useCleanupRestoreRun();
   const [wizardVm, setWizardVm] = useState<VmWithBackups | null>(null);
@@ -69,6 +71,21 @@ export function RestorePage() {
   const cleanupPending = runs?.filter((r) => r.cleanup_needed) ?? [];
   const openFileSessions = fileRestoreRuns?.filter((r) => r.cleanup_needed) ?? [];
   const filteredVms = (vms ?? []).filter((vm) => matchesAllColumns(vm, vmSearch));
+
+  // Backlog #22: "VMs mit vorhandenen Backups" liefert (VmWithBackups)
+  // keine Speicherort-Info -- ueber den bereits geladenen vollen
+  // VM-Datensatz (useVms, hat csv_paths/smb_share_paths) per Name+Cluster
+  // nachschlagen, statt das Backend dafuer zu erweitern. Fuer geloeschte
+  // VMs (exists_in_inventory === false) gibt es keinen aktuellen
+  // Datensatz mehr -- "-" ist dann ehrlich, statt zu raten.
+  function storageLabel(vm: VmWithBackups): string {
+    const full = liveVms?.find((v) => v.name === vm.name && v.cluster_id === vm.cluster_id);
+    if (!full) return "-";
+    const labels: string[] = [];
+    if (full.csv_paths.length > 0) labels.push("CSV");
+    if (full.smb_share_paths.length > 0) labels.push("SMB3");
+    return labels.length > 0 ? labels.join(" + ") : "-";
+  }
 
   function handleCleanup(runId: string, vmName: string) {
     confirmAction({
@@ -221,6 +238,7 @@ export function RestorePage() {
             <Table.Th>Status</Table.Th>
             <Table.Th>Host</Table.Th>
             <Table.Th>Cluster</Table.Th>
+            <Table.Th>Speicherort</Table.Th>
             <Table.Th>Backups</Table.Th>
             <Table.Th />
           </Table.Tr>
@@ -251,6 +269,7 @@ export function RestorePage() {
                 </Table.Td>
                 <Table.Td>{vm.host ?? "-"}</Table.Td>
                 <Table.Td>{vm.cluster ?? "-"}</Table.Td>
+                <Table.Td>{storageLabel(vm)}</Table.Td>
                 <Table.Td>
                   <Badge variant="filled" color="blue">
                     {vm.backup_count}
