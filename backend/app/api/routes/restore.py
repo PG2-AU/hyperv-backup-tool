@@ -1139,27 +1139,36 @@ def _execute_smb_restore_add(run_id: str) -> None:
                 node_session = node_service.connect(hv_cluster.username, hv_password)
                 ctx.row.message = node_address
 
-            # EXPERIMENT (2026-09-18): jetzt, wo bekannt ist, dass der
-            # eigentliche Fehler beim Anhaengen ein WinRM-Double-Hop war
-            # (nicht die zuerst vermutete fehlende Schreibrechte-ACL auf
-            # ~snapshot), testen wir per CredSSP direkt aus dem Snapshot
-            # anzuhaengen -- OHNE Kopierschritt. Falls das funktioniert,
-            # war 'Failed to set folder permission' beim allerersten Versuch
-            # (noch unter NTLM, vor Einfuehrung von CredSSP) ebenfalls nur
-            # ein Double-Hop-Symptom, kein echtes ONTAP-Schreibschutz-Limit
-            # -- dann kann die ganze Kopier-/Staging-/ACL-Logik entfallen.
-            with _StepCtx(db, run.id, "attach", "VHDX als Zusatzdisk anhängen (Test: direkt aus Snapshot, CredSSP)") as ctx:
+            with _StepCtx(db, run.id, "copy", "VHDX aus Snapshot in Staging-Ordner kopieren") as ctx:
+                node_service.copy_unc_to_unc(node_session, snapshot_path, staging_path, hv_cluster.username, hv_password)
+                ctx.row.message = staging_path
+
+            with _StepCtx(db, run.id, "attach", "VHDX als Zusatzdisk anhängen") as ctx:
+                # Add-VMHardDiskDrive fuer eine SMB3-Disk braucht -- wie
+                # Add-ClusterVirtualMachineRole weiter unten in dieser Datei
+                # -- einen echten Double-Hop (Knoten -> NetApp-CIFS-Server),
+                # den weder NTLM noch Kerberos ohne Delegation erlauben.
+                # Live verifiziert (2026-09-18): identische Datei/ACL --
+                # interaktiv (Failover Cluster Manager, volle Kerberos-
+                # Delegation der Nutzersitzung) funktioniert das Anhaengen
+                # sofort, per WinRM (dieselbe NTLM-Session wie fuer den
+                # Kopierschritt oben) schlaegt es reproduzierbar mit
+                # 'Access is denied' fehl -- die zuvor vermutete fehlende
+                # ACL (siehe copy_unc_to_unc) war dagegen nicht die
+                # Ursache. Gleicher Fix wie dort: nur fuer DIESEN einen
+                # Schritt auf CredSSP umstellen (echte Delegation), auf den
+                # tatsaechlichen Besitzer-Knoten verbunden statt den CNO.
                 credssp_settings = copy.copy(settings)
                 credssp_settings.winrm_transport = "credssp"
                 credssp_service = HyperVService(
                     credssp_settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node,
                 )
                 credssp_session = credssp_service.connect(hv_cluster.username, hv_password)
-                info = credssp_service.attach_vhd(credssp_session, run.vm_name, snapshot_path)
+                info = credssp_service.attach_vhd(credssp_session, run.vm_name, staging_path)
                 run.attached_controller_type = str(info.get("controller_type"))
                 run.attached_controller_number = str(info.get("controller_number"))
                 run.attached_controller_location = str(info.get("controller_location"))
-                run.restored_vhd_path = snapshot_path
+                run.restored_vhd_path = staging_path
                 run.cleanup_needed = True
                 ctx.row.message = f"{info.get('controller_type')} {info.get('controller_number')}:{info.get('controller_location')}"
 
@@ -1673,15 +1682,9 @@ def cleanup_restore(
         result = node_service.detach_vhd(node_session, run.vm_name, run.restored_vhd_path)
         if not result.success:
             raise RuntimeError(result.error)
-        # EXPERIMENT (2026-09-18, siehe _execute_smb_restore_add): zeigt
-        # restored_vhd_path auf ONTAPs schreibgeschuetzten `~snapshot`-
-        # Ordner selbst (Direkt-Attach-Test ohne Kopierschritt), waere ein
-        # delete_file-Versuch von vornherein zum Scheitern verurteilt --
-        # und faelschlich, es ist ja nicht unsere eigene Kopie.
-        if "\\~snapshot\\" not in run.restored_vhd_path.lower():
-            result = node_service.delete_file(node_session, run.restored_vhd_path)
-            if not result.success:
-                raise RuntimeError(result.error)
+        result = node_service.delete_file(node_session, run.restored_vhd_path)
+        if not result.success:
+            raise RuntimeError(result.error)
         # Backlog #22: bei einem SMB3-ADD-Restore liegt restored_vhd_path
         # in einem eigenen, pro-Lauf Staging-Unterordner
         # ('_hvnb_restores\<run-id>\...', siehe _execute_smb_restore_add)
