@@ -1046,6 +1046,22 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                         )
                         if refreshed_vm is not None and hv_vm_fresh is not None:
                             _apply_vm_discovery_refresh(db, run.hyperv_cluster_id, hv_vm_fresh, refreshed_vm)
+                            # WICHTIG: SessionLocal laeuft mit autoflush=False
+                            # (app.db.session) -- ohne diesen expliziten Commit
+                            # sieht die gleich folgende all_vhds-Abfrage fuer
+                            # _refresh_smb_share_rows NUR den alten, bereits
+                            # committeten Stand, nicht die soeben per db.add()
+                            # angelegten frischen VHD-Zeilen dieser VM. Live
+                            # gefunden (2026-09-18): _refresh_smb_share_rows
+                            # meldete "aktualisiert", loeschte dabei aber alle
+                            # bestehenden HyperVSmbShare-Zeilen und fuegte
+                            # mangels sichtbarer Daten keine neuen ein -- die
+                            # Tabelle blieb leer, bis eine volle Discovery
+                            # (die vor ihrem eigenen _refresh_smb_share_rows-
+                            # Aufruf explizit committet, siehe _run_discovery)
+                            # es reparierte. Gleicher Commit-Fix unten in
+                            # _execute_smb_restore_replace.
+                            db.commit()
                             messages.append("Disk-/Checkpoint-Stand aktualisiert")
                         else:
                             messages.append("VM-Stand nicht aktualisiert -- nächste periodische Discovery übernimmt das")
@@ -1413,6 +1429,14 @@ def _execute_smb_restore_replace(run_id: str) -> None:  # noqa: C901
                     )
                     if refreshed_vm is not None and hv_vm_fresh is not None:
                         _apply_vm_discovery_refresh(db, run.hyperv_cluster_id, hv_vm_fresh, refreshed_vm)
+                        # WICHTIG: SessionLocal laeuft mit autoflush=False --
+                        # ohne diesen Commit sieht die gleich folgende
+                        # all_vhds-Abfrage fuer _refresh_smb_share_rows nur
+                        # den alten Stand, nicht die frischen VHD-Zeilen
+                        # dieser VM. Live gefunden 2026-09-18: die Tabelle
+                        # blieb trotz "aktualisiert"-Meldung leer -- siehe
+                        # identischer Fix im CSV-Pfad in _execute_restore.
+                        db.commit()
                         messages.append("Disk-/Checkpoint-Stand aktualisiert")
                     else:
                         messages.append("VM-Stand nicht aktualisiert -- nächste periodische Discovery übernimmt das")
