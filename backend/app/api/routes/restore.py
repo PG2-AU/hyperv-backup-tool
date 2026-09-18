@@ -1144,7 +1144,27 @@ def _execute_smb_restore_add(run_id: str) -> None:
                 ctx.row.message = staging_path
 
             with _StepCtx(db, run.id, "attach", "VHDX als Zusatzdisk anhängen") as ctx:
-                info = node_service.attach_vhd(node_session, run.vm_name, staging_path)
+                # Add-VMHardDiskDrive fuer eine SMB3-Disk braucht -- wie
+                # Add-ClusterVirtualMachineRole weiter unten in dieser Datei
+                # -- einen echten Double-Hop (Knoten -> NetApp-CIFS-Server),
+                # den weder NTLM noch Kerberos ohne Delegation erlauben.
+                # Live verifiziert (2026-09-18): identische Datei/ACL --
+                # interaktiv (Failover Cluster Manager, volle Kerberos-
+                # Delegation der Nutzersitzung) funktioniert das Anhaengen
+                # sofort, per WinRM (dieselbe NTLM-Session wie fuer den
+                # Kopierschritt oben) schlaegt es reproduzierbar mit
+                # 'Access is denied' fehl -- die zuvor vermutete fehlende
+                # ACL (siehe copy_unc_to_unc) war dagegen nicht die
+                # Ursache. Gleicher Fix wie dort: nur fuer DIESEN einen
+                # Schritt auf CredSSP umstellen (echte Delegation), auf den
+                # tatsaechlichen Besitzer-Knoten verbunden statt den CNO.
+                credssp_settings = copy.copy(settings)
+                credssp_settings.winrm_transport = "credssp"
+                credssp_service = HyperVService(
+                    credssp_settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node,
+                )
+                credssp_session = credssp_service.connect(hv_cluster.username, hv_password)
+                info = credssp_service.attach_vhd(credssp_session, run.vm_name, staging_path)
                 run.attached_controller_type = str(info.get("controller_type"))
                 run.attached_controller_number = str(info.get("controller_number"))
                 run.attached_controller_location = str(info.get("controller_location"))
@@ -1644,7 +1664,20 @@ def cleanup_restore(
         cno_session = hv_service.connect(hv_cluster.username, hv_password, read_timeout_sec=15, operation_timeout_sec=10)
         owner_node = hv_service.get_vm_owner_node(cno_session, run.vm_name) or vm.host_name
         node_address = hv_service.resolve_node_address(cno_session, owner_node)
-        node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node)
+        is_smb_path = run.restored_vhd_path.startswith("\\\\")
+        if is_smb_path:
+            # Backlog #22: detach_vhd (Hyper-V-Cmdlet, gleicher Double-Hop
+            # wie attach_vhd in _execute_smb_restore_add) UND delete_file/
+            # remove_empty_directory (reiner Dateisystem-Zugriff auf den
+            # UNC-Pfad eines DRITTEN Hosts) brauchen fuer eine SMB3-Disk
+            # echte Delegation -- dieselbe CredSSP-Session fuer alle drei
+            # wiederverwenden, verbunden mit dem tatsaechlichen Besitzer-
+            # Knoten statt dem CNO.
+            credssp_settings = copy.copy(settings)
+            credssp_settings.winrm_transport = "credssp"
+            node_service = HyperVService(credssp_settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node)
+        else:
+            node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node)
         node_session = node_service.connect(hv_cluster.username, hv_password)
         result = node_service.detach_vhd(node_session, run.vm_name, run.restored_vhd_path)
         if not result.success:
