@@ -24,7 +24,7 @@ import {
 } from "@/api/hooks";
 import { DayJobStrip } from "@/components/DayJobStrip";
 import type { BackupJobRun, BackupRunSnapshot } from "@/api/types";
-import { formatRunTargets } from "@/utils/format";
+import { formatRunTargets, HEALTH_COLOR } from "@/utils/format";
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: "green",
@@ -48,13 +48,6 @@ const STATUS_COLOR: Record<string, string> = {
 const JOBS_TABLE_VISIBLE_ROWS = 8;
 const ROW_HEIGHT_PX = 44;
 const HEADER_HEIGHT_PX = 44;
-
-const HEALTH_COLOR: Record<string, string> = {
-  healthy: "green",
-  degraded: "orange",
-  unreachable: "red",
-  unknown: "gray",
-};
 
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "-";

@@ -5,10 +5,7 @@ import { IconAlertTriangle, IconCheck, IconCopy, IconSearch, IconX } from "@tabl
 
 import { useDetectKerberosRealm, useHyperVClusters, useKerberosConfig, useTestKerberosConnection, useUpdateKerberosConfig } from "@/api/hooks";
 import { apiErrorMessage } from "@/utils/errors";
-
-function fmtDate(value?: string | null): string {
-  return value ? new Date(value).toLocaleString("de-DE") : "–";
-}
+import { formatDateTime as fmtDate } from "@/utils/format";
 
 /** Ein kopierbarer Shell-Befehlsblock fuer die Rollout-Checkliste unten --
  * dieselbe Code+CopyButton-Kombination wie beim PowerShell-Skript in

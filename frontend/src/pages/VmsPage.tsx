@@ -32,7 +32,7 @@ import { SearchInput } from "@/components/SearchInput";
 import type { BackupScope, Csv, ResourceGroup, SmbShare, Vm } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
-import { formatBytes, lunShortName } from "@/utils/format";
+import { formatBytes, lunShortName, VM_STATE_COLOR as STATE_COLOR } from "@/utils/format";
 import { useAuthStore } from "@/store/authStore";
 import { useRunPolicy } from "@/utils/runPolicy";
 import { matchesAllColumns } from "@/utils/search";
@@ -72,8 +72,6 @@ function csvIdentity(csv: Csv): string {
 function smbShareIdentity(share: SmbShare): string {
   return `${share.cluster_id ?? ""}::${share.server}::${share.share}`;
 }
-
-const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
 
 function ResourceGroupCell({ groups, policies }: { groups: string[]; policies: string[] }) {
   if (!groups.length) {

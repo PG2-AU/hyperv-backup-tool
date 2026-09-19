@@ -9,11 +9,10 @@ interface SnapMirrorPolicyFormModalProps {
   onClose: () => void;
   clusters: NetAppCluster[] | undefined;
   svms: NetAppSvm[] | undefined;
-  initialClusterId?: string | null;
   onSubmitPlan: (plan: PolicyCreationPlan) => void;
 }
 
-export function SnapMirrorPolicyFormModal({ opened, onClose, clusters, svms, initialClusterId, onSubmitPlan }: SnapMirrorPolicyFormModalProps) {
+export function SnapMirrorPolicyFormModal({ opened, onClose, clusters, svms, onSubmitPlan }: SnapMirrorPolicyFormModalProps) {
   const [clusterId, setClusterId] = useState<string | null>(null);
   const [svmName, setSvmName] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -22,12 +21,12 @@ export function SnapMirrorPolicyFormModal({ opened, onClose, clusters, svms, ini
 
   useEffect(() => {
     if (!opened) return;
-    setClusterId(initialClusterId ?? clusters?.[0]?.id ?? null);
+    setClusterId(clusters?.[0]?.id ?? null);
     setSvmName(null);
     setName("");
     setVaultType("vault");
     setRules([{ label: "", count: 7 }]);
-  }, [opened, clusters, initialClusterId]);
+  }, [opened, clusters]);
 
   const svmOptions = (svms ?? []).filter((s) => s.cluster_id === clusterId).map((s) => ({ value: s.name, label: s.name }));
   const validRules = rules.filter((r) => r.label.trim() && r.count > 0);
@@ -47,7 +46,6 @@ export function SnapMirrorPolicyFormModal({ opened, onClose, clusters, svms, ini
             data={(clusters ?? []).map((c) => ({ value: c.id, label: c.name }))}
             value={clusterId}
             onChange={(v) => { setClusterId(v); setSvmName(null); }}
-            disabled={!!initialClusterId}
             required
           />
           <Select label="SVM" data={svmOptions} value={svmName} onChange={setSvmName} required searchable />

@@ -32,10 +32,7 @@ import {
 import type { WinrmClusterType } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
-
-function fmtDate(value?: string | null): string {
-  return value ? new Date(value).toLocaleString("de-DE") : "–";
-}
+import { formatDateTime as fmtDate } from "@/utils/format";
 
 interface WinrmCertsTabProps {
   // Vorbelegung des Assistenten -- z.B. wenn die Sektion auf Restore >

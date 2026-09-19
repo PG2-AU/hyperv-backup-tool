@@ -11,6 +11,25 @@ export function formatBytes(bytes?: number | null): string {
   return `${value.toFixed(exponent === 0 ? 0 : 1)} ${UNITS[exponent]}`;
 }
 
+// Frueher separat (und einmal -- DashboardPage -- mit abweichendem
+// "degraded"-Farbton "orange" statt "yellow", vermutlich ein Kopierfehler)
+// in StoragePage.tsx, SettingsPage.tsx und DashboardPage.tsx definiert --
+// hierher konsolidiert (2026-09-19), damit alle drei Seiten denselben
+// Farbton fuer denselben NetApp-Cluster-Health-Wert zeigen.
+export const HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
+
+// Frueher identisch in RestorePage.tsx und VmsPage.tsx dupliziert.
+export const VM_STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
+
+// Frueher identisch als fmtDate/formatTimestamp in WinrmCertsTab.tsx,
+// AdConfigTab.tsx, KerberosTab.tsx und VersionFooter.tsx dupliziert --
+// hierher konsolidiert (2026-09-19). `fallback` optional, da die
+// Aufrufer unterschiedliche Platzhaltertexte brauchten ("–" vs. "noch
+// nicht gelaufen" vs. "unbekannt").
+export function formatDateTime(value: string | null | undefined, fallback = "–"): string {
+  return value ? new Date(value).toLocaleString("de-DE") : fallback;
+}
+
 const WEEKDAY_NAMES = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 
 export function formatSchedule(schedule?: Schedule | null): string {

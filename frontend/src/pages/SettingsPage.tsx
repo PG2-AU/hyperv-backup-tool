@@ -72,10 +72,10 @@ import type { HyperVCluster, SnapMirrorLabel } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { buildHyperVClusterCreationSteps, buildHyperVClusterUpdateSteps } from "@/utils/hypervSteps";
+import { HEALTH_COLOR as HYPERV_HEALTH_COLOR } from "@/utils/format";
 import { useAuthStore } from "@/store/authStore";
 import { LOG_FONT_SIZE_OPTIONS, useDisplayStore, type ContentFontSize } from "@/store/displayStore";
 
-const HYPERV_HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
 const HYPERV_HEALTH_LABEL: Record<string, string> = {
   healthy: "Healthy",
   degraded: "Eingeschränkt",

@@ -27,8 +27,7 @@ import type { FileRestoreRun, VmWithBackups } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { matchesAllColumns } from "@/utils/search";
-
-const STATE_COLOR: Record<string, string> = { Running: "green", Off: "gray", Saved: "yellow" };
+import { VM_STATE_COLOR as STATE_COLOR } from "@/utils/format";
 
 export function RestorePage() {
   const [params, setParams] = useSearchParams();

@@ -94,7 +94,7 @@ import type {
 import { useAuthStore } from "@/store/authStore";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
-import { formatBytes, formatLagTime, lunShortName } from "@/utils/format";
+import { formatBytes, formatLagTime, HEALTH_COLOR, lunShortName } from "@/utils/format";
 import { matchesAllColumns } from "@/utils/search";
 import {
   buildLunCreationSteps,
@@ -110,7 +110,6 @@ import {
   buildVolumeEditSteps,
 } from "@/utils/netappSteps";
 
-const HEALTH_COLOR: Record<string, string> = { healthy: "green", degraded: "yellow", unreachable: "red", unknown: "gray" };
 const HEALTH_LABEL: Record<string, string> = {
   healthy: "Healthy",
   degraded: "Eingeschränkt",

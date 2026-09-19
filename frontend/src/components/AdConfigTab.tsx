@@ -5,10 +5,7 @@ import { IconAlertTriangle, IconCheck, IconX } from "@tabler/icons-react";
 
 import { useAdConfig, useTestAdConnection, useUpdateAdConfig } from "@/api/hooks.settings";
 import { apiErrorMessage } from "@/utils/errors";
-
-function fmtDate(value?: string | null): string {
-  return value ? new Date(value).toLocaleString("de-DE") : "–";
-}
+import { formatDateTime as fmtDate } from "@/utils/format";
 
 /** Settings > Active Directory -- GUI-verwaltete AD-Integration fuer die
  * GUI-Anmeldung lokaler Benutzerkonten (Backlog #12, schlanke Variante

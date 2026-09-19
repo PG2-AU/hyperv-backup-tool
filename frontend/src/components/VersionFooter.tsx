@@ -1,9 +1,10 @@
 import { Stack, Text, Tooltip } from "@mantine/core";
 
 import { useVersion } from "@/api/hooks.settings";
+import { formatDateTime } from "@/utils/format";
 
 function formatTimestamp(value: string | null | undefined): string {
-  return value ? new Date(value).toLocaleString("de-DE") : "noch nicht gelaufen";
+  return formatDateTime(value, "noch nicht gelaufen");
 }
 
 export function VersionFooter() {
@@ -11,7 +12,7 @@ export function VersionFooter() {
 
   if (!version) return null;
 
-  const deployedLabel = version.last_deploy_at ? new Date(version.last_deploy_at).toLocaleString("de-DE") : "unbekannt";
+  const deployedLabel = formatDateTime(version.last_deploy_at, "unbekannt");
 
   return (
     <Tooltip label={version.commit ?? "unbekannter Commit"} position="top-start" openDelay={300}>

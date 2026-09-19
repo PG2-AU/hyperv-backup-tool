@@ -9,13 +9,12 @@ interface NetAppScheduleFormModalProps {
   onClose: () => void;
   clusters: NetAppCluster[] | undefined;
   svms: NetAppSvm[] | undefined;
-  initialClusterId?: string | null;
   onSubmitPlan: (plan: ScheduleCreationPlan) => void;
 }
 
 const NO_SVM_VALUE = "__cluster_scoped__";
 
-export function NetAppScheduleFormModal({ opened, onClose, clusters, svms, initialClusterId, onSubmitPlan }: NetAppScheduleFormModalProps) {
+export function NetAppScheduleFormModal({ opened, onClose, clusters, svms, onSubmitPlan }: NetAppScheduleFormModalProps) {
   const [clusterId, setClusterId] = useState<string | null>(null);
   const [svmName, setSvmName] = useState<string | null>(NO_SVM_VALUE);
   const [name, setName] = useState("");
@@ -23,11 +22,11 @@ export function NetAppScheduleFormModal({ opened, onClose, clusters, svms, initi
 
   useEffect(() => {
     if (!opened) return;
-    setClusterId(initialClusterId ?? clusters?.[0]?.id ?? null);
+    setClusterId(clusters?.[0]?.id ?? null);
     setSvmName(NO_SVM_VALUE);
     setName("");
     setCron({ minutes: [], hours: [], days: [], weekdays: [] });
-  }, [opened, clusters, initialClusterId]);
+  }, [opened, clusters]);
 
   const svmOptions = [
     { value: NO_SVM_VALUE, label: "Cluster-weit (keine SVM)" },
@@ -57,7 +56,6 @@ export function NetAppScheduleFormModal({ opened, onClose, clusters, svms, initi
             data={(clusters ?? []).map((c) => ({ value: c.id, label: c.name }))}
             value={clusterId}
             onChange={(v) => { setClusterId(v); setSvmName(NO_SVM_VALUE); }}
-            disabled={!!initialClusterId}
             required
           />
           <Select label="SVM" data={svmOptions} value={svmName} onChange={setSvmName} searchable />
