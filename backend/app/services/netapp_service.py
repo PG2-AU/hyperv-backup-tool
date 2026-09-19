@@ -54,6 +54,9 @@ from netapp_ontap.resources import (
     Volume,
 )
 
+from app.core.crypto import decrypt_secret
+from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
+
 
 class NetAppConnectionError(Exception):
     """Verbindungsaufbau oder Authentifizierung gegen den Cluster fehlgeschlagen."""
@@ -324,6 +327,23 @@ class OperationResult:
     success: bool
     message: str = ""
     created_snapshot_uuids: list[str] = field(default_factory=list)
+
+
+def netapp_service_for_cluster(cluster: NetAppCluster) -> "NetAppOntapService":
+    """Baut ein NetAppOntapService-Objekt aus einer registrierten
+    NetAppCluster-Zeile -- war bis 2026-09-19 identisch in
+    app.api.routes.restore und app.api.routes.jobs dupliziert
+    (_netapp_service_for), hier zu einer gemeinsamen Stelle konsolidiert."""
+    if cluster.auth_method == NetAppAuthMethod.CERTIFICATE and cluster.client_cert_path and cluster.client_key_path:
+        return NetAppOntapService(
+            host=cluster.management_lif, verify_ssl=cluster.verify_ssl,
+            cert_path=cluster.client_cert_path, key_path=cluster.client_key_path,
+        )
+    return NetAppOntapService(
+        host=cluster.management_lif, verify_ssl=cluster.verify_ssl,
+        username=cluster.username,
+        password=decrypt_secret(cluster.encrypted_password) if cluster.encrypted_password else None,
+    )
 
 
 class NetAppOntapService:
@@ -1436,16 +1456,6 @@ class NetAppOntapService:
             except NetAppRestError:
                 return False
 
-    def metrocluster_switchover_in_progress(self) -> bool:
-        with self._connection():
-            try:
-                mcc = Metrocluster()
-                mcc.get()
-                local = getattr(mcc, "local", None)
-                return bool(local and getattr(local, "mode", "") not in ("normal", ""))
-            except NetAppRestError:
-                return False
-
     def create_snapshot(
         self, volume_name: str, svm_name: str, snapshot_name: str,
         snapmirror_label: str | None = None, expiry_time: datetime | None = None,
@@ -1509,19 +1519,6 @@ class NetAppOntapService:
                 return OperationResult(success=True, message="Snapshot geloescht")
             except NetAppRestError as exc:
                 return OperationResult(success=False, message=str(exc))
-
-    def cleanup_snapshots(self, volume_uuid: str, snapshot_uuids: list[str]) -> OperationResult:
-        """Best-effort Rollback: versucht alle uebergebenen Snapshots zu entfernen
-        und meldet gesammelt, welche fehlgeschlagen sind, statt beim ersten Fehler abzubrechen."""
-        failures: list[str] = []
-        for snap_uuid in snapshot_uuids:
-            result = self.delete_snapshot(volume_uuid, snap_uuid)
-            if not result.success:
-                failures.append(f"{snap_uuid}: {result.message}")
-
-        if failures:
-            return OperationResult(success=False, message="; ".join(failures))
-        return OperationResult(success=True, message=f"{len(snapshot_uuids)} Snapshot(s) aufgeraeumt")
 
     def list_snapmirror_relationships(self, destination_svm: str | None = None) -> list[SnapMirrorRelationshipInfo]:
         with self._connection():

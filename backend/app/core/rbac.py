@@ -78,7 +78,3 @@ class ScopeType(StrEnum):
     VM = "vm"
     LUN = "lun"
     SVM = "svm"
-
-
-def has_permission(user_permissions: set[Permission], required: Permission) -> bool:
-    return required in user_permissions

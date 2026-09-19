@@ -836,10 +836,6 @@ class HyperVService:
         script = f"Remove-VMSnapshot -VMName '{vm_name}' -Name '{checkpoint_name}' -Confirm:$false"
         return self._run_ps(session, script)
 
-    def cleanup_checkpoints(self, session: winrm.Session, checkpoints: list[tuple[str, str]]) -> list[CommandResult]:
-        """Best-effort Rollback ueber mehrere VM-Checkpoints (vm_name, checkpoint_name)."""
-        return [self.remove_checkpoint(session, vm_name, cp_name) for vm_name, cp_name in checkpoints]
-
     # --- VM-Restore: Disk anhaengen/ersetzen -------------------------------
 
     def resolve_node_address(self, cno_session: winrm.Session, node_name: str) -> str:
@@ -1027,22 +1023,6 @@ class HyperVService:
             raise RuntimeError(f"Get-VHD fuer '{path}' fehlgeschlagen: {result.error}")
         parent = (result.output or "").strip()
         return parent or None
-
-    def get_vhd_info(self, session: winrm.Session, path: str) -> tuple[str | None, int, int]:
-        """Wie get_vhd_parent_path, liefert zusaetzlich Size/FileSize in
-        einem Aufruf -- genutzt, um beim Backup-Zeitpunkt-Refresh
-        (_execute_job_run) die echte Groesse der Basis-VHDX zu ermitteln,
-        statt der kleinen Differenzdatei (siehe BackupRunVmConfig.vhds
-        base_size_bytes/base_used_bytes)."""
-        escaped = path.replace("'", "''")
-        result = self._run_ps(
-            session, f"Get-VHD -Path '{escaped}' -ErrorAction Stop | Select-Object ParentPath, Size, FileSize | ConvertTo-Json",
-        )
-        if not result.success:
-            raise RuntimeError(f"Get-VHD fuer '{path}' fehlgeschlagen: {result.error}")
-        data = json.loads(result.output or "{}")
-        parent = (data.get("ParentPath") or "").strip() or None
-        return parent, int(data.get("Size") or 0), int(data.get("FileSize") or 0)
 
     def set_vhd_parent(
         self, session: winrm.Session, path: str, parent_path: str,

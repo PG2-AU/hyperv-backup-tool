@@ -39,7 +39,7 @@ from app.models.file_restore_run import FileRestoreRun, FileRestoreRunStep
 from app.models.netapp_cluster import NetAppCluster
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_proxy_host import RestoreProxyHost
-from app.models.restore_run import RestoreStatus, RestoreStepStatus
+from app.models.restore_run import RestoreStatus
 from app.services.email_service import notify_restore_failure
 from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppConnectionError

@@ -40,7 +40,14 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _refresh_csv_rows, _refresh_smb_share_rows, _resolve_csv_name
+from app.api.routes.hyperv_clusters import (
+    _apply_vm_discovery_refresh,
+    _parse_csv_name,
+    _parse_smb_share,
+    _refresh_csv_rows,
+    _refresh_smb_share_rows,
+    _resolve_csv_name,
+)
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
 from app.core.config import Settings, get_settings
 from app.core.crypto import decrypt_secret
@@ -49,7 +56,7 @@ from app.db.session import SessionLocal, get_db
 from app.models.backup_run import BackupRunSnapshot, BackupRunVmConfig
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
-from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
+from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppLun
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_copy_speed import RestoreCopySpeedSample
@@ -60,21 +67,9 @@ from app.models.vm_recreate_run import VmRecreateRun, VmRecreateRunStep
 from app.services.email_service import notify_restore_failure
 from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppConnectionError, NetAppOntapService
+from app.services.netapp_service import netapp_service_for_cluster as _netapp_service_for
 
 router = APIRouter(prefix="/api/restore", tags=["restore"])
-
-_CSV_NAME_RE = re.compile(r"ClusterStorage\\([^\\]+)\\", re.IGNORECASE)
-# Backlog #22 (SMB3-Restore) -- lokale Kopie von _SMB_PATH_RE aus
-# hyperv_clusters.py, gleiches Muster wie bei _CSV_NAME_RE oben (dieses
-# Modul haelt seine eigenen, einfachen Parsing-Regexe statt sie zu
-# importieren, auch wenn andere -- korrelationsschwere -- Helfer aus
-# hyperv_clusters.py importiert werden, siehe Imports oben).
-_SMB_PATH_RE = re.compile(r"^\\\\([^\\]+)\\([^\\]+)\\")
-
-
-def _parse_smb_share(vhd_path: str) -> tuple[str, str] | None:
-    match = _SMB_PATH_RE.match(vhd_path)
-    return (match.group(1), match.group(2)) if match else None
 
 
 def _smb_snapshot_source_path(server: str, share: str, snapshot_name: str, vhd_path: str) -> str:
@@ -112,14 +107,9 @@ def _restore_settings() -> Settings:
     return settings
 
 
-def _parse_csv_name(vhd_path: str) -> str | None:
-    match = _CSV_NAME_RE.search(vhd_path)
-    return match.group(1) if match else None
-
-
-def _slugify(name: str) -> str:
+def _slugify(name: str, fallback: str = "vm") -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower()
-    return slug or "vm"
+    return slug or fallback
 
 
 class VmWithBackupsRead(BaseModel):
@@ -479,19 +469,6 @@ class _StepCtx:
             self.row.message = str(exc)[:2000]
         self.db.commit()
         return False
-
-
-def _netapp_service_for(cluster: NetAppCluster) -> NetAppOntapService:
-    if cluster.auth_method == NetAppAuthMethod.CERTIFICATE and cluster.client_cert_path and cluster.client_key_path:
-        return NetAppOntapService(
-            host=cluster.management_lif, verify_ssl=cluster.verify_ssl,
-            cert_path=cluster.client_cert_path, key_path=cluster.client_key_path,
-        )
-    return NetAppOntapService(
-        host=cluster.management_lif, verify_ssl=cluster.verify_ssl,
-        username=cluster.username,
-        password=decrypt_secret(cluster.encrypted_password) if cluster.encrypted_password else None,
-    )
 
 
 def _record_copy_speed(db: Session, storage_type: str, bytes_copied: int, duration_seconds: float) -> None:

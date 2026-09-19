@@ -25,7 +25,6 @@ aber trotzdem (crash-konsistent) weiter, statt den gesamten Lauf
 abzubrechen -- Best-Effort pro VM, analog zum Rest dieser Funktion."""
 
 import queue
-import re
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -44,11 +43,11 @@ from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import SessionLocal, get_db
 from app.models.backup_policy import BackupPolicy, BackupScope, ConsistencyType
-from app.api.routes.restore import _StepCtx, _avhdx_display_name, _find_plain_checkpoint_id
+from app.api.routes.restore import _StepCtx, _avhdx_display_name, _find_plain_checkpoint_id, _slugify
 from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunStep, BackupRunVmConfig, JobStatus
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
-from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster
+from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppCifsShare, NetAppLun, NetAppSnapMirrorRelationship, NetAppSvm, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink, parse_member_key, resolve_member_key
 from app.models.restore_infra import RestoreInfraConfig
@@ -69,7 +68,7 @@ from app.schemas.backup import (
     UpcomingJobRead,
 )
 from app.services.hyperv_service import HyperVService, VirtualMachineInfo
-from app.services.netapp_service import NetAppOntapService
+from app.services.netapp_service import netapp_service_for_cluster as _netapp_service_for
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -392,11 +391,6 @@ def _to_run_read(run: BackupRun, include_steps: bool = False) -> BackupJobRun:
     )
 
 
-def _slugify(name: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower()
-    return slug or "policy"
-
-
 @dataclass
 class _VolumeTarget:
     netapp_cluster_id: str
@@ -633,19 +627,6 @@ def _resolve_targets(
             warnings.append(f"Resource Group '{group.name}': Scope '{group.scope}' wird fuer Backup-Jobs nicht unterstuetzt")
 
     return list(targets.values()), warnings
-
-
-def _netapp_service_for(cluster: NetAppCluster) -> NetAppOntapService:
-    if cluster.auth_method == NetAppAuthMethod.CERTIFICATE and cluster.client_cert_path and cluster.client_key_path:
-        return NetAppOntapService(
-            host=cluster.management_lif, verify_ssl=cluster.verify_ssl,
-            cert_path=cluster.client_cert_path, key_path=cluster.client_key_path,
-        )
-    return NetAppOntapService(
-        host=cluster.management_lif, verify_ssl=cluster.verify_ssl,
-        username=cluster.username,
-        password=decrypt_secret(cluster.encrypted_password) if cluster.encrypted_password else None,
-    )
 
 
 def _resolve_volume_keys_for_object(
@@ -1296,7 +1277,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
         # Teil 3) -- gleiche Form wie cluster_ids_by_name in _start_job_run.
         cluster_ids_by_name = {name: c.id for name, c in clusters_by_name.items()}
         snapshot_suffix = run.started_at.strftime("%Y%m%d%H%M%S")
-        slug = _slugify(policy.name)
+        slug = _slugify(policy.name, fallback="policy")
         label = policy.snapmirror_label.name if policy.snapmirror_label else None
         # Snapshot Locking: expiry_time an NetApp uebergeben, damit die Sperre
         # tatsaechlich wirkt (siehe create_snapshot in netapp_service.py) --

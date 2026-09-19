@@ -91,7 +91,3 @@ def write_krb5_conf(settings: Settings, realm: str, kdc_hostname: str) -> Path:
     path.write_text(content, encoding="utf-8")
     _realm_sidecar_path(settings).write_text(realm_upper, encoding="utf-8")
     return path
-
-
-def krb5_config_exists(settings: Settings) -> bool:
-    return managed_krb5_conf_path(settings).is_file()
