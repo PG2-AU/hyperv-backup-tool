@@ -82,6 +82,19 @@ function folderOf(path: string | undefined | null): string | null {
 // storage_type ("csv"/"smb3") gemessenen durchschnittlichen Kopier-
 // geschwindigkeit (siehe GET /restore/copy-speed-estimate) und der
 // Groesse der zu kopierenden VHD(s) schaetzen.
+// Live-Laufzeit waehrend eines Restores (Nutzer-Vorgabe 2026-09-19) --
+// exakte "MM:SS"/"H:MM:SS"-Anzeige statt der gerundeten "ca. X Minuten"-
+// Form von formatEstimatedDuration (die wuerde sich sekuendlich kaum
+// sichtbar aendern und wie eingefroren wirken).
+function formatElapsed(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
 function formatEstimatedDuration(seconds: number): string {
   if (seconds < 45) return "unter 1 Minute";
   const minutes = Math.round(seconds / 60);
@@ -176,6 +189,38 @@ function CapacityBar({ estimate }: { estimate: CapacityEstimate }) {
         </Text>
       )}
     </div>
+  );
+}
+
+// Live-Laufzeit-Anzeige waehrend eines laufenden Restores (Nutzer-Vorgabe
+// 2026-09-19) -- tickt sekuendlich per eigenem Intervall, damit nicht die
+// ganze restliche Wizard-Komponente jede Sekunde neu rendert. Stoppt, sobald
+// finishedAt gesetzt ist (Lauf beendet), und friert dann auf die tatsaechliche
+// Gesamtdauer ein statt weiterzulaufen.
+function ElapsedTimer({
+  startedAt, finishedAt, estimatedSeconds,
+}: {
+  startedAt: string;
+  finishedAt?: string | null;
+  estimatedSeconds?: number | null;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (finishedAt) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [finishedAt]);
+  const endMs = finishedAt ? new Date(finishedAt).getTime() : now;
+  const elapsedSeconds = Math.max(0, (endMs - new Date(startedAt).getTime()) / 1000);
+  const pct = estimatedSeconds ? Math.min(100, Math.round((elapsedSeconds / estimatedSeconds) * 100)) : null;
+  return (
+    <Stack gap={2}>
+      <Text size="xs" c="dimmed">
+        Laufzeit: <strong>{formatElapsed(elapsedSeconds)}</strong>
+        {estimatedSeconds != null && <> von geschätzt {formatEstimatedDuration(estimatedSeconds)}</>}
+      </Text>
+      {pct != null && <Progress value={pct} size="sm" color={pct >= 100 ? "orange" : "blue"} animated={!finishedAt} />}
+    </Stack>
   );
 }
 
@@ -1043,6 +1088,13 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
         <Stepper.Step label="Fortschritt" description="Live-Status">
           {restoreKind === "clone" ? (
             <Stack mt="md" gap="sm">
+              {cloneRun && (
+                <ElapsedTimer
+                  startedAt={cloneRun.started_at}
+                  finishedAt={cloneRun.finished_at}
+                  estimatedSeconds={estimatedDurationSeconds}
+                />
+              )}
               {cloneRun?.steps.map((s) => (
                 <Group key={s.step} gap="xs" wrap="nowrap" align="flex-start">
                   {STEP_STATUS_ICON[s.status]}
@@ -1173,6 +1225,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
                 <Text size="sm" fw={600} ff="monospace">
                   {currentVhdPath?.split("\\").pop()}
                 </Text>
+                <ElapsedTimer startedAt={run.started_at} finishedAt={run.finished_at} estimatedSeconds={estimatedDurationSeconds} />
                 {run.steps.map((s) => (
                   <Group key={s.step} gap="xs" wrap="nowrap" align="flex-start">
                     {STEP_STATUS_ICON[s.status]}
