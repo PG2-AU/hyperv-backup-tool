@@ -435,13 +435,13 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
   const estimatedBytesPerSecond = estimatedUsesSmb
     ? copySpeedEstimate?.smb3_bytes_per_second
     : copySpeedEstimate?.csv_bytes_per_second;
-  // Nutzer-Vorgabe 2026-09-19: pauschaler Aufschlag fuer die reinen
+  // Nutzer-Vorgabe 2026-09-19/21: pauschaler Aufschlag fuer die reinen
   // Prozessaufrufe rund um den eigentlichen Kopiervorgang (Verbindungs-
   // aufbau, Checkpoints entfernen, VM stoppen/starten, Anhaengen,
   // Inventory-Refresh, ...) -- die Kopiergeschwindigkeits-Messung selbst
   // erfasst bewusst nur den reinen Kopierschritt (siehe _record_copy_speed
   // im Backend), diese Schritte drumherum aber real ebenfalls Zeit.
-  const RESTORE_PROCESS_OVERHEAD_SECONDS = 30;
+  const RESTORE_PROCESS_OVERHEAD_SECONDS = 60;
   const estimatedDurationSeconds =
     estimatedTotalBytes > 0 && estimatedBytesPerSecond
       ? estimatedTotalBytes / estimatedBytesPerSecond + RESTORE_PROCESS_OVERHEAD_SECONDS
