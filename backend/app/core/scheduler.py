@@ -1856,7 +1856,13 @@ def start_scheduler() -> BackgroundScheduler:
         id="force-cancel-timed-out-runs", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
-        _cleanup_stuck_checkpoints, CronTrigger(minute="*"),
+        # Kein minute="*" wie der Zeitlimit-Watchdog: dieser Job ist ein
+        # Backstop fuer ein seltenes Ereignis (hart abgebrochener Lauf),
+        # keine Sekunden-Reaktionszeit noetig -- 5min haelt die Anzahl
+        # der (im Normalfall leeren) Kandidaten-Abfragen niedrig, bleibt
+        # aber weit unter der 60min-Karenz der alters-basierten
+        # Verwaiste-Checkpoint-Erkennung, die er ergaenzt.
+        _cleanup_stuck_checkpoints, IntervalTrigger(minutes=5, start_date=INTERVAL_ANCHOR),
         id="checkpoint-cleanup", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
@@ -1895,7 +1901,7 @@ def start_scheduler() -> BackgroundScheduler:
             f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
             f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone}, "
             "haengende abgebrochene Backup-Laeufe minuetlich per Zeitlimit-Watchdog beendet, "
-            "verwaiste Checkpoints hart beendeter Laeufe minuetlich per gezielter Nachlese geprueft, "
+            "verwaiste Checkpoints hart beendeter Laeufe alle 5min per gezielter Nachlese geprueft, "
             f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h), "
             f"E-Mail-Tageszusammenfassung alle 15min geprueft, "
             f"Warnungs-Check (Kapazitaet/Cluster/SnapMirror) alle {alert_check_interval}min)",
