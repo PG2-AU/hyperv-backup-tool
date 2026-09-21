@@ -1,9 +1,10 @@
-import { Alert, Button, Container, Paper, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
-import { IconAlertCircle, IconServer2 } from "@tabler/icons-react";
+import { Alert, Box, Button, Container, Paper, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
+import { IconAlertCircle } from "@tabler/icons-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { apiClient } from "@/api/client";
+import logo from "@/assets/logo.png";
 import { useAuthStore } from "@/store/authStore";
 
 export function LoginPage() {
@@ -36,7 +37,9 @@ export function LoginPage() {
   return (
     <Container size={420} style={{ paddingTop: "12vh" }}>
       <Stack align="center" gap={4} mb="lg">
-        <IconServer2 size={40} stroke={1.5} />
+        <Box bg="white" px={16} py={10} mb={4} style={{ borderRadius: 8, lineHeight: 0 }}>
+          <img src={logo} alt="Advanced Unibyte" height={40} style={{ display: "block" }} />
+        </Box>
         <Title order={2}>Hyper-V NetApp Backup</Title>
         <Text c="dimmed" size="sm">
           Anmelden mit lokalem Konto oder Active-Directory-Benutzer
