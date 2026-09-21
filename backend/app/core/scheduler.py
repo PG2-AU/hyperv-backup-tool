@@ -31,13 +31,22 @@ from app.api.routes.jobs import _execute_job_run, _occurrences_within, _start_jo
 from app.api.routes.netapp_clusters import _discover_and_persist as _run_netapp_discovery
 from app.api.routes.netapp_clusters import _refresh_status as _refresh_netapp_status
 from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
+from app.api.routes.restore import _slugify
 from app.core.capacity_history import capacity_key
 from app.core.config import get_settings
+from app.core.crypto import decrypt_secret
 from app.db.session import SessionLocal
 from app.models.alert import Alert, AlertConfig, AlertScope, AlertStatus, AlertType
 from app.models.allowed_schedule_collision import AllowedScheduleCollision
 from app.models.backup_policy import BackupPolicy, RetentionType
-from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapshotDestination, BackupRunStep, JobStatus
+from app.models.backup_run import (
+    BackupRun,
+    BackupRunSnapshot,
+    BackupRunSnapshotDestination,
+    BackupRunStep,
+    BackupRunVmConfig,
+    JobStatus,
+)
 from app.models.capacity_history import CapacitySample
 from app.models.email_config import EmailConfig
 from app.models.file_restore_run import FileRestoreRun
@@ -53,6 +62,7 @@ from app.models.scheduler_status import SchedulerStatus
 from app.models.system_log import SystemLogEvent
 from app.models.vm_recreate_run import VmRecreateRun
 from app.services.email_service import DailySummaryFailure, DailySummaryRow, DailySummaryStats, send_daily_summary
+from app.services.hyperv_service import HyperVService
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -1602,11 +1612,196 @@ def force_cancel_timed_out_runs() -> None:
             _log(
                 db,
                 f"Backup-Lauf '{run.policy_name}' (Lauf {run.id}) hart abgeschlossen: {note}. "
-                "Etwaige offene Hyper-V-Checkpoints raeumt die Verwaiste-Checkpoint-Erkennung auf.",
+                "Etwaige offene Hyper-V-Checkpoints versucht die gezielte Checkpoint-Nachlese zeitnah "
+                "zu entfernen, sonst greift die alters-basierte Verwaiste-Checkpoint-Erkennung.",
                 level="WARNING",
             )
         if stuck:
             db.commit()
+    finally:
+        db.close()
+
+
+def _cleanup_stuck_checkpoints() -> None:
+    """Gezielte Nachlese fuer Hyper-V-Checkpoints eines Backup-Laufs, der
+    hart beendet wurde, OHNE seine eigene Entfern-Schleife (siehe
+    _execute_job_run, `active_checkpoints`) fuer alle selbst erstellten
+    Checkpoints abzuschliessen -- entweder durch force_cancel_timed_out_runs
+    (CANCELLED) oder durch einen Prozess-Neustart mitten im Lauf
+    (_reap_orphaned_in_progress_runs in init_db.py markiert das als FAILED).
+    Ergaenzt (ersetzt NICHT) die bestehende alters-basierte Verwaiste-
+    Checkpoint-Erkennung in run_alert_check (Default 60min Karenz) -- hier
+    wird gezielt und deutlich frueher versucht, GENAU den eigenen Checkpoint
+    dieses konkreten Laufs zu entfernen, statt auf den generischen Alarm zu
+    warten. Backlog-Punkt 40.
+
+    Der Checkpoint-Name ist deterministisch (siehe checkpoint_name in
+    _execute_job_run), die betroffenen VMs + ihr Hyper-V-Cluster stehen ueber
+    BackupRunStep (welche checkpoint-create-*-Schritte erfolgreich waren,
+    aber kein passender checkpoint-remove-*) und
+    BackupRunVmConfig.hyperv_cluster_id (ueberlebt auch eine zwischenzeitlich
+    geloeschte VM) bereits fest -- kein Ziel-Neuaufloesen noetig, kein
+    zusaetzlicher WinRM-Aufruf ausser der eigentlichen Entfernung.
+
+    Best-effort und idempotent: Remove-VMSnapshot auf einem bereits
+    entfernten/nie vorhandenen Checkpoint schadet nicht (Fehlertext wird
+    als Erfolg gewertet), ein bei echter Nebenlaeufigkeit doch noch
+    zurueckkehrender Original-Thread (durchlaeuft VOR seiner eigenen
+    finished_at-Pruefung ohnehin dieselbe Entfern-Schleife) kollidiert damit
+    bestenfalls harmlos. Ein Fehlschlag hier ist nicht fatal -- die
+    alters-basierte Erkennung faengt einen tatsaechlich verwaist
+    gebliebenen Checkpoint ohnehin weiterhin ab."""
+    db = SessionLocal()
+    try:
+        # Zeitfenster begrenzt die Abfrage auf tatsaechlich relevante,
+        # juengere Laeufe -- ohne das wuerde jede Minute die komplette
+        # Historie (inkl. Laeufen von vor Monaten, die diese Spalte noch
+        # nie gesetzt hatten) erneut durchsucht.
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        candidates = (
+            db.query(BackupRun)
+            .filter(
+                BackupRun.status.in_([JobStatus.CANCELLED, JobStatus.FAILED]),
+                BackupRun.checkpoint_cleanup_at.is_(None),
+                BackupRun.finished_at.isnot(None),
+                BackupRun.finished_at >= cutoff,
+            )
+            .all()
+        )
+        if not candidates:
+            return
+        settings = get_settings()
+        hyperv_clusters_by_id = {c.id: c for c in db.query(HyperVCluster).all()}
+
+        for run in candidates:
+            try:
+                steps = db.query(BackupRunStep.step, BackupRunStep.status).filter(BackupRunStep.run_id == run.id).all()
+                created_vms = {
+                    step[len("checkpoint-create-") :]
+                    for step, step_status in steps
+                    if step.startswith("checkpoint-create-") and step_status == RestoreStepStatus.SUCCESS
+                }
+                if not created_vms:
+                    run.checkpoint_cleanup_at = datetime.now(timezone.utc)
+                    db.commit()
+                    continue
+                removed_vms = {
+                    step[len("checkpoint-remove-") :]
+                    for step, step_status in steps
+                    if step.startswith("checkpoint-remove-") and step_status == RestoreStepStatus.SUCCESS
+                }
+                pending_vms = created_vms - removed_vms
+                if not pending_vms:
+                    run.checkpoint_cleanup_at = datetime.now(timezone.utc)
+                    db.commit()
+                    continue
+
+                checkpoint_name = f"hvnb_{_slugify(run.policy_name, fallback='policy')}_{run.started_at.strftime('%Y%m%d%H%M%S')}"
+                cluster_by_vm = {
+                    cfg.vm_name: cfg.hyperv_cluster_id
+                    for cfg in db.query(BackupRunVmConfig)
+                    .filter(BackupRunVmConfig.run_id == run.id, BackupRunVmConfig.vm_name.in_(pending_vms))
+                    .all()
+                    if cfg.hyperv_cluster_id
+                }
+                vms_by_cluster: dict[str, list[str]] = defaultdict(list)
+                unresolved_vms: list[str] = []
+                for vm_name in pending_vms:
+                    cluster_id = cluster_by_vm.get(vm_name)
+                    if cluster_id:
+                        vms_by_cluster[cluster_id].append(vm_name)
+                    else:
+                        unresolved_vms.append(vm_name)
+                if unresolved_vms:
+                    _log(
+                        db,
+                        f"Checkpoint-Nachlese fuer Lauf '{run.policy_name}' ({run.id}): kein Cluster ermittelbar "
+                        f"fuer {', '.join(unresolved_vms)} -- ueberspringe, faellt ggf. der Verwaiste-"
+                        "Checkpoint-Erkennung zu.",
+                        level="WARNING",
+                    )
+
+                for cluster_id, vm_names in vms_by_cluster.items():
+                    cluster = hyperv_clusters_by_id.get(cluster_id)
+                    if cluster is None:
+                        continue
+                    try:
+                        password = decrypt_secret(cluster.encrypted_password)
+                        cno_service = HyperVService(
+                            settings, cluster.management_address, use_https=cluster.use_https,
+                            node_hostname=cluster.hyperv_cluster_name,
+                        )
+                        cno_session = cno_service.connect(cluster.username, password, read_timeout_sec=15, operation_timeout_sec=10)
+                        owner_by_vm = cno_service.get_vm_owner_nodes(cno_session, vm_names)
+                        addr_by_node = cno_service.node_address_map(cno_session)
+                    except Exception as exc:
+                        _log(
+                            db,
+                            f"Checkpoint-Nachlese: Cluster '{cluster.name}' fuer Lauf '{run.policy_name}' "
+                            f"({run.id}) nicht erreichbar ({exc}) -- ueberspringe, faellt ggf. der "
+                            "Verwaiste-Checkpoint-Erkennung zu.",
+                            level="WARNING",
+                        )
+                        continue
+
+                    node_sessions: dict[str, tuple[HyperVService, object]] = {}
+                    for vm_name in vm_names:
+                        owner_node = owner_by_vm.get(vm_name)
+                        if not owner_node:
+                            _log(
+                                db,
+                                f"Checkpoint-Nachlese: Besitzer-Knoten von '{vm_name}' nicht ermittelbar "
+                                f"(Lauf '{run.policy_name}', {run.id}) -- ueberspringe.",
+                                level="WARNING",
+                            )
+                            continue
+                        node_key = owner_node.lower()
+                        if node_key not in node_sessions:
+                            node_address = addr_by_node.get(node_key, owner_node)
+                            try:
+                                node_service = HyperVService(
+                                    settings, node_address, use_https=cluster.use_https, node_hostname=owner_node,
+                                )
+                                node_sessions[node_key] = (node_service, node_service.connect(cluster.username, password))
+                            except Exception as exc:
+                                _log(
+                                    db,
+                                    f"Checkpoint-Nachlese: Knoten '{owner_node}' nicht erreichbar ({exc}) "
+                                    f"(Lauf '{run.policy_name}', {run.id}) -- ueberspringe.",
+                                    level="WARNING",
+                                )
+                                continue
+                        node_service, node_session = node_sessions[node_key]
+                        try:
+                            result = node_service.remove_checkpoint(node_session, vm_name, checkpoint_name)
+                            if result.success or "cannot find" in (result.error or "").lower():
+                                _log(
+                                    db,
+                                    f"Checkpoint-Nachlese: '{checkpoint_name}' auf '{vm_name}' entfernt "
+                                    f"(Lauf '{run.policy_name}', {run.id}).",
+                                )
+                            else:
+                                _log(
+                                    db,
+                                    f"Checkpoint-Nachlese fuer '{vm_name}' fehlgeschlagen ({result.error}) "
+                                    f"(Lauf '{run.policy_name}', {run.id}) -- faellt ggf. der Verwaiste-"
+                                    "Checkpoint-Erkennung zu.",
+                                    level="WARNING",
+                                )
+                        except Exception as exc:
+                            _log(
+                                db,
+                                f"Checkpoint-Nachlese fuer '{vm_name}' fehlgeschlagen ({exc}) "
+                                f"(Lauf '{run.policy_name}', {run.id}) -- faellt ggf. der Verwaiste-"
+                                "Checkpoint-Erkennung zu.",
+                                level="WARNING",
+                            )
+
+                run.checkpoint_cleanup_at = datetime.now(timezone.utc)
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                _log(db, f"Checkpoint-Nachlese fuer Lauf {run.id} fehlgeschlagen: {exc}", level="WARNING")
     finally:
         db.close()
 
@@ -1661,6 +1856,10 @@ def start_scheduler() -> BackgroundScheduler:
         id="force-cancel-timed-out-runs", replace_existing=True, max_instances=1,
     )
     scheduler.add_job(
+        _cleanup_stuck_checkpoints, CronTrigger(minute="*"),
+        id="checkpoint-cleanup", replace_existing=True, max_instances=1,
+    )
+    scheduler.add_job(
         run_file_restore_expiry, IntervalTrigger(hours=1, start_date=INTERVAL_ANCHOR),
         id="file-restore-expiry", replace_existing=True, max_instances=1,
     )
@@ -1696,6 +1895,7 @@ def start_scheduler() -> BackgroundScheduler:
             f"Retention-Cleanup taeglich um {retention_hour:02d}:15 UTC, "
             f"geplante Backups minuetlich geprueft in Zeitzone {settings.schedule_timezone}, "
             "haengende abgebrochene Backup-Laeufe minuetlich per Zeitlimit-Watchdog beendet, "
+            "verwaiste Checkpoints hart beendeter Laeufe minuetlich per gezielter Nachlese geprueft, "
             f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h), "
             f"E-Mail-Tageszusammenfassung alle 15min geprueft, "
             f"Warnungs-Check (Kapazitaet/Cluster/SnapMirror) alle {alert_check_interval}min)",

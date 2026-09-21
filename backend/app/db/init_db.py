@@ -425,6 +425,7 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "hyperv_vhds", {"base_size_bytes": "INTEGER", "base_used_bytes": "INTEGER"})
     _add_missing_columns(engine, "hyperv_vhds", {"smb_server": "VARCHAR(255)", "smb_share": "VARCHAR(255)"})
     _add_missing_columns(engine, "backup_policies", {"paused_since": "DATETIME", "paused_until": "DATETIME"})
+    _add_missing_columns(engine, "backup_runs", {"checkpoint_cleanup_at": "DATETIME"})
     _add_missing_columns(
         engine, "schedules", {"paused": "BOOLEAN", "paused_since": "DATETIME", "paused_until": "DATETIME"}
     )

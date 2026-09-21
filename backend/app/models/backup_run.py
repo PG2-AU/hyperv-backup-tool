@@ -82,6 +82,14 @@ class BackupRun(Base):
     # Timeouts begrenzt, ~10-50s) -- der Lauf stoppt erst vor dem naechsten
     # Schritt. Bereits erstellte Checkpoints werden trotzdem IMMER entfernt.
     cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Wiederholungs-Schutz fuer die gezielte Checkpoint-Nachlese (Backlog
+    # #40, app.core.scheduler._cleanup_stuck_checkpoints): gesetzt, sobald
+    # dieser Lauf einmal auf verwaiste eigene Checkpoints geprueft wurde --
+    # unabhaengig davon, ob dabei tatsaechlich etwas zu entfernen war oder
+    # die Entfernung gelang. Best-effort, kein Retry -- ein tatsaechlich
+    # verwaist gebliebener Checkpoint faellt weiterhin der alters-basierten
+    # Verwaiste-Checkpoint-Erkennung (run_alert_check) zu.
+    checkpoint_cleanup_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     snapshots = relationship("BackupRunSnapshot", back_populates="run", cascade="all, delete-orphan")
     vm_configs = relationship("BackupRunVmConfig", back_populates="run", cascade="all, delete-orphan")
