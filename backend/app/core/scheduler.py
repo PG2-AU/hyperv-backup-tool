@@ -663,8 +663,13 @@ def run_alert_check() -> None:
     Teil dieses Checks, siehe app.models.alert.
 
     Prueft ausserdem verpasste geplante Laeufe (BACKUP_MISSED, bewusst NICHT
-    Teil der automatischen "Problem behoben"-Aufloesung -- optional aber
-    per AlertConfig.backup_missed_auto_dismiss_days rein alter-basiert
+    Teil der generischen "nicht mehr erkannt"-seen_keys-Aufloesung -- ein
+    verpasster Termin ist eine abgeschlossene historische Tatsache, kein
+    sich selbst korrigierender Zustand. Loest sich aber seit Backlog #44
+    (2026-09-21) automatisch auf, sobald DANACH ein erfolgreicher Lauf
+    derselben Resource Group + Policy existiert -- zeigt, dass die
+    Backup-Kette wieder funktioniert. Zusaetzlich optional per
+    AlertConfig.backup_missed_auto_dismiss_days rein alter-basiert
     automatisch quittierbar, 0 = deaktiviert) sowie Zeitplan-Kollisionen
     (SCHEDULE_COLLISION, siehe _find_schedule_collisions -- IST Teil der
     automatischen Aufloesung, aber vom Nutzer bestaetigte Kollisionen werden
@@ -1090,7 +1095,36 @@ def run_alert_check() -> None:
 
         for (alert_type, key), alert in active_by_key.items():
             if alert_type == AlertType.BACKUP_MISSED:
-                continue  # loest sich nie automatisch -- siehe oben, nur manuell per dismiss
+                # Backlog #44 (Nutzer-Vorgabe 2026-09-21): kein generisches
+                # seen_keys-Verhalten (ein verpasster Termin bleibt eine
+                # historische Tatsache, siehe Docstring), aber ein
+                # SPAETERER erfolgreicher Lauf derselben Resource Group +
+                # Policy loest den Alarm trotzdem auf -- er hat seinen
+                # Zweck (auf ein Problem hinweisen) dann erfuellt. Gleiche
+                # resource_group_id-IS-NULL-Toleranz wie bei der
+                # urspruenglichen Verpasst-Erkennung oben: ein manuelles
+                # "Jetzt ausfuehren" auf der GANZEN Policy zaehlt ebenso.
+                if alert.resource_group_id and alert.policy_id:
+                    resolved_run = (
+                        db.query(BackupRun)
+                        .filter(
+                            BackupRun.policy_id == alert.policy_id,
+                            or_(BackupRun.resource_group_id == alert.resource_group_id, BackupRun.resource_group_id.is_(None)),
+                            BackupRun.status.in_([JobStatus.SUCCEEDED, JobStatus.SUCCEEDED_WITH_ERRORS]),
+                            BackupRun.started_at > alert.triggered_at,
+                        )
+                        .order_by(BackupRun.started_at)
+                        .first()
+                    )
+                    if resolved_run is not None:
+                        alert.status = AlertStatus.RESOLVED
+                        alert.resolved_at = now
+                        _log(
+                            db,
+                            f"Verpasster Lauf automatisch aufgeloest (spaeterer erfolgreicher Lauf "
+                            f"{resolved_run.started_at:%Y-%m-%d %H:%M} UTC): {alert.object_name}",
+                        )
+                continue
             if (alert_type, key) not in seen_keys:
                 alert.status = AlertStatus.RESOLVED
                 alert.resolved_at = now
