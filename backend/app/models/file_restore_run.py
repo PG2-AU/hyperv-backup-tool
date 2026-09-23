@@ -70,6 +70,12 @@ class FileRestoreRun(Base):
     # FlexClone geklont (siehe _execute_file_restore_open), Cleanup muss
     # dann das ganze Volume statt nur eine LUN loeschen.
     clone_volume_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Nur bei SMB3-VMs (Backlog #22) im Fallback-Fall gesetzt: lokaler
+    # Ordner auf dem Restore-Proxy-Host, in den die VHDX aus `~snapshot`
+    # kopiert wurde, weil sie sich nicht direkt per UNC mounten liess --
+    # Cleanup loescht ihn samt Kopie. Bei SMB3 gibt es dafuer keinen
+    # LUN-Klon/iSCSI (clone_lun_uuid/target_iqn/disk_number bleiben leer).
+    staged_vhd_dir: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     netapp_cluster_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     svm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     igroup_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

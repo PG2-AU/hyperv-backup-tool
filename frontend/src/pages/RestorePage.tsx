@@ -99,10 +99,14 @@ export function RestorePage() {
     });
   }
 
-  function handleCleanupFileSession(runId: string, vmName: string, usedSecondary: boolean) {
+  function handleCleanupFileSession(runId: string, vmName: string, usedSecondary: boolean, sourceVhdPath: string) {
+    // SMB3-VMs (Backlog #22) haben keinen LUN-/Volume-Klon -- nur den
+    // Mount bzw. eine lokale Kopie auf dem Restore-Proxy-Host.
+    const isSmb = sourceVhdPath.startsWith("\\\\");
+    const cloneLabel = isSmb ? "ggf. die lokale Kopie auf dem Restore-Proxy-Host" : `den temporären ${usedSecondary ? "Volume-Klon" : "LUN-Klon"}`;
     confirmAction({
       title: "Session aufräumen",
-      message: `VHDX für '${vmName}' aushängen und temporären ${usedSecondary ? "Volume-Klon" : "LUN-Klon"} entfernen?`,
+      message: `VHDX für '${vmName}' aushängen und ${cloneLabel} entfernen?`,
       confirmLabel: "Aufräumen",
       onConfirm: () =>
         cleanupFileRestoreRun.mutate(runId, {
@@ -211,7 +215,7 @@ export function RestorePage() {
                         variant="light"
                         leftSection={<IconTrash size={14} />}
                         loading={cleanupFileRestoreRun.isPending}
-                        onClick={() => handleCleanupFileSession(r.id, r.vm_name, r.used_secondary)}
+                        onClick={() => handleCleanupFileSession(r.id, r.vm_name, r.used_secondary, r.source_vhd_path)}
                       >
                         Aufräumen
                       </Button>

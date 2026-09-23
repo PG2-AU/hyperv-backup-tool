@@ -1405,6 +1405,83 @@ class HyperVService:
         escaped = vhd_path.replace("'", "''")
         self._run_ps(session, f"Dismount-DiskImage -ImagePath '{escaped}' -ErrorAction SilentlyContinue")
 
+    def mount_vhd_unc(self, session: winrm.Session, unc_path: str, share_username: str, share_password: str) -> int:
+        """Wie mount_vhd, aber fuer eine VHDX auf einem SMB3-Export
+        (Backlog #22, Datei-Restore direkt aus ONTAPs `~snapshot`-Ordner,
+        ohne Kopie). Gleicher Double-Hop-Workaround wie copy_unc_to_unc
+        (net use mit expliziten Zugangsdaten) -- aber bewusst OHNE das
+        'net use /delete' am Ende aus _wrap_smb_net_use: '/delete /y'
+        wuerde die Verbindung auch bei offenen Handles trennen, und der
+        gemountete Datentraeger haelt die Datei genau darueber offen. Die
+        Zuordnung verfaellt ohnehin mit der Logon-Session dieser WinRM-Shell.
+        Ob der Mount danach aus einer NEUEN Session noch lesbar ist, prueft
+        der Aufrufer (siehe _execute_smb_file_restore_open)."""
+        escaped = unc_path.replace("'", "''")
+        escaped_user = share_username.replace("'", "''")
+        escaped_pw = share_password.replace("'", "''")
+        root_match = _UNC_SHARE_ROOT_RE.match(unc_path)
+        if root_match is None:
+            raise RuntimeError(f"'{unc_path}' ist kein UNC-Pfad")
+        root = root_match.group(0).replace("'", "''")
+        script = (
+            f"net use '{root}' /delete /y 2>&1 | Out-Null; "
+            f"net use '{root}' '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1 | Out-Null; "
+            f"if ($LASTEXITCODE -ne 0) {{ throw \"net use fehlgeschlagen fuer '{root}' (Exit $LASTEXITCODE)\" }}; "
+            f"Mount-DiskImage -ImagePath '{escaped}' -Access ReadOnly -PassThru -ErrorAction Stop | "
+            "Get-DiskImage | Get-Disk | Select-Object -ExpandProperty Number"
+        )
+        result = self._run_ps(session, script)
+        output = result.output.strip()
+        if not result.success or not output:
+            raise RuntimeError(f"VHDX '{unc_path}' konnte nicht gemountet werden: {result.error or result.output}")
+        return int(output.splitlines()[-1])
+
+    def dismount_vhd_by_disk_number(self, session: winrm.Session, disk_number: int) -> None:
+        """Best-effort-Gegenstueck zu mount_vhd_unc: haengt ueber den
+        Geraetepfad statt ueber -ImagePath aus -- Letzteres muesste die
+        UNC-Datei erneut aufloesen, wofuer diese (spaetere) Session keine
+        SMB-Zugangsdaten hat."""
+        self._run_ps(
+            session,
+            f"Dismount-DiskImage -DevicePath '\\\\.\\PHYSICALDRIVE{int(disk_number)}' -ErrorAction SilentlyContinue",
+        )
+
+    def copy_unc_to_local(
+        self, session: winrm.Session, unc_path: str, local_path: str, share_username: str, share_password: str,
+    ) -> int:
+        """Kopiert eine Datei von einem SMB3-Export auf ein lokales
+        Laufwerk dieses Hosts (Backlog #22, Fallback fuer den Datei-Restore,
+        falls mount_vhd_unc nicht funktioniert). Prueft vorher den freien
+        Platz auf dem Ziellaufwerk, damit eine grosse VHDX nicht das
+        Systemlaufwerk des Restore-Proxy-Hosts vollschreibt."""
+        escaped_src = unc_path.replace("'", "''")
+        escaped_dest = local_path.replace("'", "''")
+        dest_dir = local_path.rsplit("\\", 1)[0].replace("'", "''")
+        drive = local_path[0]
+        body = (
+            f"$size = (Get-Item -Path '{escaped_src}' -ErrorAction Stop).Length; "
+            f"$free = (Get-PSDrive -Name '{drive}' -ErrorAction Stop).Free; "
+            "if ($free -lt ($size + 5GB)) { throw (\"Zu wenig freier Platz auf dem Restore-Proxy-Host: \" + "
+            "[math]::Round($size/1GB,1) + \" GB benoetigt (+5 GB Reserve), \" + [math]::Round($free/1GB,1) + \" GB frei\") }; "
+            f"New-Item -ItemType Directory -Force -Path '{dest_dir}' -ErrorAction Stop | Out-Null; "
+            f"Copy-Item -Path '{escaped_src}' -Destination '{escaped_dest}' -Force -ErrorAction Stop; "
+            f"(Get-Item -Path '{escaped_dest}').Length "
+        )
+        script = self._wrap_smb_net_use(body, [unc_path], share_username, share_password)
+        result = self._run_ps(session, script)
+        if not result.success or not result.output.strip():
+            raise RuntimeError(f"Kopieren von '{unc_path}' nach '{local_path}' fehlgeschlagen: {result.error or result.output}")
+        try:
+            return int(result.output.strip().splitlines()[-1])
+        except ValueError as exc:
+            raise RuntimeError(f"Unerwartete Antwort beim Kopieren: {result.output}") from exc
+
+    def remove_local_directory(self, session: winrm.Session, path: str) -> None:
+        """Best-effort: entfernt einen Ordner samt Inhalt (z.B. den
+        Staging-Ordner einer auf den Restore-Proxy-Host kopierten VHDX)."""
+        escaped = path.replace("'", "''")
+        self._run_ps(session, f"Remove-Item -Path '{escaped}' -Recurse -Force -ErrorAction SilentlyContinue")
+
     def prepare_vhd_partition_path(self, session: winrm.Session, disk_number: int, mount_dir: str) -> str:
         """Bindet die Datenpartition einer per mount_vhd gemounteten VHDX in
         einen Ordner ein -- Gegenstueck zu prepare_data_partition_path fuer

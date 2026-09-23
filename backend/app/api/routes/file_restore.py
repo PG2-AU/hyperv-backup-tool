@@ -29,17 +29,27 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.restore import _StepCtx, _netapp_service_for, _parse_csv_name, _resolve_checkpoint_source_path, _slugify
+from app.api.routes.hyperv_clusters import _parse_smb_share
+from app.api.routes.restore import (
+    _StepCtx,
+    _netapp_service_for,
+    _parse_csv_name,
+    _resolve_checkpoint_source_path,
+    _slugify,
+    _smb_snapshot_source_path,
+)
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import SessionLocal, get_db
 from app.models.backup_run import BackupRunSnapshot, BackupRunVmConfig
 from app.models.file_restore_run import FileRestoreRun, FileRestoreRunStep
+from app.models.hyperv_cluster import HyperVCluster
+from app.models.hyperv_discovery import HyperVSmbShare
 from app.models.netapp_cluster import NetAppCluster
 from app.models.restore_infra import RestoreInfraConfig
 from app.models.restore_proxy_host import RestoreProxyHost
-from app.models.restore_run import RestoreStatus
+from app.models.restore_run import RestoreStatus, RestoreStepStatus
 from app.services.email_service import notify_restore_failure
 from app.services.hyperv_service import HyperVService
 from app.services.netapp_service import NetAppConnectionError
@@ -167,7 +177,11 @@ def trigger_file_restore(
     db.commit()
     db.refresh(run)
 
-    background_tasks.add_task(_execute_file_restore_open, run.id)
+    # Backlog #22: VHDs auf einem SMB3-Export haben keine CSV/LUN-Kette --
+    # eigener Ablauf direkt aus ONTAPs `~snapshot`-Ordner (siehe
+    # _execute_smb_file_restore_open), gleiche Weiche wie in restore.py.
+    is_smb = _parse_csv_name(payload.source_vhd_path) is None and _parse_smb_share(payload.source_vhd_path) is not None
+    background_tasks.add_task(_execute_smb_file_restore_open if is_smb else _execute_file_restore_open, run.id)
     return run
 
 
@@ -222,10 +236,24 @@ def _cleanup_file_restore_run(db: Session, run: FileRestoreRun) -> None:
         proxy_service, proxy_session, _ = _connect_proxy(db)
     except HTTPException:
         return
-    if run.vhd_file_path:
-        proxy_service.dismount_vhd(proxy_session, run.vhd_file_path)
-    if run.vhd_disk_number is not None and run.proxy_vhd_mount_dir:
-        proxy_service.release_disk(proxy_session, run.vhd_disk_number, run.proxy_vhd_mount_dir)
+    # SMB3 (Backlog #22, direkt aus `~snapshot` gemountet ODER lokal auf
+    # den Proxy kopiert): Partition zuerst freigeben, dann ueber den
+    # Geraetepfad aushaengen (siehe dismount_vhd_by_disk_number -- eine
+    # UNC-Datei liesse sich aus dieser Session per -ImagePath nicht mehr
+    # aufloesen), danach eine lokale Kopie loeschen.
+    is_smb = bool(run.staged_vhd_dir or (run.vhd_file_path and run.vhd_file_path.startswith("\\\\")))
+    if is_smb:
+        if run.vhd_disk_number is not None:
+            if run.proxy_vhd_mount_dir:
+                proxy_service.release_disk(proxy_session, run.vhd_disk_number, run.proxy_vhd_mount_dir)
+            proxy_service.dismount_vhd_by_disk_number(proxy_session, run.vhd_disk_number)
+        if run.staged_vhd_dir:
+            proxy_service.remove_local_directory(proxy_session, run.staged_vhd_dir)
+    else:
+        if run.vhd_file_path:
+            proxy_service.dismount_vhd(proxy_session, run.vhd_file_path)
+        if run.vhd_disk_number is not None and run.proxy_vhd_mount_dir:
+            proxy_service.release_disk(proxy_session, run.vhd_disk_number, run.proxy_vhd_mount_dir)
     if run.disk_number is not None and run.proxy_lun_mount_dir:
         proxy_service.release_disk(proxy_session, run.disk_number, run.proxy_lun_mount_dir)
     if run.target_iqn:
@@ -511,5 +539,179 @@ def _execute_file_restore_open(run_id: str) -> None:  # noqa: C901
                     netapp_service.delete_volume(clone_volume_uuid)
                 except NetAppConnectionError:
                     pass
+    finally:
+        db.close()
+
+
+def _smb_share_credentials(db: Session, vm_config: BackupRunVmConfig | None, server: str, share: str) -> tuple[str, str]:
+    """Zugangsdaten fuer den NetApp-CIFS-Export -- dieselben wie bei den
+    SMB3-Restores in restore.py (Servicekonto des Hyper-V-Clusters, das
+    die VM-Dateien auf der Freigabe ohnehin lesen/schreiben darf). Der
+    Cluster kommt bevorzugt aus der beim Backup gespeicherten VM-Config
+    (funktioniert auch fuer inzwischen geloeschte VMs), sonst aus der
+    discoverten Freigabe."""
+    cluster = db.get(HyperVCluster, vm_config.hyperv_cluster_id) if vm_config and vm_config.hyperv_cluster_id else None
+    if cluster is None:
+        smb_row = next(
+            (
+                s for s in db.query(HyperVSmbShare).all()
+                if s.server.lower() == server.lower() and s.share.lower() == share.lower()
+            ),
+            None,
+        )
+        cluster = db.get(HyperVCluster, smb_row.cluster_id) if smb_row else None
+    if cluster is None:
+        raise RuntimeError(f"Kein Hyper-V-Cluster mit Zugriff auf die Freigabe '\\\\{server}\\{share}' gefunden")
+    return cluster.username, decrypt_secret(cluster.encrypted_password)
+
+
+def _execute_smb_file_restore_open(run_id: str) -> None:  # noqa: C901
+    """Backlog #22: Datei-Restore fuer eine VM auf einem SMB3-Export. Kein
+    LUN-Klon/iSCSI -- ONTAP stellt den Snapshot bereits schreibgeschuetzt
+    unter `\\\\<server>\\<share>\\~snapshot\\<snapshot>\\...` bereit.
+
+    Weg 1 (bevorzugt, ohne Kopie): die VHDX direkt per UNC auf dem
+    Restore-Proxy-Host read-only mounten. Anders als beim Anhaengen an eine
+    VM (siehe _execute_smb_restore_add, Add-VMHardDiskDrive will dort
+    Ordnerrechte SETZEN) braucht Mount-DiskImage -Access ReadOnly keinen
+    Schreibzugriff. Weil der Mount ueber die 'net use'-Zuordnung einer
+    kurzlebigen WinRM-Shell aufgebaut wird, wird anschliessend aus einer
+    NEUEN Session geprueft, ob das Dateisystem wirklich lesbar bleibt.
+
+    Weg 2 (Fallback, falls Weg 1 scheitert): die VHDX zuerst lokal auf den
+    Restore-Proxy-Host kopieren (mit Pruefung des freien Platzes) und die
+    Kopie mounten -- langsamer, aber ohne jede SMB-Abhaengigkeit waehrend
+    der Session.
+
+    Nur vom Primaersystem: ein SnapMirror-Ziel (DP-Volume) hat in der
+    Regel keinen eigenen CIFS-Export, genau wie bei den uebrigen
+    SMB3-Restore-Arten."""
+    db = SessionLocal()
+    proxy_service: HyperVService | None = None
+    proxy_session = None
+    vhd_disk_number: int | None = None
+    vhd_mount_dir: str | None = None
+    staged_dir: str | None = None
+
+    try:
+        run = db.get(FileRestoreRun, run_id)
+        if run is None:
+            return
+
+        try:
+            with _StepCtx(db, run.id, "resolve", "Ziel auflösen", step_model=FileRestoreRunStep) as ctx:
+                smb = _parse_smb_share(run.source_vhd_path)
+                if smb is None:
+                    raise RuntimeError(f"SMB3-Freigabe konnte nicht aus '{run.source_vhd_path}' ermittelt werden")
+                server, share = smb
+
+                snapshot = db.get(BackupRunSnapshot, run.source_snapshot_id)
+                if snapshot is None or not snapshot.snapshot_name:
+                    raise RuntimeError("Gewählter Snapshot nicht gefunden")
+                if not snapshot.success:
+                    raise RuntimeError(
+                        "Der Snapshot ist auf dem Primärsystem nicht mehr vorhanden. Datei-Restore für VMs auf "
+                        "einer SMB3-Freigabe ist nur vom Primärsystem aus möglich."
+                    )
+
+                vm_config = (
+                    db.query(BackupRunVmConfig)
+                    .filter(BackupRunVmConfig.run_id == snapshot.run_id, BackupRunVmConfig.vm_name == run.vm_name)
+                    .first()
+                )
+                # Gleiche Einschraenkung wie im CSV-Pfad (siehe dort): eine
+                # AVHDX laesst sich auf dem Proxy nicht aufloesen, nur ein
+                # Checkpoint mit plain VHDX ist direkt mountbar.
+                copy_source_path = _resolve_checkpoint_source_path(vm_config, run.source_vhd_path, run.avhdx_checkpoint_id)
+                if copy_source_path.lower().endswith(".avhdx"):
+                    raise RuntimeError(
+                        "Diese Sicherung enthält für dieses Laufwerk einen aktiven Checkpoint (AVHDX statt "
+                        "Basis-VHDX) und kann im Datei-Modus nicht durchsucht werden."
+                    )
+                share_user, share_password = _smb_share_credentials(db, vm_config, server, share)
+                snapshot_path = _smb_snapshot_source_path(server, share, snapshot.snapshot_name, copy_source_path)
+                ctx.row.message = snapshot_path
+
+            with _StepCtx(db, run.id, "connect-proxy", "Verbindung zum Restore-Proxy-Host", step_model=FileRestoreRunStep) as ctx:
+                proxy_service, proxy_session, proxy = _connect_proxy(db)
+                ctx.row.message = proxy.address
+
+            slug = _slugify(run.vm_name)
+            suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+            vhd_mount_dir = f"C:\\hvnb_filerestore\\{run.id}\\vhd"
+
+            # --- Weg 1: direkt aus ~snapshot mounten ---
+            direct_error: str | None = None
+            with _StepCtx(db, run.id, "mount-vhd", "VHDX direkt aus Snapshot mounten", step_model=FileRestoreRunStep) as direct_ctx:
+                try:
+                    vhd_disk_number = proxy_service.mount_vhd_unc(proxy_session, snapshot_path, share_user, share_password)
+                    run.vhd_file_path = snapshot_path
+                    run.vhd_disk_number = vhd_disk_number
+                    db.commit()
+                    vhd_mount_dir = proxy_service.prepare_vhd_partition_path(proxy_session, vhd_disk_number, vhd_mount_dir)
+                    run.proxy_vhd_mount_dir = vhd_mount_dir
+                    db.commit()
+                    # Frische Session: bleibt der Mount auch ohne die
+                    # 'net use'-Zuordnung der Mount-Shell lesbar?
+                    _, verify_session, _ = _connect_proxy(db)
+                    proxy_service.list_directory(verify_session, vhd_mount_dir)
+                    direct_ctx.row.message = f"Disk {vhd_disk_number} -> {vhd_mount_dir}"
+                except Exception as exc:
+                    direct_error = str(exc)
+                    if vhd_disk_number is not None:
+                        proxy_service.release_disk(proxy_session, vhd_disk_number, vhd_mount_dir)
+                        proxy_service.dismount_vhd_by_disk_number(proxy_session, vhd_disk_number)
+                    vhd_disk_number = None
+                    run.vhd_file_path = None
+                    run.vhd_disk_number = None
+                    run.proxy_vhd_mount_dir = None
+                    db.commit()
+            if direct_error:
+                direct_ctx.row.status = RestoreStepStatus.SKIPPED
+                direct_ctx.row.message = f"Direkt-Mount nicht möglich, weiter mit lokaler Kopie: {direct_error}"[:2000]
+                db.commit()
+
+                # --- Weg 2: lokal auf den Proxy kopieren und mounten ---
+                staged_dir = f"C:\\hvnb_filerestore\\{run.id}\\stage"
+                local_vhd_path = f"{staged_dir}\\{copy_source_path.rsplit(chr(92), 1)[-1]}"
+                with _StepCtx(db, run.id, "copy-to-proxy", "VHDX auf den Restore-Proxy-Host kopieren", step_model=FileRestoreRunStep) as ctx:
+                    run.staged_vhd_dir = staged_dir
+                    db.commit()
+                    copied = proxy_service.copy_unc_to_local(proxy_session, snapshot_path, local_vhd_path, share_user, share_password)
+                    ctx.row.message = f"{local_vhd_path} ({copied / 1024**3:.1f} GB)"
+
+                with _StepCtx(db, run.id, "mount-vhd-local", "VHDX mounten", step_model=FileRestoreRunStep) as ctx:
+                    vhd_disk_number = proxy_service.mount_vhd(proxy_session, local_vhd_path, read_only=True)
+                    run.vhd_file_path = local_vhd_path
+                    run.vhd_disk_number = vhd_disk_number
+                    db.commit()
+                    ctx.row.message = f"Disk {vhd_disk_number}"
+
+                with _StepCtx(db, run.id, "mount-vhd-partition", "VHDX-Partition einbinden", step_model=FileRestoreRunStep) as ctx:
+                    vhd_mount_dir = proxy_service.prepare_vhd_partition_path(proxy_session, vhd_disk_number, vhd_mount_dir)
+                    run.proxy_vhd_mount_dir = vhd_mount_dir
+                    db.commit()
+                    ctx.row.message = vhd_mount_dir
+
+            run.browse_root_path = vhd_mount_dir
+            run.default_destination_path = f"C:\\FileRestore\\{slug}\\{suffix}"
+            run.status = RestoreStatus.SUCCEEDED
+            run.cleanup_needed = True
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+
+        except Exception as exc:
+            run.status = RestoreStatus.FAILED
+            run.error_message = str(exc)[:2000]
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+            notify_restore_failure(db, "Datei-Restore", run.vm_name, run.id, run.error_message)
+            if proxy_service and proxy_session:
+                if vhd_disk_number is not None:
+                    if vhd_mount_dir:
+                        proxy_service.release_disk(proxy_session, vhd_disk_number, vhd_mount_dir)
+                    proxy_service.dismount_vhd_by_disk_number(proxy_session, vhd_disk_number)
+                if staged_dir:
+                    proxy_service.remove_local_directory(proxy_session, staged_dir)
     finally:
         db.close()
