@@ -237,16 +237,16 @@ def _cleanup_file_restore_run(db: Session, run: FileRestoreRun) -> None:
     except HTTPException:
         return
     # SMB3 (Backlog #22, direkt aus `~snapshot` gemountet ODER lokal auf
-    # den Proxy kopiert): Partition zuerst freigeben, dann ueber den
-    # Geraetepfad aushaengen (siehe dismount_vhd_by_disk_number -- eine
-    # UNC-Datei liesse sich aus dieser Session per -ImagePath nicht mehr
-    # aufloesen), danach eine lokale Kopie loeschen.
+    # den Proxy kopiert): Partition zuerst freigeben, dann aushaengen --
+    # bei einem Direkt-Mount mit den Zugangsdaten der Freigabe (siehe
+    # dismount_vhd), danach eine lokale Kopie loeschen.
     is_smb = bool(run.staged_vhd_dir or (run.vhd_file_path and run.vhd_file_path.startswith("\\\\")))
     if is_smb:
-        if run.vhd_disk_number is not None:
-            if run.proxy_vhd_mount_dir:
-                proxy_service.release_disk(proxy_session, run.vhd_disk_number, run.proxy_vhd_mount_dir)
-            proxy_service.dismount_vhd_by_disk_number(proxy_session, run.vhd_disk_number)
+        if run.vhd_disk_number is not None and run.proxy_vhd_mount_dir:
+            proxy_service.release_disk(proxy_session, run.vhd_disk_number, run.proxy_vhd_mount_dir)
+        if run.vhd_file_path:
+            share_user, share_password = _smb_credentials_for_run(db, run)
+            proxy_service.dismount_vhd(proxy_session, run.vhd_file_path, share_user, share_password)
         if run.staged_vhd_dir:
             proxy_service.remove_local_directory(proxy_session, run.staged_vhd_dir)
     else:
@@ -279,6 +279,10 @@ def _cleanup_file_restore_run(db: Session, run: FileRestoreRun) -> None:
                     netapp_service.delete_lun(run.clone_lun_uuid)
                 except NetAppConnectionError:
                     pass
+
+    # Pro-Session-Ordner (enthielt nur die inzwischen entfernten
+    # Mount-Punkte/Kopie) -- blieb frueher bei jeder Session leer liegen.
+    proxy_service.remove_empty_directory(proxy_session, f"C:\\hvnb_filerestore\\{run.id}")
 
     run.cleanup_needed = False
     run.cleanup_done_at = datetime.now(timezone.utc)
@@ -565,6 +569,25 @@ def _smb_share_credentials(db: Session, vm_config: BackupRunVmConfig | None, ser
     return cluster.username, decrypt_secret(cluster.encrypted_password)
 
 
+def _smb_credentials_for_run(db: Session, run: FileRestoreRun) -> tuple[str | None, str | None]:
+    """Best-effort fuer den Cleanup: Zugangsdaten der Freigabe, auf der
+    run.vhd_file_path liegt -- (None, None), wenn keine UNC-Datei oder
+    nicht (mehr) aufloesbar; dismount_vhd versucht es dann ohne."""
+    smb = _parse_smb_share(run.vhd_file_path or "")
+    if smb is None:
+        return None, None
+    snapshot = db.get(BackupRunSnapshot, run.source_snapshot_id)
+    vm_config = (
+        db.query(BackupRunVmConfig)
+        .filter(BackupRunVmConfig.run_id == snapshot.run_id, BackupRunVmConfig.vm_name == run.vm_name)
+        .first()
+    ) if snapshot else None
+    try:
+        return _smb_share_credentials(db, vm_config, smb[0], smb[1])
+    except RuntimeError:
+        return None, None
+
+
 def _execute_smb_file_restore_open(run_id: str) -> None:  # noqa: C901
     """Backlog #22: Datei-Restore fuer eine VM auf einem SMB3-Export. Kein
     LUN-Klon/iSCSI -- ONTAP stellt den Snapshot bereits schreibgeschuetzt
@@ -592,6 +615,8 @@ def _execute_smb_file_restore_open(run_id: str) -> None:  # noqa: C901
     vhd_disk_number: int | None = None
     vhd_mount_dir: str | None = None
     staged_dir: str | None = None
+    share_user: str | None = None
+    share_password: str | None = None
 
     try:
         run = db.get(FileRestoreRun, run_id)
@@ -660,7 +685,7 @@ def _execute_smb_file_restore_open(run_id: str) -> None:  # noqa: C901
                     direct_error = str(exc)
                     if vhd_disk_number is not None:
                         proxy_service.release_disk(proxy_session, vhd_disk_number, vhd_mount_dir)
-                        proxy_service.dismount_vhd_by_disk_number(proxy_session, vhd_disk_number)
+                        proxy_service.dismount_vhd(proxy_session, snapshot_path, share_user, share_password)
                     vhd_disk_number = None
                     run.vhd_file_path = None
                     run.vhd_disk_number = None
@@ -710,7 +735,8 @@ def _execute_smb_file_restore_open(run_id: str) -> None:  # noqa: C901
                 if vhd_disk_number is not None:
                     if vhd_mount_dir:
                         proxy_service.release_disk(proxy_session, vhd_disk_number, vhd_mount_dir)
-                    proxy_service.dismount_vhd_by_disk_number(proxy_session, vhd_disk_number)
+                    if run.vhd_file_path:
+                        proxy_service.dismount_vhd(proxy_session, run.vhd_file_path, share_user, share_password)
                 if staged_dir:
                     proxy_service.remove_local_directory(proxy_session, staged_dir)
     finally:

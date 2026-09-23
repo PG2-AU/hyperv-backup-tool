@@ -1400,11 +1400,22 @@ class HyperVService:
             raise RuntimeError(f"VHDX '{vhd_path}' konnte nicht gemountet werden: {result.error or result.output}")
         return int(output.splitlines()[-1])
 
-    def dismount_vhd(self, session: winrm.Session, vhd_path: str) -> None:
+    def dismount_vhd(
+        self, session: winrm.Session, vhd_path: str, share_username: str | None = None, share_password: str | None = None,
+    ) -> None:
         """Best-effort -- wird auch beim Cleanup nach einem Fehler
-        aufgerufen, daher kein Raise bei Fehlschlag."""
+        aufgerufen, daher kein Raise bei Fehlschlag.
+
+        'share_username'/'share_password' (Backlog #22): fuer eine per
+        mount_vhd_unc direkt von einem SMB3-Export gemountete VHDX.
+        Dismount-DiskImage oeffnet die Image-Datei dabei erneut -- live
+        verifiziert (2026-09-23): ohne SMB-Zugangsdaten in DIESER Session
+        scheitert es mit 'Access is denied', auch ueber -DevicePath, und
+        der virtuelle Datentraeger bleibt auf dem Proxy haengen."""
         escaped = vhd_path.replace("'", "''")
-        self._run_ps(session, f"Dismount-DiskImage -ImagePath '{escaped}' -ErrorAction SilentlyContinue")
+        body = f"Dismount-DiskImage -ImagePath '{escaped}' -ErrorAction SilentlyContinue | Out-Null"
+        script = self._wrap_smb_net_use(body, [vhd_path], share_username, share_password) if share_username else body
+        self._run_ps(session, script)
 
     def mount_vhd_unc(self, session: winrm.Session, unc_path: str, share_username: str, share_password: str) -> int:
         """Wie mount_vhd, aber fuer eine VHDX auf einem SMB3-Export
@@ -1416,7 +1427,8 @@ class HyperVService:
         gemountete Datentraeger haelt die Datei genau darueber offen. Die
         Zuordnung verfaellt ohnehin mit der Logon-Session dieser WinRM-Shell.
         Ob der Mount danach aus einer NEUEN Session noch lesbar ist, prueft
-        der Aufrufer (siehe _execute_smb_file_restore_open)."""
+        der Aufrufer (siehe _execute_smb_file_restore_open). Aushaengen
+        braucht die Zugangsdaten erneut (siehe dismount_vhd)."""
         escaped = unc_path.replace("'", "''")
         escaped_user = share_username.replace("'", "''")
         escaped_pw = share_password.replace("'", "''")
@@ -1437,16 +1449,6 @@ class HyperVService:
         if not result.success or not output:
             raise RuntimeError(f"VHDX '{unc_path}' konnte nicht gemountet werden: {result.error or result.output}")
         return int(output.splitlines()[-1])
-
-    def dismount_vhd_by_disk_number(self, session: winrm.Session, disk_number: int) -> None:
-        """Best-effort-Gegenstueck zu mount_vhd_unc: haengt ueber den
-        Geraetepfad statt ueber -ImagePath aus -- Letzteres muesste die
-        UNC-Datei erneut aufloesen, wofuer diese (spaetere) Session keine
-        SMB-Zugangsdaten hat."""
-        self._run_ps(
-            session,
-            f"Dismount-DiskImage -DevicePath '\\\\.\\PHYSICALDRIVE{int(disk_number)}' -ErrorAction SilentlyContinue",
-        )
 
     def copy_unc_to_local(
         self, session: winrm.Session, unc_path: str, local_path: str, share_username: str, share_password: str,
