@@ -1295,8 +1295,9 @@ class HyperVService:
             return script_body
         map_lines = "".join(
             f"net use '{root}' /delete /y 2>&1 | Out-Null; "
-            f"net use '{root}' '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1 | Out-Null; "
-            f"if ($LASTEXITCODE -ne 0) {{ throw \"net use fehlgeschlagen fuer '{root}' (Exit $LASTEXITCODE)\" }}; "
+            f"$nuOut = net use '{root}' '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1; "
+            f"if ($LASTEXITCODE -ne 0) {{ throw (\"net use fehlgeschlagen fuer '{root}' (Exit $LASTEXITCODE): \" + "
+            "(($nuOut | Out-String) -replace '\\s+', ' ').Trim()) }; "
             for root in share_roots
         )
         cleanup_lines = "".join(f"net use '{root}' /delete /y 2>&1 | Out-Null; " for root in share_roots)
@@ -1425,8 +1426,9 @@ class HyperVService:
         root = root_match.group(0).replace("'", "''")
         script = (
             f"net use '{root}' /delete /y 2>&1 | Out-Null; "
-            f"net use '{root}' '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1 | Out-Null; "
-            f"if ($LASTEXITCODE -ne 0) {{ throw \"net use fehlgeschlagen fuer '{root}' (Exit $LASTEXITCODE)\" }}; "
+            f"$nuOut = net use '{root}' '{escaped_pw}' /user:'{escaped_user}' /persistent:no 2>&1; "
+            f"if ($LASTEXITCODE -ne 0) {{ throw (\"net use fehlgeschlagen fuer '{root}' (Exit $LASTEXITCODE): \" + "
+            "(($nuOut | Out-String) -replace '\\s+', ' ').Trim()) }; "
             f"Mount-DiskImage -ImagePath '{escaped}' -Access ReadOnly -PassThru -ErrorAction Stop | "
             "Get-DiskImage | Get-Disk | Select-Object -ExpandProperty Number"
         )
