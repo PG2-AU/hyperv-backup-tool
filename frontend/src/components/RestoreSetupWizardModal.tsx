@@ -187,6 +187,7 @@ export function RestoreSetupWizardModal({ opened, onClose }: RestoreSetupWizardM
                 <List.Item>Eine IP-Adresse im iSCSI-Netz der Ziel-SVM(s); wird bei „Einrichten" pro SVM ausgewählt</List.Item>
                 <List.Item>Netzwerkzugriff auf Port 3260 (iSCSI) der SVM sowie Port 445 (SMB) eines Hyper-V-Knotens</List.Item>
                 <List.Item>Für datei-basierten Restore zusätzlich das Cmdlet <Text component="span" ff="monospace" size="sm">Mount-DiskImage</Text> (Windows-Storage-Modul, ab Server 2012 vorhanden)</List.Item>
+                <List.Item>Für datei-basierten Restore von VMs auf SMB3-Freigaben zusätzlich Port 445 (SMB) der CIFS-LIFs der SVM – der Proxy liest die VHDX direkt aus dem Snapshot-Ordner der Freigabe</List.Item>
               </List>
             </Alert>
             <TextInput

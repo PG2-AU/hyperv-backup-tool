@@ -347,6 +347,7 @@ export function RestorePage() {
                 <List.Item>eine IP-Adresse im iSCSI-Netz jeder Ziel-SVM – pro SVM in der Tabelle unten als Quell-IP wählbar</List.Item>
                 <List.Item>Netzwerkzugriff auf Port 3260 (iSCSI) der SVM und Port 445 (SMB) eines Hyper-V-Knotens</List.Item>
                 <List.Item>für datei-basierten Restore zusätzlich das Cmdlet <Text component="span" ff="monospace" size="sm">Mount-DiskImage</Text></List.Item>
+                <List.Item>für datei-basierten Restore von VMs auf SMB3-Freigaben zusätzlich Port 445 (SMB) der CIFS-LIFs der SVM – der Proxy liest die VHDX direkt aus dem Snapshot-Ordner der Freigabe</List.Item>
               </List>
             </Alert>
 
