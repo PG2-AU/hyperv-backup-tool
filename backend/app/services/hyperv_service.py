@@ -17,6 +17,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 import winrm
+from requests.adapters import HTTPAdapter
+from urllib3.exceptions import NameResolutionError
+from urllib3.util.retry import Retry
 
 from app.core.config import Settings
 from app.core.kerberos_auth import KerberosTicketError, ensure_ticket
@@ -202,6 +205,60 @@ def check_reachability(host: str, port: int, timeout_sec: float = 5.0) -> None:
         raise HyperVConnectionError(f"Host '{host}' ist auf Port {port} nicht erreichbar: {exc}") from exc
 
 
+class _DnsOnlyRetry(Retry):
+    """Wiederholt AUSSCHLIESSLICH fehlgeschlagene DNS-Aufloesungen
+    (NameResolutionError), jeder andere Fehler verhaelt sich exakt wie mit
+    dem requests-Standard (Retry(0, read=False) -- kein Wiederholen).
+
+    Hintergrund (Produktion 2026-09-24): mehrere gleichzeitig ueber die
+    Alarme-Seite ausgeloeste "Checkpoint loeschen"-Aktionen scheiterten mit
+    "Failed to resolve 'svhvclu01.rvm.local' ([Errno -2] ...)", obwohl
+    derselbe CNO-Name sonst zuverlaessig aufloest -- jede Aktion baut
+    eigene WinRM-Verbindungen auf (CNO + Knoten), der DNS-Weg im Container
+    (pasta-Forwarder -> WSL-DNS-Proxy -> Windows) liefert bei so einem
+    Schwall offenbar vereinzelt Fehlantworten. Ein DNS-Fehler tritt VOR
+    dem Senden der Anfrage auf, das Wiederholen ist daher immer
+    unbedenklich (kein doppelt ausgefuehrter PowerShell-Befehl) --
+    anders als ein generischer Retry auf run_ps-Ebene, der mitten in der
+    open_shell/run_command/receive-Folge einen Befehl erneut starten koennte."""
+
+    def increment(self, method=None, url=None, response=None, error=None, _pool=None, _stacktrace=None):
+        if not isinstance(error, NameResolutionError):
+            return Retry(0, read=False).increment(method, url, response, error, _pool, _stacktrace)
+        return super().increment(method, url, response, error, _pool, _stacktrace)
+
+
+def _install_dns_retry(ws: winrm.Session) -> None:
+    """Haengt _DnsOnlyRetry in die requests-Session, die pywinrm intern
+    (lazy, erst beim ersten Aufruf) in Transport.build_session anlegt. Muss
+    VOR der ersten Anfrage greifen -- bei HTTP-Endpunkten schickt
+    build_session selbst schon eine (setup_encryption), deshalb wird auch
+    dieser Schritt umschlossen, nicht nur build_session."""
+    transport = ws.protocol.transport
+    adapter = HTTPAdapter(
+        max_retries=_DnsOnlyRetry(total=4, connect=4, read=0, status=0, other=0, redirect=0, backoff_factor=1, raise_on_status=False)
+    )
+
+    def _mount(session) -> None:
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+
+    orig_build = transport.build_session
+    orig_setup = transport.setup_encryption
+
+    def _setup_encryption(session) -> None:
+        _mount(session)
+        orig_setup(session)
+
+    def _build_session():
+        session = orig_build()
+        _mount(session)
+        return session
+
+    transport.setup_encryption = _setup_encryption
+    transport.build_session = _build_session
+
+
 class HyperVService:
     def __init__(
         self, settings: Settings, target_host: str, use_https: bool | None = None,
@@ -261,7 +318,7 @@ class HyperVService:
                 raise HyperVConnectionError(str(exc)) from exc
             auth = (principal, "")  # Passwort wird von HTTPKerberosAuth nicht genutzt, das Ticket ist schon da
             kwargs["kerberos_hostname_override"] = self._node_hostname or self._target_host
-        return winrm.Session(
+        ws = winrm.Session(
             endpoint,
             auth=auth,
             transport=self._settings.winrm_transport,
@@ -276,6 +333,8 @@ class HyperVService:
             operation_timeout_sec=operation_timeout_sec,
             **kwargs,
         )
+        _install_dns_retry(ws)
+        return ws
 
     def connect(self, username: str, password: str, *, read_timeout_sec: int = 30, operation_timeout_sec: int = 20) -> winrm.Session:
         """Oeffentlicher Wrapper um _session fuer Aufrufer ausserhalb dieser
