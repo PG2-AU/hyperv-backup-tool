@@ -743,30 +743,6 @@ export function VmsPage() {
     <Stack style={{ height: "calc(100vh - 112px)" }} gap="md">
       <Title order={3}>Inventory</Title>
 
-      {selectedVm && <VmChainHeader vm={selectedVm} csvs={csvs} smbShares={smbShares} onClose={() => setSelectedVm(null)} />}
-      {selectedCsv && (
-        <CsvChainHeader
-          csv={selectedCsv}
-          vms={vms}
-          onClose={() => setSelectedCsv(null)}
-          onVmClick={(vm) => {
-            setSelectedCsv(null);
-            setParams({ tab: "vms", vm: vm.id });
-          }}
-        />
-      )}
-      {selectedSmbShare && (
-        <SmbShareChainHeader
-          share={selectedSmbShare}
-          vms={vms}
-          onClose={() => setSelectedSmbShare(null)}
-          onVmClick={(vm) => {
-            setSelectedSmbShare(null);
-            setParams({ tab: "vms", vm: vm.id });
-          }}
-        />
-      )}
-
       <Tabs
         value={activeTab}
         onChange={(v) => setParams({ tab: v ?? "vms" })}
@@ -779,6 +755,11 @@ export function VmsPage() {
         </Tabs.List>
 
         <Tabs.Panel value="vms" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          {selectedVm && (
+            <Box mb="md">
+              <VmChainHeader vm={selectedVm} csvs={csvs} smbShares={smbShares} onClose={() => setSelectedVm(null)} />
+            </Box>
+          )}
           <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <Title order={5} mb="sm">Virtuelle Maschinen</Title>
             <Group justify="flex-start" mb="sm">
@@ -952,6 +933,19 @@ export function VmsPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="csv" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          {selectedCsv && (
+            <Box mb="md">
+              <CsvChainHeader
+                csv={selectedCsv}
+                vms={vms}
+                onClose={() => setSelectedCsv(null)}
+                onVmClick={(vm) => {
+                  setSelectedCsv(null);
+                  setParams({ tab: "vms", vm: vm.id });
+                }}
+              />
+            </Box>
+          )}
           <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <Title order={5} mb="sm">
               Cluster Shared Volumes
@@ -1070,6 +1064,19 @@ export function VmsPage() {
 
         {(smbShares?.length ?? 0) > 0 && (
           <Tabs.Panel value="smb" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            {selectedSmbShare && (
+              <Box mb="md">
+                <SmbShareChainHeader
+                  share={selectedSmbShare}
+                  vms={vms}
+                  onClose={() => setSelectedSmbShare(null)}
+                  onVmClick={(vm) => {
+                    setSelectedSmbShare(null);
+                    setParams({ tab: "vms", vm: vm.id });
+                  }}
+                />
+              </Box>
+            )}
             <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
               <Title order={5} mb="sm">
                 SMB3-Freigaben
