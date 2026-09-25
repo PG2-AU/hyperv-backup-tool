@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActionIcon, Badge, Box, Group, Paper, Progress, SegmentedControl, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Box, Group, Paper, Progress, SegmentedControl, Select, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
   IconAlertTriangle,
@@ -573,11 +573,37 @@ export function VmsPage() {
     const p = params.get("site");
     return p === "mismatch" || p === "unassigned" ? p : "all";
   });
+  // Checkpoint-Filter (Backlog #64). Bewusst auf den rohen Discovery-
+  // Checkpoints statt auf visibleCheckpointsOf -- der Filter soll zeigen,
+  // was tatsaechlich existiert, auch einen gerade laufenden, noch jungen
+  // Backup-Checkpoint, den das Warn-Badge absichtlich ausblendet.
+  // ?checkpoint=...: direkt verlinkbar.
+  type CheckpointFilter = "all" | "any" | "manual" | "app" | "none";
+  const [checkpointFilter, setCheckpointFilter] = useState<CheckpointFilter>(() => {
+    const p = params.get("checkpoint");
+    return p === "any" || p === "manual" || p === "app" || p === "none" ? p : "all";
+  });
+  const matchesCheckpointFilter = (vm: Vm, filter: CheckpointFilter) => {
+    switch (filter) {
+      case "any":
+        return vm.checkpoints.length > 0;
+      case "manual":
+        return vm.checkpoints.some((cp) => !cp.app_created);
+      case "app":
+        return vm.checkpoints.some((cp) => cp.app_created);
+      case "none":
+        return vm.checkpoints.length === 0;
+      default:
+        return true;
+    }
+  };
+  const checkpointCount = (filter: CheckpointFilter) => (vms ?? []).filter((vm) => matchesCheckpointFilter(vm, filter)).length;
   const siteMismatchCount = (vms ?? []).filter((vm) => vm.site_mismatch).length;
   const siteUnassignedCount = (vms ?? []).filter((vm) => vm.site_unassigned).length;
   const filteredVms = (vms ?? []).filter(
     (vm) =>
       matchesAllColumns(vm, vmSearch) &&
+      matchesCheckpointFilter(vm, checkpointFilter) &&
       (!sitesConfigured ||
         siteFilter === "all" ||
         (siteFilter === "mismatch" && vm.site_mismatch) ||
@@ -789,6 +815,21 @@ export function VmsPage() {
             <Title order={5} mb="sm">Virtuelle Maschinen</Title>
             <Group justify="flex-start" mb="sm">
               <SearchInput value={vmSearch} onChange={setVmSearch} placeholder="VM-Name suchen…" />
+              <Select
+                size="xs"
+                w={260}
+                aria-label="Checkpoint-Filter"
+                value={checkpointFilter}
+                onChange={(v) => v && setCheckpointFilter(v as CheckpointFilter)}
+                allowDeselect={false}
+                data={[
+                  { value: "all", label: "Checkpoints: alle VMs" },
+                  { value: "any", label: `Mit Checkpoint (${checkpointCount("any")})` },
+                  { value: "manual", label: `Mit manuellem Checkpoint (${checkpointCount("manual")})` },
+                  { value: "app", label: `Mit Backup-Checkpoint hvnb_ (${checkpointCount("app")})` },
+                  { value: "none", label: `Ohne Checkpoint (${checkpointCount("none")})` },
+                ]}
+              />
               {sitesConfigured && (
                 <SegmentedControl
                   size="xs"
