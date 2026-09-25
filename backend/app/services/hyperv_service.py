@@ -158,6 +158,16 @@ class HyperVClusterSummary:
 
 
 @dataclass
+class VmStorageLayout:
+    vm_id: str | None
+    configuration_location: str | None
+    snapshot_file_location: str | None
+    smart_paging_file_path: str | None
+    vhd_paths: list[str]
+    checkpoint_count: int
+
+
+@dataclass
 class DiscoveryStepResult:
     step: str
     success: bool
@@ -1061,6 +1071,130 @@ class HyperVService:
         if not result.success:
             raise RuntimeError(f"Live-Migration von '{vm_name}' nach '{target_node}' fehlgeschlagen: {result.error}")
         return result.output.strip().splitlines()[-1].strip() if result.output.strip() else ""
+
+    # --- Storage-Move (VM verschieben, Stufe 2, siehe app.api.routes.vm_moves) ---
+
+    def get_vm_storage_layout(self, node_session: winrm.Session, vm_name: str) -> "VmStorageLayout":
+        """Aktuelle Ablageorte einer VM fuer die Pfad-Abbildung beim Storage-
+        Move: Konfigurations-, Checkpoint- und Smart-Paging-Ordner, alle
+        angeschlossenen Festplatten sowie die Anzahl Checkpoints."""
+        vm = vm_name.replace("'", "''")
+        script = (
+            f"$v = Get-VM -Name '{vm}' -ErrorAction Stop; "
+            "[PSCustomObject]@{ "
+            "Id = [string]$v.Id; ConfigurationLocation = $v.ConfigurationLocation; "
+            "SnapshotFileLocation = $v.SnapshotFileLocation; SmartPagingFilePath = $v.SmartPagingFilePath; "
+            "Vhds = @(Get-VMHardDiskDrive -VM $v | Where-Object { $_.Path } | ForEach-Object { $_.Path }); "
+            "CheckpointCount = @(Get-VMSnapshot -VM $v -ErrorAction SilentlyContinue).Count "
+            "} | ConvertTo-Json -Depth 3"
+        )
+        result = self._run_ps(node_session, script)
+        if not result.success:
+            raise RuntimeError(f"Ablageorte der VM '{vm_name}' konnten nicht gelesen werden: {result.error}")
+        try:
+            data = json.loads(result.output)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Unerwartete Antwort beim Lesen der VM-Ablageorte: {result.output[:200]}") from exc
+        vhds = data.get("Vhds") or []
+        return VmStorageLayout(
+            vm_id=data.get("Id") or None,
+            configuration_location=data.get("ConfigurationLocation") or None,
+            snapshot_file_location=data.get("SnapshotFileLocation") or None,
+            smart_paging_file_path=data.get("SmartPagingFilePath") or None,
+            vhd_paths=vhds if isinstance(vhds, list) else [vhds],
+            checkpoint_count=int(data.get("CheckpointCount") or 0),
+        )
+
+    def existing_paths(self, node_session: winrm.Session, paths: list[str]) -> list[str]:
+        """Welche der angegebenen Dateien existieren bereits -- Kollisions-
+        pruefung vor dem Storage-Move (Move-VMStorage wuerde sonst mitten im
+        Kopieren an einer gleichnamigen Datei scheitern)."""
+        if not paths:
+            return []
+        items = ", ".join("'" + p.replace("'", "''") + "'" for p in paths)
+        result = self._run_ps(node_session, f"@({items}) | Where-Object {{ Test-Path -LiteralPath $_ }}")
+        if not result.success:
+            raise RuntimeError(f"Zielpfade konnten nicht geprueft werden: {result.error}")
+        return [line.strip() for line in result.output.splitlines() if line.strip()]
+
+    def move_vm_storage(
+        self, node_session: winrm.Session, vm_name: str, *,
+        virtual_machine_path: str | None, snapshot_file_path: str | None, smart_paging_file_path: str | None,
+        vhd_moves: list[tuple[str, str]],
+    ) -> CommandResult:
+        """Verschiebt die Dateien der VM im laufenden Betrieb -- jede
+        Festplatte einzeln auf ihren abgebildeten Zielpfad (-Vhds), die
+        Ordner fuer Konfiguration/Checkpoints/Smart Paging jeweils separat.
+        So bleibt die Ordnerstruktur der Quelle erhalten (Nutzer-Vorgabe
+        2026-09-25), statt wie mit -DestinationStoragePath alles in einen
+        einzigen Ordner zu legen. None = diesen Ort nicht verschieben.
+
+        Blockiert bis zum Ende -- kann bei grossen VMs Stunden dauern, der
+        Aufrufer fuehrt das daher in einem eigenen Thread aus und fragt den
+        Fortschritt ueber eine zweite Sitzung ab (storage_move_progress).
+        Liefert das rohe CommandResult: ein Fehler kann bei einer
+        geclusterten VM auch NACH erfolgreichem Kopieren auftreten (Cluster-
+        Konfigurations-Update, vgl. _restore_settings in restore.py) --
+        ob der Move wirklich fehlschlug, entscheidet der Aufrufer anhand der
+        tatsaechlichen Pfade danach."""
+        def q(value: str) -> str:
+            return "'" + value.replace("'", "''") + "'"
+
+        args = [f"-VMName {q(vm_name)}"]
+        if virtual_machine_path:
+            args.append(f"-VirtualMachinePath {q(virtual_machine_path)}")
+        if snapshot_file_path:
+            args.append(f"-SnapshotFilePath {q(snapshot_file_path)}")
+        if smart_paging_file_path:
+            args.append(f"-SmartPagingFilePath {q(smart_paging_file_path)}")
+        if vhd_moves:
+            tables = ", ".join(f"@{{SourceFilePath = {q(src)}; DestinationFilePath = {q(dst)}}}" for src, dst in vhd_moves)
+            args.append(f"-Vhds @({tables})")
+        return self._run_ps(node_session, f"Move-VMStorage {' '.join(args)} -ErrorAction Stop")
+
+    def storage_move_progress(self, node_session: winrm.Session, vm_name: str, vm_uuid: str | None) -> int | None:
+        """Fortschritt (0-100) eines laufenden Storage-Moves: bevorzugt ueber
+        den WMI-Migrationsjob der VM (Msvm_MigrationJob, VirtualSystemName =
+        VM-GUID), sonst ueber die Prozentangabe im Get-VM-Status. None, wenn
+        (noch/nicht mehr) kein Fortschritt ablesbar ist."""
+        vm = vm_name.replace("'", "''")
+        guid = (vm_uuid or "").replace("'", "")
+        script = (
+            "$p = $null; "
+            + (
+                f"$j = Get-CimInstance -Namespace root\\virtualization\\v2 -ClassName Msvm_MigrationJob -ErrorAction SilentlyContinue "
+                f"| Where-Object {{ $_.VirtualSystemName -eq '{guid}' -and $_.JobState -eq 4 }} | Select-Object -First 1; "
+                "if ($j) { $p = $j.PercentComplete }; "
+                if guid else ""
+            )
+            + f"if ($p -eq $null) {{ $s = [string](Get-VM -Name '{vm}' -ErrorAction SilentlyContinue).Status; "
+            "if ($s -match '(\\d+)\\s*%') { $p = $Matches[1] } }; "
+            "if ($p -ne $null) { [int]$p }"
+        )
+        result = self._run_ps(node_session, script)
+        if not result.success or not result.output.strip():
+            return None
+        try:
+            return max(0, min(100, int(result.output.strip().splitlines()[-1])))
+        except ValueError:
+            return None
+
+    def cancel_storage_move(self, node_session: winrm.Session, vm_uuid: str | None) -> bool:
+        """Bricht den laufenden WMI-Migrationsjob der VM ab
+        (CIM_ConcreteJob.RequestStateChange, 4 = Terminate). Hyper-V laesst
+        die VM dabei auf dem Quell-Storage weiterlaufen. Liefert False, wenn
+        kein laufender Job gefunden wurde."""
+        if not vm_uuid:
+            return False
+        guid = vm_uuid.replace("'", "")
+        result = self._run_ps(
+            node_session,
+            "$j = Get-CimInstance -Namespace root\\virtualization\\v2 -ClassName Msvm_MigrationJob "
+            f"| Where-Object {{ $_.VirtualSystemName -eq '{guid}' -and $_.JobState -eq 4 }} | Select-Object -First 1; "
+            "if ($j) { $r = Invoke-CimMethod -InputObject $j -MethodName RequestStateChange "
+            "-Arguments @{ RequestedState = [uint16]4 }; 'ok:' + $r.ReturnValue } else { 'none' }",
+        )
+        return result.success and result.output.strip().startswith("ok:")
 
     def detach_vhd(self, session: winrm.Session, vm_name: str, vhd_path: str) -> CommandResult:
         escaped = vhd_path.replace("'", "''")

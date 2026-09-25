@@ -471,6 +471,11 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "alert_config", {"site_mismatch_grace_minutes": "INTEGER"})
     _add_missing_columns(engine, "netapp_clusters", {"site_id": "VARCHAR(36)", "metrocluster_mode": "VARCHAR(50)"})
     _add_missing_columns(engine, "hyperv_clusters", {"node_names_json": "VARCHAR(4000)"})
+    # VM verschieben, Stufe 2 (Storage-Move, siehe app.models.vm_move_run).
+    _add_missing_columns(
+        engine, "vm_move_runs",
+        {"destination_csv_name": "VARCHAR(255)", "progress_percent": "INTEGER", "cancel_requested_at": "DATETIME"},
+    )
     with engine.connect() as conn:
         conn.execute(text("UPDATE alert_config SET site_mismatch_grace_minutes = 120 WHERE site_mismatch_grace_minutes IS NULL"))
         conn.commit()

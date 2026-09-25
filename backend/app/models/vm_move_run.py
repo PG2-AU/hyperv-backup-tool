@@ -4,13 +4,14 @@ Laeuft als Hintergrund-Task (siehe app.api.routes.vm_moves); Status/
 Schritte werden fortlaufend aktualisiert, damit das Frontend per Polling
 live mitverfolgen kann (gleiches Muster wie VmRecreateRun).
 
-move_type ist bereits vorbereitet fuer Stufe 2 (Storage-Move per
-Move-VMStorage), aktuell gibt es nur 'host'."""
+move_type: 'host' (Stufe 1, Live-Migration auf anderen Knoten) oder
+'storage' (Stufe 2, Move-VMStorage auf eine andere CSV unter Beibehaltung
+der Ordnerstruktur, siehe app.core.storage_move)."""
 
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -39,6 +40,12 @@ class VmMoveRun(Base):
     source_node: Mapped[str | None] = mapped_column(String(255), nullable=True)
     target_node: Mapped[str] = mapped_column(String(255))
     requested_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Nur Storage-Move (Stufe 2): Ziel-CSV, Fortschritt 0-100 laut Hyper-V,
+    # Abbruch-Anforderung aus der GUI (der Lauf bricht den WMI-
+    # Migrationsjob beim naechsten Fortschritts-Poll ab).
+    destination_csv_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    progress_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[RestoreStatus] = mapped_column(String(20), default=RestoreStatus.RUNNING)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

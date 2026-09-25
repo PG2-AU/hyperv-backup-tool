@@ -1237,9 +1237,34 @@ export interface VmMoveRun {
   move_type: string;
   source_node?: string | null;
   target_node: string;
+  destination_csv_name?: string | null;
+  progress_percent?: number | null;
+  cancel_requested_at?: string | null;
   status: "running" | "succeeded" | "failed";
   error_message?: string | null;
   started_at: string;
   finished_at?: string | null;
   steps: VmMoveRunStep[];
+}
+
+export interface VmStorageTargetCsv {
+  name: string;
+  path?: string | null;
+  capacity_bytes?: number | null;
+  free_bytes?: number | null;
+  site?: SiteBadge | null;
+  is_current: boolean;
+  fits: boolean;
+  protection_groups_after: string[];
+  protection_change: "same" | "changed" | "lost" | "gained";
+}
+
+export interface VmStorageTargets {
+  vm_name: string;
+  current_csvs: string[];
+  host_site?: SiteBadge | null;
+  required_bytes: number;
+  protection_groups_now: string[];
+  csvs: VmStorageTargetCsv[];
+  blocked_reason?: string | null;
 }

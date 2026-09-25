@@ -1061,8 +1061,22 @@ def _start_job_run(
         hyperv_smb_share_by_key = {_smb_share_key(s.server, s.share): s for s in db.query(HyperVSmbShare).all()}
         _, cifs_shares_by_key = _smb_share_index(db)
 
+        # VMs, deren Dateien gerade per Storage-Move (app.api.routes.
+        # vm_moves) auf eine andere CSV kopiert werden: der Volume-Snapshot
+        # dieses Laufs erfasst sie nicht verlaesslich (je nach Zeitpunkt
+        # liegt sie noch auf der Quelle, schon auf dem Ziel oder dazwischen)
+        # -- als nicht gesichert markieren, damit dieser Lauf fuer sie nicht
+        # als Wiederherstellungspunkt angeboten wird (gleicher Mechanismus
+        # wie bei der CSV-Verschiebungs-Erkennung in _execute_job_run).
+        storage_moving = {
+            (m.hyperv_cluster_id, m.vm_name)
+            for m in db.query(VmMoveRun).filter(VmMoveRun.status == RestoreStatus.RUNNING, VmMoveRun.move_type == "storage").all()
+        }
         for vm_name in vm_names_in_run:
             hv_vm = hyperv_vms_by_name.get(vm_name)
+            not_captured = bool(hv_vm and (hv_vm.cluster_id, vm_name) in storage_moving)
+            if not_captured:
+                warnings.append(f"VM '{vm_name}': Storage-Move läuft -- VM wird in diesem Lauf nicht gesichert")
             vhd_entries = _build_vhd_entries(
                 hyperv_vhds_by_vm_uuid.get(hv_vm.vm_uuid, []) if hv_vm and hv_vm.vm_uuid else [],
                 cluster_ids_by_name, hyperv_csv_by_name, hyperv_smb_share_by_key, cifs_shares_by_key,
@@ -1082,6 +1096,7 @@ def _start_job_run(
                     pci_devices=hv_vm.pci_devices if hv_vm else None,
                     vhds=vhd_entries,
                     checkpoints=list(hv_vm.checkpoints or []) if hv_vm else [],
+                    not_captured=not_captured,
                 )
             )
         db.commit()
@@ -1385,7 +1400,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                         skipped_vms.append((vm_name, "Hyper-V-Cluster nicht gefunden"))
                         continue
                     if (meta["cluster_id"], vm_name) in moving_vms:
-                        skipped_vms.append((vm_name, "VM wird gerade verschoben (Live-Migration)"))
+                        skipped_vms.append((vm_name, "VM wird gerade verschoben"))
                         continue
                     vms_by_cluster[meta["cluster_id"]].append(vm_name)
 
@@ -1626,6 +1641,12 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                     for fut in futures:
                         fut.result()
 
+        # Als nicht gesichert markierte VMs (z.B. laufender Storage-Move, siehe
+        # _start_job_run) gar nicht erst im Snapshot fuehren.
+        not_captured_vm_names = {
+            cfg.vm_name
+            for cfg in db.query(BackupRunVmConfig).filter(BackupRunVmConfig.run_id == run.id, BackupRunVmConfig.not_captured.is_(True)).all()
+        }
         for target in targets:
             if was_cancelled:
                 break
@@ -1640,7 +1661,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                 volume_name=target.volume_name,
                 csv_names=sorted(target.csv_names),
                 lun_names=sorted(target.lun_names),
-                vm_names=sorted(target.vm_names),
+                vm_names=sorted(v for v in target.vm_names if v not in not_captured_vm_names),
             )
             cluster = clusters_by_id.get(target.netapp_cluster_id)
             volume = volumes_by_key.get((target.netapp_cluster_id, target.svm_name, target.volume_name))

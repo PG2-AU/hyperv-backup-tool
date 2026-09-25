@@ -957,7 +957,7 @@ export function VmsPage() {
                           <IconBolt size={16} />
                         </ActionIcon>
                       </Tooltip>
-                      <Tooltip label="VM verschieben (Live-Migration auf anderen Host)">
+                      <Tooltip label="VM verschieben (Host oder Storage)">
                         <ActionIcon variant="light" disabled={!canManageHyperv || !vm.cluster_id} onClick={() => setMoveVm(vm)}>
                           <IconArrowsRightLeft size={16} />
                         </ActionIcon>
