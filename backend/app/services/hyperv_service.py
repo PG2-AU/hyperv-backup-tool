@@ -1037,6 +1037,33 @@ class HyperVService:
         entries = raw if isinstance(raw, list) else [raw]
         return [HyperVClusterNodeSummary(name=e["Name"], state=e.get("State") or "") for e in entries if e.get("Name")]
 
+    def node_memory(self, node_session: winrm.Session) -> tuple[int, int]:
+        """(Gesamt, frei) physischer Arbeitsspeicher DIESES Knotens in Bytes
+        -- direkt auf dem Knoten abgefragt (Win32_OperatingSystem liefert
+        KB), NICHT per -ComputerName vom CNO aus (waere ein zweiter Hop)."""
+        result = self._run_ps(
+            node_session,
+            "$o = Get-CimInstance Win32_OperatingSystem; \"$($o.TotalVisibleMemorySize);$($o.FreePhysicalMemory)\"",
+        )
+        if not result.success:
+            raise RuntimeError(result.error or "Win32_OperatingSystem nicht lesbar")
+        total_kb, free_kb = result.output.strip().splitlines()[-1].split(";")
+        return int(total_kb) * 1024, int(free_kb) * 1024
+
+    def vm_memory(self, node_session: winrm.Session, vm_name: str) -> tuple[str, int, int]:
+        """(Status, zugewiesener RAM, Start-RAM) einer VM in Bytes, auf ihrem
+        Owner-Knoten abgefragt. Fuer eine Live-Migration zaehlt der aktuell
+        ZUGEWIESENE Speicher (bei dynamischem RAM nicht das Maximum)."""
+        vm = vm_name.replace("'", "''")
+        result = self._run_ps(
+            node_session,
+            f"$v = Get-VM -Name '{vm}' -ErrorAction Stop; \"$([string]$v.State);$($v.MemoryAssigned);$($v.MemoryStartup)\"",
+        )
+        if not result.success:
+            raise RuntimeError(result.error or "Get-VM fehlgeschlagen")
+        state, assigned, startup = result.output.strip().splitlines()[-1].split(";")
+        return state, int(assigned or 0), int(startup or 0)
+
     def live_migrate_vm(self, cno_session: winrm.Session, vm_name: str, target_node: str) -> str:
         """Verschiebt eine hochverfuegbare VM auf einen anderen Cluster-
         Knoten (Host-Move, Stufe 1). Laufende VM: echte Live-Migration

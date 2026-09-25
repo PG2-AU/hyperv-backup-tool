@@ -18,6 +18,8 @@ beschaedigt hat):
 import copy
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -90,6 +92,15 @@ class MoveTargetNode(BaseModel):
     is_current: bool
     site: SiteBadge | None = None
     vm_count: int = 0
+    # Live je Knoten abgefragt (None = Knoten nicht erreichbar/nicht Up).
+    memory_total_bytes: int | None = None
+    memory_free_bytes: int | None = None
+    # Frei NACH dem Move (frei minus RAM der VM) -- nur fuer Zielkandidaten.
+    memory_free_after_bytes: int | None = None
+    # False = zu wenig RAM inkl. Reserve, None = unbekannt.
+    fits_memory: bool | None = None
+    memory_error: str | None = None
+    recommended: bool = False
 
 
 class MoveTargetsRead(BaseModel):
@@ -98,7 +109,15 @@ class MoveTargetsRead(BaseModel):
     current_node: str | None = None
     host_site: SiteBadge | None = None
     storage_sites: list[SiteBadge] = []
+    # RAM, den die VM auf dem Zielknoten braucht: bei laufender VM der
+    # aktuell zugewiesene, sonst der Start-RAM (fuer den naechsten Start).
+    vm_memory_bytes: int | None = None
+    vm_state: str | None = None
+    # Reserve, die auf dem Zielknoten nach dem Move frei bleiben muss.
+    memory_reserve_bytes_hint: str = ""
     nodes: list[MoveTargetNode]
+    recommended_node: str | None = None
+    recommended_reason: str | None = None
     # Gesetzt, wenn ein Move gerade nicht erlaubt ist (Backup laeuft etc.)
     # -- der Dialog zeigt den Grund und deaktiviert den Start-Button.
     blocked_reason: str | None = None
@@ -149,13 +168,16 @@ def get_move_targets(
     vm = _get_vm_or_404(db, cluster_id, vm_name)
 
     password = decrypt_secret(cluster.encrypted_password)
+    settings = get_settings()
     try:
-        service = _cno_service(cluster)
+        service = _cno_service(cluster, settings)
         session = service.connect(cluster.username, password, read_timeout_sec=15, operation_timeout_sec=10)
         nodes = service.list_cluster_nodes(session)
         current = service.get_vm_owner_node(session, vm_name) or vm.host_name
+        node_ips = service.node_address_map(session)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cluster-Knoten konnten nicht abgefragt werden: {exc}") from exc
+    memory = _query_node_memory(cluster, password, settings, [n.name for n in nodes if n.state == "Up"], node_ips, current, vm_name)
 
     resolver = SiteResolver(db)
     site_status = resolver.vm_status(vm, vhds_by_vm_uuid(db).get(vm.vm_uuid, []) if vm.vm_uuid else [])
@@ -168,22 +190,121 @@ def get_move_targets(
         return SiteBadge.model_validate(site) if site else None
 
     current_key = normalize_node_name(current)
+    vm_need = memory.vm_need_bytes
+    target_nodes: list[MoveTargetNode] = []
+    for n in sorted(nodes, key=lambda n: n.name.lower()):
+        key = normalize_node_name(n.name)
+        info = memory.nodes.get(key)
+        node = MoveTargetNode(
+            name=n.name, state=n.state, is_current=key == current_key,
+            site=_badge(resolver.node_site(cluster_id, n.name)),
+            vm_count=vm_counts.get(key, 0),
+            memory_error=memory.errors.get(key),
+        )
+        if info is not None:
+            node.memory_total_bytes, node.memory_free_bytes = info
+            if not node.is_current and vm_need is not None:
+                node.memory_free_after_bytes = node.memory_free_bytes - vm_need
+                node.fits_memory = node.memory_free_after_bytes >= _memory_reserve(node.memory_total_bytes)
+        target_nodes.append(node)
+
+    storage_site_ids = {s.id for s in site_status.storage_sites}
+    recommended, reason = _recommend_node(target_nodes, storage_site_ids)
+    for node in target_nodes:
+        node.recommended = node.name == recommended
+
     return MoveTargetsRead(
         vm_name=vm.name,
         current_node=current,
         # Host-Standort bezogen auf den LIVE-Owner (Discovery kann veraltet sein).
         host_site=_badge(resolver.node_site(cluster_id, current)),
         storage_sites=[SiteBadge.model_validate(s) for s in site_status.storage_sites],
-        nodes=[
-            MoveTargetNode(
-                name=n.name, state=n.state, is_current=normalize_node_name(n.name) == current_key,
-                site=_badge(resolver.node_site(cluster_id, n.name)),
-                vm_count=vm_counts.get(normalize_node_name(n.name), 0),
-            )
-            for n in sorted(nodes, key=lambda n: n.name.lower())
-        ],
+        vm_memory_bytes=vm_need,
+        vm_state=memory.vm_state,
+        memory_reserve_bytes_hint=f"{_RESERVE_PERCENT} % des Knoten-RAMs, mindestens {_RESERVE_MIN_BYTES // 2**30} GB",
+        nodes=target_nodes,
+        recommended_node=recommended,
+        recommended_reason=reason,
         blocked_reason=_blocked_reason(db, vm),
     )
+
+
+# Auf dem Zielknoten muss nach dem Move mindestens so viel RAM frei bleiben
+# -- der Hyper-V-Host selbst (Root-Partition, Cluster-Dienst, Treiber)
+# braucht Luft, und ein Failover eines anderen Knotens soll nicht sofort an
+# vollgelaufenem Speicher scheitern.
+_RESERVE_PERCENT = 10
+_RESERVE_MIN_BYTES = 4 * 2**30
+
+
+def _memory_reserve(total_bytes: int) -> int:
+    return max(_RESERVE_MIN_BYTES, total_bytes * _RESERVE_PERCENT // 100)
+
+
+@dataclass
+class _MemorySnapshot:
+    nodes: dict[str, tuple[int, int]] = field(default_factory=dict)
+    errors: dict[str, str] = field(default_factory=dict)
+    vm_need_bytes: int | None = None
+    vm_state: str | None = None
+
+
+def _query_node_memory(
+    cluster: HyperVCluster, password: str, settings, node_names: list[str], node_ips: dict[str, str],
+    owner: str | None, vm_name: str,
+) -> _MemorySnapshot:
+    """Fragt je Knoten (parallel, direkte Verbindung zur Management-IP wie
+    beim Backup) den freien RAM ab, auf dem Owner-Knoten zusaetzlich den RAM
+    der VM. Ein nicht erreichbarer Knoten verhindert den Dialog nicht --
+    er bekommt nur keine RAM-Angabe (fits_memory = None)."""
+    snapshot = _MemorySnapshot()
+    owner_key = normalize_node_name(owner)
+
+    def _one(name: str):
+        node = HyperVService(settings, node_ips.get(name.lower(), name), use_https=cluster.use_https, node_hostname=name)
+        session = node.connect(cluster.username, password, read_timeout_sec=15, operation_timeout_sec=10)
+        mem = node.node_memory(session)
+        vm_info = node.vm_memory(session, vm_name) if normalize_node_name(name) == owner_key else None
+        return mem, vm_info
+
+    with ThreadPoolExecutor(max_workers=max(1, min(8, len(node_names)))) as pool:
+        futures = {pool.submit(_one, name): name for name in node_names}
+        for future, name in futures.items():
+            key = normalize_node_name(name)
+            try:
+                mem, vm_info = future.result(timeout=40)
+            except Exception as exc:  # noqa: BLE001 -- nur Anzeige
+                snapshot.errors[key] = str(exc)[:300]
+                continue
+            snapshot.nodes[key] = mem
+            if vm_info is not None:
+                state, assigned, startup = vm_info
+                snapshot.vm_state = state
+                snapshot.vm_need_bytes = assigned if state == "Running" and assigned else startup
+    return snapshot
+
+
+def _recommend_node(nodes: list[MoveTargetNode], storage_site_ids: set[str]) -> tuple[str | None, str | None]:
+    """Empfohlener Zielknoten: Up, nicht der aktuelle, genug RAM (oder RAM
+    unbekannt), und -- falls der Storage-Standort bekannt ist -- NUR am
+    Standort des Storage (sonst wuerde der Move eine Standort-Abweichung
+    erzeugen statt beheben). Darunter der mit dem meisten freien RAM nach
+    dem Move; Knoten mit bekanntem RAM vor solchen ohne."""
+    candidates = [n for n in nodes if n.state == "Up" and not n.is_current and n.fits_memory is not False]
+    if storage_site_ids:
+        same_site = [n for n in candidates if n.site and n.site.id in storage_site_ids]
+        if not same_site:
+            return None, "Kein betriebsbereiter Knoten mit genug freiem RAM am Standort des Storage."
+        candidates = same_site
+    if not candidates:
+        return None, "Kein betriebsbereiter Knoten mit genug freiem RAM."
+    best = max(candidates, key=lambda n: (n.memory_free_after_bytes is not None, n.memory_free_after_bytes or 0, -n.vm_count))
+    parts = []
+    if storage_site_ids and best.site:
+        parts.append(f"gleicher Standort wie der Storage ({best.site.name})")
+    if best.memory_free_after_bytes is not None:
+        parts.append(f"meisten freien RAM nach dem Move ({best.memory_free_after_bytes / 2**30:.0f} GB)")
+    return best.name, ", ".join(parts) or None
 
 
 def _is_access_denied(exc: Exception) -> bool:
@@ -339,6 +460,8 @@ class StorageTargetsRead(BaseModel):
     required_bytes: int
     protection_groups_now: list[str]
     csvs: list[StorageTargetCsv]
+    recommended_csv: str | None = None
+    recommended_reason: str | None = None
     blocked_reason: str | None = None
 
 
@@ -415,12 +538,37 @@ def get_storage_targets(
         )
 
     host_site = resolver.node_site(cluster_id, vm.host_name)
+    recommended, reason = _recommend_csv(csvs, host_site.id if host_site else None)
     return StorageTargetsRead(
         vm_name=vm.name, current_csvs=current_csvs,
         host_site=SiteBadge.model_validate(host_site) if host_site else None,
         required_bytes=required, protection_groups_now=groups_now, csvs=csvs,
+        recommended_csv=recommended, recommended_reason=reason,
         blocked_reason=_storage_blocked_reason(db, vm, vhds),
     )
+
+
+def _recommend_csv(csvs: list[StorageTargetCsv], host_site_id: str | None) -> tuple[str | None, str | None]:
+    """Empfohlene Ziel-CSV: nicht die aktuelle, genug Platz, und -- falls der
+    Host-Standort bekannt ist -- NUR am Standort des Hosts. Darunter zuerst
+    eine CSV, auf der sich der Backup-Schutz nicht aendert, dann die mit dem
+    meisten freien Platz."""
+    candidates = [c for c in csvs if not c.is_current and c.fits]
+    if host_site_id:
+        candidates = [c for c in candidates if c.site and c.site.id == host_site_id]
+        if not candidates:
+            return None, "Keine CSV mit genug Platz am Standort des Hosts."
+    if not candidates:
+        return None, "Keine CSV mit genug freiem Platz."
+    best = max(candidates, key=lambda c: (c.protection_change in ("same", "gained"), c.free_bytes or 0))
+    parts = []
+    if host_site_id and best.site:
+        parts.append(f"gleicher Standort wie der Host ({best.site.name})")
+    if best.protection_change == "same":
+        parts.append("Backup-Schutz bleibt gleich")
+    if best.free_bytes is not None:
+        parts.append(f"meisten freien Platz ({best.free_bytes / 2**30:.0f} GB)")
+    return best.name, ", ".join(parts) or None
 
 
 @router.post("/storage", response_model=VmMoveRunRead, status_code=status.HTTP_202_ACCEPTED)

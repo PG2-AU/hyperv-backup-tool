@@ -1212,6 +1212,13 @@ export interface VmMoveTargetNode {
   is_current: boolean;
   site?: SiteBadge | null;
   vm_count: number;
+  memory_total_bytes?: number | null;
+  memory_free_bytes?: number | null;
+  memory_free_after_bytes?: number | null;
+  // false = zu wenig RAM inkl. Reserve, null = unbekannt
+  fits_memory?: boolean | null;
+  memory_error?: string | null;
+  recommended: boolean;
 }
 
 export interface VmMoveTargets {
@@ -1219,7 +1226,12 @@ export interface VmMoveTargets {
   current_node?: string | null;
   host_site?: SiteBadge | null;
   storage_sites: SiteBadge[];
+  vm_memory_bytes?: number | null;
+  vm_state?: string | null;
+  memory_reserve_bytes_hint: string;
   nodes: VmMoveTargetNode[];
+  recommended_node?: string | null;
+  recommended_reason?: string | null;
   blocked_reason?: string | null;
 }
 
@@ -1266,5 +1278,7 @@ export interface VmStorageTargets {
   required_bytes: number;
   protection_groups_now: string[];
   csvs: VmStorageTargetCsv[];
+  recommended_csv?: string | null;
+  recommended_reason?: string | null;
   blocked_reason?: string | null;
 }

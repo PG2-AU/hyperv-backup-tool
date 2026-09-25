@@ -562,6 +562,8 @@ export function VmsPage() {
   );
   const [vmSearch, setVmSearch] = useState("");
   const [moveVm, setMoveVm] = useState<Vm | null>(null);
+  // Stufe 3: Dialog im "Standort-Abweichung beheben"-Modus geoeffnet.
+  const [moveFixSite, setMoveFixSite] = useState(false);
   // Standort-Filter (Settings > Standorte) -- nur sichtbar, sobald
   // mindestens ein Standort angelegt ist.
   const { data: sites } = useSites();
@@ -887,10 +889,26 @@ export function VmsPage() {
                                   {name}
                                 </Text>
                               ))}
+                              {canManageHyperv && vm.cluster_id && (
+                                <Text size="xs" fw={600}>
+                                  Klicken zum Beheben
+                                </Text>
+                              )}
                             </Stack>
                           }
                         >
-                          <Badge color="orange" variant="filled" leftSection={<IconAlertTriangle size={12} />}>
+                          <Badge
+                            color="orange"
+                            variant="filled"
+                            leftSection={<IconAlertTriangle size={12} />}
+                            style={canManageHyperv && vm.cluster_id ? { cursor: "pointer" } : undefined}
+                            onClick={(e) => {
+                              if (!canManageHyperv || !vm.cluster_id) return;
+                              e.stopPropagation();
+                              setMoveFixSite(true);
+                              setMoveVm(vm);
+                            }}
+                          >
                             Standort-Abweichung
                           </Badge>
                         </Tooltip>
@@ -958,7 +976,14 @@ export function VmsPage() {
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="VM verschieben (Host oder Storage)">
-                        <ActionIcon variant="light" disabled={!canManageHyperv || !vm.cluster_id} onClick={() => setMoveVm(vm)}>
+                        <ActionIcon
+                          variant="light"
+                          disabled={!canManageHyperv || !vm.cluster_id}
+                          onClick={() => {
+                            setMoveFixSite(false);
+                            setMoveVm(vm);
+                          }}
+                        >
                           <IconArrowsRightLeft size={16} />
                         </ActionIcon>
                       </Tooltip>
@@ -1281,7 +1306,7 @@ export function VmsPage() {
         )}
       </Tabs>
 
-      <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} />
+      <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} fixSiteMismatch={moveFixSite} />
       <BackupsModal
         opened={!!backupsTarget}
         onClose={() => setBackupsTarget(null)}

@@ -16,6 +16,9 @@ export function useVmMoveTargets(clusterId: string | null | undefined, vmName: s
     staleTime: 0,
     gcTime: 0,
     retry: false,
+    // Kein erneutes Abfragen beim Fensterwechsel: kostet WinRM-Aufrufe je
+    // Knoten und wuerde eine bereits getroffene Auswahl zuruecksetzen.
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -54,6 +57,9 @@ export function useVmStorageTargets(clusterId: string | null | undefined, vmName
     staleTime: 0,
     gcTime: 0,
     retry: false,
+    // Kein erneutes Abfragen beim Fensterwechsel: kostet WinRM-Aufrufe je
+    // Knoten und wuerde eine bereits getroffene Auswahl zuruecksetzen.
+    refetchOnWindowFocus: false,
   });
 }
 

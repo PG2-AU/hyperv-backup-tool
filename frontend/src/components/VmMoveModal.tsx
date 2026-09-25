@@ -1,5 +1,18 @@
 import { useEffect, useState } from "react";
-import { Alert, Badge, Button, Checkbox, Group, Loader, Modal, Progress, Radio, SegmentedControl, Stack, Text } from "@mantine/core";
+import {
+  Alert,
+  Badge,
+  Button,
+  Checkbox,
+  Group,
+  Loader,
+  Modal,
+  Progress,
+  Radio,
+  SegmentedControl,
+  Stack,
+  Text,
+} from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconAlertTriangle, IconCheck, IconMinus, IconX } from "@tabler/icons-react";
 
@@ -11,7 +24,7 @@ import {
   useVmMoveTargets,
   useVmStorageTargets,
 } from "@/api/hooks.vmMoves";
-import type { Vm, VmStorageTargetCsv } from "@/api/types";
+import type { VmMoveTargetNode, VmStorageTargetCsv } from "@/api/types";
 import { SiteBadgeView } from "@/components/SiteBadge";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
@@ -26,21 +39,37 @@ const STEP_STATUS_ICON: Record<string, React.ReactNode> = {
 
 type MoveMode = "host" | "storage";
 
+// Minimal noetig: Name + Cluster -- so kann der Dialog auch von der
+// Alarme-Seite aus geoeffnet werden, die kein volles Vm-Objekt hat.
+interface MoveVmRef {
+  name: string;
+  cluster_id?: string | null;
+}
+
 interface VmMoveModalProps {
   opened: boolean;
   onClose: () => void;
-  vm: Vm | null;
+  vm: MoveVmRef | null;
+  // Stufe 3: "Standort-Abweichung beheben" -- erklaert die Abweichung,
+  // waehlt den passenden Weg vor und selektiert das empfohlene Ziel.
+  fixSiteMismatch?: boolean;
 }
 
 // VM verschieben: Stufe 1 = Host-Move (Live-Migration auf einen anderen
 // Knoten des Clusters), Stufe 2 = Storage-Move (Move-VMStorage auf eine
 // andere CSV, Ordnerstruktur der Quelle bleibt erhalten). Standort-Badges
 // (Settings > Standorte) helfen bei der Wahl eines passenden Ziels.
-export function VmMoveModal({ opened, onClose, vm }: VmMoveModalProps) {
+export function VmMoveModal({ opened, onClose, vm, fixSiteMismatch = false }: VmMoveModalProps) {
   const [mode, setMode] = useState<MoveMode>("host");
   const [runId, setRunId] = useState<string | undefined>(undefined);
   const { data: run } = useVmMoveRun(runId);
   const cancelMove = useCancelVmMove();
+  // Im Beheben-Modus braucht der Dialog die Standorte schon hier, um den
+  // passenden Weg vorzuwaehlen -- gleiche Query wie in HostMoveForm, wird
+  // von React Query geteilt (kein zweiter Aufruf).
+  const { data: hostTargets } = useVmMoveTargets(vm?.cluster_id, vm?.name, opened && fixSiteMismatch && !runId);
+  // Disks an mehreren Standorten: nur ein Storage-Move behebt das.
+  const storageOnly = fixSiteMismatch && (hostTargets?.storage_sites.length ?? 0) > 1;
 
   useEffect(() => {
     if (!opened) {
@@ -49,12 +78,21 @@ export function VmMoveModal({ opened, onClose, vm }: VmMoveModalProps) {
     }
   }, [opened]);
 
+  useEffect(() => {
+    if (storageOnly) setMode("storage");
+  }, [storageOnly]);
+
   const running = run?.status === "running";
 
   function handleCancel() {
     if (!runId) return;
     cancelMove.mutate(runId, {
-      onError: (err) => notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Abbruch fehlgeschlagen."), color: "red" }),
+      onError: (err) =>
+        notifications.show({
+          title: "Fehler",
+          message: apiErrorMessage(err, "Abbruch fehlgeschlagen."),
+          color: "red",
+        }),
     });
   }
 
@@ -63,23 +101,46 @@ export function VmMoveModal({ opened, onClose, vm }: VmMoveModalProps) {
       opened={opened}
       onClose={running ? () => undefined : onClose}
       withCloseButton={!running}
-      title={`VM verschieben: ${vm?.name ?? ""}`}
+      title={`${fixSiteMismatch ? "Standort-Abweichung beheben" : "VM verschieben"}: ${vm?.name ?? ""}`}
       size="lg"
     >
       {!runId && (
         <Stack gap="sm">
+          {fixSiteMismatch && hostTargets && (
+            <Alert color="orange" icon={<IconAlertTriangle size={16} />} variant="light">
+              <Stack gap={4}>
+                <Group gap={6}>
+                  <Text size="sm">Host {hostTargets.current_node ?? "?"}</Text>
+                  {hostTargets.host_site && <SiteBadgeView site={hostTargets.host_site} />}
+                  <Text size="sm">≠ Storage</Text>
+                  {hostTargets.storage_sites.map((s) => (
+                    <SiteBadgeView key={s.id} site={s} />
+                  ))}
+                </Group>
+                <Text size="xs">
+                  {storageOnly
+                    ? "Die Festplatten liegen an mehreren Standorten -- das behebt nur ein Storage-Move auf eine CSV am Standort des Hosts."
+                    : "Schnellster Weg: Host per Live-Migration an den Standort des Storage verschieben (Sekunden, keine Datenkopie). Alternativ den Storage an den Standort des Hosts verschieben (dauert je nach VM-Größe)."}
+                </Text>
+              </Stack>
+            </Alert>
+          )}
           <SegmentedControl
             value={mode}
             onChange={(v) => setMode(v as MoveMode)}
             data={[
-              { value: "host", label: "Host (Live-Migration)" },
+              {
+                value: "host",
+                label: "Host (Live-Migration)",
+                disabled: storageOnly,
+              },
               { value: "storage", label: "Storage (andere CSV)" },
             ]}
           />
           {mode === "host" ? (
-            <HostMoveForm vm={vm} opened={opened} onStarted={setRunId} onClose={onClose} />
+            <HostMoveForm vm={vm} opened={opened} preselect={fixSiteMismatch} onStarted={setRunId} onClose={onClose} />
           ) : (
-            <StorageMoveForm vm={vm} opened={opened} onStarted={setRunId} onClose={onClose} />
+            <StorageMoveForm vm={vm} opened={opened} preselect={fixSiteMismatch} onStarted={setRunId} onClose={onClose} />
           )}
         </Stack>
       )}
@@ -147,25 +208,39 @@ export function VmMoveModal({ opened, onClose, vm }: VmMoveModalProps) {
 }
 
 interface FormProps {
-  vm: Vm | null;
+  vm: MoveVmRef | null;
   opened: boolean;
+  // Empfohlenes Ziel automatisch auswaehlen (Beheben-Modus).
+  preselect: boolean;
   onStarted: (runId: string) => void;
   onClose: () => void;
 }
 
-function HostMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
+function HostMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProps) {
   const [targetNode, setTargetNode] = useState<string | null>(null);
   const { data: targets, isLoading, error } = useVmMoveTargets(vm?.cluster_id, vm?.name, opened);
   const startMove = useStartVmMove();
   const storageSiteIds = new Set((targets?.storage_sites ?? []).map((s) => s.id));
 
+  useEffect(() => {
+    if (preselect && targets?.recommended_node && !targets.blocked_reason) setTargetNode(targets.recommended_node);
+  }, [preselect, targets]);
+
   function handleStart() {
     if (!vm?.cluster_id || !targetNode) return;
     startMove
-      .mutateAsync({ cluster_id: vm.cluster_id, vm_name: vm.name, target_node: targetNode })
+      .mutateAsync({
+        cluster_id: vm.cluster_id,
+        vm_name: vm.name,
+        target_node: targetNode,
+      })
       .then((started) => onStarted(started.id))
       .catch((err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Verschieben konnte nicht gestartet werden."), color: "red" }),
+        notifications.show({
+          title: "Fehler",
+          message: apiErrorMessage(err, "Verschieben konnte nicht gestartet werden."),
+          color: "red",
+        }),
       );
   }
 
@@ -178,7 +253,7 @@ function HostMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
       {isLoading && (
         <Group gap="xs">
           <Loader size="xs" />
-          <Text size="sm">Cluster-Knoten werden abgefragt…</Text>
+          <Text size="sm">Cluster-Knoten und freier Arbeitsspeicher werden abgefragt…</Text>
         </Group>
       )}
       {error && (
@@ -204,6 +279,25 @@ function HostMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
               </>
             )}
           </Group>
+          <Text size="xs" c="dimmed">
+            RAM-Bedarf der VM:{" "}
+            {targets.vm_memory_bytes != null
+              ? `${formatBytes(targets.vm_memory_bytes)} (${targets.vm_state === "Running" ? "aktuell zugewiesen" : "Start-RAM"})`
+              : "unbekannt"}{" "}
+            · Reserve auf dem Zielknoten: {targets.memory_reserve_bytes_hint}
+          </Text>
+          {targets.recommended_node ? (
+            <Text size="xs">
+              Empfohlen: <b>{targets.recommended_node}</b>
+              {targets.recommended_reason ? ` -- ${targets.recommended_reason}` : ""}
+            </Text>
+          ) : (
+            targets.recommended_reason && (
+              <Text size="xs" c="orange">
+                Keine Empfehlung: {targets.recommended_reason}
+              </Text>
+            )
+          )}
           {targets.blocked_reason && (
             <Alert color="orange" icon={<IconAlertTriangle size={16} />} title="Verschieben derzeit nicht möglich">
               {targets.blocked_reason}
@@ -219,35 +313,49 @@ function HostMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
                   <Radio
                     key={node.name}
                     value={node.name}
-                    disabled={!up || node.is_current || !!targets.blocked_reason}
+                    disabled={!up || node.is_current || node.fits_memory === false || !!targets.blocked_reason}
+                    styles={{ labelWrapper: { flex: 1 } }}
                     label={
-                      <Group gap={6} wrap="nowrap">
-                        <Text size="sm">{node.name}</Text>
-                        {node.site && <SiteBadgeView site={node.site} />}
-                        {node.is_current && (
-                          <Badge size="sm" variant="outline" color="gray">
-                            aktuell
-                          </Badge>
-                        )}
-                        {!up && (
-                          <Badge size="sm" variant="light" color="red">
-                            {node.state}
-                          </Badge>
-                        )}
-                        {up && !node.is_current && matchesStorage && (
-                          <Badge size="sm" variant="light" color="green">
-                            gleicher Standort wie Storage
-                          </Badge>
-                        )}
-                        {up && !node.is_current && mismatchesStorage && (
-                          <Badge size="sm" variant="light" color="orange">
-                            anderer Standort als Storage
-                          </Badge>
-                        )}
-                        <Text size="xs" c="dimmed">
-                          {node.vm_count} VMs
-                        </Text>
-                      </Group>
+                      <Stack gap={2}>
+                        <Group gap={6} wrap="nowrap">
+                          <Text size="sm">{node.name}</Text>
+                          {node.recommended && (
+                            <Badge size="sm" variant="filled" color="green">
+                              Empfohlen
+                            </Badge>
+                          )}
+                          {node.site && <SiteBadgeView site={node.site} />}
+                          {node.is_current && (
+                            <Badge size="sm" variant="outline" color="gray">
+                              aktuell
+                            </Badge>
+                          )}
+                          {!up && (
+                            <Badge size="sm" variant="light" color="red">
+                              {node.state}
+                            </Badge>
+                          )}
+                          {up && !node.is_current && matchesStorage && (
+                            <Badge size="sm" variant="light" color="green">
+                              gleicher Standort wie Storage
+                            </Badge>
+                          )}
+                          {up && !node.is_current && mismatchesStorage && (
+                            <Badge size="sm" variant="light" color="orange">
+                              anderer Standort als Storage
+                            </Badge>
+                          )}
+                          {up && !node.is_current && node.fits_memory === false && (
+                            <Badge size="sm" variant="light" color="red">
+                              zu wenig RAM
+                            </Badge>
+                          )}
+                          <Text size="xs" c="dimmed">
+                            {node.vm_count} VMs
+                          </Text>
+                        </Group>
+                        {up && <NodeMemoryBar node={node} />}
+                      </Stack>
                     }
                   />
                 );
@@ -260,7 +368,11 @@ function HostMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
         <Button variant="default" onClick={onClose}>
           Abbrechen
         </Button>
-        <Button onClick={handleStart} loading={startMove.isPending} disabled={!targetNode || !targets || !!targets.blocked_reason}>
+        <Button
+          onClick={handleStart}
+          loading={startMove.isPending}
+          disabled={!targetNode || !targets || !!targets.blocked_reason}
+        >
           Verschieben
         </Button>
       </Group>
@@ -275,7 +387,7 @@ const PROTECTION_CHANGE_TEXT: Record<VmStorageTargetCsv["protection_change"], st
   gained: "Die VM wird danach zusätzlich durch eine CSV-Protection-Group gesichert.",
 };
 
-function StorageMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
+function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProps) {
   const [destination, setDestination] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const { data: targets, isLoading, error } = useVmStorageTargets(vm?.cluster_id, vm?.name, opened);
@@ -284,6 +396,9 @@ function StorageMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
   const needsAck = !!selected && selected.protection_change !== "same";
 
   useEffect(() => setAcknowledged(false), [destination]);
+  useEffect(() => {
+    if (preselect && targets?.recommended_csv && !targets.blocked_reason) setDestination(targets.recommended_csv);
+  }, [preselect, targets]);
 
   function handleStart() {
     if (!vm?.cluster_id || !destination) return;
@@ -296,15 +411,19 @@ function StorageMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
       })
       .then((started) => onStarted(started.id))
       .catch((err) =>
-        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Verschieben konnte nicht gestartet werden."), color: "red" }),
+        notifications.show({
+          title: "Fehler",
+          message: apiErrorMessage(err, "Verschieben konnte nicht gestartet werden."),
+          color: "red",
+        }),
       );
   }
 
   return (
     <Stack gap="sm">
       <Text size="sm" c="dimmed">
-        Verschiebt Konfiguration und Festplatten der VM im laufenden Betrieb auf eine andere CSV. Die Ordnerstruktur bleibt
-        dabei erhalten (z.B. ...\Volume1\VM01\… → ...\Volume2\VM01\…). Der Host ändert sich nicht.
+        Verschiebt Konfiguration und Festplatten der VM im laufenden Betrieb auf eine andere CSV. Die Ordnerstruktur bleibt dabei
+        erhalten (z.B. ...\Volume1\VM01\… → ...\Volume2\VM01\…). Der Host ändert sich nicht.
       </Text>
       {isLoading && <Loader size="xs" />}
       {error && (
@@ -328,8 +447,21 @@ function StorageMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
             )}
           </Group>
           <Text size="xs" c="dimmed">
-            Gesichert durch: {targets.protection_groups_now.length > 0 ? targets.protection_groups_now.join(", ") : "keine Protection Group"}
+            Gesichert durch:{" "}
+            {targets.protection_groups_now.length > 0 ? targets.protection_groups_now.join(", ") : "keine Protection Group"}
           </Text>
+          {targets.recommended_csv ? (
+            <Text size="xs">
+              Empfohlen: <b>{targets.recommended_csv}</b>
+              {targets.recommended_reason ? ` -- ${targets.recommended_reason}` : ""}
+            </Text>
+          ) : (
+            targets.recommended_reason && (
+              <Text size="xs" c="orange">
+                Keine Empfehlung: {targets.recommended_reason}
+              </Text>
+            )
+          )}
           {targets.blocked_reason && (
             <Alert color="orange" icon={<IconAlertTriangle size={16} />} title="Verschieben derzeit nicht möglich">
               {targets.blocked_reason}
@@ -348,6 +480,11 @@ function StorageMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
                     label={
                       <Group gap={6} wrap="nowrap">
                         <Text size="sm">{csv.name}</Text>
+                        {csv.name === targets.recommended_csv && (
+                          <Badge size="sm" variant="filled" color="green">
+                            Empfohlen
+                          </Badge>
+                        )}
                         {csv.site && <SiteBadgeView site={csv.site} />}
                         {csv.is_current && (
                           <Badge size="sm" variant="outline" color="gray">
@@ -420,6 +557,35 @@ function StorageMoveForm({ vm, opened, onStarted, onClose }: FormProps) {
           Verschieben
         </Button>
       </Group>
+    </Stack>
+  );
+}
+
+// RAM-Auslastung eines Knotens: heller Teil = aktuell belegt, dunklerer
+// Aufsatz = zusaetzlich durch die VM belegt (nur bei Zielkandidaten).
+function NodeMemoryBar({ node }: { node: VmMoveTargetNode }) {
+  if (node.memory_total_bytes == null || node.memory_free_bytes == null) {
+    return (
+      <Text size="xs" c="dimmed">
+        RAM nicht abfragbar{node.memory_error ? ` (${node.memory_error})` : ""}
+      </Text>
+    );
+  }
+  const total = node.memory_total_bytes;
+  const usedPct = ((total - node.memory_free_bytes) / total) * 100;
+  const afterFree = node.memory_free_after_bytes;
+  const addPct = afterFree != null ? Math.max(0, ((node.memory_free_bytes - afterFree) / total) * 100) : 0;
+  const color = node.fits_memory === false ? "red" : usedPct + addPct >= 85 ? "yellow" : "blue";
+  return (
+    <Stack gap={2} maw={360}>
+      <Progress.Root size={6}>
+        <Progress.Section value={usedPct} color="gray" />
+        {addPct > 0 && <Progress.Section value={Math.min(addPct, 100 - usedPct)} color={color} />}
+      </Progress.Root>
+      <Text size="xs" c="dimmed">
+        {formatBytes(node.memory_free_bytes)} von {formatBytes(total)} frei
+        {afterFree != null ? ` → ${formatBytes(Math.max(0, afterFree))} nach dem Move` : ""}
+      </Text>
     </Stack>
   );
 }

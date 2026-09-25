@@ -15,6 +15,7 @@ import {
   useTriggerJobRun,
 } from "@/api/hooks";
 import { SearchInput } from "@/components/SearchInput";
+import { VmMoveModal } from "@/components/VmMoveModal";
 import type { Alert, AlertType } from "@/api/types";
 import { useAuthStore } from "@/store/authStore";
 import { confirmAction } from "@/utils/confirm";
@@ -147,7 +148,20 @@ function AlertAction({ alert }: { alert: Alert }) {
       </Group>
     );
   }
-  if (alert.alert_type === "hyperv_vm_multi_csv" || alert.alert_type === "hyperv_vm_site_mismatch") {
+  if (alert.alert_type === "hyperv_vm_site_mismatch") {
+    return (
+      <Group gap="xs" wrap="nowrap">
+        {alert.hyperv_cluster_id && alert.vm_name && <FixSiteMismatchButton clusterId={alert.hyperv_cluster_id} vmName={alert.vm_name} />}
+        <Tooltip label="Zum Inventar">
+          <ActionIcon component={Link} to="/vms?tab=vms&site=mismatch" variant="subtle">
+            <IconExternalLink size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <DismissAlertButton alertId={alert.id} />
+      </Group>
+    );
+  }
+  if (alert.alert_type === "hyperv_vm_multi_csv") {
     return (
       <Group gap="xs" wrap="nowrap">
         <Tooltip label="Zum Inventar">
@@ -170,6 +184,22 @@ function AlertAction({ alert }: { alert: Alert }) {
     );
   }
   return null;
+}
+
+// Stufe 3 (VM verschieben): oeffnet den Move-Dialog im Beheben-Modus.
+// Der Alarm loest sich beim naechsten Alarm-Check von selbst auf, sobald
+// Host und Storage wieder am selben Standort sind.
+function FixSiteMismatchButton({ clusterId, vmName }: { clusterId: string; vmName: string }) {
+  const [opened, setOpened] = useState(false);
+  const canManage = useAuthStore((s) => s.hasPermission("hyperv:manage"));
+  return (
+    <>
+      <Button size="xs" variant="light" disabled={!canManage} onClick={() => setOpened(true)}>
+        Beheben
+      </Button>
+      <VmMoveModal opened={opened} onClose={() => setOpened(false)} vm={{ name: vmName, cluster_id: clusterId }} fixSiteMismatch />
+    </>
+  );
 }
 
 function DeleteOrphanCheckpointButton({
