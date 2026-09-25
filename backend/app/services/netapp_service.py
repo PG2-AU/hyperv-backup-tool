@@ -152,6 +152,11 @@ class ClusterSummary:
     healthy_node_count: int
     healthy: bool
     is_metrocluster: bool
+    # ONTAP 'metrocluster.local.mode' (normal/switchover/partial_switchover/
+    # partial_switchback/waiting_for_switchback) -- None ohne MetroCluster
+    # oder wenn nicht lesbar. Grundlage fuer das Aussetzen der Standort-
+    # Abweichungs-Pruefung waehrend eines Switchovers (siehe app.core.sites).
+    metrocluster_mode: str | None = None
 
 
 @dataclass
@@ -416,10 +421,14 @@ class NetAppOntapService:
                 healthy_count = sum(1 for n in nodes if str(getattr(n, "state", "")) == "up")
 
                 is_mcc = False
+                mcc_mode = None
                 try:
                     mcc = Metrocluster()
                     mcc.get()
                     is_mcc = getattr(mcc, "configuration_type", None) not in (None, "not_configured")
+                    if is_mcc:
+                        mode = _get_nested(mcc, "local.mode")
+                        mcc_mode = str(mode) if mode else None
                 except NetAppRestError:
                     is_mcc = False
 
@@ -431,6 +440,7 @@ class NetAppOntapService:
                     healthy_node_count=healthy_count,
                     healthy=node_count > 0 and healthy_count == node_count,
                     is_metrocluster=is_mcc,
+                    metrocluster_mode=mcc_mode,
                 )
         except NetAppRestError as exc:
             raise NetAppConnectionError(str(exc)) from exc

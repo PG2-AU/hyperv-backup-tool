@@ -122,6 +122,7 @@ def update_alert_config(
     config.schedule_collision_window_minutes = payload.schedule_collision_window_minutes
     config.orphan_checkpoint_grace_minutes = payload.orphan_checkpoint_grace_minutes
     config.avhdx_without_checkpoint_grace_minutes = payload.avhdx_without_checkpoint_grace_minutes
+    config.site_mismatch_grace_minutes = payload.site_mismatch_grace_minutes
     config.alert_check_interval_minutes = payload.alert_check_interval_minutes
     config.backup_missed_auto_dismiss_days = payload.backup_missed_auto_dismiss_days
     config.scope = AlertScope(payload.scope)

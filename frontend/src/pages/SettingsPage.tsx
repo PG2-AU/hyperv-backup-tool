@@ -64,6 +64,7 @@ import { EmailSettingsTab } from "@/components/EmailSettingsTab";
 import { AdConfigTab } from "@/components/AdConfigTab";
 import { KerberosTab } from "@/components/KerberosTab";
 import { SchedulerConfigTab } from "@/components/SchedulerConfigTab";
+import { SitesTab } from "@/components/SitesTab";
 import { WinrmCertsTab } from "@/components/WinrmCertsTab";
 import { HyperVClusterFormModal } from "@/components/HyperVClusterFormModal";
 import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
@@ -509,6 +510,7 @@ export function SettingsPage() {
           <Tabs.Tab value="winrm-certs">WinRM-Zertifikate</Tabs.Tab>
           <Tabs.Tab value="kerberos">Kerberos</Tabs.Tab>
           <Tabs.Tab value="storage">Storage</Tabs.Tab>
+          <Tabs.Tab value="sites">Standorte</Tabs.Tab>
           <Tabs.Tab value="email">E-Mail</Tabs.Tab>
           <Tabs.Tab value="scheduler">Hintergrundjobs</Tabs.Tab>
           <Tabs.Tab value="alerts">Alarms</Tabs.Tab>
@@ -881,6 +883,10 @@ export function SettingsPage() {
 
         <Tabs.Panel value="kerberos" pt="md">
           <KerberosTab />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="sites" pt="md">
+          <SitesTab />
         </Tabs.Panel>
 
         <Tabs.Panel value="email" pt="md">

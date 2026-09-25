@@ -120,6 +120,7 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "WinRM-Zertifikate", path: "/settings?tab=winrm-certs", requiredPermission: "settings:manage" },
       { label: "Kerberos", path: "/settings?tab=kerberos", requiredPermission: "settings:manage" },
       { label: "Storage", path: "/settings?tab=storage", requiredPermission: "settings:manage" },
+      { label: "Standorte", path: "/settings?tab=sites", requiredPermission: "settings:manage" },
       { label: "E-Mail", path: "/settings?tab=email", requiredPermission: "settings:manage" },
       { label: "Hintergrundjobs", path: "/settings?tab=scheduler", requiredPermission: "settings:manage" },
       { label: "Alarms", path: "/settings?tab=alerts", requiredPermission: "settings:manage" },

@@ -33,6 +33,7 @@ class AlertType(str, enum.Enum):
     SCHEDULE_COLLISION = "schedule_collision"
     HYPERV_ORPHAN_CHECKPOINT = "hyperv_orphan_checkpoint"
     HYPERV_VM_MULTI_CSV = "hyperv_vm_multi_csv"
+    HYPERV_VM_SITE_MISMATCH = "hyperv_vm_site_mismatch"
     HYPERV_VM_AVHDX_WITHOUT_CHECKPOINT = "hyperv_vm_avhdx_without_checkpoint"
 
 
@@ -125,6 +126,11 @@ class AlertConfig(Base):
     # (_execute_job_run, jobs.py) meist ohnehin sofort korrigiert -- dieser
     # Alarm ist das Sicherheitsnetz fuer die restlichen Faelle.
     avhdx_without_checkpoint_grace_minutes: Mapped[int] = mapped_column(Integer, default=30)
+    # Eine VM, deren Host an einem anderen Standort steht als (mindestens
+    # eine) ihrer CSVs, wird erst nach dieser Spanne gemeldet -- bei Host-
+    # Wartung (Drain) oder Live-Migration laufen VMs legitim voruebergehend
+    # im anderen Rechenzentrum (siehe app.core.sites).
+    site_mismatch_grace_minutes: Mapped[int] = mapped_column(Integer, default=120)
     # Wie oft der periodische Warnungs-Check (run_alert_check) automatisch
     # laeuft -- Aenderung hier wird sofort per scheduler.reschedule_job() auf
     # die laufende APScheduler-Job-ID "alert-check" angewendet, kein

@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 
+from app.schemas.site import SiteBadge
+
 
 class VhdInfo(BaseModel):
     name: str
@@ -64,6 +66,15 @@ class VmRead(BaseModel):
     network_adapters: list[NetworkAdapterRead] = []
     pci_devices: list[str] = []
     checkpoints: list[CheckpointRead] = []
+    # Standort-Kennzeichnung (siehe app.core.sites): Standort des Hosts,
+    # eindeutige Standorte der Disks, und ob beide voneinander abweichen.
+    host_site: SiteBadge | None = None
+    storage_sites: list[SiteBadge] = []
+    site_mismatch: bool = False
+    # CSVs/Freigaben, deren Standort vom Host-Standort abweicht.
+    site_mismatch_storage: list[str] = []
+    # Host oder mindestens eine Disk noch keinem Standort zugeordnet.
+    site_unassigned: bool = False
 
 
 class CsvRead(BaseModel):
@@ -89,6 +100,10 @@ class CsvRead(BaseModel):
     policy_names: list[str] = []
     policy_ids: list[str] = []
     protected: bool = False
+    # Effektiver Standort (siehe app.core.sites.SiteResolver.csv_site) und
+    # dessen Quelle: 'netapp' (geerbt) oder 'override' (manuell an der CSV).
+    site: SiteBadge | None = None
+    site_source: str | None = None
 
 
 class SmbShareRead(BaseModel):

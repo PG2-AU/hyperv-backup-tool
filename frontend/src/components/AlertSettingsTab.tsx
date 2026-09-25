@@ -19,6 +19,7 @@ export function AlertSettingsTab() {
   const [collisionWindowMinutes, setCollisionWindowMinutes] = useState<number | string>(15);
   const [orphanCheckpointGraceMinutes, setOrphanCheckpointGraceMinutes] = useState<number | string>(60);
   const [avhdxGraceMinutes, setAvhdxGraceMinutes] = useState<number | string>(30);
+  const [siteMismatchGraceMinutes, setSiteMismatchGraceMinutes] = useState<number | string>(120);
   const [alertCheckIntervalMinutes, setAlertCheckIntervalMinutes] = useState<number | string>(5);
   const [missedAutoDismissDays, setMissedAutoDismissDays] = useState<number | string>(0);
   const [scope, setScope] = useState<AlertScope>("all");
@@ -32,6 +33,7 @@ export function AlertSettingsTab() {
     setCollisionWindowMinutes(config.schedule_collision_window_minutes);
     setOrphanCheckpointGraceMinutes(config.orphan_checkpoint_grace_minutes);
     setAvhdxGraceMinutes(config.avhdx_without_checkpoint_grace_minutes);
+    setSiteMismatchGraceMinutes(config.site_mismatch_grace_minutes);
     setAlertCheckIntervalMinutes(config.alert_check_interval_minutes);
     setMissedAutoDismissDays(config.backup_missed_auto_dismiss_days);
     setScope(config.scope);
@@ -46,6 +48,7 @@ export function AlertSettingsTab() {
       schedule_collision_window_minutes: Number(collisionWindowMinutes),
       orphan_checkpoint_grace_minutes: Number(orphanCheckpointGraceMinutes),
       avhdx_without_checkpoint_grace_minutes: Number(avhdxGraceMinutes),
+      site_mismatch_grace_minutes: Number(siteMismatchGraceMinutes),
       alert_check_interval_minutes: Number(alertCheckIntervalMinutes),
       backup_missed_auto_dismiss_days: Number(missedAutoDismissDays),
       scope,
@@ -138,6 +141,15 @@ export function AlertSettingsTab() {
           max={1440}
           value={avhdxGraceMinutes}
           onChange={setAvhdxGraceMinutes}
+          suffix=" min"
+        />
+        <NumberInput
+          label="Karenzzeit Standort-Abweichung"
+          description="So lange darf eine VM auf einem Host an einem anderen Standort laufen als ihr Storage, bevor gewarnt wird -- deckt Host-Wartung und kurzfristige Live-Migrationen ab (Standorte unter Settings > Standorte)"
+          min={0}
+          max={10080}
+          value={siteMismatchGraceMinutes}
+          onChange={setSiteMismatchGraceMinutes}
           suffix=" min"
         />
         <NumberInput

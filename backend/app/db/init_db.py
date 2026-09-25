@@ -21,6 +21,7 @@ from app.models.resource_group import ResourceGroup, ResourceGroupPolicyLink, ma
 from app.models.restore_copy_speed import RestoreCopySpeedSample  # noqa: F401  (nur fuer create_all)
 from app.models.role import Role, RoleAssignment
 from app.models.scheduler_config import SchedulerConfig
+from app.models.site import CsvSiteOverride, HyperVNodeSite, Site, VmSiteMismatchObservation  # noqa: F401  (nur fuer create_all)
 from app.models.snapmirror_label import DEFAULT_SNAPMIRROR_LABELS, SnapMirrorLabel
 from app.models.user import User, UserSource
 from app.models.winrm_cert import WinrmHostCertificate, WinrmTrustState  # noqa: F401  (nur fuer create_all)
@@ -129,6 +130,19 @@ def _cleanup_orphaned_netapp_discovery_rows(engine) -> None:
             "netapp_platforms", "netapp_aggregates",
         ):
             conn.execute(text(f"DELETE FROM {table} WHERE cluster_id NOT IN (SELECT id FROM netapp_clusters)"))
+        conn.commit()
+
+
+def _cleanup_orphaned_site_rows(engine) -> None:
+    """Standort-Zuordnungen (app.models.site), deren Hyper-V-Cluster oder
+    Standort nicht mehr existiert -- gleicher Grund wie
+    _cleanup_orphaned_hyperv_discovery_rows (SQLite erzwingt die
+    ondelete-CASCADE-Angabe ohne PRAGMA foreign_keys nicht)."""
+    with engine.connect() as conn:
+        for table in ("hyperv_node_sites", "csv_site_overrides"):
+            conn.execute(text(f"DELETE FROM {table} WHERE cluster_id NOT IN (SELECT id FROM hyperv_clusters)"))
+            conn.execute(text(f"DELETE FROM {table} WHERE site_id NOT IN (SELECT id FROM sites)"))
+        conn.execute(text("UPDATE netapp_clusters SET site_id = NULL WHERE site_id IS NOT NULL AND site_id NOT IN (SELECT id FROM sites)"))
         conn.commit()
 
 
@@ -452,6 +466,13 @@ def init_db(db: Session) -> None:
         {"resource_group_id": "VARCHAR(36)", "policy_id": "VARCHAR(36)", "vm_name": "VARCHAR(255)", "checkpoint_id": "VARCHAR(36)"},
     )
     _add_missing_columns(engine, "alert_config", {"backup_missed_auto_dismiss_days": "INTEGER"})
+    # Standort-Kennzeichnung (2026-09-25, siehe app.models.site).
+    _add_missing_columns(engine, "alert_config", {"site_mismatch_grace_minutes": "INTEGER"})
+    _add_missing_columns(engine, "netapp_clusters", {"site_id": "VARCHAR(36)", "metrocluster_mode": "VARCHAR(50)"})
+    _add_missing_columns(engine, "hyperv_clusters", {"node_names_json": "VARCHAR(4000)"})
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE alert_config SET site_mismatch_grace_minutes = 120 WHERE site_mismatch_grace_minutes IS NULL"))
+        conn.commit()
     with engine.connect() as conn:
         conn.execute(
             text("UPDATE alert_config SET backup_missed_auto_dismiss_days = 0 WHERE backup_missed_auto_dismiss_days IS NULL")
@@ -511,6 +532,7 @@ def init_db(db: Session) -> None:
 
     _cleanup_orphaned_hyperv_discovery_rows(engine)
     _cleanup_orphaned_netapp_discovery_rows(engine)
+    _cleanup_orphaned_site_rows(engine)
     _reap_orphaned_in_progress_runs(engine)
     _migrate_resource_group_members(db)
     _migrate_resource_group_policy_link_schedules(db)

@@ -49,6 +49,14 @@ export interface Vm {
   network_adapters: NetworkAdapter[];
   pci_devices: string[];
   checkpoints: VmCheckpoint[];
+  // Standort-Kennzeichnung (siehe backend app.core.sites).
+  host_site?: SiteBadge | null;
+  storage_sites: SiteBadge[];
+  site_mismatch: boolean;
+  // CSVs/Freigaben, deren Standort vom Host-Standort abweicht.
+  site_mismatch_storage: string[];
+  // Host oder mindestens eine Disk noch keinem Standort zugeordnet.
+  site_unassigned: boolean;
 }
 
 export interface Csv {
@@ -72,6 +80,9 @@ export interface Csv {
   policy_names: string[];
   policy_ids: string[];
   protected: boolean;
+  site?: SiteBadge | null;
+  // 'netapp' = vom NetApp-System geerbt, 'override' = manuell an der CSV.
+  site_source?: "netapp" | "override" | null;
 }
 
 export interface SmbShare {
@@ -579,6 +590,7 @@ export type AlertType =
   | "hyperv_orphan_checkpoint"
   | "hyperv_vm_multi_csv"
   | "hyperv_vm_avhdx_without_checkpoint"
+  | "hyperv_vm_site_mismatch"
   | "backup_failed";
 
 export interface Alert {
@@ -599,8 +611,8 @@ export interface Alert {
   run_id?: string | null;
   resource_group_id?: string | null;
   policy_id?: string | null;
-  // vm_name: bei hyperv_orphan_checkpoint, hyperv_vm_multi_csv UND
-  // hyperv_vm_avhdx_without_checkpoint gesetzt. Bei hyperv_orphan_checkpoint
+  // vm_name: bei hyperv_orphan_checkpoint, hyperv_vm_multi_csv,
+  // hyperv_vm_site_mismatch UND hyperv_vm_avhdx_without_checkpoint gesetzt. Bei hyperv_orphan_checkpoint
   // zusaetzlich Grundlage fuer den "Checkpoint löschen"-Button, bei
   // hyperv_vm_avhdx_without_checkpoint fuer den "VM Discovery"-Button.
   vm_name?: string | null;
@@ -617,6 +629,7 @@ export interface AlertConfig {
   schedule_collision_window_minutes: number;
   orphan_checkpoint_grace_minutes: number;
   avhdx_without_checkpoint_grace_minutes: number;
+  site_mismatch_grace_minutes: number;
   alert_check_interval_minutes: number;
   // 0 = deaktiviert (kein automatisches Quittieren verpasster Laeufe)
   backup_missed_auto_dismiss_days: number;
@@ -631,6 +644,7 @@ export interface AlertConfigWritePayload {
   schedule_collision_window_minutes: number;
   orphan_checkpoint_grace_minutes: number;
   avhdx_without_checkpoint_grace_minutes: number;
+  site_mismatch_grace_minutes: number;
   alert_check_interval_minutes: number;
   backup_missed_auto_dismiss_days: number;
   scope: AlertScope;
@@ -1123,4 +1137,69 @@ export interface CapacitySeries {
   object_key: string;
   object_name: string;
   points: CapacitySamplePoint[];
+}
+
+// --- Standorte (Settings > Standorte, siehe backend app.models.site) ---
+
+export interface SiteBadge {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface Site extends SiteBadge {
+  description?: string | null;
+  created_at: string;
+}
+
+export interface SiteWrite {
+  name: string;
+  description?: string | null;
+  color: string;
+}
+
+export interface SiteNodeAssignment {
+  node_name: string;
+  site_id?: string | null;
+  vm_count: number;
+}
+
+export interface SiteHyperVClusterAssignment {
+  cluster_id: string;
+  cluster_name: string;
+  nodes: SiteNodeAssignment[];
+}
+
+export interface SiteNetAppClusterAssignment {
+  netapp_cluster_id: string;
+  name: string;
+  is_metrocluster: boolean;
+  metrocluster_mode?: string | null;
+  site_id?: string | null;
+}
+
+export interface SiteCsvAssignment {
+  cluster_id: string;
+  cluster_name: string;
+  csv_name: string;
+  disk_serial_number?: string | null;
+  netapp_cluster_name?: string | null;
+  inherited_site_id?: string | null;
+  override_site_id?: string | null;
+}
+
+export interface SiteAssignments {
+  hyperv_clusters: SiteHyperVClusterAssignment[];
+  netapp_clusters: SiteNetAppClusterAssignment[];
+  csvs: SiteCsvAssignment[];
+  // NetApp-Systeme ausserhalb des MetroCluster-Normalbetriebs -- solange
+  // nicht leer, ist die Standort-Abweichungs-Pruefung ausgesetzt.
+  switchover_clusters: string[];
+}
+
+export interface SiteMismatchSummary {
+  sites_configured: boolean;
+  mismatch_count: number;
+  unassigned_count: number;
+  switchover_clusters: string[];
 }

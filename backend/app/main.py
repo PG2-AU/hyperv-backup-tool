@@ -22,6 +22,7 @@ from app.api.routes import (
     schedules,
     search,
     settings as settings_routes,
+    sites,
     snapmirror_labels,
     storage,
     storage_access,
@@ -93,6 +94,7 @@ app.include_router(winrm_certs.router)
 app.include_router(kerberos_config_routes.router)
 app.include_router(ad_config_routes.router)
 app.include_router(capacity_history.router)
+app.include_router(sites.router)
 
 
 @app.get("/api/health")

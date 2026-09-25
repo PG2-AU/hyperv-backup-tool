@@ -306,6 +306,9 @@ def _apply_summary(cluster: HyperVCluster, summary) -> None:
         else HyperVClusterHealth.DEGRADED
     )
     cluster.last_check_error = None
+    node_names = sorted(n.name for n in summary.nodes if n.name)
+    if node_names:
+        cluster.node_names_json = json.dumps(node_names)
 
 
 def _refresh_node_reachability(cluster: HyperVCluster, service: HyperVService, username: str, password: str) -> None:

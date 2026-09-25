@@ -55,6 +55,11 @@ class HyperVCluster(Base):
     # Pydantic (from_attributes) ueber die Property die geparste Liste
     # statt des rohen JSON-Strings liest.
     unreachable_nodes_json: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # JSON-Liste aller Knotennamen laut Get-ClusterNode (letzter
+    # erfolgreicher Health-Check) -- Grundlage fuer die manuelle
+    # Knoten->Standort-Zuordnung (Settings > Standorte), die sonst nur die
+    # Knoten anbieten koennte, auf denen gerade zufaellig eine VM laeuft.
+    node_names_json: Mapped[str | None] = mapped_column(String(4000), nullable=True)
 
     @property
     def unreachable_nodes(self) -> list[dict]:
@@ -65,3 +70,13 @@ class HyperVCluster(Base):
         except json.JSONDecodeError:
             return []
         return data if isinstance(data, list) else []
+
+    @property
+    def node_names(self) -> list[str]:
+        if not self.node_names_json:
+            return []
+        try:
+            data = json.loads(self.node_names_json)
+        except json.JSONDecodeError:
+            return []
+        return [n for n in data if isinstance(n, str)] if isinstance(data, list) else []

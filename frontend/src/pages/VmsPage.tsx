@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActionIcon, Badge, Box, Group, Paper, Progress, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Box, Group, Paper, Progress, SegmentedControl, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
   IconAlertTriangle,
@@ -24,11 +24,13 @@ import {
 import { useSearchParams } from "react-router-dom";
 
 import { useCsvs, useDeleteVmCheckpoint, useDiscoverVm, useResourceGroups, useRunningJobRuns, useSmbShares, useVms } from "@/api/hooks";
+import { useSites } from "@/api/hooks.sites";
 import { BackupsModal } from "@/components/BackupsModal";
 import { CapacityHistoryPanel } from "@/components/CapacityHistoryPanel";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
+import { SiteBadgeView } from "@/components/SiteBadge";
 import type { BackupScope, Csv, ResourceGroup, SmbShare, Vm } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
@@ -557,7 +559,25 @@ export function VmsPage() {
     null,
   );
   const [vmSearch, setVmSearch] = useState("");
-  const filteredVms = (vms ?? []).filter((vm) => matchesAllColumns(vm, vmSearch));
+  // Standort-Filter (Settings > Standorte) -- nur sichtbar, sobald
+  // mindestens ein Standort angelegt ist.
+  const { data: sites } = useSites();
+  const sitesConfigured = (sites?.length ?? 0) > 0;
+  // ?site=mismatch|unassigned: Einstieg ueber die Dashboard-Kachel.
+  const [siteFilter, setSiteFilter] = useState<"all" | "mismatch" | "unassigned">(() => {
+    const p = params.get("site");
+    return p === "mismatch" || p === "unassigned" ? p : "all";
+  });
+  const siteMismatchCount = (vms ?? []).filter((vm) => vm.site_mismatch).length;
+  const siteUnassignedCount = (vms ?? []).filter((vm) => vm.site_unassigned).length;
+  const filteredVms = (vms ?? []).filter(
+    (vm) =>
+      matchesAllColumns(vm, vmSearch) &&
+      (!sitesConfigured ||
+        siteFilter === "all" ||
+        (siteFilter === "mismatch" && vm.site_mismatch) ||
+        (siteFilter === "unassigned" && vm.site_unassigned)),
+  );
   const [csvSearch, setCsvSearch] = useState("");
   const filteredCsvs = (csvs ?? []).filter((csv) => matchesAllColumns(csv, csvSearch));
   const [smbShareSearch, setSmbShareSearch] = useState("");
@@ -764,6 +784,18 @@ export function VmsPage() {
             <Title order={5} mb="sm">Virtuelle Maschinen</Title>
             <Group justify="flex-start" mb="sm">
               <SearchInput value={vmSearch} onChange={setVmSearch} placeholder="VM-Name suchen…" />
+              {sitesConfigured && (
+                <SegmentedControl
+                  size="xs"
+                  value={siteFilter}
+                  onChange={(v) => setSiteFilter(v as typeof siteFilter)}
+                  data={[
+                    { value: "all", label: "Alle" },
+                    { value: "mismatch", label: `Standort-Abweichung (${siteMismatchCount})` },
+                    { value: "unassigned", label: `Ohne Standort (${siteUnassignedCount})` },
+                  ]}
+                />
+              )}
             </Group>
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             <Table striped highlightOnHover>
@@ -837,6 +869,29 @@ export function VmsPage() {
                           </Badge>
                         </Tooltip>
                       )}
+                      {vm.site_mismatch && vm.host_site && (
+                        <Tooltip
+                          multiline
+                          w={300}
+                          label={
+                            <Stack gap={2}>
+                              <Text size="xs">
+                                Host {vm.host} steht in {vm.host_site.name}, aber folgende Speicherorte liegen an einem anderen
+                                Standort:
+                              </Text>
+                              {vm.site_mismatch_storage.map((name) => (
+                                <Text key={name} size="xs">
+                                  {name}
+                                </Text>
+                              ))}
+                            </Stack>
+                          }
+                        >
+                          <Badge color="orange" variant="filled" leftSection={<IconAlertTriangle size={12} />}>
+                            Standort-Abweichung
+                          </Badge>
+                        </Tooltip>
+                      )}
                       {avhdxVhds.length > 0 && (
                         <Tooltip
                           multiline
@@ -862,9 +917,21 @@ export function VmsPage() {
                       )}
                     </Group>
                   </Table.Td>
-                  <Table.Td>{vm.host}</Table.Td>
+                  <Table.Td>
+                    <Group gap={4} wrap="nowrap">
+                      <Text size="sm">{vm.host}</Text>
+                      {vm.host_site && <SiteBadgeView site={vm.host_site} />}
+                    </Group>
+                  </Table.Td>
                   <Table.Td>{vm.cluster ?? "-"}</Table.Td>
-                  <Table.Td>{[...vm.csv_paths, ...vm.smb_share_paths].join(", ") || "-"}</Table.Td>
+                  <Table.Td>
+                    <Group gap={4}>
+                      <Text size="sm">{[...vm.csv_paths, ...vm.smb_share_paths].join(", ") || "-"}</Text>
+                      {vm.storage_sites.map((site) => (
+                        <SiteBadgeView key={site.id} site={site} />
+                      ))}
+                    </Group>
+                  </Table.Td>
                   <Table.Td miw={140}>
                     <Text size="xs" c="dimmed">
                       {formatBytes(vm.vhdx_used_bytes)} / {formatBytes(vm.vhdx_size_bytes)}
@@ -959,6 +1026,7 @@ export function VmsPage() {
               <Table.Tr>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Owner-Node</Table.Th>
+                {sitesConfigured && <Table.Th>Standort</Table.Th>}
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Pfad</Table.Th>
                 <Table.Th>Größe</Table.Th>
@@ -988,6 +1056,26 @@ export function VmsPage() {
                   >
                     <Table.Td>{csv.name}</Table.Td>
                     <Table.Td>{csv.owner_node}</Table.Td>
+                    {sitesConfigured && (
+                      <Table.Td>
+                        {csv.site ? (
+                          <Tooltip
+                            label={csv.site_source === "override" ? "Manuell an dieser CSV festgelegt" : "Vom NetApp-System geerbt"}
+                          >
+                            <Group gap={4} wrap="nowrap">
+                              <SiteBadgeView site={csv.site} />
+                              {csv.site_source === "override" && (
+                                <Text size="xs" c="dimmed">
+                                  manuell
+                                </Text>
+                              )}
+                            </Group>
+                          </Tooltip>
+                        ) : (
+                          "-"
+                        )}
+                      </Table.Td>
+                    )}
                     <Table.Td>
                       <Badge color="green" variant="light">
                         {csv.state}

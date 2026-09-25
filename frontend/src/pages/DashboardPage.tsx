@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Anchor, Badge, Grid, Group, Paper, Progress, ScrollArea, SegmentedControl, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
 import {
   IconAlertTriangle,
+  IconMapPin,
   IconCircleCheck,
   IconClockHour4,
   IconDatabase,
@@ -22,6 +23,7 @@ import {
   useVms,
   useVolumes,
 } from "@/api/hooks";
+import { useSiteMismatchSummary } from "@/api/hooks.sites";
 import { DayJobStrip } from "@/components/DayJobStrip";
 import type { BackupJobRun, BackupRunSnapshot } from "@/api/types";
 import { formatRunTargets, HEALTH_COLOR } from "@/utils/format";
@@ -138,6 +140,8 @@ export function DashboardPage() {
   const { data: volumes } = useVolumes();
   const { data: relationships } = useSnapMirrorRelationships();
   const { data: alerts } = useAlerts();
+  const { data: siteSummary } = useSiteMismatchSummary();
+  const sitesConfigured = siteSummary?.sites_configured ?? false;
 
   const protectedVms = vms?.filter((v) => v.protected).length ?? 0;
 
@@ -208,7 +212,7 @@ export function DashboardPage() {
     <Stack>
       <Title order={3}>Dashboard</Title>
 
-      <SimpleGrid cols={{ base: 1, xs: 2, sm: 3, lg: 5 }}>
+      <SimpleGrid cols={{ base: 1, xs: 2, sm: 3, lg: sitesConfigured ? 6 : 5 }}>
         <StatCard
           icon={<IconServer2 size={24} />}
           label="Hyper-V Cluster"
@@ -243,6 +247,22 @@ export function DashboardPage() {
           color={activeAlertsCount > 0 ? "red" : undefined}
           to="/alerts"
         />
+        {sitesConfigured && siteSummary && (
+          <StatCard
+            icon={<IconMapPin size={24} />}
+            label="Standort-Abweichungen"
+            value={siteSummary.switchover_clusters.length > 0 ? "Ausgesetzt" : String(siteSummary.mismatch_count)}
+            sub={
+              siteSummary.switchover_clusters.length > 0
+                ? `MetroCluster-Switchover (${siteSummary.switchover_clusters.join(", ")})`
+                : siteSummary.unassigned_count > 0
+                  ? `${siteSummary.unassigned_count} VMs ohne vollständige Zuordnung`
+                  : "VM-Host und Storage am selben Standort"
+            }
+            color={siteSummary.switchover_clusters.length > 0 ? "orange" : siteSummary.mismatch_count > 0 ? "orange" : "green"}
+            to="/vms?tab=vms&site=mismatch"
+          />
+        )}
       </SimpleGrid>
 
       <Grid>

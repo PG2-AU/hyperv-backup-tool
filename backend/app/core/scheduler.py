@@ -35,6 +35,7 @@ from app.api.routes.restore import _slugify
 from app.core.capacity_history import capacity_key
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
+from app.core.sites import SiteResolver, vhds_by_vm_uuid
 from app.db.session import SessionLocal
 from app.models.alert import Alert, AlertConfig, AlertScope, AlertStatus, AlertType
 from app.models.allowed_schedule_collision import AllowedScheduleCollision
@@ -52,6 +53,7 @@ from app.models.email_config import EmailConfig
 from app.models.file_restore_run import FileRestoreRun
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
 from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
+from app.models.site import VmSiteMismatchObservation
 from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import NetAppAggregate, NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink
@@ -646,6 +648,80 @@ def _occurrence_in_pause_window(
     )
 
 
+def _check_site_mismatches(db, config, now, active_by_key, seen_keys, trigger) -> None:
+    """Standort-Abweichung (Nutzer-Vorgabe 2026-09-25, siehe
+    app.models.site): VM laeuft auf einem Host in Standort A, mindestens
+    eine ihrer Disks liegt auf Storage in Standort B. Rein aus discoverten
+    Daten + manueller Standort-Zuordnung abgeleitet (kein WinRM-Aufruf).
+
+    MIT Karenzzeit (AlertConfig.site_mismatch_grace_minutes, anders als
+    HYPERV_VM_MULTI_CSV): bei Host-Wartung/Live-Migration laufen VMs
+    legitim voruebergehend im anderen Rechenzentrum. Da HyperVVm-Zeilen bei
+    jeder Discovery neu angelegt werden, merkt sich VmSiteMismatchObservation
+    (Schluessel vm_uuid), seit wann die Abweichung ununterbrochen besteht.
+
+    Waehrend eines MetroCluster-Switchovers (irgendein registriertes
+    NetApp-System meldet metrocluster_mode != 'normal') ist die Pruefung
+    komplett ausgesetzt: dann laeuft Storage absichtlich im anderen
+    Rechenzentrum. Bereits aktive Alarme bleiben in dieser Zeit
+    unveraendert stehen (weder neu ausgeloest noch aufgeloest), die
+    Beobachtungs-Zeitstempel ebenso."""
+    resolver = SiteResolver(db)
+    observations = {o.vm_uuid: o for o in db.query(VmSiteMismatchObservation).all()}
+
+    if resolver.switchover_clusters:
+        for (alert_type, key) in active_by_key:
+            if alert_type == AlertType.HYPERV_VM_SITE_MISMATCH:
+                seen_keys.add((alert_type, key))
+        return
+
+    grace_minutes = config.site_mismatch_grace_minutes if config else 120
+    cutoff = now - timedelta(minutes=grace_minutes)
+    current: set[str] = set()
+    if resolver.sites:
+        vhds = vhds_by_vm_uuid(db)
+        for vm in db.query(HyperVVm).filter(HyperVVm.vm_uuid.isnot(None)).all():
+            if vm.vm_uuid in current:
+                continue  # Duplikat (Live-Migration-Race in der Discovery) -- schon bewertet
+            status = resolver.vm_status(vm, vhds.get(vm.vm_uuid, []))
+            if not status.mismatch:
+                continue
+            current.add(vm.vm_uuid)
+            observation = observations.get(vm.vm_uuid)
+            if observation is None:
+                observation = VmSiteMismatchObservation(vm_uuid=vm.vm_uuid, first_seen_at=now)
+                db.add(observation)
+                observations[vm.vm_uuid] = observation
+            first_seen = observation.first_seen_at
+            if first_seen.tzinfo is None:
+                first_seen = first_seen.replace(tzinfo=timezone.utc)
+            if first_seen > cutoff:
+                continue  # noch innerhalb der Karenzzeit -- evtl. nur Wartung/Live-Migration
+            key = vm.vm_uuid
+            seen_keys.add((AlertType.HYPERV_VM_SITE_MISMATCH, key))
+            other_sites = sorted({x.name for x in status.storage_sites if x.id != status.host_site.id})
+            message = (
+                f"VM laeuft auf Host {vm.host_name} (Standort {status.host_site.name}), liegt aber auf "
+                f"{', '.join(status.mismatched_storage)} (Standort {', '.join(other_sites)}) -- "
+                f"Abweichung besteht seit {first_seen:%d.%m.%Y %H:%M} UTC"
+            )
+            existing = active_by_key.get((AlertType.HYPERV_VM_SITE_MISMATCH, key))
+            if existing is None:
+                trigger(
+                    AlertType.HYPERV_VM_SITE_MISMATCH, key,
+                    object_name=vm.name,
+                    hyperv_cluster_id=vm.cluster_id,
+                    vm_name=vm.name,
+                    message=message,
+                )
+            elif existing.message != message:
+                existing.message = message
+
+    for vm_uuid, observation in observations.items():
+        if vm_uuid not in current:
+            db.delete(observation)
+
+
 def run_alert_check() -> None:
     """Prueft die Bedingungen, die im Dashboard unter 'Warnungen' gezaehlt
     werden (siehe app.api.routes.alerts): Kapazitaets-Schwellwerte (Volume/
@@ -679,7 +755,9 @@ def run_alert_check() -> None:
     Loeschen ueber die GUI oder anderweitig, aus der naechsten Discovery,
     loest sich der Alarm von selbst) sowie VMs, deren VHDX ueber mehrere
     CSVs verteilt liegen (HYPERV_VM_MULTI_CSV, ebenfalls Teil der
-    automatischen Aufloesung, bewusst ohne Karenzzeit)."""
+    automatischen Aufloesung, bewusst ohne Karenzzeit) sowie VMs, deren
+    Host an einem anderen Standort steht als ihr Storage
+    (HYPERV_VM_SITE_MISMATCH, mit Karenzzeit, siehe _check_site_mismatches)."""
     db = SessionLocal()
     try:
         # Bewusst KEIN "Task gestartet"-Log hier (anders als Health-Check/
@@ -1092,6 +1170,8 @@ def run_alert_check() -> None:
                 )
             elif existing.message != message:
                 existing.message = message
+
+        _check_site_mismatches(db, config, now, active_by_key, seen_keys, _trigger)
 
         for (alert_type, key), alert in active_by_key.items():
             if alert_type == AlertType.BACKUP_MISSED:

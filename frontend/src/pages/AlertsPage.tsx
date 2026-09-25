@@ -34,6 +34,7 @@ const TYPE_LABEL: Record<AlertType, string> = {
   hyperv_orphan_checkpoint: "Verwaister Checkpoint",
   hyperv_vm_multi_csv: "VM auf mehreren CSVs",
   hyperv_vm_avhdx_without_checkpoint: "AVHDX ohne Checkpoint",
+  hyperv_vm_site_mismatch: "Standort-Abweichung",
   backup_failed: "Backup fehlgeschlagen",
 };
 
@@ -50,6 +51,7 @@ const TYPE_COLOR: Record<AlertType, string> = {
   hyperv_orphan_checkpoint: "orange",
   hyperv_vm_multi_csv: "orange",
   hyperv_vm_avhdx_without_checkpoint: "orange",
+  hyperv_vm_site_mismatch: "orange",
   backup_failed: "red",
 };
 
@@ -145,7 +147,7 @@ function AlertAction({ alert }: { alert: Alert }) {
       </Group>
     );
   }
-  if (alert.alert_type === "hyperv_vm_multi_csv") {
+  if (alert.alert_type === "hyperv_vm_multi_csv" || alert.alert_type === "hyperv_vm_site_mismatch") {
     return (
       <Group gap="xs" wrap="nowrap">
         <Tooltip label="Zum Inventar">

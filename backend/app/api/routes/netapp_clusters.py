@@ -329,6 +329,7 @@ def _refresh_status(db: Session, cluster: NetAppCluster) -> NetAppCluster:
         cluster.healthy_node_count = summary.healthy_node_count
         cluster.health = NetAppClusterHealth.HEALTHY if summary.healthy else NetAppClusterHealth.DEGRADED
         cluster.is_metrocluster = summary.is_metrocluster
+        cluster.metrocluster_mode = summary.metrocluster_mode
         cluster.last_check_error = None
     except NetAppConnectionError as exc:
         cluster.health = NetAppClusterHealth.UNREACHABLE
@@ -404,6 +405,7 @@ def create_cluster(
         healthy_node_count=summary.healthy_node_count,
         health=NetAppClusterHealth.HEALTHY if summary.healthy else NetAppClusterHealth.DEGRADED,
         is_metrocluster=summary.is_metrocluster,
+        metrocluster_mode=summary.metrocluster_mode,
         last_checked_at=datetime.now(timezone.utc),
     )
     db.add(cluster)
@@ -455,6 +457,7 @@ def update_cluster(
     cluster.healthy_node_count = summary.healthy_node_count
     cluster.health = NetAppClusterHealth.HEALTHY if summary.healthy else NetAppClusterHealth.DEGRADED
     cluster.is_metrocluster = summary.is_metrocluster
+    cluster.metrocluster_mode = summary.metrocluster_mode
     cluster.last_checked_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(cluster)

@@ -29,6 +29,7 @@ from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _get_vm_
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
+from app.core.sites import SiteResolver
 from app.db.session import get_db
 from app.models.alert import Alert, AlertStatus, AlertType
 from app.models.backup_policy import BackupPolicy, BackupScope
@@ -36,6 +37,7 @@ from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
 from app.models.netapp_discovery import NetAppLun, NetAppVolume
 from app.models.resource_group import ResourceGroup, make_member_key
+from app.schemas.site import SiteBadge
 from app.schemas.vm import CheckpointRead, CsvRead, NetworkAdapterRead, SmbShareRead, VhdInfo, VmRead
 from app.services.hyperv_service import HyperVService
 
@@ -138,6 +140,8 @@ def _annotate_vm(vm: VmRead, groups: list[ResourceGroup]) -> VmRead:
 def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Permission.HYPERV_VIEW))) -> list[VmRead]:
     groups = db.query(ResourceGroup).all()
     cluster_names = {c.id: c.name for c in db.query(HyperVCluster).all()}
+    site_resolver = SiteResolver(db)
+    sites_configured = bool(site_resolver.sites)
 
     vhds_by_vm: dict[tuple[str, str | None], list[HyperVVhd]] = defaultdict(list)
     for vhd in db.query(HyperVVhd).all():
@@ -151,6 +155,7 @@ def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Perm
         # unveraendert weiterfunktioniert.
         csv_paths = sorted({f"C:\\ClusterStorage\\{v.csv_name}" for v in vhds if v.csv_name})
         smb_share_paths = sorted({f"\\\\{v.smb_server}\\{v.smb_share}" for v in vhds if v.smb_server and v.smb_share})
+        site_status = site_resolver.vm_status(vm, vhds)
         vm_read = VmRead(
             id=vm.id,
             name=vm.name,
@@ -190,6 +195,13 @@ def list_vms(db: Session = Depends(get_db), user=Depends(require_permission(Perm
                 CheckpointRead(name=c["name"], id=c["id"], creation_time=c["creation_time"], app_created=c["name"].startswith("hvnb_"))
                 for c in (vm.checkpoints or [])
             ],
+            host_site=SiteBadge.model_validate(site_status.host_site) if site_status.host_site else None,
+            storage_sites=[SiteBadge.model_validate(x) for x in site_status.storage_sites],
+            site_mismatch=site_status.mismatch,
+            site_mismatch_storage=site_status.mismatched_storage,
+            # Ohne einen einzigen angelegten Standort ist die Funktion schlicht
+            # nicht in Benutzung -- dann auch keinen "nicht zugeordnet"-Hinweis.
+            site_unassigned=sites_configured and (site_status.host_site is None or site_status.storage_unassigned),
         )
         vms.append(_annotate_vm(vm_read, groups))
     return vms
@@ -215,8 +227,10 @@ def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Per
     # Storage > LUNs den korrekten Wert zeigte.
     luns_by_serial: dict[str, NetAppLun] = {lun.serial_number: lun for lun in db.query(NetAppLun).all() if lun.serial_number}
 
+    site_resolver = SiteResolver(db)
     csvs: list[CsvRead] = []
     for csv in db.query(HyperVCsv).order_by(HyperVCsv.name).all():
+        csv_site, csv_site_source = site_resolver.csv_site(csv)
         volume = volumes_by_key.get((csv.netapp_svm_name, csv.netapp_volume_name)) if csv.netapp_volume_name else None
         lun = luns_by_serial.get(csv.disk_serial_number) if csv.disk_serial_number else None
         csv_read = CsvRead(
@@ -236,6 +250,8 @@ def list_csvs(db: Session = Depends(get_db), user=Depends(require_permission(Per
             volume_used_bytes=volume.used_bytes if volume else None,
             svm_name=csv.netapp_svm_name,
             netapp_cluster_name=csv.netapp_cluster_name,
+            site=SiteBadge.model_validate(csv_site) if csv_site else None,
+            site_source=csv_site_source,
         )
         csvs.append(_annotate_csv(csv_read, groups))
     return csvs

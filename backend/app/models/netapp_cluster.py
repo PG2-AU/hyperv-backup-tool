@@ -63,6 +63,16 @@ class NetAppCluster(Base):
     node_count: Mapped[int] = mapped_column(Integer, default=0)
     healthy_node_count: Mapped[int] = mapped_column(Integer, default=0)
     is_metrocluster: Mapped[bool] = mapped_column(Boolean, default=False)
+    # ONTAP metrocluster.local.mode (siehe ClusterSummary.metrocluster_mode),
+    # vom Health-Check aktualisiert. Weicht er von 'normal' ab (Switchover),
+    # setzt run_alert_check die Standort-Abweichungs-Pruefung aus.
+    metrocluster_mode: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Standort (app.models.site.Site) dieses Storage-Systems -- jede CSV
+    # erbt ihn ueber die LUN-Seriennummer (siehe app.core.sites). Bewusst
+    # ohne ForeignKey-Constraint (nachtraeglich per ALTER TABLE ergaenzt,
+    # SQLite kann dort keine Constraints anlegen); beim Loeschen eines
+    # Standorts raeumt app.api.routes.sites die Verweise selbst auf.
+    site_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_check_error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
