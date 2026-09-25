@@ -3,6 +3,7 @@ import { ActionIcon, Badge, Box, Group, Paper, Progress, SegmentedControl, Stack
 import { notifications } from "@mantine/notifications";
 import {
   IconAlertTriangle,
+  IconArrowsRightLeft,
   IconBolt,
   IconChartLine,
   IconChevronsRight,
@@ -31,6 +32,7 @@ import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
 import { SiteBadgeView } from "@/components/SiteBadge";
+import { VmMoveModal } from "@/components/VmMoveModal";
 import type { BackupScope, Csv, ResourceGroup, SmbShare, Vm } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
@@ -559,6 +561,7 @@ export function VmsPage() {
     null,
   );
   const [vmSearch, setVmSearch] = useState("");
+  const [moveVm, setMoveVm] = useState<Vm | null>(null);
   // Standort-Filter (Settings > Standorte) -- nur sichtbar, sobald
   // mindestens ein Standort angelegt ist.
   const { data: sites } = useSites();
@@ -954,6 +957,11 @@ export function VmsPage() {
                           <IconBolt size={16} />
                         </ActionIcon>
                       </Tooltip>
+                      <Tooltip label="VM verschieben (Live-Migration auf anderen Host)">
+                        <ActionIcon variant="light" disabled={!canManageHyperv || !vm.cluster_id} onClick={() => setMoveVm(vm)}>
+                          <IconArrowsRightLeft size={16} />
+                        </ActionIcon>
+                      </Tooltip>
                       <Tooltip label="Details anzeigen">
                         <ActionIcon variant="light" onClick={() => setSelectedVm(vm)}>
                           <IconInfoCircle size={16} />
@@ -1273,6 +1281,7 @@ export function VmsPage() {
         )}
       </Tabs>
 
+      <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} />
       <BackupsModal
         opened={!!backupsTarget}
         onClose={() => setBackupsTarget(null)}

@@ -51,8 +51,9 @@ from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppCifsShare, NetAppLun, NetAppSnapMirrorRelationship, NetAppSvm, NetAppVolume
 from app.models.resource_group import ResourceGroupPolicyLink, parse_member_key, resolve_member_key
 from app.models.restore_infra import RestoreInfraConfig
-from app.models.restore_run import RestoreStepStatus
+from app.models.restore_run import RestoreStatus, RestoreStepStatus
 from app.models.schedule import Schedule, ScheduleType
+from app.models.vm_move_run import VmMoveRun
 from app.models.scheduler_config import SchedulerConfig
 from app.models.snapmirror_label import SnapMirrorLabel
 from app.services.email_service import notify_backup_failure
@@ -1371,10 +1372,20 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             skipped_vms: list[tuple[str, str]] = []  # (vm_name, grund)
             if not was_cancelled:
                 vms_by_cluster: dict[str, list[str]] = defaultdict(list)
+                # VMs, die gerade ueber die App verschoben werden (siehe
+                # app.api.routes.vm_moves) -- ein Checkpoint waehrend einer
+                # Live-Migration wuerde scheitern oder mit ihr kollidieren.
+                moving_vms = {
+                    (m.hyperv_cluster_id, m.vm_name)
+                    for m in db.query(VmMoveRun).filter(VmMoveRun.status == RestoreStatus.RUNNING).all()
+                }
                 for vm_name in vm_names_in_run:
                     meta = hyperv_vm_meta.get(vm_name)
                     if meta is None or hyperv_clusters_by_id.get(meta["cluster_id"]) is None:
                         skipped_vms.append((vm_name, "Hyper-V-Cluster nicht gefunden"))
+                        continue
+                    if (meta["cluster_id"], vm_name) in moving_vms:
+                        skipped_vms.append((vm_name, "VM wird gerade verschoben (Live-Migration)"))
                         continue
                     vms_by_cluster[meta["cluster_id"]].append(vm_name)
 

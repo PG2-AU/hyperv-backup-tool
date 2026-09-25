@@ -1011,6 +1011,57 @@ class HyperVService:
         if not result.success:
             raise RuntimeError(f"VM '{vm_name}' konnte nicht als Cluster-Rolle registriert werden: {result.error}")
 
+    def list_cluster_nodes(self, cno_session: winrm.Session) -> list[HyperVClusterNodeSummary]:
+        """Alle Cluster-Knoten mit ihrem Status (Up/Down/Paused/Joining) --
+        Single-Hop gegen den CNO, fuer die Zielauswahl beim Host-Move."""
+        result = self._run_ps(
+            cno_session,
+            "Get-ClusterNode | Select-Object Name, @{N='State';E={[string]$_.State}} | ConvertTo-Json -Depth 2",
+        )
+        if not result.success:
+            raise RuntimeError(f"Cluster-Knoten konnten nicht gelesen werden: {result.error}")
+        try:
+            raw = json.loads(result.output or "[]")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Unerwartete Antwort von Get-ClusterNode: {result.output[:200]}") from exc
+        entries = raw if isinstance(raw, list) else [raw]
+        return [HyperVClusterNodeSummary(name=e["Name"], state=e.get("State") or "") for e in entries if e.get("Name")]
+
+    def live_migrate_vm(self, cno_session: winrm.Session, vm_name: str, target_node: str) -> str:
+        """Verschiebt eine hochverfuegbare VM auf einen anderen Cluster-
+        Knoten (Host-Move, Stufe 1). Laufende VM: echte Live-Migration
+        (Move-ClusterVirtualMachineRole -MigrationType Live, kein
+        Ausfall); ausgeschaltete/gespeicherte VM: reines Verschieben der
+        Cluster-Rolle (Move-ClusterGroup), da es dort nichts live zu
+        migrieren gibt. Cluster-Gruppenname = VM-Name, gleiche Annahme wie
+        get_vm_owner_node. Vorab-Checks (Gruppe ist eine VM, Zielknoten ist
+        Up und nicht schon Owner) laufen im selben Aufruf, damit zwischen
+        Pruefung und Migration kein zweiter Roundtrip liegt. Liefert den
+        tatsaechlichen neuen Owner-Knoten laut Cluster zurueck.
+
+        Hinweis: wie Add-ClusterVirtualMachineRole (register_cluster_role)
+        ein Cluster-API-Aufruf aus einer Remote-Sitzung -- kann unter NTLM/
+        Kerberos ohne Delegation mit 'Access is denied' scheitern (Double-
+        Hop), siehe den CredSSP-Rueckfall in app.api.routes.vm_moves."""
+        vm = vm_name.replace("'", "''")
+        node = target_node.replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"$g = Get-ClusterGroup -Name '{vm}'; "
+            f"if ([string]$g.GroupType -ne 'VirtualMachine') {{ throw \"Cluster-Gruppe '{vm}' ist keine VM-Rolle (Typ: $($g.GroupType))\" }}; "
+            f"$n = Get-ClusterNode -Name '{node}'; "
+            f"if ([string]$n.State -ne 'Up') {{ throw \"Zielknoten '{node}' ist nicht betriebsbereit (Status: $($n.State))\" }}; "
+            f"if ($g.OwnerNode.Name -eq $n.Name) {{ throw \"VM '{vm}' laeuft bereits auf '{node}'\" }}; "
+            "if ([string]$g.State -eq 'Online') { "
+            "Move-ClusterVirtualMachineRole -InputObject $g -Node $n.Name -MigrationType Live | Out-Null "
+            "} else { Move-ClusterGroup -InputObject $g -Node $n.Name | Out-Null }; "
+            f"(Get-ClusterGroup -Name '{vm}').OwnerNode.Name"
+        )
+        result = self._run_ps(cno_session, script)
+        if not result.success:
+            raise RuntimeError(f"Live-Migration von '{vm_name}' nach '{target_node}' fehlgeschlagen: {result.error}")
+        return result.output.strip().splitlines()[-1].strip() if result.output.strip() else ""
+
     def detach_vhd(self, session: winrm.Session, vm_name: str, vhd_path: str) -> CommandResult:
         escaped = vhd_path.replace("'", "''")
         script = (

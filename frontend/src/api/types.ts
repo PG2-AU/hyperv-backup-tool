@@ -1203,3 +1203,43 @@ export interface SiteMismatchSummary {
   unassigned_count: number;
   switchover_clusters: string[];
 }
+
+// --- VM verschieben (Inventory > VMs, siehe backend app.api.routes.vm_moves) ---
+
+export interface VmMoveTargetNode {
+  name: string;
+  state: string;
+  is_current: boolean;
+  site?: SiteBadge | null;
+  vm_count: number;
+}
+
+export interface VmMoveTargets {
+  vm_name: string;
+  current_node?: string | null;
+  host_site?: SiteBadge | null;
+  storage_sites: SiteBadge[];
+  nodes: VmMoveTargetNode[];
+  blocked_reason?: string | null;
+}
+
+export interface VmMoveRunStep {
+  step: string;
+  label: string;
+  status: "pending" | "running" | "success" | "error" | "skipped";
+  message?: string | null;
+}
+
+export interface VmMoveRun {
+  id: string;
+  hyperv_cluster_id: string;
+  vm_name: string;
+  move_type: string;
+  source_node?: string | null;
+  target_node: string;
+  status: "running" | "succeeded" | "failed";
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: VmMoveRunStep[];
+}
