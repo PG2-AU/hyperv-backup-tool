@@ -1264,6 +1264,11 @@ export interface VmStorageTargetCsv {
   path?: string | null;
   capacity_bytes?: number | null;
   free_bytes?: number | null;
+  // Zusatzbelegung, wenn diese CSV das Ziel ist
+  needed_bytes: number;
+  free_after_bytes?: number | null;
+  // Heute von der VM hier belegt, wird beim Wegverschieben frei
+  freed_bytes: number;
   site?: SiteBadge | null;
   is_current: boolean;
   fits: boolean;
@@ -1278,6 +1283,9 @@ export interface VmStorageTargets {
   required_bytes: number;
   protection_groups_now: string[];
   csvs: VmStorageTargetCsv[];
+  usage_live: boolean;
+  usage_note?: string | null;
+  reserve_hint: string;
   recommended_csv?: string | null;
   recommended_reason?: string | null;
   blocked_reason?: string | null;

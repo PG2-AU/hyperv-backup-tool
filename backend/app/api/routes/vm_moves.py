@@ -444,6 +444,15 @@ class StorageTargetCsv(BaseModel):
     path: str | None = None
     capacity_bytes: int | None = None
     free_bytes: int | None = None
+    # Platz, den die VM auf DIESER CSV zusaetzlich belegen wuerde, wenn sie
+    # das Ziel ist (ohne Disks, die schon hier liegen).
+    needed_bytes: int = 0
+    # Frei, wenn diese CSV das Ziel ist (frei minus needed_bytes) -- analog
+    # zu memory_free_after_bytes beim Host-Move.
+    free_after_bytes: int | None = None
+    # Platz, den die VM hier heute belegt und der beim Wegverschieben frei
+    # wird (nur CSVs, auf denen die VM aktuell liegt).
+    freed_bytes: int = 0
     site: SiteBadge | None = None
     # Alle Disks der VM liegen bereits auf dieser CSV.
     is_current: bool = False
@@ -460,6 +469,11 @@ class StorageTargetsRead(BaseModel):
     required_bytes: int
     protection_groups_now: list[str]
     csvs: list[StorageTargetCsv]
+    # True = Belegung eben live vom Cluster gelesen, False = Stand der
+    # letzten Discovery (Live-Abfrage fehlgeschlagen, siehe usage_note).
+    usage_live: bool = False
+    usage_note: str | None = None
+    reserve_hint: str = ""
     recommended_csv: str | None = None
     recommended_reason: str | None = None
     blocked_reason: str | None = None
@@ -499,9 +513,12 @@ def get_storage_targets(
     cluster_id: str, vm_name: str, db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.HYPERV_MANAGE)),
 ) -> StorageTargetsRead:
-    """Rein aus der DB (kein WinRM) -- die echten Ablageorte werden erst
-    beim Start live gelesen und dort nochmals geprueft."""
+    """Belegung der CSVs live vom Cluster (ein Get-ClusterSharedVolume-
+    Aufruf gegen den CNO, gleiche Quelle wie die Discovery), faellt bei
+    einem Fehler auf den Discovery-Stand zurueck. Die echten Ablageorte der
+    VM werden erst beim Start live gelesen und dort nochmals geprueft."""
     vm = _get_vm_or_404(db, cluster_id, vm_name)
+    live_usage, usage_note = _live_csv_usage(db, cluster_id)
     vhds = [v for v in db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_uuid == vm.vm_uuid).all()] if vm.vm_uuid else []
     current_csvs = sorted({v.csv_name for v in vhds if v.csv_name})
     groups = db.query(ResourceGroup).all()
@@ -514,9 +531,11 @@ def get_storage_targets(
     csvs: list[StorageTargetCsv] = []
     for csv in db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).order_by(HyperVCsv.name).all():
         is_current = bool(current_csvs) and current_csvs == [csv.name]
-        free = (csv.capacity_bytes - csv.used_bytes) if csv.capacity_bytes is not None and csv.used_bytes is not None else None
+        capacity, used = live_usage.get(csv.name, (csv.capacity_bytes, csv.used_bytes))
+        free = (capacity - used) if capacity is not None and used is not None else None
         # Nur der Anteil, der tatsaechlich auf diese CSV wandert, zaehlt.
         needed = sum((v.base_used_bytes or v.used_bytes or v.size_bytes or 0) for v in vhds if v.csv_name != csv.name)
+        freed = sum((v.base_used_bytes or v.used_bytes or v.size_bytes or 0) for v in vhds if v.csv_name == csv.name)
         groups_after = _protection_for(vm, [csv.name], groups)
         if set(groups_after) == set(groups_now):
             change = "same"
@@ -529,10 +548,12 @@ def get_storage_targets(
         site, _ = resolver.csv_site(csv)
         csvs.append(
             StorageTargetCsv(
-                name=csv.name, path=csv.path, capacity_bytes=csv.capacity_bytes, free_bytes=free,
+                name=csv.name, path=csv.path, capacity_bytes=capacity, free_bytes=free,
+                needed_bytes=needed, freed_bytes=freed,
+                free_after_bytes=(free - needed) if free is not None and not is_current else None,
                 site=SiteBadge.model_validate(site) if site else None, is_current=is_current,
-                # 10 % Reserve -- eine randvoll gelaufene CSV legt alle VMs darauf lahm.
-                fits=free is None or free - needed >= 0.1 * (csv.capacity_bytes or 0),
+                # Reserve -- eine randvoll gelaufene CSV legt alle VMs darauf lahm.
+                fits=free is None or free - needed >= _CSV_RESERVE_PERCENT * (capacity or 0) // 100,
                 protection_groups_after=groups_after, protection_change=change,
             )
         )
@@ -543,9 +564,31 @@ def get_storage_targets(
         vm_name=vm.name, current_csvs=current_csvs,
         host_site=SiteBadge.model_validate(host_site) if host_site else None,
         required_bytes=required, protection_groups_now=groups_now, csvs=csvs,
+        usage_live=bool(live_usage), usage_note=usage_note,
+        reserve_hint=f"{_CSV_RESERVE_PERCENT} % der CSV-Kapazität",
         recommended_csv=recommended, recommended_reason=reason,
         blocked_reason=_storage_blocked_reason(db, vm, vhds),
     )
+
+
+_CSV_RESERVE_PERCENT = 10
+
+
+def _live_csv_usage(db: Session, cluster_id: str) -> tuple[dict[str, tuple[int, int]], str | None]:
+    """{CSV-Name: (Kapazitaet, belegt)} live vom Cluster -- wird NICHT in die
+    DB geschrieben (ein GET soll keine Discovery-Zeilen ersetzen). Leeres
+    Dict + Hinweis, wenn die Abfrage scheitert."""
+    cluster = db.get(HyperVCluster, cluster_id)
+    if cluster is None:
+        return {}, None
+    try:
+        service = _cno_service(cluster)
+        session = service.connect(
+            cluster.username, decrypt_secret(cluster.encrypted_password), read_timeout_sec=15, operation_timeout_sec=10,
+        )
+        return {c.name: (c.capacity_bytes, c.used_bytes) for c in service.list_csvs(session)}, None
+    except Exception as exc:  # noqa: BLE001 -- nur Anzeige, Fallback auf Discovery-Stand
+        return {}, f"Live-Abfrage fehlgeschlagen, Stand der letzten Discovery ({str(exc)[:200]})"
 
 
 def _recommend_csv(csvs: list[StorageTargetCsv], host_site_id: str | None) -> tuple[str | None, str | None]:
@@ -560,14 +603,14 @@ def _recommend_csv(csvs: list[StorageTargetCsv], host_site_id: str | None) -> tu
             return None, "Keine CSV mit genug Platz am Standort des Hosts."
     if not candidates:
         return None, "Keine CSV mit genug freiem Platz."
-    best = max(candidates, key=lambda c: (c.protection_change in ("same", "gained"), c.free_bytes or 0))
+    best = max(candidates, key=lambda c: (c.protection_change in ("same", "gained"), c.free_after_bytes or 0))
     parts = []
     if host_site_id and best.site:
         parts.append(f"gleicher Standort wie der Host ({best.site.name})")
     if best.protection_change == "same":
         parts.append("Backup-Schutz bleibt gleich")
-    if best.free_bytes is not None:
-        parts.append(f"meisten freien Platz ({best.free_bytes / 2**30:.0f} GB)")
+    if best.free_after_bytes is not None:
+        parts.append(f"meisten freien Platz nach dem Move ({best.free_after_bytes / 2**30:.0f} GB)")
     return best.name, ", ".join(parts) or None
 
 

@@ -450,6 +450,10 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
             Gesichert durch:{" "}
             {targets.protection_groups_now.length > 0 ? targets.protection_groups_now.join(", ") : "keine Protection Group"}
           </Text>
+          <Text size="xs" c={targets.usage_note ? "orange" : "dimmed"}>
+            Platzbedarf der VM: {formatBytes(targets.required_bytes)} · Reserve auf der Ziel-CSV: {targets.reserve_hint} ·{" "}
+            {targets.usage_note ?? (targets.usage_live ? "Belegung live abgefragt" : "Belegung laut letzter Discovery")}
+          </Text>
           {targets.recommended_csv ? (
             <Text size="xs">
               Empfohlen: <b>{targets.recommended_csv}</b>
@@ -477,49 +481,50 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
                     key={csv.name}
                     value={csv.name}
                     disabled={csv.is_current || !csv.fits || !!targets.blocked_reason}
+                    styles={{ labelWrapper: { flex: 1 } }}
                     label={
-                      <Group gap={6} wrap="nowrap">
-                        <Text size="sm">{csv.name}</Text>
-                        {csv.name === targets.recommended_csv && (
-                          <Badge size="sm" variant="filled" color="green">
-                            Empfohlen
-                          </Badge>
-                        )}
-                        {csv.site && <SiteBadgeView site={csv.site} />}
-                        {csv.is_current && (
-                          <Badge size="sm" variant="outline" color="gray">
-                            aktuell
-                          </Badge>
-                        )}
-                        {!csv.is_current && !csv.fits && (
-                          <Badge size="sm" variant="light" color="red">
-                            zu wenig Platz
-                          </Badge>
-                        )}
-                        {!csv.is_current && matchesHost && (
-                          <Badge size="sm" variant="light" color="green">
-                            gleicher Standort wie Host
-                          </Badge>
-                        )}
-                        {!csv.is_current && mismatchesHost && (
-                          <Badge size="sm" variant="light" color="orange">
-                            anderer Standort als Host
-                          </Badge>
-                        )}
-                        {!csv.is_current && csv.protection_change === "lost" && (
-                          <Badge size="sm" variant="light" color="red">
-                            danach ungeschützt
-                          </Badge>
-                        )}
-                        {!csv.is_current && csv.protection_change === "changed" && (
-                          <Badge size="sm" variant="light" color="yellow">
-                            anderes Backup-Profil
-                          </Badge>
-                        )}
-                        <Text size="xs" c="dimmed">
-                          {csv.free_bytes != null ? `${formatBytes(csv.free_bytes)} frei` : ""}
-                        </Text>
-                      </Group>
+                      <Stack gap={2}>
+                        <Group gap={6} wrap="nowrap">
+                          <Text size="sm">{csv.name}</Text>
+                          {csv.name === targets.recommended_csv && (
+                            <Badge size="sm" variant="filled" color="green">
+                              Empfohlen
+                            </Badge>
+                          )}
+                          {csv.site && <SiteBadgeView site={csv.site} />}
+                          {csv.is_current && (
+                            <Badge size="sm" variant="outline" color="gray">
+                              aktuell
+                            </Badge>
+                          )}
+                          {!csv.is_current && !csv.fits && (
+                            <Badge size="sm" variant="light" color="red">
+                              zu wenig Platz
+                            </Badge>
+                          )}
+                          {!csv.is_current && matchesHost && (
+                            <Badge size="sm" variant="light" color="green">
+                              gleicher Standort wie Host
+                            </Badge>
+                          )}
+                          {!csv.is_current && mismatchesHost && (
+                            <Badge size="sm" variant="light" color="orange">
+                              anderer Standort als Host
+                            </Badge>
+                          )}
+                          {!csv.is_current && csv.protection_change === "lost" && (
+                            <Badge size="sm" variant="light" color="red">
+                              danach ungeschützt
+                            </Badge>
+                          )}
+                          {!csv.is_current && csv.protection_change === "changed" && (
+                            <Badge size="sm" variant="light" color="yellow">
+                              anderes Backup-Profil
+                            </Badge>
+                          )}
+                        </Group>
+                        <CsvUsageBar csv={csv} />
+                      </Stack>
                     }
                   />
                 );
@@ -585,6 +590,53 @@ function NodeMemoryBar({ node }: { node: VmMoveTargetNode }) {
       <Text size="xs" c="dimmed">
         {formatBytes(node.memory_free_bytes)} von {formatBytes(total)} frei
         {afterFree != null ? ` → ${formatBytes(Math.max(0, afterFree))} nach dem Move` : ""}
+      </Text>
+    </Stack>
+  );
+}
+
+// Belegung einer CSV, analog zu NodeMemoryBar: grau = heute belegt, farbiger
+// Aufsatz = zusaetzlich durch die VM belegt, wenn diese CSV das Ziel ist.
+// Bei der aktuellen CSV der VM zeigt der gruene Anteil stattdessen den
+// Platz, der durch das Wegverschieben frei wird.
+function CsvUsageBar({ csv }: { csv: VmStorageTargetCsv }) {
+  if (csv.capacity_bytes == null || csv.free_bytes == null || csv.capacity_bytes <= 0) {
+    return (
+      <Text size="xs" c="dimmed">
+        Belegung unbekannt
+      </Text>
+    );
+  }
+  const total = csv.capacity_bytes;
+  const usedPct = ((total - csv.free_bytes) / total) * 100;
+  if (csv.is_current) {
+    const freedPct = Math.min(usedPct, (csv.freed_bytes / total) * 100);
+    return (
+      <Stack gap={2} maw={360}>
+        <Progress.Root size={6}>
+          <Progress.Section value={usedPct - freedPct} color="gray" />
+          {freedPct > 0 && <Progress.Section value={freedPct} color="green" />}
+        </Progress.Root>
+        <Text size="xs" c="dimmed">
+          {formatBytes(csv.free_bytes)} von {formatBytes(total)} frei → {formatBytes(csv.free_bytes + csv.freed_bytes)} nach dem
+          Move (wird frei)
+        </Text>
+      </Stack>
+    );
+  }
+  const afterFree = csv.free_after_bytes;
+  const addPct = afterFree != null ? Math.max(0, Math.min(100 - usedPct, (csv.needed_bytes / total) * 100)) : 0;
+  const color = !csv.fits ? "red" : usedPct + addPct >= 85 ? "yellow" : "blue";
+  return (
+    <Stack gap={2} maw={360}>
+      <Progress.Root size={6}>
+        <Progress.Section value={usedPct} color="gray" />
+        {addPct > 0 && <Progress.Section value={addPct} color={color} />}
+      </Progress.Root>
+      <Text size="xs" c="dimmed">
+        {formatBytes(csv.free_bytes)} von {formatBytes(total)} frei
+        {afterFree != null ? ` → ${formatBytes(Math.max(0, afterFree))} nach dem Move` : ""}
+        {csv.freed_bytes > 0 ? ` (bereits ${formatBytes(csv.freed_bytes)} der VM hier)` : ""}
       </Text>
     </Stack>
   );
