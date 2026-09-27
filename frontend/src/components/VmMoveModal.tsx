@@ -8,14 +8,16 @@ import {
   Loader,
   Modal,
   Progress,
+  Paper,
   Radio,
-  SegmentedControl,
   Stack,
   Text,
+  UnstyledButton,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconAlertTriangle, IconCheck, IconMinus, IconX } from "@tabler/icons-react";
+import { IconAlertTriangle, IconArrowLeft, IconCheck, IconDatabase, IconMinus, IconServer, IconX } from "@tabler/icons-react";
 
+import { useVms } from "@/api/hooks";
 import {
   useCancelVmMove,
   useStartStorageMove,
@@ -60,27 +62,27 @@ interface VmMoveModalProps {
 // andere CSV, Ordnerstruktur der Quelle bleibt erhalten). Standort-Badges
 // (Settings > Standorte) helfen bei der Wahl eines passenden Ziels.
 export function VmMoveModal({ opened, onClose, vm, fixSiteMismatch = false }: VmMoveModalProps) {
-  const [mode, setMode] = useState<MoveMode>("host");
+  // null = noch keine Art gewaehlt. Die teuren Live-Abfragen (RAM aller
+  // Knoten bzw. CSV-Belegung) starten erst, wenn das jeweilige Formular
+  // nach der Auswahl gerendert wird (Nutzer-Vorgabe 2026-09-27).
+  const [mode, setMode] = useState<MoveMode | null>(null);
   const [runId, setRunId] = useState<string | undefined>(undefined);
   const { data: run } = useVmMoveRun(runId);
   const cancelMove = useCancelVmMove();
-  // Im Beheben-Modus braucht der Dialog die Standorte schon hier, um den
-  // passenden Weg vorzuwaehlen -- gleiche Query wie in HostMoveForm, wird
-  // von React Query geteilt (kein zweiter Aufruf).
-  const { data: hostTargets } = useVmMoveTargets(vm?.cluster_id, vm?.name, opened && fixSiteMismatch && !runId);
+  // Standort-Info fuer den Beheben-Hinweis aus dem bereits geladenen
+  // Inventory (reine DB-Abfrage, kein WinRM) -- funktioniert auch beim
+  // Oeffnen von der Alarme-Seite, die nur Name + Cluster kennt.
+  const { data: vms } = useVms();
+  const inventoryVm = vms?.find((v) => v.cluster_id === vm?.cluster_id && v.name === vm?.name);
   // Disks an mehreren Standorten: nur ein Storage-Move behebt das.
-  const storageOnly = fixSiteMismatch && (hostTargets?.storage_sites.length ?? 0) > 1;
+  const storageOnly = fixSiteMismatch && (inventoryVm?.storage_sites.length ?? 0) > 1;
 
   useEffect(() => {
     if (!opened) {
       setRunId(undefined);
-      setMode("host");
+      setMode(null);
     }
   }, [opened]);
-
-  useEffect(() => {
-    if (storageOnly) setMode("storage");
-  }, [storageOnly]);
 
   const running = run?.status === "running";
 
@@ -106,14 +108,14 @@ export function VmMoveModal({ opened, onClose, vm, fixSiteMismatch = false }: Vm
     >
       {!runId && (
         <Stack gap="sm">
-          {fixSiteMismatch && hostTargets && (
+          {fixSiteMismatch && inventoryVm && (
             <Alert color="orange" icon={<IconAlertTriangle size={16} />} variant="light">
               <Stack gap={4}>
                 <Group gap={6}>
-                  <Text size="sm">Host {hostTargets.current_node ?? "?"}</Text>
-                  {hostTargets.host_site && <SiteBadgeView site={hostTargets.host_site} />}
+                  <Text size="sm">Host {inventoryVm.host || "?"}</Text>
+                  {inventoryVm.host_site && <SiteBadgeView site={inventoryVm.host_site} />}
                   <Text size="sm">≠ Storage</Text>
-                  {hostTargets.storage_sites.map((s) => (
+                  {inventoryVm.storage_sites.map((s) => (
                     <SiteBadgeView key={s.id} site={s} />
                   ))}
                 </Group>
@@ -125,22 +127,26 @@ export function VmMoveModal({ opened, onClose, vm, fixSiteMismatch = false }: Vm
               </Stack>
             </Alert>
           )}
-          <SegmentedControl
-            value={mode}
-            onChange={(v) => setMode(v as MoveMode)}
-            data={[
-              {
-                value: "host",
-                label: "Host (Live-Migration)",
-                disabled: storageOnly,
-              },
-              { value: "storage", label: "Storage (andere CSV)" },
-            ]}
-          />
-          {mode === "host" ? (
-            <HostMoveForm vm={vm} opened={opened} preselect={fixSiteMismatch} onStarted={setRunId} onClose={onClose} />
+          {mode === null ? (
+            <MoveTypeChoice
+              storageOnly={storageOnly}
+              recommend={fixSiteMismatch ? (storageOnly ? "storage" : "host") : null}
+              onChoose={setMode}
+              onClose={onClose}
+            />
           ) : (
-            <StorageMoveForm vm={vm} opened={opened} preselect={fixSiteMismatch} onStarted={setRunId} onClose={onClose} />
+            <>
+              <Group>
+                <Button size="xs" variant="subtle" leftSection={<IconArrowLeft size={14} />} onClick={() => setMode(null)} px={0}>
+                  Andere Art wählen
+                </Button>
+              </Group>
+              {mode === "host" ? (
+                <HostMoveForm vm={vm} opened={opened} preselect={fixSiteMismatch} onStarted={setRunId} onClose={onClose} />
+              ) : (
+                <StorageMoveForm vm={vm} opened={opened} preselect={fixSiteMismatch} onStarted={setRunId} onClose={onClose} />
+              )}
+            </>
           )}
         </Stack>
       )}
@@ -638,6 +644,79 @@ function CsvUsageBar({ csv }: { csv: VmStorageTargetCsv }) {
         {afterFree != null ? ` → ${formatBytes(Math.max(0, afterFree))} nach dem Move` : ""}
         {csv.freed_bytes > 0 ? ` (bereits ${formatBytes(csv.freed_bytes)} der VM hier)` : ""}
       </Text>
+    </Stack>
+  );
+}
+
+// Erster Schritt des Dialogs: Art der Verschiebung waehlen. Loest selbst
+// keine Abfrage aus.
+function MoveTypeChoice({
+  storageOnly,
+  recommend,
+  onChoose,
+  onClose,
+}: {
+  storageOnly: boolean;
+  recommend: MoveMode | null;
+  onChoose: (mode: MoveMode) => void;
+  onClose: () => void;
+}) {
+  const options: { mode: MoveMode; icon: React.ReactNode; title: string; text: string; query: string }[] = [
+    {
+      mode: "host",
+      icon: <IconServer size={22} />,
+      title: "Host (Live-Migration)",
+      text: "Auf einen anderen Knoten des Clusters. Dauert Sekunden, keine Datenkopie, der Speicherort bleibt gleich.",
+      query: "Fragt als Nächstes den freien Arbeitsspeicher aller Knoten ab.",
+    },
+    {
+      mode: "storage",
+      icon: <IconDatabase size={22} />,
+      title: "Storage (andere CSV)",
+      text: "Dateien der VM auf eine andere CSV, Ordnerstruktur bleibt erhalten. Dauert je nach VM-Größe, der Host bleibt gleich.",
+      query: "Fragt als Nächstes die Belegung aller CSVs ab.",
+    },
+  ];
+  return (
+    <Stack gap="sm">
+      <Text size="sm">Was soll verschoben werden?</Text>
+      {options.map((o) => {
+        const disabled = o.mode === "host" && storageOnly;
+        return (
+          <UnstyledButton key={o.mode} onClick={() => !disabled && onChoose(o.mode)} disabled={disabled}>
+            <Paper withBorder p="sm" style={{ opacity: disabled ? 0.5 : 1, cursor: disabled ? "not-allowed" : "pointer" }}>
+              <Group align="flex-start" wrap="nowrap" gap="sm">
+                {o.icon}
+                <Stack gap={2} style={{ flex: 1 }}>
+                  <Group gap={6}>
+                    <Text size="sm" fw={600}>
+                      {o.title}
+                    </Text>
+                    {recommend === o.mode && (
+                      <Badge size="sm" variant="filled" color="green">
+                        Empfohlen
+                      </Badge>
+                    )}
+                  </Group>
+                  <Text size="xs" c="dimmed">
+                    {disabled ? "Behebt die Abweichung nicht, da die Festplatten an mehreren Standorten liegen." : o.text}
+                  </Text>
+                  {!disabled && (
+                    <Text size="xs" c="dimmed" fs="italic">
+                      {o.query}
+                    </Text>
+                  )}
+                </Stack>
+              </Group>
+            </Paper>
+          </UnstyledButton>
+        );
+      })}
+      <Group justify="flex-end">
+        <Button variant="default" onClick={onClose}>
+          Abbrechen
+        </Button>
+      </Group>
     </Stack>
   );
 }
