@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/api/client";
 import type { VmMoveRun, VmMoveTargets, VmStorageTargets } from "@/api/types";
@@ -12,12 +12,15 @@ export function useVmMoveTargets(clusterId: string | null | undefined, vmName: s
     queryFn: async () =>
       (await apiClient.get<VmMoveTargets>(`/vm-moves/targets/${clusterId}/${encodeURIComponent(vmName!)}`)).data,
     enabled: enabled && !!clusterId && !!vmName,
-    // Knotenstatus/Owner sind live -- beim erneuten Oeffnen immer frisch.
-    staleTime: 0,
-    gcTime: 0,
+    // Live-Abfrage kostet WinRM-Aufrufe (bei den Knoten einer je Knoten):
+    // innerhalb EINES geoeffneten Dialogs wiederverwenden, auch beim
+    // Wechsel Host <-> Storage und zurueck (Nutzer-Vorgabe 2026-09-27).
+    // Beim Schliessen des Dialogs verwirft VmMoveModal die Ergebnisse
+    // (resetVmMoveQueries), das naechste Oeffnen fragt also frisch ab;
+    // bewusst neu abfragen geht ueber den Aktualisieren-Button (refetch).
+    staleTime: Infinity,
+    gcTime: 10 * 60 * 1000,
     retry: false,
-    // Kein erneutes Abfragen beim Fensterwechsel: kostet WinRM-Aufrufe je
-    // Knoten und wuerde eine bereits getroffene Auswahl zuruecksetzen.
     refetchOnWindowFocus: false,
   });
 }
@@ -54,11 +57,15 @@ export function useVmStorageTargets(clusterId: string | null | undefined, vmName
     queryFn: async () =>
       (await apiClient.get<VmStorageTargets>(`/vm-moves/storage-targets/${clusterId}/${encodeURIComponent(vmName!)}`)).data,
     enabled: enabled && !!clusterId && !!vmName,
-    staleTime: 0,
-    gcTime: 0,
+    // Live-Abfrage kostet WinRM-Aufrufe (bei den Knoten einer je Knoten):
+    // innerhalb EINES geoeffneten Dialogs wiederverwenden, auch beim
+    // Wechsel Host <-> Storage und zurueck (Nutzer-Vorgabe 2026-09-27).
+    // Beim Schliessen des Dialogs verwirft VmMoveModal die Ergebnisse
+    // (resetVmMoveQueries), das naechste Oeffnen fragt also frisch ab;
+    // bewusst neu abfragen geht ueber den Aktualisieren-Button (refetch).
+    staleTime: Infinity,
+    gcTime: 10 * 60 * 1000,
     retry: false,
-    // Kein erneutes Abfragen beim Fensterwechsel: kostet WinRM-Aufrufe je
-    // Knoten und wuerde eine bereits getroffene Auswahl zuruecksetzen.
     refetchOnWindowFocus: false,
   });
 }
@@ -80,4 +87,10 @@ export function useCancelVmMove() {
     mutationFn: async (runId: string) => (await apiClient.post<VmMoveRun>(`/vm-moves/${runId}/cancel`)).data,
     onSuccess: (run) => queryClient.invalidateQueries({ queryKey: ["vm-move-run", run.id] }),
   });
+}
+
+// Verwirft die Ziel-Abfragen aller VMs -- beim Schliessen des Move-Dialogs.
+export function resetVmMoveQueries(queryClient: QueryClient) {
+  queryClient.removeQueries({ queryKey: ["vm-move-targets"] });
+  queryClient.removeQueries({ queryKey: ["vm-storage-targets"] });
 }

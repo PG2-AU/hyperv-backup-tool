@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
@@ -12,13 +13,26 @@ import {
   Radio,
   Stack,
   Text,
+  Tooltip,
   UnstyledButton,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconAlertTriangle, IconArrowLeft, IconCheck, IconDatabase, IconMinus, IconServer, IconX } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconArrowLeft,
+  IconCheck,
+  IconDatabase,
+  IconMinus,
+  IconRefresh,
+  IconServer,
+  IconX,
+} from "@tabler/icons-react";
+
+import { useQueryClient } from "@tanstack/react-query";
 
 import { useVms } from "@/api/hooks";
 import {
+  resetVmMoveQueries,
   useCancelVmMove,
   useStartStorageMove,
   useStartVmMove,
@@ -77,12 +91,15 @@ export function VmMoveModal({ opened, onClose, vm, fixSiteMismatch = false }: Vm
   // Disks an mehreren Standorten: nur ein Storage-Move behebt das.
   const storageOnly = fixSiteMismatch && (inventoryVm?.storage_sites.length ?? 0) > 1;
 
+  const queryClient = useQueryClient();
   useEffect(() => {
     if (!opened) {
       setRunId(undefined);
       setMode(null);
+      // Ergebnisse gelten nur fuer diesen einen geoeffneten Dialog.
+      resetVmMoveQueries(queryClient);
     }
-  }, [opened]);
+  }, [opened, queryClient]);
 
   const running = run?.status === "running";
 
@@ -224,7 +241,14 @@ interface FormProps {
 
 function HostMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProps) {
   const [targetNode, setTargetNode] = useState<string | null>(null);
-  const { data: targets, isLoading, error } = useVmMoveTargets(vm?.cluster_id, vm?.name, opened);
+  const {
+    data: targets,
+    isLoading,
+    error,
+    dataUpdatedAt,
+    isFetching,
+    refetch,
+  } = useVmMoveTargets(vm?.cluster_id, vm?.name, opened);
   const startMove = useStartVmMove();
   const storageSiteIds = new Set((targets?.storage_sites ?? []).map((s) => s.id));
 
@@ -269,6 +293,7 @@ function HostMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProps) 
       )}
       {targets && (
         <>
+          <FetchedAtLine updatedAt={dataUpdatedAt} fetching={isFetching} onRefresh={() => refetch()} />
           <Group gap="xs">
             <Text size="sm">
               Aktuell auf <b>{targets.current_node ?? "?"}</b>
@@ -396,7 +421,14 @@ const PROTECTION_CHANGE_TEXT: Record<VmStorageTargetCsv["protection_change"], st
 function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProps) {
   const [destination, setDestination] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
-  const { data: targets, isLoading, error } = useVmStorageTargets(vm?.cluster_id, vm?.name, opened);
+  const {
+    data: targets,
+    isLoading,
+    error,
+    dataUpdatedAt,
+    isFetching,
+    refetch,
+  } = useVmStorageTargets(vm?.cluster_id, vm?.name, opened);
   const startMove = useStartStorageMove();
   const selected = targets?.csvs.find((c) => c.name === destination);
   const needsAck = !!selected && selected.protection_change !== "same";
@@ -439,6 +471,7 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
       )}
       {targets && (
         <>
+          <FetchedAtLine updatedAt={dataUpdatedAt} fetching={isFetching} onRefresh={() => refetch()} />
           <Group gap="xs">
             <Text size="sm">
               Aktuell auf <b>{targets.current_csvs.join(", ") || "?"}</b> · {formatBytes(targets.required_bytes)} belegt
@@ -718,5 +751,23 @@ function MoveTypeChoice({
         </Button>
       </Group>
     </Stack>
+  );
+}
+
+// "Stand: hh:mm:ss" der Live-Abfrage + bewusstes Neu-Abfragen -- die Werte
+// werden innerhalb des geoeffneten Dialogs wiederverwendet (siehe
+// hooks.vmMoves.ts), koennen also einige Minuten alt sein.
+function FetchedAtLine({ updatedAt, fetching, onRefresh }: { updatedAt: number; fetching: boolean; onRefresh: () => void }) {
+  return (
+    <Group gap={6}>
+      <Text size="xs" c="dimmed">
+        {fetching ? "Wird aktualisiert…" : `Stand: ${new Date(updatedAt).toLocaleTimeString("de-DE")}`}
+      </Text>
+      <Tooltip label="Neu abfragen">
+        <ActionIcon size="sm" variant="subtle" onClick={onRefresh} loading={fetching} aria-label="Neu abfragen">
+          <IconRefresh size={14} />
+        </ActionIcon>
+      </Tooltip>
+    </Group>
   );
 }
