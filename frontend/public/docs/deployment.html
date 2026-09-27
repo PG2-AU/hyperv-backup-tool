@@ -1627,8 +1627,11 @@ Hyper-V-Cmdlets (<code>Get-VM</code>, <code>New-VM</code>, <code>Checkpoint-VM</
 usw. — dafür würde Hyper-V-Administratoren reichen) auch
 Disk-/iSCSI-/Partitions-Cmdlets für den Restore-Workflow (<code>Connect-IscsiTarget</code>,
 <code>Mount-VHD</code>/<code>Mount-DiskImage</code>, <code>Set-Disk</code>, <code>Add/Remove-PartitionAccessPath</code>)
-sowie Cluster-Abfragen (<code>Get-ClusterSharedVolume</code>, <code>Get-ClusterNode</code>,
-<code>Add-ClusterVirtualMachineRole</code>). Für die Disk-/iSCSI-Verwaltung gibt es unter
+sowie Cluster-Abfragen und -Aktionen (<code>Get-ClusterSharedVolume</code>, <code>Get-ClusterNode</code>,
+<code>Add-ClusterVirtualMachineRole</code>, für &quot;VM verschieben&quot; zusätzlich
+<code>Move-ClusterVirtualMachineRole</code>/<code>Move-ClusterGroup</code> und <code>Move-VMStorage</code>,
+für die RAM-Anzeige beim Host-Move <code>Get-CimInstance Win32_OperatingSystem</code>
+direkt auf jedem Knoten). Für die Disk-/iSCSI-Verwaltung gibt es unter
 Windows <strong>keine</strong> eigene, schmalere eingebaute Gruppe (anders als bei
 Hyper-V) — diese Cmdlets verlangen lokale Administratorrechte. Volle
 Cluster-Verwaltung ist davon i. d. R. bereits mit abgedeckt, da Failover
@@ -1851,14 +1854,22 @@ eintragen → &quot;Verbindung testen&quot; → Speichern.</p>
 <p><strong>Bekannte Einschränkung bei geclusterten VMs (automatisch behandelt,
 keine Aktion nötig):</strong> manche Failover-Cluster-Operationen
 (<code>Add-/Remove-VMHardDiskDrive</code> beim Restore/der VM-Neuerstellung an
-einer bereits geclusterten VM, sowie <code>Add-ClusterVirtualMachineRole</code> am
-Ende einer VM-Neuerstellung) brauchen intern einen zweiten Hop zum
+einer bereits geclusterten VM, <code>Add-ClusterVirtualMachineRole</code> am
+Ende einer VM-Neuerstellung, <code>Move-VMStorage</code> beim Storage-Move sowie
+<code>Move-ClusterVirtualMachineRole</code> bei der Live-Migration über &quot;VM
+verschieben&quot;) brauchen intern einen zweiten Hop zum
 Cluster-Dienst, den weder NTLM noch Kerberos ohne AD Constrained
 Delegation unterstützen (&quot;Access is denied&quot; bzw.
 &quot;Update-ClusterVirtualMachineConfiguration could not be completed&quot;).
 Die App weicht dafür automatisch temporär auf NTLM bzw. gezielt CredSSP
 aus (nur für diese einzelnen Schritte, nicht global) — live verifiziert,
-keine zusätzliche Konfiguration nötig. Die eigentliche, vollständige
+keine zusätzliche Konfiguration nötig. Die Live-Migration versucht es
+zuerst mit dem eingestellten Transport und wiederholt nur bei &quot;Access is
+denied&quot; einmal per CredSSP; welcher Weg gegriffen hat, steht im
+Schritt-Protokoll des Dialogs. Beim Storage-Move entscheidet die App
+anhand der tatsächlichen Dateipfade danach, ob er gelungen ist — ein
+Fehler, den <code>Move-VMStorage</code> erst nach dem Kopieren meldet (Cluster-
+Update), wird dort nur als Hinweis angezeigt. Die eigentliche, vollständige
 Lösung wäre Kerberos Constrained Delegation in AD für die
 WinRM-Dienstkonten der Hyper-V-Knoten (braucht AD-Admin-Zugriff auf den
 Domain Controller, aktuell nicht eingerichtet).</p>
@@ -1973,6 +1984,16 @@ direkt in der GUI konfiguriert (kein <code>.env</code>/Neustart nötig). Danach
 können AD-Benutzer über &quot;Benutzer hinzufügen&quot; gesucht und mit einer
 Rolle versehen werden, unabhängig von lokalen Konten, die weiterhin
 funktionieren. <strong>Settings &gt; E-Mail</strong> (Alerting) — optional</li>
+<li><strong>Settings &gt; Standorte</strong> (optional, bei zwei Rechenzentren bzw.
+MetroCluster) — Standorte anlegen (z. B. DC1/DC2), jedem Hyper-V-Knoten
+manuell und jedem NetApp-System einen Standort zuweisen; jede CSV erbt
+den Standort ihres NetApp-Systems über die LUN-Seriennummer und kann
+einzeln abweichend festgelegt werden. Danach markiert Inventory &gt; VMs
+jede VM, deren Host an einem anderen Standort steht als ihr Storage,
+inkl. Alarm nach einer Karenzzeit (Settings &gt; Alarms, Standard 120 min;
+während eines MetroCluster-Switchovers ausgesetzt) und &quot;Beheben&quot;-Aktion.
+Damit die Knotenliste vollständig ist, einmal den Health-Check laufen
+lassen (Verify-Button beim Cluster).</li>
 </ol>
 <p>Eine funktionale Architekturübersicht ist direkt in der Applikation unter
 dem Dokumentations-Link in der Seitenleiste verlinkt.</p>

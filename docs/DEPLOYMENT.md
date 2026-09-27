@@ -1361,8 +1361,11 @@ zu einem Sprungbrett für die gesamte Domäne bzw. den gesamten Forest.
 > usw. — dafür würde Hyper-V-Administratoren reichen) auch
 > Disk-/iSCSI-/Partitions-Cmdlets für den Restore-Workflow (`Connect-IscsiTarget`,
 > `Mount-VHD`/`Mount-DiskImage`, `Set-Disk`, `Add/Remove-PartitionAccessPath`)
-> sowie Cluster-Abfragen (`Get-ClusterSharedVolume`, `Get-ClusterNode`,
-> `Add-ClusterVirtualMachineRole`). Für die Disk-/iSCSI-Verwaltung gibt es unter
+> sowie Cluster-Abfragen und -Aktionen (`Get-ClusterSharedVolume`, `Get-ClusterNode`,
+> `Add-ClusterVirtualMachineRole`, für "VM verschieben" zusätzlich
+> `Move-ClusterVirtualMachineRole`/`Move-ClusterGroup` und `Move-VMStorage`,
+> für die RAM-Anzeige beim Host-Move `Get-CimInstance Win32_OperatingSystem`
+> direkt auf jedem Knoten). Für die Disk-/iSCSI-Verwaltung gibt es unter
 > Windows **keine** eigene, schmalere eingebaute Gruppe (anders als bei
 > Hyper-V) — diese Cmdlets verlangen lokale Administratorrechte. Volle
 > Cluster-Verwaltung ist davon i. d. R. bereits mit abgedeckt, da Failover
@@ -1603,14 +1606,22 @@ eintragen → "Verbindung testen" → Speichern.
 **Bekannte Einschränkung bei geclusterten VMs (automatisch behandelt,
 keine Aktion nötig):** manche Failover-Cluster-Operationen
 (`Add-/Remove-VMHardDiskDrive` beim Restore/der VM-Neuerstellung an
-einer bereits geclusterten VM, sowie `Add-ClusterVirtualMachineRole` am
-Ende einer VM-Neuerstellung) brauchen intern einen zweiten Hop zum
+einer bereits geclusterten VM, `Add-ClusterVirtualMachineRole` am
+Ende einer VM-Neuerstellung, `Move-VMStorage` beim Storage-Move sowie
+`Move-ClusterVirtualMachineRole` bei der Live-Migration über "VM
+verschieben") brauchen intern einen zweiten Hop zum
 Cluster-Dienst, den weder NTLM noch Kerberos ohne AD Constrained
 Delegation unterstützen ("Access is denied" bzw.
 "Update-ClusterVirtualMachineConfiguration could not be completed").
 Die App weicht dafür automatisch temporär auf NTLM bzw. gezielt CredSSP
 aus (nur für diese einzelnen Schritte, nicht global) — live verifiziert,
-keine zusätzliche Konfiguration nötig. Die eigentliche, vollständige
+keine zusätzliche Konfiguration nötig. Die Live-Migration versucht es
+zuerst mit dem eingestellten Transport und wiederholt nur bei "Access is
+denied" einmal per CredSSP; welcher Weg gegriffen hat, steht im
+Schritt-Protokoll des Dialogs. Beim Storage-Move entscheidet die App
+anhand der tatsächlichen Dateipfade danach, ob er gelungen ist — ein
+Fehler, den `Move-VMStorage` erst nach dem Kopieren meldet (Cluster-
+Update), wird dort nur als Hinweis angezeigt. Die eigentliche, vollständige
 Lösung wäre Kerberos Constrained Delegation in AD für die
 WinRM-Dienstkonten der Hyper-V-Knoten (braucht AD-Admin-Zugriff auf den
 Domain Controller, aktuell nicht eingerichtet).
@@ -1732,6 +1743,16 @@ Web-GUI folgen (in dieser Reihenfolge sinnvoll):
    können AD-Benutzer über "Benutzer hinzufügen" gesucht und mit einer
    Rolle versehen werden, unabhängig von lokalen Konten, die weiterhin
    funktionieren. **Settings > E-Mail** (Alerting) — optional
+6. **Settings > Standorte** (optional, bei zwei Rechenzentren bzw.
+   MetroCluster) — Standorte anlegen (z. B. DC1/DC2), jedem Hyper-V-Knoten
+   manuell und jedem NetApp-System einen Standort zuweisen; jede CSV erbt
+   den Standort ihres NetApp-Systems über die LUN-Seriennummer und kann
+   einzeln abweichend festgelegt werden. Danach markiert Inventory > VMs
+   jede VM, deren Host an einem anderen Standort steht als ihr Storage,
+   inkl. Alarm nach einer Karenzzeit (Settings > Alarms, Standard 120 min;
+   während eines MetroCluster-Switchovers ausgesetzt) und "Beheben"-Aktion.
+   Damit die Knotenliste vollständig ist, einmal den Health-Check laufen
+   lassen (Verify-Button beim Cluster).
 
 Eine funktionale Architekturübersicht ist direkt in der Applikation unter
 dem Dokumentations-Link in der Seitenleiste verlinkt.

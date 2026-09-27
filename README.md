@@ -46,10 +46,10 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   bewusst nicht umgesetzt).
 - **WinRM-Transport** -- NTLM, CredSSP oder Kerberos konfigurierbar (Settings >
   Kerberos), inkl. selbst-signierter Zertifikatsverwaltung fuer HTTPS-WinRM-Listener
-  (Settings > WinRM-Zertifikate). Zwei Hyper-V-Cluster-Operationen (Disk-Attach/
-  Detach, Cluster-Rollen-Registrierung) erzwingen aus technischen Gruenden
-  weiterhin NTLM bzw. eine gezielt gescopte CredSSP-Sitzung, selbst wenn Kerberos
-  als Standard-Transport aktiv ist.
+  (Settings > WinRM-Zertifikate). Einige Hyper-V-Cluster-Operationen (Disk-Attach/
+  Detach, Cluster-Rollen-Registrierung, Storage-Move, Live-Migration) erzwingen aus
+  technischen Gruenden weiterhin NTLM bzw. eine gezielt gescopte CredSSP-Sitzung,
+  selbst wenn Kerberos als Standard-Transport aktiv ist.
 - **Backup/Restore** -- App-konsistente (VSS-Checkpoint) oder crash-konsistente
   Backups auf Ebene VM/CSV/LUN, orchestriert ueber Resource Groups + Zeitplaene mit
   Retention; Restore als Anhaengen oder Ersetzen inkl. automatischem AVHDX-Ketten-
@@ -62,7 +62,20 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   jobs.
 - **Alarme** -- Kapazitaets-Schwellwerte (Volume/LUN), SnapMirror-Lag, verpasste
   Backups, Zeitplan-Kollisionen, verwaiste Checkpoints, AVHDX ohne Checkpoint,
-  Knoten-Erreichbarkeit; optionaler E-Mail-Versand pro Alarmtyp.
+  VM auf mehreren CSVs, Standort-Abweichung, Knoten-Erreichbarkeit; optionaler
+  E-Mail-Versand pro Alarmtyp.
+- **Standorte** -- Kennzeichnung von Hyper-V-Knoten (manuell) und NetApp-Systemen
+  (jede CSV erbt ueber die LUN-Seriennummer, einzeln ueberschreibbar) je
+  Rechenzentrum (Settings > Standorte); Inventory, Dashboard und Alarm zeigen VMs,
+  deren Host an einem anderen Standort steht als ihr Storage. Waehrend eines
+  MetroCluster-Switchovers ist die Pruefung ausgesetzt.
+- **VM verschieben** -- Aktion in Inventory > VMs: Host-Move per Live-Migration
+  (Zielknoten-Vorschlag nach Standort und live abgefragtem freiem RAM) oder
+  Storage-Move per `Move-VMStorage` auf eine andere CSV (Ordnerstruktur der Quelle
+  bleibt erhalten, CSV-Belegung vor/nach dem Move, Fortschritt + Abbruch, Warnung
+  bei geaendertem Backup-Schutz). Gesperrt waehrend eines Backups der VM; Backups
+  ueberspringen umgekehrt eine VM, die gerade verschoben wird. "Beheben" an einer
+  Standort-Abweichung oeffnet den Dialog mit vorgeschlagenem Ziel.
 - **Kapazitaetsverlauf** -- taeglicher Messpunkt je VHD/CSV/LUN/Volume/Aggregat
   (`CapacitySample`, ueber einen aus stabilen Objekteigenschaften abgeleiteten
   Schluessel statt der bei jeder Discovery neu vergebenen Zeilen-ID), als
