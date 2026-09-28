@@ -17,6 +17,10 @@ class DbBackupConfig(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Kennung dieser Installation im Dateinamen (hvnb-db-<kennung>-...); die
+    # Aufbewahrung auf der Freigabe raeumt nur Dateien mit DIESER Kennung
+    # auf. Nicht der Hostname -- siehe app.core.db_backup.instance_name.
+    instance_name: Mapped[str] = mapped_column(String(40), default="hvnb")
     # UNC-Pfad inkl. optionalem Unterordner, z.B. \\fs01\backup\hvnb
     share_path: Mapped[str] = mapped_column(String(1000), default="")
     username: Mapped[str] = mapped_column(String(255), default="")

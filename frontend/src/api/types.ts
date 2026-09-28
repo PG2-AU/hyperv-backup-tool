@@ -1319,6 +1319,8 @@ export interface ConfigImportResult {
 
 export interface DbBackupConfig {
   enabled: boolean;
+  // Kennung im Dateinamen, Aufbewahrung raeumt nur Dateien mit dieser Kennung auf
+  instance_name: string;
   share_path: string;
   username: string;
   password_set: boolean;
@@ -1335,6 +1337,7 @@ export interface DbBackupConfig {
 
 export interface DbBackupConfigWrite {
   enabled: boolean;
+  instance_name: string;
   share_path: string;
   username: string;
   // undefined/null = unveraendert, "" = loeschen

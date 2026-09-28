@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.core.crypto import encrypt_secret
 from app.core.db_backup import (
+    INSTANCE_NAME_RE,
     BackupFileInfo,
     DbBackupError,
     fetch_backup,
     inspect_backup,
+    instance_name,
     list_backups,
     restore_database,
     run_db_backup,
@@ -35,6 +37,7 @@ _CONFIRM_WORD = "WIEDERHERSTELLEN"
 
 class DbBackupConfigRead(BaseModel):
     enabled: bool
+    instance_name: str
     share_path: str
     username: str
     password_set: bool
@@ -51,6 +54,7 @@ class DbBackupConfigRead(BaseModel):
 
 class DbBackupConfigWrite(BaseModel):
     enabled: bool
+    instance_name: str = Field(default="hvnb", max_length=40)
     share_path: str = Field(max_length=1000)
     username: str = Field(max_length=255)
     # None = unveraendert lassen, "" = loeschen
@@ -109,7 +113,7 @@ def _get_or_create(db: Session) -> DbBackupConfig:
 
 def _read(config: DbBackupConfig) -> DbBackupConfigRead:
     return DbBackupConfigRead(
-        enabled=config.enabled, share_path=config.share_path, username=config.username,
+        enabled=config.enabled, instance_name=instance_name(config), share_path=config.share_path, username=config.username,
         password_set=bool(config.encrypted_password), hour_utc=config.hour_utc, retention_days=config.retention_days,
         local_keep=config.local_keep, last_attempt_at=config.last_attempt_at, last_success_at=config.last_success_at,
         last_file_name=config.last_file_name, last_size_bytes=config.last_size_bytes, last_error=config.last_error,
@@ -147,7 +151,14 @@ def update_config(
             split_unc(share_path)
         except SmbTargetError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    name = payload.instance_name.strip()
+    if not INSTANCE_NAME_RE.match(name):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Kennung: 1-40 Zeichen, nur Buchstaben, Ziffern und Bindestrich (z. B. prod oder svaudemo7).",
+        )
     config = _get_or_create(db)
+    config.instance_name = name
     if payload.enabled and not config.enabled:
         config.enabled_since = datetime.now(timezone.utc)
     config.enabled = payload.enabled

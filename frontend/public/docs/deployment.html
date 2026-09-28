@@ -2030,9 +2030,13 @@ Kapazitätsverlauf.</p>
 komplette Datenbank (Einrichtung, Backup-Katalog, Historie) täglich auf eine
 CIFS-Freigabe (UNC-Pfad + Konto, z. B. <code>DOMAIN\svc-hvnb-dbbackup</code>) und
 behält zusätzlich die letzten Kopien lokal unter <code>/data/db-backups</code> im
-Volume <code>hvnb-data</code>. Auf der Freigabe werden nach Ablauf der eingestellten
-Aufbewahrung nur Dateien nach dem Muster
-<code>hvnb-db-&lt;server&gt;-&lt;JJJJMMTT-HHMMSS&gt;.sqlite.gz</code> dieses Servers gelöscht.
+Volume <code>hvnb-data</code>. Die Dateien heißen
+<code>hvnb-db-&lt;kennung&gt;-&lt;JJJJMMTT-HHMMSS&gt;.sqlite.gz</code>; die <strong>Kennung</strong> wird in den
+Einstellungen vergeben (Standard <code>hvnb</code>, z. B. <code>prod</code>) — bewusst nicht der
+Hostname, denn im Container ist das die Container-ID, die sich bei jedem
+Neuerstellen ändert. Auf der Freigabe löscht die Aufbewahrung nur Dateien
+mit der eigenen Kennung; teilen sich mehrere Installationen einen Ordner,
+bekommt jede eine eigene Kennung.
 Fehlgeschlagene bzw. seit mehr als 36 h ausbleibende Sicherungen erscheinen
 als Alarm. Der Container bindet die Freigabe nicht ein (rootless), sondern
 schreibt direkt per SMB 2/3 (Python-Paket <code>smbprotocol</code>, wird wie alle
@@ -2059,11 +2063,11 @@ Sicherung auswählen, wiederherstellen.</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
 <pre><code># In der WSL2-Distribution; Datei vorher z. B. von der Freigabe holen
-gunzip -k hvnb-db-&lt;server&gt;-&lt;zeitstempel&gt;.sqlite.gz
+gunzip -k hvnb-db-&lt;kennung&gt;-&lt;zeitstempel&gt;.sqlite.gz
 systemctl --user stop hvnb-backup.service
 DATA=$(podman volume inspect hvnb-data --format '{{.Mountpoint}}')
 podman unshare cp "$DATA/app.db" "$DATA/app.db.vor-restore"
-podman unshare cp hvnb-db-&lt;server&gt;-&lt;zeitstempel&gt;.sqlite "$DATA/app.db"
+podman unshare cp hvnb-db-&lt;kennung&gt;-&lt;zeitstempel&gt;.sqlite "$DATA/app.db"
 systemctl --user start hvnb-backup.service</code></pre>
 </div>
 <p>Alternative für einen 1:1-Servertausch inklusive aller Historie: die beiden

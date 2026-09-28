@@ -472,6 +472,10 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "alert_config", {"site_mismatch_grace_minutes": "INTEGER"})
     _add_missing_columns(engine, "netapp_clusters", {"site_id": "VARCHAR(36)", "metrocluster_mode": "VARCHAR(50)"})
     _add_missing_columns(engine, "hyperv_clusters", {"node_names_json": "VARCHAR(4000)"})
+    _add_missing_columns(engine, "db_backup_config", {"instance_name": "VARCHAR(40)"})
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE db_backup_config SET instance_name = 'hvnb' WHERE instance_name IS NULL OR instance_name = ''"))
+        conn.commit()
     # VM verschieben, Stufe 2 (Storage-Move, siehe app.models.vm_move_run).
     _add_missing_columns(
         engine, "vm_move_runs",

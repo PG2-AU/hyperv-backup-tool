@@ -25,7 +25,6 @@ import gzip
 import os
 import re
 import signal
-import socket
 import sqlite3
 import tempfile
 import threading
@@ -77,12 +76,20 @@ def local_backup_dir() -> Path:
     return path
 
 
-def _host() -> str:
-    return re.sub(r"[^A-Za-z0-9-]", "-", socket.gethostname().split(".")[0]) or "hvnb"
+# Kennung im Dateinamen -- bewusst NICHT der Hostname: im Container ist das
+# die Container-ID, die sich bei jedem Neuerstellen (Quadlet-Neustart)
+# aendert; die Aufbewahrung haette aeltere Sicherungen dann als "fremd"
+# betrachtet und nie mehr geloescht (live gefunden 2026-09-28).
+INSTANCE_NAME_RE = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 
 
-def _file_name(pre_restore: bool = False) -> str:
-    return f"hvnb-db-{_host()}-{datetime.now(timezone.utc).strftime(_TS_FORMAT)}{'-vor-restore' if pre_restore else ''}.sqlite.gz"
+def instance_name(config: DbBackupConfig | None) -> str:
+    name = (config.instance_name if config is not None else "") or ""
+    return name if INSTANCE_NAME_RE.match(name) else "hvnb"
+
+
+def _file_name(name: str, pre_restore: bool = False) -> str:
+    return f"hvnb-db-{name}-{datetime.now(timezone.utc).strftime(_TS_FORMAT)}{'-vor-restore' if pre_restore else ''}.sqlite.gz"
 
 
 @dataclass
@@ -133,9 +140,9 @@ def _rotate_local(keep: int, pre_restore: bool) -> None:
         (local_backup_dir() / info.name).unlink(missing_ok=True)
 
 
-def save_local_copy(pre_restore: bool = False, keep: int = 3) -> tuple[str, int]:
+def save_local_copy(instance: str, pre_restore: bool = False, keep: int = 3) -> tuple[str, int]:
     data, _ = _snapshot_bytes()
-    name = _file_name(pre_restore)
+    name = _file_name(instance, pre_restore)
     (local_backup_dir() / name).write_bytes(data)
     _rotate_local(_PRE_RESTORE_KEEP if pre_restore else keep, pre_restore)
     return name, len(data)
@@ -169,7 +176,7 @@ def run_db_backup(db: Session, *, triggered_by: str) -> DbBackupConfig:
     config.last_upload_failed = False
     try:
         data, raw_size = _snapshot_bytes()
-        name = _file_name()
+        name = _file_name(instance_name(config))
         (local_backup_dir() / name).write_bytes(data)
         _rotate_local(config.local_keep, pre_restore=False)
     except Exception as exc:  # noqa: BLE001
@@ -185,7 +192,7 @@ def run_db_backup(db: Session, *, triggered_by: str) -> DbBackupConfig:
             cutoff = now - timedelta(days=config.retention_days)
             for entry in target.list_files():
                 info = _parse(entry.name, entry.size_bytes)
-                if info and not info.pre_restore and info.host == _host() and info.created_at < cutoff:
+                if info and not info.pre_restore and info.host == instance_name(config) and info.created_at < cutoff:
                     target.remove(entry.name)
                     deleted += 1
     except Exception as exc:  # noqa: BLE001
@@ -210,7 +217,7 @@ def run_db_backup(db: Session, *, triggered_by: str) -> DbBackupConfig:
 
 
 def test_target(config: DbBackupConfig) -> str:
-    name = f"hvnb-verbindungstest-{_host()}.tmp"
+    name = f"hvnb-verbindungstest-{instance_name(config)}.tmp"
     with _target(config) as target:
         target.write(name, b"hvnb connection test")
         target.remove(name)
@@ -386,7 +393,7 @@ def restore_database(db: Session, restore_path: Path, *, actor: str, source_labe
     if blockers:
         raise DbBackupError("Wiederherstellung nicht moeglich, es laeuft noch: " + ", ".join(blockers))
 
-    safety_name, _ = save_local_copy(pre_restore=True)
+    safety_name, _ = save_local_copy(instance_name(db.query(DbBackupConfig).first()), pre_restore=True)
     scheduler = get_scheduler()
     if scheduler is not None:
         scheduler.pause()

@@ -71,6 +71,7 @@ function ConfigSection() {
   const runNow = useRunDbBackup();
 
   const [enabled, setEnabled] = useState(false);
+  const [instanceName, setInstanceName] = useState("hvnb");
   const [sharePath, setSharePath] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -81,6 +82,7 @@ function ConfigSection() {
   useEffect(() => {
     if (!config) return;
     setEnabled(config.enabled);
+    setInstanceName(config.instance_name);
     setSharePath(config.share_path);
     setUsername(config.username);
     setHour(config.hour_utc);
@@ -94,6 +96,7 @@ function ConfigSection() {
   function handleSave() {
     return save.mutateAsync({
       enabled,
+      instance_name: instanceName,
       share_path: sharePath,
       username,
       // leer = unveraendert lassen (Kennwort wird nie angezeigt)
@@ -142,7 +145,8 @@ function ConfigSection() {
       <Text size="xs" c="dimmed" mb="md">
         Sichert die komplette Datenbank dieser Anwendung (Einrichtung, Backup-Katalog, Historie) täglich auf eine CIFS-Freigabe
         und behält zusätzlich die letzten Kopien lokal. Die Kopie ist im laufenden Betrieb konsistent, auch während Backups
-        laufen. Auf der Freigabe werden nur Dateien nach dem Muster <code>hvnb-db-…sqlite.gz</code> dieses Servers gelöscht.
+        laufen. Auf der Freigabe werden nur Dateien nach dem Muster <code>hvnb-db-…sqlite.gz</code> mit der Kennung dieser
+        Installation gelöscht.
       </Text>
       <Alert color="yellow" icon={<IconAlertTriangle size={16} />} mb="md">
         Die gespeicherten Kennwörter in der Sicherung sind mit <code>HVNB_SECRET_KEY</code> aus der <code>.env</code>{" "}
@@ -152,6 +156,14 @@ function ConfigSection() {
       </Alert>
       <Stack gap="sm">
         <Switch label="Tägliche Sicherung aktiv" checked={enabled} onChange={(e) => setEnabled(e.currentTarget.checked)} />
+        <TextInput
+          label="Kennung dieser Installation"
+          description={`Steht im Dateinamen (hvnb-db-${instanceName || "…"}-JJJJMMTT-HHMMSS.sqlite.gz). Die Aufbewahrung löscht auf der Freigabe nur Sicherungen mit dieser Kennung -- teilen sich mehrere Installationen einen Ordner, bekommt jede eine eigene. Nur Buchstaben, Ziffern, Bindestrich.`}
+          placeholder="z. B. prod"
+          maxLength={40}
+          value={instanceName}
+          onChange={(e) => setInstanceName(e.currentTarget.value)}
+        />
         <TextInput
           label="Ziel (UNC-Pfad)"
           placeholder="\\fileserver\backup\hvnb"

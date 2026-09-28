@@ -1793,9 +1793,13 @@ Kapazitätsverlauf.
 komplette Datenbank (Einrichtung, Backup-Katalog, Historie) täglich auf eine
 CIFS-Freigabe (UNC-Pfad + Konto, z. B. `DOMAIN\svc-hvnb-dbbackup`) und
 behält zusätzlich die letzten Kopien lokal unter `/data/db-backups` im
-Volume `hvnb-data`. Auf der Freigabe werden nach Ablauf der eingestellten
-Aufbewahrung nur Dateien nach dem Muster
-`hvnb-db-<server>-<JJJJMMTT-HHMMSS>.sqlite.gz` dieses Servers gelöscht.
+Volume `hvnb-data`. Die Dateien heißen
+`hvnb-db-<kennung>-<JJJJMMTT-HHMMSS>.sqlite.gz`; die **Kennung** wird in den
+Einstellungen vergeben (Standard `hvnb`, z. B. `prod`) — bewusst nicht der
+Hostname, denn im Container ist das die Container-ID, die sich bei jedem
+Neuerstellen ändert. Auf der Freigabe löscht die Aufbewahrung nur Dateien
+mit der eigenen Kennung; teilen sich mehrere Installationen einen Ordner,
+bekommt jede eine eigene Kennung.
 Fehlgeschlagene bzw. seit mehr als 36 h ausbleibende Sicherungen erscheinen
 als Alarm. Der Container bindet die Freigabe nicht ein (rootless), sondern
 schreibt direkt per SMB 2/3 (Python-Paket `smbprotocol`, wird wie alle
@@ -1822,11 +1826,11 @@ Sicherung auswählen, wiederherstellen.
 
 ```bash
 # In der WSL2-Distribution; Datei vorher z. B. von der Freigabe holen
-gunzip -k hvnb-db-<server>-<zeitstempel>.sqlite.gz
+gunzip -k hvnb-db-<kennung>-<zeitstempel>.sqlite.gz
 systemctl --user stop hvnb-backup.service
 DATA=$(podman volume inspect hvnb-data --format '{{.Mountpoint}}')
 podman unshare cp "$DATA/app.db" "$DATA/app.db.vor-restore"
-podman unshare cp hvnb-db-<server>-<zeitstempel>.sqlite "$DATA/app.db"
+podman unshare cp hvnb-db-<kennung>-<zeitstempel>.sqlite "$DATA/app.db"
 systemctl --user start hvnb-backup.service
 ```
 
