@@ -222,6 +222,8 @@ aber praktisch immer erfuellt.
 - [ ] Dauerhafte Loesung fuer externe Erreichbarkeit nach Neustarts (Skript
       das den Portproxy beim VM-Boot automatisch mit der aktuellen WSL2-IP
       neu setzt, z.B. als Scheduled Task)
+      -- Skript dafuer liegt inzwischen vor: docs/windows/Update-HvnbPortProxy.ps1,
+      Einrichtung als Scheduled Task siehe DEPLOYMENT.md Abschnitt 8
 - [ ] Dauerhafte Loesung fuer Code-Sync klaeren (echter Git-Server oder
       Netzwerk-Routing zwischen 10.81.x und 10.93.70.x) -- aktuell nur
       manueller Bundle+RDP-Transfer
@@ -229,3 +231,7 @@ aber praktisch immer erfuellt.
       WinRM-basierten Restore-Ausfuehrungspfad)
 - [ ] NetApp-Cluster, Hyper-V-Cluster etc. in der neuen Instanz einrichten
       (separate DB von der Entwickler-Instanz)
+      -- alternativ die Konfiguration einer bestehenden Instanz uebernehmen:
+      dort Settings > System > "Konfiguration exportieren", hier
+      "Konfiguration importieren" (ohne Kennwoerter, siehe DEPLOYMENT.md
+      Abschnitt 13)

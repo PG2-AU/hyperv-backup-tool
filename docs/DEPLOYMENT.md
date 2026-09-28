@@ -1727,8 +1727,15 @@ curl -sk https://<Server-IP>:8443/api/health
 
 ## 12. Nächste Schritte (in der GUI)
 
-Die Applikation ist jetzt lauffähig, aber fachlich noch leer. Über die
-Web-GUI folgen (in dieser Reihenfolge sinnvoll):
+Die Applikation ist jetzt lauffähig, aber fachlich noch leer.
+
+**Umzug oder Wiederaufbau einer bestehenden Installation:** statt der
+folgenden Schritte die Konfiguration des alten Servers importieren
+(Settings → System → "Konfiguration importieren", siehe Abschnitt 13) und
+danach nur die in der Vorschau aufgelisteten Kennwörter nachtragen.
+
+Für eine komplett neue Einrichtung folgen über die Web-GUI (in dieser
+Reihenfolge sinnvoll):
 
 1. **Settings > Hyper-V-Hosts** — Hyper-V-Cluster hinzufügen (braucht Teil 2
    auf jedem betroffenen Knoten abgeschlossen)
