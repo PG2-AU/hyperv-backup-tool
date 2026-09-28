@@ -66,6 +66,7 @@ import { KerberosTab } from "@/components/KerberosTab";
 import { SchedulerConfigTab } from "@/components/SchedulerConfigTab";
 import { SitesTab } from "@/components/SitesTab";
 import { ConfigTransferTab } from "@/components/ConfigTransferTab";
+import { DbBackupTab } from "@/components/DbBackupTab";
 import { WinrmCertsTab } from "@/components/WinrmCertsTab";
 import { HyperVClusterFormModal } from "@/components/HyperVClusterFormModal";
 import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
@@ -516,6 +517,7 @@ export function SettingsPage() {
           <Tabs.Tab value="scheduler">Hintergrundjobs</Tabs.Tab>
           <Tabs.Tab value="alerts">Alarms</Tabs.Tab>
           <Tabs.Tab value="display">Ansicht</Tabs.Tab>
+          <Tabs.Tab value="db-backup">DB-Sicherung</Tabs.Tab>
           <Tabs.Tab value="system">System</Tabs.Tab>
           <Tabs.Tab value="updates">Updates (Git)</Tabs.Tab>
         </Tabs.List>
@@ -934,6 +936,10 @@ export function SettingsPage() {
               />
             </Stack>
           </Paper>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="db-backup" pt="md">
+          <DbBackupTab />
         </Tabs.Panel>
 
         <Tabs.Panel value="system" pt="md">

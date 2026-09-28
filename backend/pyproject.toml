@@ -21,6 +21,8 @@ dependencies = [
     "gssapi>=1.8",
     "httpx>=0.27",
     "apscheduler>=3.10",
+    # DB-Sicherung auf CIFS-Freigabe ohne Kernel-Mount (Container laeuft rootless)
+    "smbprotocol>=1.13",
 ]
 
 [project.optional-dependencies]

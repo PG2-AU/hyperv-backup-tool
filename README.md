@@ -84,6 +84,10 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
 - **Konfiguration exportieren/importieren** -- Settings > System: komplette Einrichtung
   als ZIP (ohne Kennwoerter, optional mit Backup-Katalog), Import in eine frische
   Installation fuer Umzug/Wiederaufbau.
+- **DB-Sicherung** -- taegliche, im Betrieb konsistente Sicherung der App-Datenbank auf
+  eine CIFS-Freigabe (smbprotocol, kein Kernel-Mount) plus lokale Kopien, Aufbewahrung
+  in Tagen, Alarm bei Fehlschlag/Ausbleiben, Wiederherstellen per GUI mit Vorabpruefung
+  (Integritaet, HVNB_SECRET_KEY) und automatischer Sicherheitskopie.
 - **MetroCluster/SnapMirror** -- Status-Anzeige, Spiegelobjekte optional aus der
   gesamten Storage-Ansicht ausblendbar, SnapMirror-Beziehungen/-Policies/-Schedules
   verwaltbar inkl. manuellem Update-Trigger.

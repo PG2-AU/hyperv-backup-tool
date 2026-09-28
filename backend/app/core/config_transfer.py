@@ -85,6 +85,13 @@ CONFIG_TABLES: tuple[_TableSpec, ...] = (
     _TableSpec("ad_config", "Active-Directory-Einstellungen", scrub=("encrypted_bind_password",)),
     _TableSpec("winrm_host_certificates", "WinRM-Zertifikate"),
     _TableSpec(
+        "db_backup_config", "DB-Sicherung", scrub=("encrypted_password",),
+        reset=(
+            ("last_attempt_at", None), ("last_success_at", None), ("last_file_name", None), ("last_size_bytes", None),
+            ("last_error", None), ("last_upload_failed", 0), ("enabled_since", None),
+        ),
+    ),
+    _TableSpec(
         "winrm_trust_state", "WinRM-Zertifikatsbundle",
         reset=(("bundle_path", None), ("last_bundle_built_at", None), ("bundle_cert_count", 0)),
     ),
@@ -229,6 +236,8 @@ def manual_steps(tables: dict[str, list[dict]]) -> list[str]:
         steps.append("Kennwort des Restore-Proxy-Hosts neu eintragen (Restore > Setup)")
     if any(r.get("smtp_username") for r in tables.get("email_config", [])):
         steps.append("SMTP-Kennwort neu eintragen, falls der Mailserver eine Anmeldung verlangt (Settings > E-Mail)")
+    if any(r.get("share_path") for r in tables.get("db_backup_config", [])):
+        steps.append("Kennwort der Freigabe fuer die DB-Sicherung neu eintragen (Settings > DB-Sicherung)")
     if any(r.get("bind_user") for r in tables.get("ad_config", [])):
         steps.append("Kennwort des AD-Lesekontos neu eintragen (Settings > Active Directory)")
     local_users = [

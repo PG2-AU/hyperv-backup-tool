@@ -53,6 +53,7 @@ from app.models.email_config import EmailConfig
 from app.models.file_restore_run import FileRestoreRun
 from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
 from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
+from app.models.db_backup import DbBackupConfig
 from app.models.site import VmSiteMismatchObservation
 from app.models.netapp_cluster import NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import NetAppAggregate, NetAppLun, NetAppSnapMirrorRelationship, NetAppVolume
@@ -648,6 +649,67 @@ def _occurrence_in_pause_window(
     )
 
 
+# Ab diesem Alter der letzten erfolgreichen DB-Sicherung gilt sie als
+# ueberfaellig -- ein taeglicher Job plus Luft fuer einen einmal
+# verpassten Termin (Neustart, kurzer Ausfall der Freigabe).
+_DB_BACKUP_OVERDUE_HOURS = 36
+
+
+def _check_db_backup(db, now, active_by_key, seen_keys, trigger) -> None:
+    """DB-Sicherung (Backlog #66): Alarm bei fehlgeschlagenem letzten
+    Versuch und bei ueberfaelliger Sicherung. Beide loesen sich mit der
+    naechsten erfolgreichen Sicherung von selbst auf; bei deaktivierter
+    Sicherung gibt es keine Alarme."""
+    config = db.query(DbBackupConfig).first()
+    if config is None or not config.enabled:
+        return
+
+    def _aware(value):
+        return value.replace(tzinfo=timezone.utc) if value is not None and value.tzinfo is None else value
+
+    last_success = _aware(config.last_success_at)
+    last_attempt = _aware(config.last_attempt_at)
+    if config.last_error and last_attempt and (last_success is None or last_attempt > last_success):
+        key = (AlertType.DB_BACKUP_FAILED, "db-backup")
+        seen_keys.add(key)
+        existing = active_by_key.get(key)
+        if existing is None:
+            trigger(AlertType.DB_BACKUP_FAILED, "db-backup", object_name="DB-Sicherung", message=config.last_error[:2000])
+        elif existing.message != config.last_error[:2000]:
+            existing.message = config.last_error[:2000]
+
+    reference = last_success or _aware(config.enabled_since)
+    if reference is not None and now - reference > timedelta(hours=_DB_BACKUP_OVERDUE_HOURS):
+        key = (AlertType.DB_BACKUP_OVERDUE, "db-backup")
+        seen_keys.add(key)
+        message = (
+            f"Letzte erfolgreiche DB-Sicherung am {last_success:%d.%m.%Y %H:%M} UTC"
+            if last_success else "Seit der Aktivierung noch keine erfolgreiche DB-Sicherung"
+        ) + f" (Grenze {_DB_BACKUP_OVERDUE_HOURS} h)"
+        existing = active_by_key.get(key)
+        if existing is None:
+            trigger(AlertType.DB_BACKUP_OVERDUE, "db-backup", object_name="DB-Sicherung", message=message)
+        elif existing.message != message:
+            existing.message = message
+
+
+def run_scheduled_db_backup() -> None:
+    """Taeglicher Job 'db-backup' (Uhrzeit aus DbBackupConfig.hour_utc)."""
+    from app.core.db_backup import DbBackupError, run_db_backup
+
+    db = SessionLocal()
+    try:
+        config = db.query(DbBackupConfig).first()
+        if config is None or not config.enabled or not config.share_path:
+            return
+        try:
+            run_db_backup(db, triggered_by="geplant")
+        except DbBackupError as exc:
+            _log(db, f"DB-Sicherung uebersprungen: {exc}", level="WARNING")
+    finally:
+        db.close()
+
+
 def _check_site_mismatches(db, config, now, active_by_key, seen_keys, trigger) -> None:
     """Standort-Abweichung (Nutzer-Vorgabe 2026-09-25, siehe
     app.models.site): VM laeuft auf einem Host in Standort A, mindestens
@@ -1172,6 +1234,7 @@ def run_alert_check() -> None:
                 existing.message = message
 
         _check_site_mismatches(db, config, now, active_by_key, seen_keys, _trigger)
+        _check_db_backup(db, now, active_by_key, seen_keys, _trigger)
 
         for (alert_type, key), alert in active_by_key.items():
             if alert_type == AlertType.BACKUP_MISSED:
@@ -1936,8 +1999,16 @@ def start_scheduler() -> BackgroundScheduler:
     try:
         config = startup_db.query(SchedulerConfig).first()
         alert_config = startup_db.query(AlertConfig).first()
+        db_backup_config = startup_db.query(DbBackupConfig).first()
     finally:
         startup_db.close()
+    db_backup_hour = db_backup_config.hour_utc if db_backup_config else 1
+    try:
+        from app.core.db_backup import cleanup_temp_files
+
+        cleanup_temp_files()  # entpackte Sicherungen abgebrochener Vorschauen
+    except Exception:  # noqa: BLE001 -- rein kosmetisch
+        pass
     hc_interval = config.healthcheck_interval_minutes if config else settings.healthcheck_interval_minutes
     discovery_interval = config.discovery_interval_minutes if config else settings.discovery_interval_minutes
     snapshot_hour = config.snapshot_reconcile_hour if config else settings.snapshot_reconcile_hour
@@ -1995,6 +2066,12 @@ def start_scheduler() -> BackgroundScheduler:
         run_capacity_history_sampling, IntervalTrigger(hours=24, start_date=INTERVAL_ANCHOR),
         id="capacity-history-sampling", replace_existing=True, max_instances=1,
     )
+    # DB-Sicherung (Backlog #66) -- laeuft immer, prueft selbst, ob sie
+    # aktiviert ist; Uhrzeit per reschedule_db_backup aus den Settings.
+    scheduler.add_job(
+        run_scheduled_db_backup, CronTrigger(hour=db_backup_hour, minute=30),
+        id="db-backup", replace_existing=True, max_instances=1,
+    )
     scheduler.start()
     startup_db = SessionLocal()
     try:
@@ -2018,7 +2095,8 @@ def start_scheduler() -> BackgroundScheduler:
             "verwaiste Checkpoints hart beendeter Laeufe alle 5min per gezielter Nachlese geprueft, "
             f"Datei-Restore-Sicherheitsnetz stuendlich (Zeitlimit {settings.file_restore_max_age_hours}h), "
             f"E-Mail-Tageszusammenfassung alle 15min geprueft, "
-            f"Warnungs-Check (Kapazitaet/Cluster/SnapMirror) alle {alert_check_interval}min)",
+            f"Warnungs-Check (Kapazitaet/Cluster/SnapMirror) alle {alert_check_interval}min, "
+            f"DB-Sicherung (falls aktiviert) taeglich um {db_backup_hour:02d}:30 UTC)",
         )
     finally:
         startup_db.close()

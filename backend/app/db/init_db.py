@@ -21,6 +21,7 @@ from app.models.resource_group import ResourceGroup, ResourceGroupPolicyLink, ma
 from app.models.restore_copy_speed import RestoreCopySpeedSample  # noqa: F401  (nur fuer create_all)
 from app.models.role import Role, RoleAssignment
 from app.models.scheduler_config import SchedulerConfig
+from app.models.db_backup import DbBackupConfig  # noqa: F401  (nur fuer create_all)
 from app.models.vm_move_run import VmMoveRun, VmMoveRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.site import CsvSiteOverride, HyperVNodeSite, Site, VmSiteMismatchObservation  # noqa: F401  (nur fuer create_all)
 from app.models.snapmirror_label import DEFAULT_SNAPMIRROR_LABELS, SnapMirrorLabel

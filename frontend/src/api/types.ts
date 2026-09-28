@@ -591,6 +591,8 @@ export type AlertType =
   | "hyperv_vm_multi_csv"
   | "hyperv_vm_avhdx_without_checkpoint"
   | "hyperv_vm_site_mismatch"
+  | "db_backup_failed"
+  | "db_backup_overdue"
   | "backup_failed";
 
 export interface Alert {
@@ -1311,4 +1313,56 @@ export interface ConfigImportResult {
   skipped_users: string[];
   manual_steps: string[];
   bundle_rebuilt: boolean;
+}
+
+// --- DB-Sicherung (Settings > DB-Sicherung, Backlog #66) ---
+
+export interface DbBackupConfig {
+  enabled: boolean;
+  share_path: string;
+  username: string;
+  password_set: boolean;
+  hour_utc: number;
+  retention_days: number;
+  local_keep: number;
+  last_attempt_at?: string | null;
+  last_success_at?: string | null;
+  last_file_name?: string | null;
+  last_size_bytes?: number | null;
+  last_error?: string | null;
+  last_upload_failed: boolean;
+}
+
+export interface DbBackupConfigWrite {
+  enabled: boolean;
+  share_path: string;
+  username: string;
+  // undefined/null = unveraendert, "" = loeschen
+  password?: string | null;
+  hour_utc: number;
+  retention_days: number;
+  local_keep: number;
+}
+
+export interface DbBackupFile {
+  name: string;
+  size_bytes: number;
+  created_at: string;
+  host: string;
+  pre_restore: boolean;
+}
+
+export interface DbBackupList {
+  share: DbBackupFile[];
+  local: DbBackupFile[];
+  share_error?: string | null;
+}
+
+export interface DbRestorePreview {
+  counts: Record<string, number>;
+  latest_backup_run_at?: string | null;
+  secret_key_ok?: boolean | null;
+  blockers: string[];
+  running_jobs: string[];
+  confirm_word: string;
 }

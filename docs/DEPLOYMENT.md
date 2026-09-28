@@ -1789,6 +1789,47 @@ pausierten Protection Groups wieder aktivieren. Nicht enthalten sind
 Discovery-Daten (holt der neue Server selbst), Alarme, System Log und
 Kapazitätsverlauf.
 
+**Automatische DB-Sicherung:** Settings → DB-Sicherung sichert die
+komplette Datenbank (Einrichtung, Backup-Katalog, Historie) täglich auf eine
+CIFS-Freigabe (UNC-Pfad + Konto, z. B. `DOMAIN\svc-hvnb-dbbackup`) und
+behält zusätzlich die letzten Kopien lokal unter `/data/db-backups` im
+Volume `hvnb-data`. Auf der Freigabe werden nach Ablauf der eingestellten
+Aufbewahrung nur Dateien nach dem Muster
+`hvnb-db-<server>-<JJJJMMTT-HHMMSS>.sqlite.gz` dieses Servers gelöscht.
+Fehlgeschlagene bzw. seit mehr als 36 h ausbleibende Sicherungen erscheinen
+als Alarm. Der Container bindet die Freigabe nicht ein (rootless), sondern
+schreibt direkt per SMB 2/3 (Python-Paket `smbprotocol`, wird wie alle
+Abhängigkeiten beim Start per `pip` installiert). Die Freigabe sollte nur
+für dieses Konto les- und schreibbar sein.
+
+> **`HVNB_SECRET_KEY` getrennt verwahren.** Die Kennwörter in der Sicherung
+> sind mit diesem Schlüssel verschlüsselt, der Schlüssel selbst wird
+> bewusst nicht mitgesichert. Ohne ihn ist eine Sicherung nur noch ohne
+> Kennwörter brauchbar.
+
+**Wiederherstellen per GUI:** Settings → DB-Sicherung → "Sicherungen
+anzeigen" → Wiederherstellen (oder eine `.sqlite.gz`-Datei hochladen). Die
+App prüft die Datei vorab (Integrität, eigene Datenbank, Kennwörter mit dem
+aktuellen `HVNB_SECRET_KEY` lesbar) und sperrt, solange noch Backups,
+Restores, Datei-Restore-Sitzungen oder VM-Verschiebungen laufen. Der
+aktuelle Stand wird vorher lokal als `…-vor-restore.sqlite.gz` gesichert,
+danach startet die App neu und alle Benutzer melden sich neu an. Auf einem
+**neuen Server**: frisch installieren (Abschnitt 1–11) **mit dem alten
+`HVNB_SECRET_KEY`**, unter DB-Sicherung dieselbe Freigabe eintragen,
+Sicherung auswählen, wiederherstellen.
+
+**Wiederherstellen ohne GUI** (falls die App selbst nicht mehr startet):
+
+```bash
+# In der WSL2-Distribution; Datei vorher z. B. von der Freigabe holen
+gunzip -k hvnb-db-<server>-<zeitstempel>.sqlite.gz
+systemctl --user stop hvnb-backup.service
+DATA=$(podman volume inspect hvnb-data --format '{{.Mountpoint}}')
+podman unshare cp "$DATA/app.db" "$DATA/app.db.vor-restore"
+podman unshare cp hvnb-db-<server>-<zeitstempel>.sqlite "$DATA/app.db"
+systemctl --user start hvnb-backup.service
+```
+
 Alternative für einen 1:1-Servertausch inklusive aller Historie: die beiden
 Podman-Volumes `hvnb-data` und `hvnb-certs` plus die `.env` kopieren — dann
 **muss `HVNB_SECRET_KEY` identisch mitkommen**, sonst sind alle

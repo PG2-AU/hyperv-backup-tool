@@ -36,6 +36,8 @@ const TYPE_LABEL: Record<AlertType, string> = {
   hyperv_vm_multi_csv: "VM auf mehreren CSVs",
   hyperv_vm_avhdx_without_checkpoint: "AVHDX ohne Checkpoint",
   hyperv_vm_site_mismatch: "Standort-Abweichung",
+  db_backup_failed: "DB-Sicherung fehlgeschlagen",
+  db_backup_overdue: "DB-Sicherung überfällig",
   backup_failed: "Backup fehlgeschlagen",
 };
 
@@ -53,6 +55,8 @@ const TYPE_COLOR: Record<AlertType, string> = {
   hyperv_vm_multi_csv: "orange",
   hyperv_vm_avhdx_without_checkpoint: "orange",
   hyperv_vm_site_mismatch: "orange",
+  db_backup_failed: "red",
+  db_backup_overdue: "orange",
   backup_failed: "red",
 };
 
@@ -159,6 +163,15 @@ function AlertAction({ alert }: { alert: Alert }) {
         </Tooltip>
         <DismissAlertButton alertId={alert.id} />
       </Group>
+    );
+  }
+  if (alert.alert_type === "db_backup_failed" || alert.alert_type === "db_backup_overdue") {
+    return (
+      <Tooltip label="Zu Settings > DB-Sicherung">
+        <ActionIcon component={Link} to="/settings?tab=db-backup" variant="subtle">
+          <IconExternalLink size={16} />
+        </ActionIcon>
+      </Tooltip>
     );
   }
   if (alert.alert_type === "hyperv_vm_multi_csv") {

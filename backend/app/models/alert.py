@@ -34,6 +34,8 @@ class AlertType(str, enum.Enum):
     HYPERV_ORPHAN_CHECKPOINT = "hyperv_orphan_checkpoint"
     HYPERV_VM_MULTI_CSV = "hyperv_vm_multi_csv"
     HYPERV_VM_SITE_MISMATCH = "hyperv_vm_site_mismatch"
+    DB_BACKUP_FAILED = "db_backup_failed"
+    DB_BACKUP_OVERDUE = "db_backup_overdue"
     HYPERV_VM_AVHDX_WITHOUT_CHECKPOINT = "hyperv_vm_avhdx_without_checkpoint"
 
 
