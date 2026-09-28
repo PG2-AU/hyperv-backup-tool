@@ -40,7 +40,7 @@ export function LoginPage() {
         <Box bg="white" px={16} py={10} mb={4} style={{ borderRadius: 8, lineHeight: 0 }}>
           <img src={logo} alt="Advanced Unibyte" height={40} style={{ display: "block" }} />
         </Box>
-        <Title order={2}>Hyper-V NetApp Backup</Title>
+        <Title order={2}>AU Hyper-V Storage Manager</Title>
         <Text c="dimmed" size="sm">
           Anmelden mit lokalem Konto oder Active-Directory-Benutzer
         </Text>

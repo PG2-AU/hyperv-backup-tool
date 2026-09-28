@@ -20,7 +20,7 @@ export function EmailSettingsTab() {
   const [smtpUsername, setSmtpUsername] = useState("");
   const [smtpPassword, setSmtpPassword] = useState("");
   const [fromAddress, setFromAddress] = useState("");
-  const [fromName, setFromName] = useState("Hyper-V NetApp Backup");
+  const [fromName, setFromName] = useState("AU Hyper-V Storage Manager");
   const [recipients, setRecipients] = useState("");
   const [notifyOnRestoreFailure, setNotifyOnRestoreFailure] = useState(true);
   const [dailySummaryEnabled, setDailySummaryEnabled] = useState(false);

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="HVNB_", extra="ignore")
 
-    app_name: str = "Hyper-V NetApp Backup"
+    app_name: str = "AU Hyper-V Storage Manager"
     environment: Literal["development", "production"] = "development"
 
     # --- Security / Auth ---

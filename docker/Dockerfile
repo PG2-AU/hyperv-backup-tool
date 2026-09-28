@@ -1,4 +1,4 @@
-# Hyper-V NetApp Backup Tool - Container-Image (Rocky Linux)
+# AU Hyper-V Storage Manager - Container-Image (Rocky Linux)
 #
 # Das Image enthaelt nur die Runtime (Python, Node.js, nginx, git, supervisor).
 # Der eigentliche Anwendungscode wird beim Container-Start per `git pull`

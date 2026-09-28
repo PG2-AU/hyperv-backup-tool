@@ -369,7 +369,7 @@ export function DashboardPage() {
                     <Table.Tr>
                       <Table.Td colSpan={5}>
                         <Text size="sm" c="dimmed">
-                          Keine vom Backup-Tool referenzierten SnapMirror-Beziehungen vorhanden.
+                          Keine von dieser Anwendung referenzierten SnapMirror-Beziehungen vorhanden.
                         </Text>
                       </Table.Td>
                     </Table.Tr>

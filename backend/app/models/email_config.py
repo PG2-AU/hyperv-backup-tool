@@ -28,7 +28,7 @@ class EmailConfig(Base):
     encrypted_password: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     from_address: Mapped[str] = mapped_column(String(255), default="")
-    from_name: Mapped[str] = mapped_column(String(255), default="Hyper-V NetApp Backup")
+    from_name: Mapped[str] = mapped_column(String(255), default="AU Hyper-V Storage Manager")
     # Komma-getrennte Liste -- eine globale Empfaengerliste reicht laut
     # Nutzer-Vorgabe, keine pro-Policy-Empfaenger noetig.
     recipients: Mapped[str] = mapped_column(String(2000), default="")

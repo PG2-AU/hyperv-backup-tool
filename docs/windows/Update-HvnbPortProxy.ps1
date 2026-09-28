@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Haelt die netsh-Portweiterleitung fuer den Hyper-V NetApp Backup
+    Haelt die netsh-Portweiterleitung fuer den AU Hyper-V Storage Manager
     Container synchron mit der aktuellen WSL2-Guest-IP.
 
 .DESCRIPTION

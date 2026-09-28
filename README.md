@@ -1,7 +1,8 @@
-# Hyper-V NetApp Backup Tool
+# AU Hyper-V Storage Manager
 
-Backup-Tool fuer Hyper-V (Windows Server 2022) auf Basis von NetApp ONTAP
-Snapshots und SnapMirror. Laeuft als Container auf Rocky Linux, wird per
+Backup, Restore und Storage-Verwaltung fuer Hyper-V (Windows Server 2022) auf Basis
+von NetApp ONTAP Snapshots und SnapMirror (vormals "Hyper-V NetApp Backup"; intern
+weiterhin kurz HVNB, z.B. in Umgebungsvariablen, Container- und Snapshot-Namen). Laeuft als Container auf Rocky Linux, wird per
 Git-Push/Pull deployt und bietet eine Web-GUI mit RBAC, Active-Directory-
 Integration und MetroCluster-Unterstuetzung.
 
