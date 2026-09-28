@@ -15,23 +15,30 @@ frontend/   React + TypeScript + Mantine v7  -> Web-GUI (Sidebar-Layout, Kontext
                     Jobs, Restore, Alarme, Settings, System-Log, Versionsverlauf, Docs)
   src/components/  ~50 wiederverwendbare Komponenten (Formulare, Modals, Detail-
                     Kopfzeilen, Prozess-/Discovery-Modals)
-  src/api/         Typisierte API-Clients (hooks.ts + hooks.settings.ts, types.ts)
+  src/api/         Typisierte API-Clients (hooks.ts, hooks.*.ts je Bereich, types.ts)
 backend/    FastAPI (Python)                 -> REST-API, Auth/RBAC, Orchestrierung
   app/core/        Config, Security (JWT), RBAC-Modell (Permissions/Scopes),
                     Kerberos-Konfiguration, Kapazitaetsverlauf-Schluesselableitung,
-                    periodischer Scheduler (Discovery/Healthcheck/Alarme/Retention/
-                    Kapazitaets-Sammler, siehe app/core/scheduler.py)
+                    Standort-Auswertung (sites.py), Storage-Move-Pfadabbildung
+                    (storage_move.py), Konfigurations-Export/-Import
+                    (config_transfer.py), DB-Sicherung/-Wiederherstellung
+                    (db_backup.py), periodischer Scheduler (Discovery/Healthcheck/
+                    Alarme/Retention/Kapazitaets-Sammler/DB-Sicherung, siehe
+                    app/core/scheduler.py)
   app/models/      SQLAlchemy-Modelle -- Auth/RBAC (User/Role/RoleAssignment),
                     Hyper-V-/NetApp-Discovery (VMs/VHDs/CSVs/SVMs/Volumes/LUNs/
                     Aggregate/SnapMirror), Backup-/Restore-/VM-Neuerstellungs-/Datei-
-                    Restore-Laeufe, Resource Groups + Zeitplaene, Alarme, Kapazitaets-
-                    verlauf, WinRM-/Kerberos-/AD-Konfiguration, System-Log
+                    Restore-Laeufe, VM-Verschiebungen, Resource Groups + Zeitplaene,
+                    Standorte, Alarme, Kapazitaetsverlauf, DB-Sicherung, WinRM-/
+                    Kerberos-/AD-Konfiguration, System-Log
   app/services/    NetApp-ONTAP-Client (Snapshot/SnapMirror/MetroCluster), Hyper-V-
                     Client (PowerShell/WinRM ueber NTLM/CredSSP/Kerberos), Active-
-                    Directory-Client (Login-Bind + Verzeichnis-Suche), E-Mail-Versand
+                    Directory-Client (Login-Bind + Verzeichnis-Suche), E-Mail-Versand,
+                    SMB-Dateizugriff fuer die DB-Sicherung (smb_target.py)
   app/api/routes/  REST-Endpunkte (VMs/Storage/Jobs/Restore/Datei-Restore/Resource
                     Groups/Zeitplaene/Alarme/Benutzer & Rollen/Settings/AD/Kerberos/
-                    WinRM-Zertifikate/Kapazitaetsverlauf/System-Log/Suche)
+                    WinRM-Zertifikate/Kapazitaetsverlauf/Standorte/VM-Verschiebung/
+                    Konfigurations-Transfer/DB-Sicherung/System-Log/Suche)
 docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
             uvicorn (Backend), supervisord (Prozessverwaltung),
             Git-Pull-basiertes Deployment (entrypoint.sh / updater.sh)

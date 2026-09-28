@@ -423,8 +423,9 @@
     <div class="eyebrow">Internes Ops-Tool · Architekturdokument</div>
     <h1 class="title">AU Storage Manager for Hyper-V</h1>
     <p class="subtitle">
-      Snapshot-basierte Datensicherung für Hyper-V-Failover-Cluster auf NetApp-ONTAP-Storage,
-      inklusive SnapMirror-Replikation und mehreren Wiederherstellungswegen.
+      Snapshot-basierte Datensicherung und Storage-Verwaltung für Hyper-V-Failover-Cluster auf
+      NetApp-ONTAP-Storage, inklusive SnapMirror-Replikation, mehreren Wiederherstellungswegen,
+      Standort-Kennzeichnung über zwei Rechenzentren und VM-Verschiebung.
     </p>
     <div class="metaline">
       <span><b>Zielgruppe:</b> Infrastruktur-/Storage-Admins</span>
@@ -463,7 +464,7 @@
       <div class="req">
         <span class="mark">02</span>
         <div><strong>Zwei Schutz-Granularitäten</strong>
-          <span class="detail">Eine Schutzgruppe kann einzelne VMs oder ganze Cluster Shared Volumes (CSV) umfassen — je nachdem, ob VMs individuell oder blockweise gesichert werden sollen.</span>
+          <span class="detail">Eine Schutzgruppe kann einzelne VMs, ganze Cluster Shared Volumes (CSV) oder SMB3-Freigaben auf NetApp-CIFS umfassen — je nachdem, ob VMs individuell oder blockweise gesichert werden sollen.</span>
         </div>
       </div>
       <div class="req">
@@ -490,6 +491,18 @@
           <span class="detail">Ein internes Werkzeug für ein kleines Team, kein Multi-Tenant-SaaS — entsprechend schlank gehalten: eine Instanz, ein Container, Selbst-Update statt CI/CD-Pipeline.</span>
         </div>
       </div>
+      <div class="req">
+        <span class="mark">07</span>
+        <div><strong>Betrieb über zwei Rechenzentren</strong>
+          <span class="detail">Hyper-V-Knoten und NetApp-Systeme sind je einem Standort zugeordnet; eine VM, deren Host an einem anderen Standort steht als ihr Storage, wird markiert und gemeldet (während eines MetroCluster-Switchovers ausgesetzt). VMs lassen sich direkt aus der App per Live-Migration auf einen anderen Host oder per Storage-Move auf eine andere CSV verschieben — mit Standort-, RAM- und Platz-Vorschlag.</span>
+        </div>
+      </div>
+      <div class="req">
+        <span class="mark">08</span>
+        <div><strong>Das Tool schützt sich selbst</strong>
+          <span class="detail">Alarme für Kapazität, Cluster-/SnapMirror-Zustand, verpasste Backups, verwaiste Checkpoints u. a.; tägliche Sicherung der eigenen Datenbank auf eine CIFS-Freigabe mit Wiederherstellung per GUI; Konfigurations-Export/-Import für Umzug oder Wiederaufbau.</span>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -499,6 +512,7 @@
       Eine Single-Page-Oberfläche spricht mit einem einzigen FastAPI-Backend, das seinerseits drei
       externe Welten orchestriert: die Hyper-V-Cluster (Compute), die NetApp-Cluster (Storage) und
       einen dedizierten Restore-Proxy-Host, der als neutraler Umschlagplatz für Wiederherstellungen dient.
+      Dazu kommt ein Fileserver, auf dem die App täglich ihre eigene Datenbank sichert.
     </p>
     <div class="panel">
       <pre class="mermaid">
@@ -527,6 +541,8 @@ flowchart TB
   API -- "Snapshots, Klone, SnapMirror" --> NA
   NA -. "Replikation" .-> NA2
   API -- "Mount, Kopie, Browse" --> Proxy
+  FS["Fileserver (CIFS)<br/>tägliche DB-Sicherung"]
+  API -. "SMB 2/3" .-> FS
   Proxy -- "iSCSI: LUN-/Volume-Klon" --> NA
   Proxy -- "iSCSI: LUN-/Volume-Klon" --> NA2
   Proxy -- "SMB-Kopie / VHDX anhängen" --> HV
@@ -554,8 +570,8 @@ flowchart TB
       <div class="layer">
         <span class="chip compute">Integration</span>
         <h3>Hyper-V-Anbindung</h3>
-        <p class="desc">PowerShell-Remoting gegen den Cluster-Zugriffspunkt und einzelne Knoten: Inventar auslesen, Checkpoints setzen, VMs anlegen/konfigurieren, Cluster-Rollen registrieren.</p>
-        <p class="stack">pywinrm · NTLM / CredSSP</p>
+        <p class="desc">PowerShell-Remoting gegen den Cluster-Zugriffspunkt und einzelne Knoten: Inventar auslesen, Checkpoints setzen, VMs anlegen/konfigurieren, Cluster-Rollen registrieren, VMs per Live-Migration oder Storage-Move verschieben. Operationen mit zweitem Hop zum Cluster-Dienst weichen gezielt auf NTLM bzw. CredSSP aus.</p>
+        <p class="stack">pywinrm · NTLM / CredSSP / Kerberos</p>
       </div>
       <div class="layer">
         <span class="chip storage">Integration</span>
@@ -581,6 +597,8 @@ flowchart TB
       <div class="term"><dt>Backup-Lauf</dt><dd>Eine Ausführung einer Policy: pro betroffenem NetApp-Volume ein Snapshot, pro Schritt (Checkpoint, Snapshot, SnapMirror-Update) ein protokollierter Eintrag.</dd></div>
       <div class="term"><dt>Primär / Sekundär</dt><dd>Ein Snapshot gilt als „primär“, solange er auf dem Quellsystem existiert. Wird er dort entfernt, aber liegt noch auf einem SnapMirror-Ziel vor, gilt er als „sekundär“ — weiterhin restorebar, nur die Quelle wechselt automatisch.</dd></div>
       <div class="term"><dt>Restore-Infrastruktur</dt><dd>Pro Ziel-SVM hinterlegte iSCSI-/Igroup-Konfiguration, ohne die kein Restore für diese SVM technisch möglich ist.</dd></div>
+      <div class="term"><dt>Standort</dt><dd>Rechenzentrum (z. B. DC1/DC2). Hyper-V-Knoten werden manuell zugeordnet, NetApp-Systeme ebenfalls; jede CSV erbt den Standort ihres NetApp-Systems über die LUN-Seriennummer und kann einzeln abweichen. Grundlage der Standort-Abweichung und der Zielvorschläge beim Verschieben.</dd></div>
+      <div class="term"><dt>Backup-Katalog</dt><dd>Welche Backup-Läufe welche Snapshots und VM-Konfigurationen enthalten. Liegt in der App-Datenbank — ohne ihn sind die weiterhin vorhandenen NetApp-Snapshots nicht mehr über die App restorebar; deshalb DB-Sicherung und optionaler Katalog-Export.</dd></div>
     </dl>
   </section>
 
@@ -655,7 +673,8 @@ flowchart LR
       <div class="step"><p><strong>Ein Container.</strong> Backend, Frontend-Build und SQLite-Datenbank laufen zusammen in einem rootless Podman-Container.</p></div>
       <div class="step"><p><strong>Selbst-Update statt Pipeline.</strong> Ein Supervisor-Prozess zieht periodisch <code>git pull</code>, installiert Abhängigkeiten bei Bedarf nach und startet neu — kein separates CI/CD-System nötig.</p></div>
       <div class="step"><p><strong>Additive Schema-Migration.</strong> Neue Datenbankspalten werden beim Start automatisch ergänzt, ohne bestehende Daten anzufassen.</p></div>
-      <div class="step"><p><strong>Hintergrund-Jobs im selben Prozess.</strong> Discovery, geplante Backups, Retention und Aufräumarbeiten laufen als eingebettete Scheduler-Jobs — kein separater Worker.</p></div>
+      <div class="step"><p><strong>Hintergrund-Jobs im selben Prozess.</strong> Discovery, geplante Backups, Retention, Alarm-Prüfung, DB-Sicherung und Aufräumarbeiten laufen als eingebettete Scheduler-Jobs — kein separater Worker.</p></div>
+      <div class="step"><p><strong>Sicherung und Umzug des Tools selbst.</strong> Tägliche, im Betrieb konsistente Kopie der Datenbank auf eine CIFS-Freigabe (plus lokale Kopien), Wiederherstellung per GUI mit anschließendem Neustart. Für Umzug/Wiederaufbau zusätzlich ein Konfigurations-Export ohne Kennwörter. Die Kennwörter in der Datenbank sind mit <code>HVNB_SECRET_KEY</code> verschlüsselt, der getrennt verwahrt wird.</p></div>
     </div>
   </section>
 
@@ -669,16 +688,17 @@ flowchart LR
           <tr><td class="label">Backend</td><td class="mono-cell">Python · FastAPI · Pydantic · SQLAlchemy 2.0</td></tr>
           <tr><td class="label">Datenhaltung</td><td class="mono-cell">SQLite (einzelne Datei)</td></tr>
           <tr><td class="label">Hintergrund-Jobs</td><td class="mono-cell">APScheduler (In-Process)</td></tr>
-          <tr><td class="label">Hyper-V-Anbindung</td><td class="mono-cell">pywinrm (WinRM / PowerShell-Remoting)</td></tr>
+          <tr><td class="label">Hyper-V-Anbindung</td><td class="mono-cell">pywinrm (WinRM / PowerShell-Remoting · NTLM, CredSSP, Kerberos)</td></tr>
           <tr><td class="label">NetApp-Anbindung</td><td class="mono-cell">netapp_ontap (offizielles REST-SDK)</td></tr>
-          <tr><td class="label">Auth</td><td class="mono-cell">Eigene RBAC-Rollen, optional Active Directory</td></tr>
+          <tr><td class="label">DB-Sicherung</td><td class="mono-cell">SQLite-Online-Backup-API · smbprotocol (SMB 2/3, ohne Mount)</td></tr>
+          <tr><td class="label">Auth</td><td class="mono-cell">Drei feste Rollen (Administrator/Operator/Viewer), lokal oder Active Directory</td></tr>
           <tr><td class="label">Deployment</td><td class="mono-cell">Podman (rootless) · git-basiertes Selbst-Update</td></tr>
         </tbody>
       </table>
     </div>
   </section>
 
-  <footer>HVNB — Architekturdokument · zur internen Weitergabe</footer>
+  <footer>AU Storage Manager for Hyper-V (intern HVNB) — Architekturdokument · Stand 28.09.2026 · zur internen Weitergabe</footer>
 
 </div>
 
