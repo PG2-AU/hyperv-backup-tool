@@ -473,6 +473,15 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "netapp_clusters", {"site_id": "VARCHAR(36)", "metrocluster_mode": "VARCHAR(50)"})
     _add_missing_columns(engine, "hyperv_clusters", {"node_names_json": "VARCHAR(4000)"})
     _add_missing_columns(engine, "db_backup_config", {"instance_name": "VARCHAR(40)"})
+    # Snapshot-Platzanalyse Stufe 1 (Backlog #67).
+    _add_missing_columns(
+        engine, "netapp_volumes",
+        {
+            "snapshot_used_bytes": "INTEGER", "snapshot_reserve_bytes": "INTEGER",
+            "snapshot_reserve_percent": "INTEGER", "snapshot_count": "INTEGER",
+        },
+    )
+    _add_missing_columns(engine, "capacity_samples", {"snapshot_used_bytes": "INTEGER"})
     # Produktname 2026-09-28 von "Hyper-V NetApp Backup" ueber "AU Hyper-V
     # Storage Manager" in "AU Storage Manager for Hyper-V" geaendert -- nur
     # einen unveraenderten frueheren Standard-Absendernamen mitziehen, einen

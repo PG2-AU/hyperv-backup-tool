@@ -112,13 +112,17 @@ export function CapacityBarCard({
   used,
   total,
   formatValue,
+  snapshotUsed,
 }: {
   label: string;
   used: number;
   total: number;
   formatValue: (bytes: number) => string;
+  // Optional: davon durch Snapshots belegt -- als eigener Bereich im Balken.
+  snapshotUsed?: number;
 }) {
   const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+  const snapPct = total > 0 && snapshotUsed ? Math.min(pct, (Math.min(snapshotUsed, used) / total) * 100) : 0;
   return (
     <Paper withBorder p="xs" miw={230}>
       <Group justify="space-between" mb={4}>
@@ -130,7 +134,10 @@ export function CapacityBarCard({
         </Text>
       </Group>
       <Box h={10} style={{ borderRadius: 5, background: "var(--mantine-color-gray-2)", overflow: "hidden" }}>
-        <Box h="100%" style={{ width: `${pct}%`, background: "var(--mantine-color-blue-6)", borderRadius: 5 }} />
+        <Box h="100%" style={{ display: "flex", width: `${pct}%`, borderRadius: 5, overflow: "hidden" }}>
+          <Box h="100%" style={{ flex: pct - snapPct, background: "var(--mantine-color-blue-6)" }} />
+          {snapPct > 0 && <Box h="100%" style={{ flex: snapPct, background: "var(--mantine-color-grape-5)" }} />}
+        </Box>
       </Box>
       <Group gap={12} mt={6}>
         <Group gap={4}>
@@ -139,6 +146,14 @@ export function CapacityBarCard({
             Belegt: {formatValue(used)}
           </Text>
         </Group>
+        {snapshotUsed != null && snapshotUsed > 0 && (
+          <Group gap={4}>
+            <Box w={8} h={8} style={{ borderRadius: 2, background: "var(--mantine-color-grape-5)" }} />
+            <Text size="xs" c="dimmed">
+              davon Snapshots: {formatValue(snapshotUsed)}
+            </Text>
+          </Group>
+        )}
         <Group gap={4}>
           <Box w={8} h={8} style={{ borderRadius: 2, background: "var(--mantine-color-gray-3)" }} />
           <Text size="xs" c="dimmed">

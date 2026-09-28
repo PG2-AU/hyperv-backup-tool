@@ -44,7 +44,10 @@ def _series_for_key(db: Session, object_type: str, key: str, name: str, since: d
     return CapacitySeries(
         object_key=key,
         object_name=name,
-        points=[CapacitySamplePoint(sampled_at=r.sampled_at, capacity_bytes=r.capacity_bytes, used_bytes=r.used_bytes) for r in rows],
+        points=[CapacitySamplePoint(
+            sampled_at=r.sampled_at, capacity_bytes=r.capacity_bytes, used_bytes=r.used_bytes,
+            snapshot_used_bytes=r.snapshot_used_bytes,
+        ) for r in rows],
     )
 
 

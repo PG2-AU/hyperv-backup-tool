@@ -38,4 +38,6 @@ class CapacitySample(Base):
     object_name: Mapped[str] = mapped_column(String(500))
     capacity_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Nur bei object_type=volume: davon durch Snapshots belegt (Backlog #67).
+    snapshot_used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sampled_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

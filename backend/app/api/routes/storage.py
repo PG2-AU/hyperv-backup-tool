@@ -4,11 +4,13 @@ DB-backed aus den Ergebnissen der Cluster-Discovery (siehe netapp_clusters.py).
 """
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.core.rbac import Permission
 from app.db.session import get_db
+from app.models.backup_run import BackupRunSnapshot
 from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import (
     NetAppAggregate,
@@ -65,6 +67,19 @@ def list_svms(db: Session = Depends(get_db), user=Depends(require_permission(Per
 @router.get("/volumes", response_model=list[NetAppVolumeRead])
 def list_volumes(db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW))) -> list[NetAppVolumeRead]:
     names = _cluster_names(db)
+    # Noch vorhandene, von dieser App erstellte Snapshots je Volume laut
+    # Backup-Katalog (success=True wird vom Snapshot-Abgleich auf False
+    # gesetzt, sobald ein Snapshot auf der NetApp fehlt).
+    backup_counts: dict[tuple[str | None, str | None, str | None], int] = dict(
+        ((cluster_id, svm, vol), count)
+        for cluster_id, svm, vol, count in db.query(
+            BackupRunSnapshot.netapp_cluster_id, BackupRunSnapshot.svm_name, BackupRunSnapshot.volume_name,
+            func.count(BackupRunSnapshot.id),
+        )
+        .filter(BackupRunSnapshot.success.is_(True))
+        .group_by(BackupRunSnapshot.netapp_cluster_id, BackupRunSnapshot.svm_name, BackupRunSnapshot.volume_name)
+        .all()
+    )
     return [
         NetAppVolumeRead(
             id=v.id, cluster_id=v.cluster_id, cluster_name=names.get(v.cluster_id, "?"),
@@ -73,7 +88,11 @@ def list_volumes(db: Session = Depends(get_db), user=Depends(require_permission(
             security_style=v.security_style, language=v.language,
             snapshot_autodelete_enabled=v.snapshot_autodelete_enabled, autosize_mode=v.autosize_mode,
             snapshot_policy_name=v.snapshot_policy_name, encryption_enabled=v.encryption_enabled,
-            snapmirror_protected=v.snapmirror_protected, last_seen_at=v.last_seen_at,
+            snapmirror_protected=v.snapmirror_protected,
+            snapshot_used_bytes=v.snapshot_used_bytes, snapshot_reserve_bytes=v.snapshot_reserve_bytes,
+            snapshot_reserve_percent=v.snapshot_reserve_percent, snapshot_count=v.snapshot_count,
+            backup_snapshot_count=backup_counts.get((v.cluster_id, v.svm_name, v.name), 0),
+            last_seen_at=v.last_seen_at,
         )
         for v in db.query(NetAppVolume).order_by(NetAppVolume.name).all()
     ]

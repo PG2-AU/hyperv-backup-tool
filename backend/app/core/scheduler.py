@@ -1467,6 +1467,7 @@ def run_capacity_history_sampling() -> None:
                     object_name=volume.name,
                     capacity_bytes=volume.size_bytes,
                     used_bytes=volume.used_bytes,
+                    snapshot_used_bytes=volume.snapshot_used_bytes,
                     sampled_at=now,
                 )
             )

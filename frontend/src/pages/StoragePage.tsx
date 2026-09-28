@@ -815,6 +815,7 @@ export function StoragePage() {
     return {
       totalSize: list.reduce((sum, v) => sum + (v.size_bytes ?? 0), 0),
       totalUsed: list.reduce((sum, v) => sum + (v.used_bytes ?? 0), 0),
+      totalSnapshotUsed: list.reduce((sum, v) => sum + (v.snapshot_used_bytes ?? 0), 0),
       securityStyles: groupCount(volumes, (v) => v.security_style),
     };
   }, [volumes]);
@@ -1001,7 +1002,13 @@ export function StoragePage() {
           <Title order={5} mb="sm">Volumes</Title>
           <StatRibbon>
             <StatCard label="Anzahl Volumes" value={visibleVolumes.length} />
-            <CapacityBarCard label="Kapazität" used={volumeStats.totalUsed} total={volumeStats.totalSize} formatValue={formatBytes} />
+            <CapacityBarCard
+              label="Kapazität"
+              used={volumeStats.totalUsed}
+              total={volumeStats.totalSize}
+              snapshotUsed={volumeStats.totalSnapshotUsed}
+              formatValue={formatBytes}
+            />
             <DistributionCard label="Security Style" items={volumeStats.securityStyles} />
           </StatRibbon>
           <Group justify="space-between" mb="xs">
@@ -1069,18 +1076,8 @@ export function StoragePage() {
                   <Table.Td>{vol.security_style ?? "-"}</Table.Td>
                   <Table.Td>{vol.language ?? "-"}</Table.Td>
                   <Table.Td>{formatBytes(vol.size_bytes)}</Table.Td>
-                  <Table.Td miw={140}>
-                    <Text size="xs" c="dimmed">
-                      {formatBytes(vol.used_bytes)} {vol.percent_used != null ? `(${vol.percent_used}%)` : ""}
-                    </Text>
-                    {vol.percent_used != null && (
-                      <Progress
-                        value={vol.percent_used}
-                        size={6}
-                        mt={2}
-                        color={vol.percent_used >= 90 ? "red" : vol.percent_used >= 75 ? "yellow" : "blue"}
-                      />
-                    )}
+                  <Table.Td miw={160}>
+                    <VolumeUsageCell vol={vol} />
                   </Table.Td>
                   <Table.Td>
                     <Tooltip label={vol.snapmirror_protected ? "Per SnapMirror gesichert" : "Nicht per SnapMirror gesichert"}>
@@ -2061,5 +2058,88 @@ export function StoragePage() {
       <SvmPeerFormModal opened={svmPeerFormOpen} onClose={() => setSvmPeerFormOpen(false)} clusters={clusters} svms={svms} />
       <ProcessModal opened={!!process} onClose={() => setProcess(null)} plan={process} />
     </Stack>
+  );
+}
+
+// Belegung eines Volumes (Backlog #67): Gesamtlaenge und Farbe wie von ONTAP
+// gemeldet (percent_used), darin der Snapshot-Anteil als eigener Bereich;
+// Details per Mouseover.
+function VolumeUsageCell({ vol }: { vol: NetAppVolume }) {
+  const size = vol.size_bytes ?? 0;
+  const used = vol.used_bytes ?? 0;
+  const snap = vol.snapshot_used_bytes;
+  const pct = vol.percent_used;
+  const color = pct == null ? "blue" : pct >= 90 ? "red" : pct >= 75 ? "yellow" : "blue";
+  const snapPct = pct != null && snap != null && size > 0 ? Math.min(pct, (Math.min(snap, used) / size) * 100) : 0;
+  const reserve = vol.snapshot_reserve_bytes;
+  const overReserve = snap != null && reserve != null && snap > reserve ? snap - reserve : 0;
+
+  const bar =
+    pct == null ? null : (
+      <Progress.Root size={6} mt={2}>
+        <Progress.Section value={Math.max(pct - snapPct, 0)} color={color} />
+        {snapPct > 0 && <Progress.Section value={snapPct} color="grape.5" />}
+      </Progress.Root>
+    );
+
+  if (snap == null) {
+    return (
+      <>
+        <Text size="xs" c="dimmed">
+          {formatBytes(vol.used_bytes)} {pct != null ? `(${pct}%)` : ""}
+        </Text>
+        {bar}
+      </>
+    );
+  }
+
+  return (
+    <Tooltip
+      multiline
+      w={320}
+      withArrow
+      label={
+        <Stack gap={2}>
+          <Text size="xs">
+            Belegt: {formatBytes(used)} von {formatBytes(size)}
+            {pct != null ? ` (${pct} %)` : ""}
+          </Text>
+          <Text size="xs">davon Daten: {formatBytes(Math.max(used - Math.min(snap, used), 0))}</Text>
+          <Text size="xs">
+            davon Snapshots: {formatBytes(snap)}
+            {used > 0 ? ` (${Math.round((Math.min(snap, used) / used) * 100)} % der Belegung)` : ""}
+          </Text>
+          <Text size="xs">
+            Anzahl Snapshots: {vol.snapshot_count ?? "–"}
+            {vol.backup_snapshot_count > 0 ? `, davon ${vol.backup_snapshot_count} Backup-Snapshots dieser App` : ""}
+          </Text>
+          <Text size="xs">
+            Snapshot-Reserve: {reserve != null ? formatBytes(reserve) : "–"}
+            {vol.snapshot_reserve_percent != null ? ` (${vol.snapshot_reserve_percent} %)` : ""}
+          </Text>
+          {overReserve > 0 && (
+            <Text size="xs" c="orange.3">
+              Snapshots überschreiten die Reserve um {formatBytes(overReserve)} und belegen Platz im Datenbereich.
+            </Text>
+          )}
+          <Text size="xs" c="dimmed">
+            Stand der letzten Discovery.
+          </Text>
+        </Stack>
+      }
+    >
+      <div>
+        <Text size="xs" c="dimmed">
+          {formatBytes(vol.used_bytes)} {pct != null ? `(${pct}%)` : ""}
+          {snap > 0 && (
+            <Text span size="xs" c="grape.6">
+              {" "}
+              · Snap {formatBytes(snap)}
+            </Text>
+          )}
+        </Text>
+        {bar}
+      </div>
+    </Tooltip>
   );
 }

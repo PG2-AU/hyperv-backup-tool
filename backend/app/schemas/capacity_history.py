@@ -7,6 +7,7 @@ class CapacitySamplePoint(BaseModel):
     sampled_at: datetime
     capacity_bytes: int | None = None
     used_bytes: int | None = None
+    snapshot_used_bytes: int | None = None
 
 
 class CapacitySeries(BaseModel):

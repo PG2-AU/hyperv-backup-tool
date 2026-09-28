@@ -88,7 +88,12 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   (`CapacitySample`, ueber einen aus stabilen Objekteigenschaften abgeleiteten
   Schluessel statt der bei jeder Discovery neu vergebenen Zeilen-ID), als
   Liniendiagramm ueber 1/3/6/12 Monate direkt aus der jeweiligen Detailansicht in
-  Inventory/Storage abrufbar (mehrere VHDs einer VM als je eigene Linie).
+  Inventory/Storage abrufbar (mehrere VHDs einer VM als je eigene Linie; bei Volumes
+  zusaetzlich die Snapshot-Belegung als gestrichelte Linie).
+- **Snapshot-Belegung je Volume** -- Storage > Volumes zeigt im Belegungsbalken den
+  Snapshot-Anteil als eigenen Bereich, per Mouseover Daten/Snapshots, Anzahl Snapshots
+  (davon Backup-Snapshots dieser App laut Katalog) und Snapshot-Reserve inkl.
+  Ueberlauf-Hinweis.
 - **Konfiguration exportieren/importieren** -- Settings > System: komplette Einrichtung
   als ZIP (ohne Kennwoerter, optional mit Backup-Katalog), Import in eine frische
   Installation fuer Umzug/Wiederaufbau.

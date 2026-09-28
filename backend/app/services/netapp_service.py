@@ -205,6 +205,13 @@ class DiscoveredVolume:
     snapshot_policy_name: str | None = None
     encryption_enabled: bool | None = None
     snapmirror_protected: bool | None = None
+    # Snapshot-Belegung (Backlog #67): space.snapshot.used ist der
+    # Platz, den ALLE Snapshots des Volumes gemeinsam belegen (inkl. eines
+    # Ueberlaufs ueber die Snapshot-Reserve hinaus).
+    snapshot_used_bytes: int | None = None
+    snapshot_reserve_bytes: int | None = None
+    snapshot_reserve_percent: int | None = None
+    snapshot_count: int | None = None
 
 
 @dataclass
@@ -556,6 +563,10 @@ class NetAppOntapService:
                                 snapshot_policy_name=_get_nested(v, "snapshot_policy.name"),
                                 encryption_enabled=_get_nested(v, "encryption.enabled"),
                                 snapmirror_protected=_get_nested(v, "snapmirror.is_protected"),
+                                snapshot_used_bytes=_get_nested(v, "space.snapshot.used"),
+                                snapshot_reserve_bytes=_get_nested(v, "space.snapshot.reserve_size"),
+                                snapshot_reserve_percent=_get_nested(v, "space.snapshot.reserve_percent"),
+                                snapshot_count=_get_nested(v, "snapshot_count"),
                             )
                         )
                     results.append(DiscoveryStepResult("volumes", True, f"{len(volumes)} Volume(s) gefunden", len(volumes)))

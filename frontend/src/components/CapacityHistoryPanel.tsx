@@ -18,6 +18,17 @@ const SERIES_COLORS = ["blue.6", "teal.6", "orange.6", "grape.6", "red.6", "yell
 
 const BYTES_PER_GIB = 1024 ** 3;
 
+// Bei Volumes zusaetzlich die Snapshot-Belegung als eigene, gestrichelte
+// Linie je Serie (Backlog #67) -- nur fuer Serien, die den Wert haben
+// (Messpunkte vor Einfuehrung der Snapshot-Erfassung haben ihn nicht).
+function snapshotKey(name: string): string {
+  return `${name} – davon Snapshots`;
+}
+
+function hasSnapshots(s: CapacitySeries): boolean {
+  return s.points.some((p) => p.snapshot_used_bytes != null);
+}
+
 function buildChartData(series: CapacitySeries[]): Record<string, number | string | null>[] {
   const dateSet = new Set<string>();
   series.forEach((s) => s.points.forEach((p) => dateSet.add(p.sampled_at.slice(0, 10))));
@@ -27,6 +38,9 @@ function buildChartData(series: CapacitySeries[]): Record<string, number | strin
     series.forEach((s) => {
       const point = s.points.find((p) => p.sampled_at.slice(0, 10) === date);
       row[s.object_name] = point?.used_bytes != null ? point.used_bytes / BYTES_PER_GIB : null;
+      if (hasSnapshots(s)) {
+        row[snapshotKey(s.object_name)] = point?.snapshot_used_bytes != null ? point.snapshot_used_bytes / BYTES_PER_GIB : null;
+      }
     });
     return row;
   });
@@ -52,6 +66,20 @@ export function CapacityHistoryPanel({
   );
 
   const chartData = useMemo(() => buildChartData(series ?? []), [series]);
+  const chartSeries = useMemo(
+    () =>
+      (series ?? []).flatMap((s, i) => {
+        const base = {
+          name: s.object_name,
+          label: hasSnapshots(s) ? `${s.object_name} (belegt)` : s.object_name,
+          color: SERIES_COLORS[i % SERIES_COLORS.length],
+        };
+        return hasSnapshots(s)
+          ? [base, { name: snapshotKey(s.object_name), label: "davon Snapshots", color: "grape.5", strokeDasharray: "5 4" }]
+          : [base];
+      }),
+    [series],
+  );
   const totalPoints = (series ?? []).reduce((sum, s) => sum + s.points.length, 0);
 
   return (
@@ -61,16 +89,16 @@ export function CapacityHistoryPanel({
           <Skeleton height={180} />
         ) : totalPoints < 2 ? (
           <Alert color="gray" variant="light" icon={<IconInfoCircle size={16} />}>
-            Noch zu wenige Messpunkte für einen Verlauf -- der Kapazitäts-Sammler läuft einmal täglich, ein Backfill
-            vergangener Werte ist nicht möglich.
+            Noch zu wenige Messpunkte für einen Verlauf -- der Kapazitäts-Sammler läuft einmal täglich, ein Backfill vergangener
+            Werte ist nicht möglich.
           </Alert>
         ) : (
           <LineChart
             h={220}
             data={chartData}
             dataKey="date"
-            withLegend={(series ?? []).length > 1}
-            series={(series ?? []).map((s, i) => ({ name: s.object_name, color: SERIES_COLORS[i % SERIES_COLORS.length] }))}
+            withLegend={chartSeries.length > 1}
+            series={chartSeries}
             valueFormatter={(v) => formatBytes(v * BYTES_PER_GIB)}
             curveType="linear"
             connectNulls

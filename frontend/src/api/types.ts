@@ -205,6 +205,13 @@ export interface NetAppVolume extends NetAppDiscoveredBase {
   snapshot_policy_name?: string | null;
   encryption_enabled?: boolean | null;
   snapmirror_protected?: boolean | null;
+  // Snapshot-Belegung (Backlog #67)
+  snapshot_used_bytes?: number | null;
+  snapshot_reserve_bytes?: number | null;
+  snapshot_reserve_percent?: number | null;
+  snapshot_count?: number | null;
+  // davon laut Backup-Katalog von dieser App erstellte, noch vorhandene Snapshots
+  backup_snapshot_count: number;
 }
 
 export interface NetAppLun extends NetAppDiscoveredBase {
@@ -1133,6 +1140,8 @@ export interface CapacitySamplePoint {
   sampled_at: string;
   capacity_bytes?: number | null;
   used_bytes?: number | null;
+  // nur bei Volumes: davon durch Snapshots belegt
+  snapshot_used_bytes?: number | null;
 }
 
 export interface CapacitySeries {

@@ -61,6 +61,11 @@ class NetAppVolume(Base):
     snapshot_policy_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     encryption_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     snapmirror_protected: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Snapshot-Belegung aus der Discovery (Backlog #67, siehe DiscoveredVolume).
+    snapshot_used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    snapshot_reserve_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    snapshot_reserve_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    snapshot_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

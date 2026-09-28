@@ -138,7 +138,10 @@ def _persist_discovery(db: Session, cluster: NetAppCluster, data: DiscoveryData,
                     percent_used=vol.percent_used, security_style=vol.security_style, language=vol.language,
                     snapshot_autodelete_enabled=vol.snapshot_autodelete_enabled, autosize_mode=vol.autosize_mode,
                     snapshot_policy_name=vol.snapshot_policy_name, encryption_enabled=vol.encryption_enabled,
-                    snapmirror_protected=vol.snapmirror_protected, last_seen_at=now,
+                    snapmirror_protected=vol.snapmirror_protected,
+                    snapshot_used_bytes=vol.snapshot_used_bytes, snapshot_reserve_bytes=vol.snapshot_reserve_bytes,
+                    snapshot_reserve_percent=vol.snapshot_reserve_percent, snapshot_count=vol.snapshot_count,
+                    last_seen_at=now,
                 )
             )
 
