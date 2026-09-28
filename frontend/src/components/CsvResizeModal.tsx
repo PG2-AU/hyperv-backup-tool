@@ -572,7 +572,7 @@ function RunView({ runId, onClose }: { runId: string; onClose: () => void }) {
   const activeIndex = run.status === "running" ? (active === -1 ? run.steps.length : active) : run.steps.length;
   return (
     <Stack gap="md">
-      <Stepper active={activeIndex} size="sm" allowNextStepsSelect={false}>
+      <Stepper active={activeIndex} size="sm" orientation="vertical" allowNextStepsSelect={false}>
         {run.steps.map((s) => (
           <Stepper.Step
             key={s.step}
