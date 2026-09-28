@@ -9,6 +9,7 @@ from app.api.routes import (
     auth,
     capacity_history,
     config_transfer,
+    csv_resize,
     db_backup,
     email_config,
     file_restore,
@@ -101,6 +102,7 @@ app.include_router(sites.router)
 app.include_router(vm_moves.router)
 app.include_router(config_transfer.router)
 app.include_router(db_backup.router)
+app.include_router(csv_resize.router)
 
 
 @app.get("/api/health")

@@ -1223,6 +1223,67 @@ class HyperVService:
         )
         return result.success and result.output.strip().startswith("ok:")
 
+    # --- CSV vergroessern (Backlog #69, siehe app.api.routes.csv_resize) ---
+
+    @staticmethod
+    def _csv_partition_lookup(serial_number: str) -> str:
+        """PowerShell-Baustein: $d = Disk mit dieser Seriennummer, $p = deren
+        Datenpartition (die groesste -- GPT-CSV-Disks haben davor eine kleine
+        MSR-Partition)."""
+        serial = serial_number.replace("'", "''")
+        return (
+            f"$d = Get-Disk | Where-Object {{ $_.SerialNumber -and $_.SerialNumber.Trim() -eq '{serial}' }} | Select-Object -First 1; "
+            f"if (-not $d) {{ throw \"Keine Disk mit Seriennummer '{serial}' auf diesem Knoten\" }}; "
+            "$p = Get-Partition -DiskNumber $d.Number | Sort-Object Size -Descending | Select-Object -First 1; "
+        )
+
+    def csv_partition_info(self, session: winrm.Session, serial_number: str) -> dict:
+        """Groesse der Disk (= LUN aus Windows-Sicht), der Datenpartition und
+        die maximal moegliche Partitionsgroesse. max > size heisst: auf der
+        Disk liegt bereits unpartitionierter Platz (z.B. LUN schon
+        vergroessert, Partition noch nicht erweitert)."""
+        script = (
+            self._csv_partition_lookup(serial_number)
+            + "$s = Get-PartitionSupportedSize -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber; "
+            "\"$($d.Number);$($d.Size);$($p.PartitionNumber);$($p.Size);$($s.SizeMax)\""
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Partition der CSV-Disk konnte nicht gelesen werden: {result.error}")
+        number, disk_size, part_number, part_size, size_max = result.output.strip().splitlines()[-1].split(";")
+        return {
+            "disk_number": int(number), "disk_size_bytes": int(disk_size), "partition_number": int(part_number),
+            "partition_size_bytes": int(part_size), "partition_max_bytes": int(size_max),
+        }
+
+    def rescan_storage(self, session: winrm.Session) -> None:
+        """Liest die Disk-Groessen neu ein (entspricht 'Datentraeger neu
+        einlesen'), damit der Knoten eine vergroesserte LUN erkennt."""
+        result = self._run_ps(session, "Update-HostStorageCache -ErrorAction Stop")
+        if not result.success:
+            raise RuntimeError(f"Neu einlesen der Datentraeger fehlgeschlagen: {result.error}")
+
+    def extend_csv_partition(self, session: winrm.Session, serial_number: str) -> tuple[int, int]:
+        """Erweitert die Datenpartition der CSV-Disk auf die maximal
+        moegliche Groesse -- auf dem Owner-(Koordinator-)Knoten der CSV, im
+        laufenden Betrieb. Liefert (Groesse vorher, Groesse nachher)."""
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            + self._csv_partition_lookup(serial_number)
+            + "$before = $p.Size; "
+            "$s = Get-PartitionSupportedSize -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber; "
+            # Unter 1 MB Rest ist nichts zu erweitern (Ausrichtung).
+            "if ($s.SizeMax -gt $before + 1MB) { "
+            "Resize-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber -Size $s.SizeMax }; "
+            "$after = (Get-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber).Size; "
+            "\"$before;$after\""
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Partition konnte nicht erweitert werden: {result.error}")
+        before, after = result.output.strip().splitlines()[-1].split(";")
+        return int(before), int(after)
+
     def detach_vhd(self, session: winrm.Session, vm_name: str, vhd_path: str) -> CommandResult:
         escaped = vhd_path.replace("'", "''")
         script = (

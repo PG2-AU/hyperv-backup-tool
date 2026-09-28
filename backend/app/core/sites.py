@@ -100,6 +100,11 @@ class SiteResolver:
             return None
         return self._site(self._node_site.get((cluster_id, normalize_node_name(node_name))))
 
+    def netapp_cluster_id_for_serial(self, serial_number: str | None) -> str | None:
+        """NetApp-System, auf dem die LUN mit dieser Seriennummer aktiv liegt
+        (bei MetroCluster die aktive SVM, nicht die '-mc'-Spiegel-SVM)."""
+        return self._lun_cluster_by_serial.get(serial_number) if serial_number else None
+
     def inherited_csv_site(self, csv: HyperVCsv) -> Site | None:
         """Vom NetApp-System der LUN geerbter Standort, ohne CSV-Override."""
         if not csv.disk_serial_number:

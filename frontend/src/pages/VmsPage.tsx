@@ -4,6 +4,7 @@ import { notifications } from "@mantine/notifications";
 import {
   IconAlertTriangle,
   IconArrowsRightLeft,
+  IconArrowAutofitWidth,
   IconBolt,
   IconChartLine,
   IconChevronsRight,
@@ -24,7 +25,16 @@ import {
 } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useCsvs, useDeleteVmCheckpoint, useDiscoverVm, useResourceGroups, useRunningJobRuns, useSmbShares, useVms } from "@/api/hooks";
+import {
+  useCsvs,
+  useDeleteVmCheckpoint,
+  useDiscoverVm,
+  useResourceGroups,
+  useRunningJobRuns,
+  useSmbShares,
+  useStorageAccess,
+  useVms,
+} from "@/api/hooks";
 import { useSites } from "@/api/hooks.sites";
 import { BackupsModal } from "@/components/BackupsModal";
 import { CapacityHistoryPanel } from "@/components/CapacityHistoryPanel";
@@ -33,6 +43,7 @@ import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
 import { SiteBadgeView } from "@/components/SiteBadge";
 import { VmMoveModal } from "@/components/VmMoveModal";
+import { CsvResizeModal } from "@/components/CsvResizeModal";
 import type { BackupScope, Csv, ResourceGroup, SmbShare, Vm } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
@@ -547,6 +558,12 @@ export function VmsPage() {
   // Checkpoint-Loeschen/VM-Discovery braucht hyperv:manage.
   const canRunBackup = hasPermission("backup:run");
   const canManageHyperv = hasPermission("hyperv:manage");
+  // CSV vergroessern (Backlog #69) aendert Storage UND Hyper-V -- braucht
+  // beide Rechte und den offenen Storage-Sperrschalter (Settings > Storage).
+  const { data: storageAccess } = useStorageAccess();
+  const storageLocked = storageAccess ? !storageAccess.actions_enabled : false;
+  const canResizeCsv = canManageHyperv && hasPermission("storage:manage") && !storageLocked;
+  const [resizeCsv, setResizeCsv] = useState<Csv | null>(null);
   const [params, setParams] = useSearchParams();
   const tabParam = params.get("tab");
   const activeTab = tabParam === "csv" ? "csv" : tabParam === "smb" ? "smb" : "vms";
@@ -1208,6 +1225,17 @@ export function VmsPage() {
                             <IconHistory size={16} />
                           </ActionIcon>
                         </Tooltip>
+                        <Tooltip
+                          label={
+                            storageLocked
+                              ? "CSV vergrößern -- Storage-Aktionen sind gesperrt (Settings > Storage)"
+                              : "CSV vergrößern (Volume/LUN/Partition)"
+                          }
+                        >
+                          <ActionIcon variant="light" disabled={!canResizeCsv || !csv.cluster_id} onClick={() => setResizeCsv(csv)}>
+                            <IconArrowAutofitWidth size={16} />
+                          </ActionIcon>
+                        </Tooltip>
                       </Group>
                     </Table.Td>
                   </Table.Tr>
@@ -1347,6 +1375,7 @@ export function VmsPage() {
         )}
       </Tabs>
 
+      <CsvResizeModal opened={resizeCsv !== null} onClose={() => setResizeCsv(null)} csv={resizeCsv} />
       <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} fixSiteMismatch={moveFixSite} />
       <BackupsModal
         opened={!!backupsTarget}

@@ -1154,6 +1154,78 @@ class NetAppOntapService:
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"LUN konnte nicht geändert werden: {exc}") from exc
 
+    # --- CSV vergroessern (Backlog #69, siehe app.api.routes.csv_resize) ---
+
+    def lun_space_by_serial(self, serial_number: str) -> dict | None:
+        """Live-Angaben zur LUN mit dieser Seriennummer (= Windows-Disk-
+        Seriennummer, siehe HyperVService.list_csvs) -- None, falls sie auf
+        diesem System nicht existiert. space_reserved: LUN ist "thick"
+        (Platz im Volume fest reserviert)."""
+        with self._connection():
+            try:
+                luns = list(Lun.get_collection(serial_number=serial_number, fields="name,uuid,svm.name,location.volume,space"))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN konnte nicht gelesen werden: {exc}") from exc
+            if not luns:
+                return None
+            lun = luns[0]
+            return {
+                "uuid": lun.uuid,
+                "name": _get_nested(lun, "name"),
+                "svm_name": _get_nested(lun, "svm.name"),
+                "volume_name": _get_nested(lun, "location.volume.name"),
+                "volume_uuid": _get_nested(lun, "location.volume.uuid"),
+                "size_bytes": _get_nested(lun, "space.size"),
+                "used_bytes": _get_nested(lun, "space.used"),
+                "space_reserved": bool(_get_nested(lun, "space.guarantee.reserved")),
+            }
+
+    def volume_space(self, volume_uuid: str) -> dict:
+        """Live-Platzangaben eines Volumes inkl. Summe aller LUNs darin."""
+        with self._connection():
+            try:
+                volume = Volume(uuid=volume_uuid)
+                volume.get(fields="name,svm.name,space,aggregates,guarantee,autosize")
+                luns = list(Lun.get_collection(**{"location.volume.uuid": volume_uuid}, fields="name,space.size"))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Volume konnte nicht gelesen werden: {exc}") from exc
+            aggregates = _get_nested(volume, "aggregates") or []
+            return {
+                "uuid": volume_uuid,
+                "name": _get_nested(volume, "name"),
+                "size_bytes": _get_nested(volume, "space.size"),
+                "used_bytes": _get_nested(volume, "space.used"),
+                "available_bytes": _get_nested(volume, "space.available"),
+                "max_size_bytes": _get_nested(volume, "space.max_size"),
+                "snapshot_reserve_bytes": _get_nested(volume, "space.snapshot.reserve_size"),
+                "snapshot_reserve_percent": _get_nested(volume, "space.snapshot.reserve_percent"),
+                "snapshot_used_bytes": _get_nested(volume, "space.snapshot.used"),
+                "guarantee": _get_nested(volume, "guarantee.type"),
+                "autosize_mode": _get_nested(volume, "autosize.mode"),
+                "aggregate_names": [n for n in (_get_nested(a, "name") for a in aggregates) if n],
+                "luns": [
+                    {"name": _get_nested(l, "name"), "size_bytes": _get_nested(l, "space.size") or 0} for l in luns
+                ],
+            }
+
+    def aggregate_space(self, name: str) -> dict | None:
+        """Nur fuer ganze Cluster registrierte Systeme sichtbar -- bei einem
+        SVM-System (vsadmin) liefert ONTAP keine Aggregate, dann None."""
+        with self._connection():
+            try:
+                aggregates = list(Aggregate.get_collection(name=name, fields="space.block_storage"))
+            except NetAppRestError:
+                return None
+            if not aggregates:
+                return None
+            agg = aggregates[0]
+            return {
+                "name": name,
+                "size_bytes": _get_nested(agg, "space.block_storage.size"),
+                "used_bytes": _get_nested(agg, "space.block_storage.used"),
+                "available_bytes": _get_nested(agg, "space.block_storage.available"),
+            }
+
     def delete_lun(self, uuid: str) -> None:
         with self._connection():
             try:

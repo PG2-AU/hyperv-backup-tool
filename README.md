@@ -84,6 +84,12 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   bei geaendertem Backup-Schutz). Gesperrt waehrend eines Backups der VM; Backups
   ueberspringen umgekehrt eine VM, die gerade verschoben wird. "Beheben" an einer
   Standort-Abweichung oeffnet den Dialog mit vorgeschlagenem Ziel.
+- **CSV vergroessern** -- Aktion in Inventory > CSVs: Aggregat, Volume und LUN/CSV live
+  als Balken, Volume und LUN im Dialog manuell vergroessern (Balken und Warnungen
+  aktualisieren sich sofort: Aggregat-Platz, Ueberbuchung des Volumes, platzreservierte
+  LUN, Snapshot-Reserve), danach Volume -> LUN -> Datentraeger auf allen Knoten neu
+  einlesen -> Partition auf dem Owner-Knoten erweitern, im laufenden Betrieb; nur
+  Vergroessern, erkennt und erweitert auch bereits unpartitionierten Platz.
 - **Kapazitaetsverlauf** -- taeglicher Messpunkt je VHD/CSV/LUN/Volume/Aggregat
   (`CapacitySample`, ueber einen aus stabilen Objekteigenschaften abgeleiteten
   Schluessel statt der bei jeder Discovery neu vergebenen Zeilen-ID), als

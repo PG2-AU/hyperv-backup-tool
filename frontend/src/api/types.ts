@@ -1378,3 +1378,55 @@ export interface DbRestorePreview {
   running_jobs: string[];
   confirm_word: string;
 }
+
+// --- CSV vergroessern (Inventory > CSVs, Backlog #69) ---
+
+export interface CsvResizeInfo {
+  cluster_id: string;
+  netapp_cluster_id: string;
+  netapp_cluster_name: string;
+  csv: {
+    name: string;
+    path?: string | null;
+    owner_node?: string | null;
+    state?: string | null;
+    capacity_bytes?: number | null;
+    used_bytes?: number | null;
+    serial_number: string;
+  };
+  partition: { disk_size_bytes: number; partition_size_bytes: number; partition_max_bytes: number };
+  lun: { uuid: string; name: string; svm_name?: string | null; size_bytes: number; used_bytes?: number | null; space_reserved: boolean };
+  volume: {
+    uuid: string;
+    name: string;
+    size_bytes: number;
+    used_bytes?: number | null;
+    available_bytes?: number | null;
+    max_size_bytes?: number | null;
+    snapshot_reserve_bytes?: number | null;
+    snapshot_reserve_percent?: number | null;
+    snapshot_used_bytes?: number | null;
+    guarantee?: string | null;
+    autosize_mode?: string | null;
+    luns_total_bytes: number;
+    other_luns_bytes: number;
+    lun_count: number;
+  };
+  aggregate?: { name: string; size_bytes?: number | null; used_bytes?: number | null; available_bytes?: number | null } | null;
+  aggregate_count: number;
+  blocked_reason?: string | null;
+}
+
+export interface CsvResizeRun {
+  id: string;
+  csv_name: string;
+  new_volume_size_bytes?: number | null;
+  new_lun_size_bytes?: number | null;
+  csv_size_before_bytes?: number | null;
+  csv_size_after_bytes?: number | null;
+  status: "running" | "succeeded" | "failed";
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null }[];
+}
