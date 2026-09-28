@@ -879,11 +879,30 @@ export function StoragePage() {
   }
 
   function handleDeleteLun(lun: NetAppLun) {
+    // ONTAP loescht nur LUNs ohne igroup-Zuordnung -- ist die LUN
+    // zugeordnet, entfernt der Vorgang die Zuordnungen zuerst (mit
+    // deutlicher Warnung). Als CSV genutzte LUNs lehnt das Backend ab.
+    const igroups = (lun.mapped_igroups ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     confirmAction({
       title: "LUN löschen",
-      message: `LUN '${lun.name}' wirklich löschen? Dies kann nicht rückgängig gemacht werden.`,
-      confirmLabel: "Löschen",
-      onConfirm: () => setProcess({ title: "LUN löschen", steps: buildLunDeleteSteps(lun.cluster_id, lun.uuid ?? "") }),
+      message:
+        igroups.length > 0 ? (
+          <Stack gap="xs">
+            <Text size="sm">
+              LUN <b>{lun.name}</b> wirklich löschen? Dies kann nicht rückgängig gemacht werden.
+            </Text>
+            <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
+              Die LUN ist noch {igroups.length === 1 ? "der Initiator-Gruppe" : "den Initiator-Gruppen"} <b>{igroups.join(", ")}</b>{" "}
+              zugeordnet. Diese Zuordnungen werden zuerst entfernt -- Hosts in {igroups.length === 1 ? "dieser Gruppe" : "diesen Gruppen"}{" "}
+              verlieren den Zugriff auf die Disk sofort. Wird die LUN als CSV eines Hyper-V-Clusters genutzt, bricht der Vorgang ab.
+            </Alert>
+          </Stack>
+        ) : (
+          `LUN '${lun.name}' wirklich löschen? Dies kann nicht rückgängig gemacht werden.`
+        ),
+      confirmLabel: igroups.length > 0 ? "Zuordnungen entfernen und löschen" : "Löschen",
+      onConfirm: () =>
+        setProcess({ title: "LUN löschen", steps: buildLunDeleteSteps(lun.cluster_id, lun.uuid ?? "", igroups.length > 0) }),
     });
   }
 

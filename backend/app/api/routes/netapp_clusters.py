@@ -25,6 +25,8 @@ from app.core.config import get_settings
 from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
+from app.models.hyperv_cluster import HyperVCluster
+from app.models.hyperv_discovery import HyperVCsv
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster, NetAppClusterHealth
 from app.models.netapp_discovery import (
     NetAppAggregate,
@@ -686,19 +688,42 @@ def update_lun(
 
 @router.delete("/{cluster_id}/luns/{lun_uuid}")
 def delete_lun(
-    cluster_id: str, lun_uuid: str, db: Session = Depends(get_db),
+    cluster_id: str, lun_uuid: str, unmap: bool = False, db: Session = Depends(get_db),
     user=Depends(require_storage_unlocked),
 ) -> dict:
+    """unmap=true entfernt vorher alle igroup-Zuordnungen (ONTAP loescht nur
+    LUNs ohne Zuordnung). Eine LUN, die als CSV eines Hyper-V-Clusters
+    genutzt wird, wird in keinem Fall geloescht (Schutz vor versehentlichem
+    Loeschen produktiver VM-Speicher)."""
     cluster = _get_cluster_or_404(db, cluster_id)
     service = _service_for(cluster)
     lun = db.query(NetAppLun).filter(NetAppLun.uuid == lun_uuid).first()
     lun_label = lun.name if lun else lun_uuid
+    if lun is not None and lun.serial_number:
+        csv = db.query(HyperVCsv).filter(HyperVCsv.disk_serial_number == lun.serial_number).first()
+        if csv is not None:
+            hv_cluster = db.get(HyperVCluster, csv.cluster_id)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"LUN wird als CSV '{csv.name}' im Hyper-V-Cluster '{hv_cluster.name if hv_cluster else '?'}' genutzt "
+                    "und wird deshalb nicht gelöscht. Zuerst die CSV aus dem Cluster entfernen und eine Discovery ausführen."
+                ),
+            )
+    unmapped: list[str] = []
     try:
+        if unmap:
+            unmapped = service.unmap_lun_everywhere(lun_uuid)
         service.delete_lun(lun_uuid)
     except NetAppConnectionError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    _log_storage_action(db, user, f"LUN '{lun_label}' gelöscht (System '{cluster.name}')")
-    return {"status": "deleted"}
+        prefix = f"Zuordnungen zu {', '.join(unmapped)} wurden entfernt, aber: " if unmapped else ""
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=prefix + str(exc)) from exc
+    _log_storage_action(
+        db, user,
+        f"LUN '{lun_label}' gelöscht (System '{cluster.name}')"
+        + (f", vorher Zuordnungen entfernt: {', '.join(unmapped)}" if unmapped else ""),
+    )
+    return {"status": "deleted", "unmapped": unmapped}
 
 
 @router.post("/{cluster_id}/lun-maps", status_code=status.HTTP_201_CREATED)

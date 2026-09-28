@@ -165,14 +165,16 @@ export function buildLunEditSteps(plan: LunEditPlan): ProcessStepDef[] {
   return steps;
 }
 
-export function buildLunDeleteSteps(clusterId: string, lunUuid: string): ProcessStepDef[] {
+// unmap=true: vorher alle igroup-Zuordnungen entfernen (ONTAP loescht nur
+// LUNs ohne Zuordnung); eine als CSV genutzte LUN lehnt das Backend ab.
+export function buildLunDeleteSteps(clusterId: string, lunUuid: string, unmap = false): ProcessStepDef[] {
   return [
     {
       id: "delete",
       emoji: "🗑️",
-      label: "Lösche LUN",
+      label: unmap ? "Entferne Zuordnungen und lösche LUN" : "Lösche LUN",
       run: async () => {
-        await apiClient.delete(`/netapp/clusters/${clusterId}/luns/${lunUuid}`);
+        await apiClient.delete(`/netapp/clusters/${clusterId}/luns/${lunUuid}`, { params: { unmap } });
       },
     },
     discoverStep(clusterId),

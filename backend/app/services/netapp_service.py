@@ -1231,7 +1231,27 @@ class NetAppOntapService:
             try:
                 Lun.from_dict({"uuid": uuid}).delete()
             except NetAppRestError as exc:
+                if "currently mapped" in str(exc).lower():
+                    raise NetAppConnectionError(
+                        "LUN ist noch einer oder mehreren Initiator-Gruppen zugeordnet -- ONTAP löscht nur LUNs ohne "
+                        "Zuordnung. Zuordnungen zuerst entfernen (Löschen mit 'Zuordnungen entfernen')."
+                    ) from exc
                 raise NetAppConnectionError(f"LUN konnte nicht gelöscht werden: {exc}") from exc
+
+    def unmap_lun_everywhere(self, lun_uuid: str) -> list[str]:
+        """Entfernt alle igroup-Zuordnungen einer LUN (live abgefragt, nicht
+        aus der ggf. veralteten Discovery). Liefert die Namen der igroups."""
+        with self._connection():
+            try:
+                maps = list(LunMap.get_collection(**{"lun.uuid": lun_uuid}, fields="igroup.name,igroup.uuid"))
+                names = []
+                for lun_map in maps:
+                    igroup_uuid = _get_nested(lun_map, "igroup.uuid")
+                    LunMap.from_dict({"lun": {"uuid": lun_uuid}, "igroup": {"uuid": igroup_uuid}}).delete()
+                    names.append(_get_nested(lun_map, "igroup.name") or igroup_uuid)
+                return names
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN-Zuordnungen konnten nicht entfernt werden: {exc}") from exc
 
     def delete_lun_map(self, lun_uuid: str, igroup_name: str, svm_name: str) -> None:
         with self._connection():
