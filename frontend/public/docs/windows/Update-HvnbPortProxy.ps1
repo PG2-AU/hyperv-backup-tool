@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Haelt die netsh-Portweiterleitung fuer den AU Hyper-V Storage Manager
+    Haelt die netsh-Portweiterleitung fuer den AU Storage Manager for Hyper-V
     Container synchron mit der aktuellen WSL2-Guest-IP.
 
 .DESCRIPTION

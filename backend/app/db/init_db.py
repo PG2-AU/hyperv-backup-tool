@@ -473,13 +473,17 @@ def init_db(db: Session) -> None:
     _add_missing_columns(engine, "netapp_clusters", {"site_id": "VARCHAR(36)", "metrocluster_mode": "VARCHAR(50)"})
     _add_missing_columns(engine, "hyperv_clusters", {"node_names_json": "VARCHAR(4000)"})
     _add_missing_columns(engine, "db_backup_config", {"instance_name": "VARCHAR(40)"})
-    # Produktname 2026-09-28 von "Hyper-V NetApp Backup" in "AU Hyper-V
-    # Storage Manager" geaendert -- nur den unveraenderten alten Standard-
-    # Absendernamen mitziehen, einen selbst eingetragenen nicht anfassen.
+    # Produktname 2026-09-28 von "Hyper-V NetApp Backup" ueber "AU Hyper-V
+    # Storage Manager" in "AU Storage Manager for Hyper-V" geaendert -- nur
+    # einen unveraenderten frueheren Standard-Absendernamen mitziehen, einen
+    # selbst eingetragenen nicht anfassen.
     with engine.connect() as conn:
         if [row[1] for row in conn.execute(text("PRAGMA table_info(email_config)"))]:
             conn.execute(
-                text("UPDATE email_config SET from_name = 'AU Hyper-V Storage Manager' WHERE from_name = 'Hyper-V NetApp Backup'")
+                text(
+                    "UPDATE email_config SET from_name = 'AU Storage Manager for Hyper-V' "
+                    "WHERE from_name IN ('Hyper-V NetApp Backup', 'AU Hyper-V Storage Manager')"
+                )
             )
             conn.commit()
     with engine.connect() as conn:

@@ -14,7 +14,7 @@ mkdir -p "$(dirname "${CERT_PATH}")"
 openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
   -keyout "${KEY_PATH}" \
   -out "${CERT_PATH}" \
-  -subj "/CN=${COMMON_NAME}/O=AU Hyper-V Storage Manager" \
+  -subj "/CN=${COMMON_NAME}/O=AU Storage Manager for Hyper-V" \
   -addext "subjectAltName=DNS:${COMMON_NAME}"
 
 chmod 600 "${KEY_PATH}"

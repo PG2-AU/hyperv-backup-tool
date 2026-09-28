@@ -1,7 +1,7 @@
 [project]
 name = "hyperv-netapp-backup"
 version = "0.1.0"
-description = "AU Hyper-V Storage Manager -- Backup, Restore und Storage-Verwaltung fuer Hyper-V auf NetApp ONTAP"
+description = "AU Storage Manager for Hyper-V -- Backup, Restore und Storage-Verwaltung fuer Hyper-V auf NetApp ONTAP"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111",

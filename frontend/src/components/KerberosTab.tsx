@@ -284,7 +284,7 @@ export function KerberosTab() {
             />
             <Text size="xs" c="dimmed" mt={6}>
               Erwartet: Status <Code>active (running)</Code>, keine Fehler in den Logs, der Commit-Hash entspricht dem aus
-              Schritt 1, und <Code>{'{"status":"ok","app":"AU Hyper-V Storage Manager"}'}</Code> vom Health-Check.
+              Schritt 1, und <Code>{'{"status":"ok","app":"AU Storage Manager for Hyper-V"}'}</Code> vom Health-Check.
             </Text>
           </div>
 

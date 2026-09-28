@@ -1,4 +1,4 @@
-# AU Hyper-V Storage Manager - Container-Image (Rocky Linux)
+# AU Storage Manager for Hyper-V - Container-Image (Rocky Linux)
 #
 # Das Image enthaelt nur die Runtime (Python, Node.js, nginx, git, supervisor).
 # Der eigentliche Anwendungscode wird beim Container-Start per `git pull`

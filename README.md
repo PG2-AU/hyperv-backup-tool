@@ -1,4 +1,4 @@
-# AU Hyper-V Storage Manager
+# AU Storage Manager for Hyper-V
 
 Backup, Restore und Storage-Verwaltung fuer Hyper-V (Windows Server 2022) auf Basis
 von NetApp ONTAP Snapshots und SnapMirror (vormals "Hyper-V NetApp Backup"; intern

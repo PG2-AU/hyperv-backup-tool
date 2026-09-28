@@ -73,10 +73,10 @@ def send_test_email(db: Session, config: EmailConfig, recipient: str) -> None:
     send_raw_email(
         config,
         [recipient],
-        subject="Test-E-Mail -- AU Hyper-V Storage Manager",
-        html_body="<p>Das ist eine Test-E-Mail aus dem AU Hyper-V Storage Manager. "
+        subject="Test-E-Mail -- AU Storage Manager for Hyper-V",
+        html_body="<p>Das ist eine Test-E-Mail aus dem AU Storage Manager for Hyper-V. "
         "Wenn du diese Nachricht erhaeltst, ist die SMTP-Konfiguration korrekt.</p>",
-        text_body="Das ist eine Test-E-Mail aus dem AU Hyper-V Storage Manager. "
+        text_body="Das ist eine Test-E-Mail aus dem AU Storage Manager for Hyper-V. "
         "Wenn du diese Nachricht erhaeltst, ist die SMTP-Konfiguration korrekt.",
     )
 
@@ -106,7 +106,7 @@ def notify_backup_failure(
     config = get_email_config(db)
     if config is None or not config.enabled:
         return
-    subject = f"[AU Hyper-V Storage Manager] Backup fehlgeschlagen: {policy_name}"
+    subject = f"[AU Storage Manager for Hyper-V] Backup fehlgeschlagen: {policy_name}"
     targets_str = ", ".join(targets) if targets else "-"
     text = (
         f"Der Backup-Lauf fuer Policy '{policy_name}' ist fehlgeschlagen.\n\n"
@@ -129,7 +129,7 @@ def notify_restore_failure(db: Session, kind: str, vm_name: str, run_id: str, er
     config = get_email_config(db)
     if config is None or not config.enabled or not config.notify_on_restore_failure:
         return
-    subject = f"[AU Hyper-V Storage Manager] {kind} fehlgeschlagen: {vm_name}"
+    subject = f"[AU Storage Manager for Hyper-V] {kind} fehlgeschlagen: {vm_name}"
     text = (
         f"Der {kind}-Lauf fuer VM '{vm_name}' ist fehlgeschlagen.\n\n"
         f"Fehler: {error_message or '(keine Details)'}\n"
@@ -144,7 +144,7 @@ def notify_restore_failure(db: Session, kind: str, vm_name: str, run_id: str, er
 
 
 def send_daily_summary(db: Session, config: EmailConfig, stats: "DailySummaryStats") -> None:
-    subject = f"[AU Hyper-V Storage Manager] Tageszusammenfassung {stats.date_label} ({stats.total_failed} fehlgeschlagen)"
+    subject = f"[AU Storage Manager for Hyper-V] Tageszusammenfassung {stats.date_label} ({stats.total_failed} fehlgeschlagen)"
     text_lines = [f"Zusammenfassung der letzten 24 Stunden ({stats.date_label}):", ""]
     html_rows = []
     for row in stats.rows:

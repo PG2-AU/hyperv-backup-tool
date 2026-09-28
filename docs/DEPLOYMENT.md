@@ -1,8 +1,8 @@
 # Installation & Deployment
 
 Diese Anleitung beschreibt alle Schritte von einem frischen, domain-gejointen
-**Windows Server 2025** bis zur lauffähigen Applikation **AU Hyper-V Storage
-Manager** (vormals "Hyper-V NetApp Backup"; technische Bezeichner wie
+**Windows Server 2025** bis zur lauffähigen Applikation **AU Storage Manager for
+Hyper-V** (vormals "Hyper-V NetApp Backup"; technische Bezeichner wie
 `HVNB_*`-Variablen, Container `hvnb-backup` und Volumes `hvnb-data`/`hvnb-certs`
 behalten das Kürzel HVNB). Sie basiert auf einer
 real gegen eine solche Umgebung verifizierten Ersteinrichtung (siehe
@@ -431,7 +431,7 @@ Quadlet die Compose-Datei selbst nicht einliest:
 mkdir -p ~/.config/containers/systemd
 cat > ~/.config/containers/systemd/hvnb-backup.container << 'EOF'
 [Unit]
-Description=AU Hyper-V Storage Manager
+Description=AU Storage Manager for Hyper-V
 After=network-online.target
 Wants=network-online.target
 
@@ -507,7 +507,7 @@ Abschließender Funktionscheck, sobald `podman logs` alle drei Prozesse als
 curl -sk https://127.0.0.1:8443/api/health
 ```
 
-Erwartet: `{"status":"ok","app":"AU Hyper-V Storage Manager"}`. Bewusst
+Erwartet: `{"status":"ok","app":"AU Storage Manager for Hyper-V"}`. Bewusst
 `127.0.0.1` statt `localhost` — `localhost` löst auf vielen Systemen
 zuerst zu IPv6 (`::1`) auf, `podman port` mapped den Port aber nur auf
 IPv4 (`0.0.0.0:8443`), sodass der Verbindungsversuch über `localhost`
@@ -1725,7 +1725,7 @@ Health-Check (auch ohne Login abrufbar, praktisch für Monitoring):
 
 ```bash
 curl -sk https://<Server-IP>:8443/api/health
-# {"status":"ok","app":"AU Hyper-V Storage Manager"}
+# {"status":"ok","app":"AU Storage Manager for Hyper-V"}
 ```
 
 ## 12. Nächste Schritte (in der GUI)

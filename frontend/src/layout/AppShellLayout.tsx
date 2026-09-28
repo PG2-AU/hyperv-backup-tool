@@ -85,7 +85,7 @@ export function AppShellLayout() {
               <img src={logo} alt="Advanced Unibyte" height={24} style={{ display: "block" }} />
             </Box>
             <Title order={4} visibleFrom="sm">
-              AU Hyper-V Storage Manager
+              AU Storage Manager for Hyper-V
             </Title>
           </Group>
 
