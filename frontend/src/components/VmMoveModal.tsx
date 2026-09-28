@@ -121,7 +121,7 @@ export function VmMoveModal({ opened, onClose, vm, fixSiteMismatch = false }: Vm
       onClose={running ? () => undefined : onClose}
       withCloseButton={!running}
       title={`${fixSiteMismatch ? "Standort-Abweichung beheben" : "VM verschieben"}: ${vm?.name ?? ""}`}
-      size="lg"
+      size={960}
     >
       {!runId && (
         <Stack gap="sm">
@@ -348,7 +348,7 @@ function HostMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProps) 
                     styles={{ labelWrapper: { flex: 1 } }}
                     label={
                       <Stack gap={2}>
-                        <Group gap={6} wrap="nowrap">
+                        <Group gap={6} wrap="wrap">
                           <Text size="sm">{node.name}</Text>
                           {node.recommended && (
                             <Badge size="sm" variant="filled" color="green">
@@ -523,7 +523,7 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
                     styles={{ labelWrapper: { flex: 1 } }}
                     label={
                       <Stack gap={2}>
-                        <Group gap={6} wrap="nowrap">
+                        <Group gap={6} wrap="wrap">
                           <Text size="sm">{csv.name}</Text>
                           {csv.name === targets.recommended_csv && (
                             <Badge size="sm" variant="filled" color="green">
