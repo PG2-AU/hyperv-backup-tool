@@ -1290,3 +1290,25 @@ export interface VmStorageTargets {
   recommended_reason?: string | null;
   blocked_reason?: string | null;
 }
+
+// --- Konfiguration exportieren/importieren (Settings > System, Backlog #45) ---
+
+export interface ConfigImportPreview {
+  created_at?: string | null;
+  created_by?: string | null;
+  app_commit?: string | null;
+  include_catalog: boolean;
+  tables: { table: string; label: string; count: number }[];
+  manual_steps: string[];
+  warnings: string[];
+  // nicht leer = Import nicht moeglich
+  blockers: string[];
+}
+
+export interface ConfigImportResult {
+  imported: Record<string, number>;
+  paused_groups: string[];
+  skipped_users: string[];
+  manual_steps: string[];
+  bundle_rebuilt: boolean;
+}

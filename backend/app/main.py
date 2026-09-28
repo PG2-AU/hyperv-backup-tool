@@ -8,6 +8,7 @@ from app.api.routes import (
     alerts,
     auth,
     capacity_history,
+    config_transfer,
     email_config,
     file_restore,
     hyperv_clusters,
@@ -97,6 +98,7 @@ app.include_router(ad_config_routes.router)
 app.include_router(capacity_history.router)
 app.include_router(sites.router)
 app.include_router(vm_moves.router)
+app.include_router(config_transfer.router)
 
 
 @app.get("/api/health")

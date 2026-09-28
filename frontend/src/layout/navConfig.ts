@@ -125,6 +125,7 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Hintergrundjobs", path: "/settings?tab=scheduler", requiredPermission: "settings:manage" },
       { label: "Alarms", path: "/settings?tab=alerts", requiredPermission: "settings:manage" },
       { label: "Ansicht", path: "/settings?tab=display" },
+      { label: "System (Export/Import)", path: "/settings?tab=system", requiredPermission: "settings:manage" },
       { label: "Updates (Git)", path: "/settings?tab=updates", requiredPermission: "settings:manage" },
     ],
   },

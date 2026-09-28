@@ -81,6 +81,9 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   Schluessel statt der bei jeder Discovery neu vergebenen Zeilen-ID), als
   Liniendiagramm ueber 1/3/6/12 Monate direkt aus der jeweiligen Detailansicht in
   Inventory/Storage abrufbar (mehrere VHDs einer VM als je eigene Linie).
+- **Konfiguration exportieren/importieren** -- Settings > System: komplette Einrichtung
+  als ZIP (ohne Kennwoerter, optional mit Backup-Katalog), Import in eine frische
+  Installation fuer Umzug/Wiederaufbau.
 - **MetroCluster/SnapMirror** -- Status-Anzeige, Spiegelobjekte optional aus der
   gesamten Storage-Ansicht ausblendbar, SnapMirror-Beziehungen/-Policies/-Schedules
   verwaltbar inkl. manuellem Update-Trigger.

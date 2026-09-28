@@ -2006,6 +2006,26 @@ Abschnitt 4 für die beiden Code-Bezugsmodelle). Manuell erzwingen:</p>
 <span class="code-label">Bash</span>
 <pre><code>podman exec hvnb-backup supervisorctl restart uvicorn nginx</code></pre>
 </div>
+<p><strong>Konfiguration sichern / auf einen neuen Server übertragen:</strong> Settings →
+System → &quot;Konfiguration exportieren&quot; lädt die komplette Einrichtung als ZIP
+herunter (Cluster, NetApp-Systeme, Restore-Setup, Policies, Protection
+Groups, Zeitpläne, Standorte, alle Settings, WinRM-Zertifikate, Benutzer
+und Rollen), optional mit dem Backup-Katalog, damit ältere NetApp-Snapshots
+auf dem neuen Server weiter als Wiederherstellungspunkte auswählbar sind.
+<strong>Kennwörter, NetApp-Client-Zertifikate und Kennwörter lokaler Benutzer
+sind nie enthalten</strong> — der Export ist dadurch unabhängig von
+<code>HVNB_SECRET_KEY</code>. Import auf dem neuen Server (frische Installation nach
+Abschnitt 1–11) unter Settings → System, nur solange dort noch nichts
+eingerichtet ist. Danach die in der Vorschau aufgelisteten Kennwörter
+nachtragen, Discovery laufen lassen und die beim Import automatisch
+pausierten Protection Groups wieder aktivieren. Nicht enthalten sind
+Discovery-Daten (holt der neue Server selbst), Alarme, System Log und
+Kapazitätsverlauf.</p>
+<p>Alternative für einen 1:1-Servertausch inklusive aller Historie: die beiden
+Podman-Volumes <code>hvnb-data</code> und <code>hvnb-certs</code> plus die <code>.env</code> kopieren — dann
+<strong>muss <code>HVNB_SECRET_KEY</code> identisch mitkommen</strong>, sonst sind alle
+gespeicherten Kennwörter unbrauchbar (äußert sich als &quot;Verbindung
+fehlgeschlagen&quot; bei allen Clustern).</p>
 <p><strong>Logs:</strong></p>
 <div class="code-block">
 <span class="code-label">Bash</span>
