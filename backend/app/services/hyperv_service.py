@@ -1284,7 +1284,16 @@ class HyperVService:
             # Unter 1 MB Rest ist nichts zu erweitern (Ausrichtung).
             "if ($s.SizeMax -gt $before + 1MB) { "
             "Resize-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber -Size $s.SizeMax }; "
-            "$after = (Get-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber).Size; "
+            # Nachlesen tolerant: live gefunden (2026-09-29) -- direkt nach
+            # Resize-Partition auf einer CSV-Disk liefert Get-Partition fuer
+            # dieselbe Disk-/Partitionsnummer kurzzeitig "No matching
+            # MSFT_Partition objects found", obwohl die Erweiterung
+            # erfolgreich war. Ein paar Versuche; bleibt es leer, gilt der
+            # Resize-Zielwert (Resize-Partition haette sonst selbst geworfen).
+            "$after = $null; foreach ($i in 1..10) { "
+            "$q = Get-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber -ErrorAction SilentlyContinue; "
+            "if ($q) { $after = $q.Size; break }; Start-Sleep -Seconds 2 }; "
+            "if ($null -eq $after) { $after = if ($s.SizeMax -gt $before + 1MB) { $s.SizeMax } else { $before } }; "
             "\"$before;$after\""
         )
         result = self._run_ps(session, script)
