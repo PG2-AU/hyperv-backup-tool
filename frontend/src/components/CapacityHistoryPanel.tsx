@@ -1,4 +1,4 @@
-import { LineChart } from "@mantine/charts";
+import { AreaChart } from "@mantine/charts";
 import { Alert, Group, SegmentedControl, Skeleton, Text } from "@mantine/core";
 import { IconInfoCircle } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
@@ -18,9 +18,11 @@ const SERIES_COLORS = ["blue.6", "teal.6", "orange.6", "grape.6", "red.6", "yell
 
 const BYTES_PER_GIB = 1024 ** 3;
 
-// Bei Volumes zusaetzlich die Snapshot-Belegung als eigene, gestrichelte
-// Linie je Serie (Backlog #67) -- nur fuer Serien, die den Wert haben
-// (Messpunkte vor Einfuehrung der Snapshot-Erfassung haben ihn nicht).
+// Bei Volumes zusaetzlich die Snapshot-Belegung als eigene Flaeche je Serie
+// (Backlog #67) -- nur fuer Serien, die den Wert haben (Messpunkte vor
+// Einfuehrung der Snapshot-Erfassung haben ihn nicht). Nicht gestapelt:
+// Snapshots sind ein Teil ("davon") der belegten Menge, die lila Flaeche
+// liegt deshalb innerhalb der blauen und wird darueber gezeichnet.
 function snapshotKey(name: string): string {
   return `${name} – davon Snapshots`;
 }
@@ -75,7 +77,7 @@ export function CapacityHistoryPanel({
           color: SERIES_COLORS[i % SERIES_COLORS.length],
         };
         return hasSnapshots(s)
-          ? [base, { name: snapshotKey(s.object_name), label: "davon Snapshots", color: "grape.5", strokeDasharray: "5 4" }]
+          ? [base, { name: snapshotKey(s.object_name), label: "davon Snapshots", color: "grape.6" }]
           : [base];
       }),
     [series],
@@ -93,14 +95,17 @@ export function CapacityHistoryPanel({
             Werte ist nicht möglich.
           </Alert>
         ) : (
-          <LineChart
+          <AreaChart
             h={220}
             data={chartData}
             dataKey="date"
+            type="default"
             withLegend={chartSeries.length > 1}
             series={chartSeries}
             valueFormatter={(v) => formatBytes(v * BYTES_PER_GIB)}
             curveType="linear"
+            withGradient={false}
+            fillOpacity={0.35}
             connectNulls
           />
         )}
