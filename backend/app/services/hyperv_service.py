@@ -1229,10 +1229,19 @@ class HyperVService:
     def _csv_partition_lookup(serial_number: str) -> str:
         """PowerShell-Baustein: $d = Disk mit dieser Seriennummer, $p = deren
         Datenpartition (die groesste -- GPT-CSV-Disks haben davor eine kleine
-        MSR-Partition)."""
+        MSR-Partition).
+
+        Online-Disk zuerst: live gefunden (2026-09-29, svAUdemo7-hv102) --
+        dieselbe LUN kann auf einem Knoten als ZWEI Disk-Objekte mit gleicher
+        Seriennummer erscheinen (ein von MPIO nicht beanspruchter zweiter
+        Pfad, bleibt dauerhaft Offline). Mit einem blossen -First 1 wurde
+        die Offline-Kopie erwischt, deren Partition sich nicht erweitern
+        laesst -- "CSV vergroessern" meldete dann "Partition nur auf X
+        erweitert", obwohl Windows die neue LUN-Groesse laengst kannte."""
         serial = serial_number.replace("'", "''")
         return (
-            f"$d = Get-Disk | Where-Object {{ $_.SerialNumber -and $_.SerialNumber.Trim() -eq '{serial}' }} | Select-Object -First 1; "
+            f"$d = Get-Disk | Where-Object {{ $_.SerialNumber -and $_.SerialNumber.Trim() -eq '{serial}' }} "
+            "| Sort-Object IsOffline | Select-Object -First 1; "
             f"if (-not $d) {{ throw \"Keine Disk mit Seriennummer '{serial}' auf diesem Knoten\" }}; "
             "$p = Get-Partition -DiskNumber $d.Number | Sort-Object Size -Descending | Select-Object -First 1; "
         )
