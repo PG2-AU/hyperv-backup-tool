@@ -676,6 +676,31 @@ def _merge_avhdx_chain_smb(
     return base_remote, base_original_filename
 
 
+def _ensure_disk_still_in_place(
+    node_service: HyperVService, node_session, run: "RestoreRun", username: str, password: str,
+) -> None:
+    """Ersetzen-Vorpruefung (VOR dem Stoppen der VM): haengt an der VM noch
+    eine Disk im selben Ordner wie die gesicherte? Wurde die VM seit dem
+    Backup verschoben (Storage-Move CSV<->CSV/SMB3), liegt dort keine Disk
+    mehr -- der Ersetzen-Ablauf stoppte die VM bisher trotzdem, entfernte
+    ihre Checkpoints und scheiterte erst beim Loeschen der laengst nicht mehr
+    vorhandenen Datei (VM blieb aus, gefunden 2026-09-29). Gleicher
+    Ordnervergleich wie spaeter bei current_source_path."""
+    live_vm = node_service.get_vm(node_session, run.vm_name, username, password)
+    if live_vm is None:
+        raise RuntimeError(f"VM '{run.vm_name}' wurde auf ihrem Knoten nicht gefunden")
+    source_dir = run.source_vhd_path.rsplit("\\", 1)[0].lower()
+    if any(v.path.rsplit("\\", 1)[0].lower() == source_dir for v in live_vm.vhds):
+        return
+    now = sorted({v.path.rsplit("\\", 1)[0] for v in live_vm.vhds}) or ["(keine Disks)"]
+    raise RuntimeError(
+        f"Die VM wurde seit diesem Backup verschoben: gesichert war '{run.source_vhd_path}', "
+        f"heute liegen ihre Disks unter {', '.join(now)}. Ersetzen ist deshalb nicht möglich -- die VM wurde "
+        "nicht angefasst. Stattdessen 'Als zusätzliche Disk anhängen', 'Side-by-side' oder 'Nur einzelne "
+        "Dateien' verwenden, oder die VM vorher an den alten Ort zurückverschieben."
+    )
+
+
 def _execute_restore(run_id: str) -> None:  # noqa: C901
     db = SessionLocal()
     clone_lun_uuid: str | None = None
@@ -850,6 +875,10 @@ def _execute_restore(run_id: str) -> None:  # noqa: C901
                 node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node)
                 node_session = node_service.connect(hv_cluster.username, hv_password)
                 ctx.row.message = node_address
+
+            if run.mode != RestoreMode.ADD:
+                with _StepCtx(db, run.id, "check-location", "Prüfen, ob die Disk noch am gesicherten Ort liegt"):
+                    _ensure_disk_still_in_place(node_service, node_session, run, hv_cluster.username, hv_password)
 
             with _StepCtx(db, run.id, "connect-proxy", "Verbindung zum Restore-Proxy-Host") as ctx:
                 proxy_service = HyperVService(settings, proxy.address, use_https=proxy.use_https, node_hostname=proxy.hostname)
@@ -1376,6 +1405,9 @@ def _execute_smb_restore_replace(run_id: str) -> None:  # noqa: C901
                 node_service = HyperVService(settings, node_address, use_https=hv_cluster.use_https, node_hostname=owner_node)
                 node_session = node_service.connect(hv_cluster.username, hv_password)
                 ctx.row.message = node_address
+
+            with _StepCtx(db, run.id, "check-location", "Prüfen, ob die Disk noch am gesicherten Ort liegt"):
+                _ensure_disk_still_in_place(node_service, node_session, run, hv_cluster.username, hv_password)
 
             with _StepCtx(db, run.id, "copy", "VHDX aus Snapshot kopieren") as ctx:
                 copy_started_at = time.monotonic()

@@ -335,6 +335,18 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
         is_avhdx: v.name.toLowerCase().endsWith(".avhdx"), plain_checkpoint_id: null as string | null,
       }));
 
+  // Wurde die VM seit diesem Backup verschoben (Storage-Move CSV<->CSV/SMB3),
+  // liegt im gesicherten Ordner keine Disk mehr -- "Ersetzen" kann dann nicht
+  // funktionieren (das Backend bricht in dem Fall VOR dem Stoppen der VM ab,
+  // siehe _ensure_disk_still_in_place). Gleicher Ordnervergleich wie dort.
+  const displayFolder = (path: string) => path.slice(0, path.lastIndexOf("\\"));
+  const currentVhdFolders = [...new Set((vmFull?.vhds ?? []).map((v) => displayFolder(v.full_path)))];
+  const currentVhdDirs = new Set((vmFull?.vhds ?? []).map((v) => folderOf(v.full_path)));
+  const movedVhds =
+    selectedSnapshot?.vhds.length && currentVhdDirs.size > 0
+      ? selectedSnapshot.vhds.filter((v) => !currentVhdDirs.has(folderOf(v.path)))
+      : [];
+
   // Kapazitaetsschaetzung "CSV danach": basiert bewusst auf dem BELEGTEN
   // Platz der VHDX (Get-VHD -> FileSize), nicht der logischen/maximalen
   // Groesse -- beim Kopieren der Datei (Restore/VM-Neuerstellung) wird
@@ -756,11 +768,26 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
             <Radio.Group value={restoreKind} onChange={(v) => setRestoreKind(v as RestoreKind)} label="Was soll passieren?">
               <Stack gap="xs" mt="xs">
                 <Radio value="add" label="Als zusätzliche Disk anhängen (kein Downtime, manueller Cleanup später möglich)" />
-                <Radio value="replace" label="Laufende VHDX ersetzen (VM wird kurz gestoppt, alte Datei wird gelöscht)" />
+                <Radio
+                  value="replace"
+                  label="Laufende VHDX ersetzen (VM wird kurz gestoppt, alte Datei wird gelöscht)"
+                  disabled={movedVhds.length > 0}
+                  description={movedVhds.length > 0 ? "Nicht möglich: die VM wurde seit diesem Backup verschoben (siehe unten)." : undefined}
+                />
                 <Radio value="files" label="Nur einzelne Dateien/Ordner wiederherstellen (VHDX wird durchsuchbar gemountet)" />
                 <Radio value="clone" label="VM wiederherstellen und bestehende VM beibehalten (Side-by-side, neuer Name)" />
               </Stack>
             </Radio.Group>
+
+            {movedVhds.length > 0 && (
+              <Alert color="orange" variant="light" icon={<IconAlertTriangle size={16} />} title="VM seit diesem Backup verschoben">
+                <Text size="sm">
+                  Gesichert unter {[...new Set(movedVhds.map((v) => displayFolder(v.path)))].join(", ")}, heute unter{" "}
+                  {currentVhdFolders.join(", ") || "?"}. „Ersetzen“ ist deshalb nicht möglich. Anhängen, Side-by-side und einzelne
+                  Dateien funktionieren weiterhin; beim Anhängen landet die wiederhergestellte VHDX am damaligen Ort.
+                </Text>
+              </Alert>
+            )}
 
             {restoreKind === "clone" ? (
               <Stack gap="sm">
