@@ -23,6 +23,8 @@ from app.models.hyperv_cluster import HyperVCluster, HyperVClusterHealth
 from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
 from app.models.netapp_cluster import NetAppCluster
 from app.models.netapp_discovery import NetAppCifsShare, NetAppLun, NetAppSvm, NetAppVolume
+from app.models.backup_policy import BackupScope
+from app.models.resource_group import ResourceGroup, parse_member_key
 from app.schemas.hyperv_cluster import HyperVClusterCreate, HyperVClusterRead, HyperVClusterUpdate, HyperVReachabilityCheck
 from app.schemas.netapp_cluster import DiscoveryStepRead
 from app.services.hyperv_service import (
@@ -137,13 +139,35 @@ def _refresh_smb_share_rows(db: Session, cluster_id: str, vhds: list[HyperVVhd])
 
     volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
 
-    groups: set[tuple[str, str]] = set()
+    # Schluessel ohne Gross-/Kleinschreibung, Wert = Schreibweise fuer die Anzeige.
+    groups: dict[str, tuple[str, str]] = {}
     for vhd in vhds:
         if vhd.smb_server and vhd.smb_share:
-            groups.add((vhd.smb_server, vhd.smb_share))
+            groups.setdefault(f"{vhd.smb_server.lower()}::{vhd.smb_share.lower()}", (vhd.smb_server, vhd.smb_share))
+
+    # Freigaben OHNE VM nicht verwerfen (live gefunden 2026-09-29): wurde die
+    # letzte VM per Storage-Move von einer Freigabe weggeschoben, verschwand
+    # sie komplett -- SMB3-Reiter weg, die SMB3-Protection-Group fand ihr
+    # Ziel nicht mehr, und die Freigabe war kein Move-Ziel mehr. Deshalb
+    # zusaetzlich bereits bekannte Freigaben dieses Clusters und solche, die
+    # eine SMB3-Protection-Group nennt -- aber nur, solange es den CIFS-Share
+    # auf der NetApp noch gibt (sonst wirklich weg).
+    known: list[tuple[str, str]] = [
+        (row.server, row.share) for row in db.query(HyperVSmbShare).filter(HyperVSmbShare.cluster_id == cluster_id)
+    ]
+    for group in db.query(ResourceGroup).filter(ResourceGroup.scope == BackupScope.SMB_SHARE).all():
+        for member in group.members or []:
+            member_cluster, name = parse_member_key(member)
+            if member_cluster == cluster_id and "|" in name:
+                server, share_name = name.split("|", 1)
+                known.append((server, share_name))
+    for server, share_name in known:
+        key = f"{server.lower()}::{share_name.lower()}"
+        if key not in groups and key in shares_by_server_and_name:
+            groups[key] = (server, share_name)
 
     db.query(HyperVSmbShare).filter(HyperVSmbShare.cluster_id == cluster_id).delete()
-    for server, share_name in groups:
+    for server, share_name in groups.values():
         share = shares_by_server_and_name.get(f"{server.lower()}::{share_name.lower()}")
         # Kapazitaet kommt (wie bei HyperVCsv) vom zugrunde liegenden
         # NetApp-Objekt -- fuer SMB3 gibt es kein Windows-Cluster-

@@ -823,7 +823,9 @@ export function VmsPage() {
         <Tabs.List>
           <Tabs.Tab value="vms">Virtuelle Maschinen</Tabs.Tab>
           <Tabs.Tab value="csv">Cluster Shared Volumes</Tabs.Tab>
-          {(smbShares?.length ?? 0) > 0 && <Tabs.Tab value="smb">SMB3-Freigaben</Tabs.Tab>}
+          {/* Immer sichtbar -- der Menuepunkt Inventory > SMB3-Freigaben existiert
+              ebenfalls immer; ohne Freigaben zeigte er sonst eine leere Seite. */}
+          <Tabs.Tab value="smb">SMB3-Freigaben</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="vms" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -1256,8 +1258,7 @@ export function VmsPage() {
           </Paper>
         </Tabs.Panel>
 
-        {(smbShares?.length ?? 0) > 0 && (
-          <Tabs.Panel value="smb" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <Tabs.Panel value="smb" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             {selectedSmbShare && (
               <Box mb="md">
                 <SmbShareChainHeader
@@ -1385,6 +1386,12 @@ export function VmsPage() {
                 })}
               </Table.Tbody>
             </Table>
+            {smbShares?.length === 0 && (
+              <Text c="dimmed" size="sm" ta="center" py="md">
+                Keine SMB3-Freigaben bekannt. Freigaben erscheinen hier, sobald eine VM darauf liegt oder eine
+                SMB3-Protection-Group sie nennt (nach der nächsten Hyper-V-Discovery).
+              </Text>
+            )}
             {(smbShares?.length ?? 0) > 0 && filteredSmbShares.length === 0 && (
               <Text c="dimmed" size="sm" ta="center" py="md">
                 Keine SMB3-Freigabe passt zur Suche „{smbShareSearch}".
@@ -1393,7 +1400,6 @@ export function VmsPage() {
             </div>
             </Paper>
           </Tabs.Panel>
-        )}
       </Tabs>
 
       <CsvResizeModal opened={resizeCsv !== null} onClose={() => setResizeCsv(null)} csv={resizeCsv} />
