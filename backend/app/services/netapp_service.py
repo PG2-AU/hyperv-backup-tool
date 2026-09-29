@@ -1623,6 +1623,40 @@ class NetAppOntapService:
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"Snapshots konnten nicht abgerufen werden: {exc}") from exc
 
+    def list_snapshots(self, volume_uuid: str) -> list[dict]:
+        """Alle Snapshots eines Volumes mit Detailfeldern fuer die Ansicht
+        Storage > Volumes > Snapshots. 'owners' (z.B. snapmirror) zeigt,
+        warum ONTAP einen Snapshot ggf. nicht loeschen laesst.
+
+        Bewusst OHNE Groesse je Snapshot: ONTAPs REST-Feld 'size' ist die
+        Groesse des aktiven Dateisystems zum Aufnahmezeitpunkt, nicht der
+        beim Loeschen frei werdende Platz (live geprueft 2026-09-29: 48
+        Snapshots mit je ~97 GB auf einem Volume mit insgesamt 82 GB
+        Snapshot-Belegung). Der exklusive Platz ('reclaimable_space') muesste
+        pro Snapshot aufwendig berechnet werden."""
+        fields = "name,create_time,expiry_time,snapmirror_label,owners,state,comment"
+        with self._connection():
+            try:
+                records = list(Snapshot.get_collection(volume_uuid, fields=fields))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Snapshots konnten nicht abgerufen werden: {exc}") from exc
+            snapshots = []
+            for snap in records:
+                owners = _get_nested(snap, "owners") or []
+                snapshots.append(
+                    {
+                        "uuid": snap.uuid,
+                        "name": snap.name,
+                        "create_time": str(_get_nested(snap, "create_time") or "") or None,
+                        "expiry_time": str(_get_nested(snap, "expiry_time") or "") or None,
+                        "snapmirror_label": _get_nested(snap, "snapmirror_label"),
+                        "owners": [str(o) for o in owners],
+                        "state": _get_nested(snap, "state"),
+                        "comment": _get_nested(snap, "comment"),
+                    }
+                )
+            return snapshots
+
     def delete_snapshot(self, volume_uuid: str, snapshot_uuid: str) -> OperationResult:
         """Wird u.a. beim automatischen Aufraeumen nach einem fehlgeschlagenen Backup verwendet."""
         with self._connection():

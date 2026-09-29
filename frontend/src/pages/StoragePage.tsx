@@ -25,6 +25,7 @@ import { notifications } from "@mantine/notifications";
 import {
   IconAlertTriangle,
   IconCertificate,
+  IconCamera,
   IconChartLine,
   IconEdit,
   IconLink,
@@ -81,6 +82,7 @@ import { CapacityBarCard, DistributionCard, StatCard, StatRibbon, groupCount } f
 import { SvmPeerFormModal } from "@/components/SvmPeerFormModal";
 import { VolumeEditModal } from "@/components/VolumeEditModal";
 import { VolumeFormModal } from "@/components/VolumeFormModal";
+import { VolumeSnapshotsModal } from "@/components/VolumeSnapshotsModal";
 import type {
   NetAppAggregate,
   NetAppCluster,
@@ -747,6 +749,7 @@ export function StoragePage() {
   // Wrapper um jede <Table>), damit diese Kopfzeile bei langen Tabellen
   // sichtbar bleibt, statt aus dem Blickfeld zu scrollen.
   const [historyVolume, setHistoryVolume] = useState<NetAppVolume | null>(null);
+  const [snapshotsVolume, setSnapshotsVolume] = useState<NetAppVolume | null>(null);
   const [historyLun, setHistoryLun] = useState<NetAppLun | null>(null);
   const [historyAggregate, setHistoryAggregate] = useState<NetAppAggregate | null>(null);
   const [lunEditOpen, setLunEditOpen] = useState(false);
@@ -1138,6 +1141,11 @@ export function StoragePage() {
                       <Tooltip label="Kapazitätsverlauf">
                         <ActionIcon variant="light" onClick={() => setHistoryVolume(vol)}>
                           <IconChartLine size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Snapshots anzeigen">
+                        <ActionIcon variant="light" disabled={!vol.uuid} onClick={() => setSnapshotsVolume(vol)}>
+                          <IconCamera size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Bearbeiten">
@@ -2049,6 +2057,11 @@ export function StoragePage() {
           setVolumeEditOpen(false);
           setProcess({ title: "Volume bearbeiten", steps: buildVolumeEditSteps(plan) });
         }}
+      />
+      <VolumeSnapshotsModal
+        volume={snapshotsVolume}
+        canDelete={!locked && canManageStorage}
+        onClose={() => setSnapshotsVolume(null)}
       />
       <SnapmirrorEditModal
         opened={snapmirrorEditOpen}

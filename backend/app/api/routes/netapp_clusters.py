@@ -25,6 +25,7 @@ from app.core.config import get_settings
 from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.rbac import Permission
 from app.db.session import get_db
+from app.models.backup_run import BackupRun, BackupRunSnapshot, BackupRunSnapshotDestination
 from app.models.hyperv_cluster import HyperVCluster
 from app.models.hyperv_discovery import HyperVCsv
 from app.models.netapp_cluster import NetAppAuthMethod, NetAppCluster, NetAppClusterHealth
@@ -637,6 +638,115 @@ def delete_volume(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     _log_storage_action(db, user, f"Volume '{vol_label}' gelöscht (System '{cluster.name}')")
     return {"status": "deleted"}
+
+
+def _backup_rows_for_volume_snapshots(
+    db: Session, volume_uuid: str, volume: NetAppVolume | None,
+) -> tuple[dict[str, BackupRunSnapshot], dict[str, BackupRunSnapshotDestination]]:
+    """Snapshot-Name -> Backup-Eintrag dieser App, getrennt nach Primaer-
+    Snapshots (BackupRunSnapshot auf diesem Volume) und SnapMirror-Kopien
+    (BackupRunSnapshotDestination, falls dieses Volume ein Ziel-Volume ist).
+    Ueber den Namen statt die UUID: auf dem Ziel hat die Kopie eine eigene
+    UUID, der Name ist auf beiden Seiten gleich."""
+    primary = {
+        row.snapshot_name: row
+        for row in db.query(BackupRunSnapshot).filter(BackupRunSnapshot.volume_uuid == volume_uuid)
+        if row.snapshot_name
+    }
+    dest_filter = BackupRunSnapshotDestination.destination_volume_uuid == volume_uuid
+    if volume is not None:
+        dest_filter = dest_filter | (
+            (BackupRunSnapshotDestination.destination_volume_name == volume.name)
+            & (BackupRunSnapshotDestination.destination_svm_name == volume.svm_name)
+        )
+    destinations = {
+        dest.snapshot.snapshot_name: dest
+        for dest in db.query(BackupRunSnapshotDestination).filter(dest_filter)
+        if dest.snapshot is not None and dest.snapshot.snapshot_name
+    }
+    return primary, destinations
+
+
+@router.get("/{cluster_id}/volumes/{volume_uuid}/snapshots")
+def list_volume_snapshots(
+    cluster_id: str, volume_uuid: str, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.STORAGE_VIEW)),
+) -> list[dict]:
+    """Live-Liste der Snapshots eines Volumes (nicht aus der Discovery --
+    Snapshots aendern sich stuendlich), angereichert um die Zuordnung zu
+    Backup-Laeufen dieser App: Policy und gesicherte VMs/CSVs."""
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    try:
+        snapshots = service.list_snapshots(volume_uuid)
+    except NetAppConnectionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    volume = db.query(NetAppVolume).filter(NetAppVolume.uuid == volume_uuid).first()
+    primary, destinations = _backup_rows_for_volume_snapshots(db, volume_uuid, volume)
+    for snap in snapshots:
+        row = primary.get(snap["name"])
+        dest = destinations.get(snap["name"])
+        source_row = row or (dest.snapshot if dest is not None else None)
+        run = db.get(BackupRun, source_row.run_id) if source_row is not None else None
+        snap["backup"] = (
+            {
+                "run_id": source_row.run_id,
+                "policy_name": run.policy_name if run else None,
+                "vm_names": list(source_row.vm_names or []),
+                "csv_names": list(source_row.csv_names or []),
+                "is_replica": row is None,
+            }
+            if source_row is not None
+            else None
+        )
+    snapshots.sort(key=lambda s: s["create_time"] or "", reverse=True)
+    return snapshots
+
+
+@router.delete("/{cluster_id}/volumes/{volume_uuid}/snapshots/{snapshot_uuid}")
+def delete_volume_snapshot(
+    cluster_id: str, volume_uuid: str, snapshot_uuid: str, snapshot_name: str | None = None,
+    db: Session = Depends(get_db), user=Depends(require_storage_unlocked),
+) -> dict:
+    """Loescht einen einzelnen Snapshot auf der NetApp. Gesperrte Snapshots
+    (Snapshot-Locking, expiry_time) und belegte (z.B. SnapMirror-Basis oder
+    Grundlage eines laufenden Restore-Klons) lehnt ONTAP selbst ab -- die
+    Meldung wird unveraendert durchgereicht. Gehoert der Snapshot zu einem
+    Backup-Lauf dieser App, wird dessen Eintrag danach genauso markiert wie
+    beim naechtlichen Abgleich (success=False bzw. present=False) statt
+    geloescht: eine noch vorhandene SnapMirror-Kopie bleibt so weiterhin
+    als Restore-Quelle verfuegbar."""
+    cluster = _get_cluster_or_404(db, cluster_id)
+    service = _service_for(cluster)
+    volume = db.query(NetAppVolume).filter(NetAppVolume.uuid == volume_uuid).first()
+    vol_label = volume.name if volume else volume_uuid
+    result = service.delete_snapshot(volume_uuid, snapshot_uuid)
+    if not result.success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Snapshot konnte nicht gelöscht werden: {result.message}",
+        )
+    label = snapshot_name or snapshot_uuid
+    marked = False
+    if snapshot_name:
+        primary, destinations = _backup_rows_for_volume_snapshots(db, volume_uuid, volume)
+        now = datetime.now(timezone.utc)
+        row = primary.get(snapshot_name)
+        if row is not None and row.success:
+            row.success = False
+            row.error_message = f"Snapshot manuell gelöscht (Storage > Volumes, {user.username}, {now:%d.%m.%Y %H:%M} UTC)"
+            marked = True
+        dest = destinations.get(snapshot_name)
+        if dest is not None and dest.present:
+            dest.present = False
+            dest.last_checked_at = now
+            marked = True
+        db.commit()
+    _log_storage_action(
+        db, user,
+        f"Snapshot '{label}' auf Volume '{vol_label}' gelöscht (System '{cluster.name}')"
+        + (", Backup-Eintrag als nicht mehr vorhanden markiert" if marked else ""),
+    )
+    return {"status": "deleted", "backup_marked": marked}
 
 
 @router.post("/{cluster_id}/luns", status_code=status.HTTP_201_CREATED)
