@@ -318,12 +318,11 @@ export function VolumeSnapshotsModal({
                       <Table.Td>
                         {reason ? (
                           <Tooltip label={reason}>
-                            <Badge
-                              variant="light"
-                              color={snap.owners.length > 0 ? "orange" : "gray"}
-                              leftSection={<IconLock size={12} />}
-                            >
-                              {snap.owners.length > 0 ? "Belegt" : "Gesperrt"}
+                            {/* Einheitlich "Gesperrt" (Nutzerwunsch 2026-09-29) -- ob
+                                Snapshot-Locking oder Verwendung durch SnapMirror/Klon,
+                                steht im Tooltip. */}
+                            <Badge variant="light" color="gray" leftSection={<IconLock size={12} />}>
+                              Gesperrt
                             </Badge>
                           </Tooltip>
                         ) : (
