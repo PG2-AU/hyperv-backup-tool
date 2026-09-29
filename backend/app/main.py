@@ -35,6 +35,7 @@ from app.api.routes import (
     vms,
     winrm_certs,
 )
+from app.api.routes.hyperv_clusters import refresh_all_smb_share_rows
 from app.core.config import get_settings
 from app.core.kerberos_auth import ensure_ccache_env
 from app.core.kerberos_config import ensure_krb5_config_env
@@ -54,6 +55,16 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         init_db(db)
+    finally:
+        db.close()
+    # Abgeleitete SMB3-Freigaben-Liste aus dem gespeicherten Stand neu
+    # aufbauen (siehe refresh_all_smb_share_rows) -- best-effort, darf den
+    # Start nie verhindern.
+    db = SessionLocal()
+    try:
+        refresh_all_smb_share_rows(db)
+    except Exception:  # noqa: BLE001
+        db.rollback()
     finally:
         db.close()
     start_scheduler()

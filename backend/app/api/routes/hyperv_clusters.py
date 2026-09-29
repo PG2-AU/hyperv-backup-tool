@@ -227,6 +227,18 @@ def _refresh_csv_rows(db: Session, cluster_id: str, csvs: list[ClusterSharedVolu
     db.commit()
 
 
+def refresh_all_smb_share_rows(db: Session) -> None:
+    """_refresh_smb_share_rows fuer jeden Cluster aus dem bereits
+    gespeicherten VHD-Stand -- ohne WinRM, beim App-Start aufgerufen
+    (app.main), damit eine geaenderte Ableitungslogik nach einem Update sofort
+    greift statt erst mit der naechsten periodischen Discovery (live
+    2026-09-29: nach dem Fix fuer Freigaben ohne VM blieb die Liste bis zur
+    naechsten Discovery leer, der geplante PG_SMB3-Lauf scheiterte)."""
+    for cluster in db.query(HyperVCluster).all():
+        vhds = db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster.id).all()
+        _refresh_smb_share_rows(db, cluster.id, vhds)
+
+
 def _apply_vm_discovery_refresh(db: Session, cluster_id: str, vm: HyperVVm, refreshed: VirtualMachineInfo) -> None:
     """Ersetzt Checkpoint-Liste und VHD-Zeilen EINER VM aus einem frischen
     get_vm()-Ergebnis -- gemeinsame Logik fuer die manuelle Checkpoint-
