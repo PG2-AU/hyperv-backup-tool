@@ -502,7 +502,11 @@ def init_db(db: Session) -> None:
     # VM verschieben, Stufe 2 (Storage-Move, siehe app.models.vm_move_run).
     _add_missing_columns(
         engine, "vm_move_runs",
-        {"destination_csv_name": "VARCHAR(255)", "progress_percent": "INTEGER", "cancel_requested_at": "DATETIME"},
+        {
+            "destination_csv_name": "VARCHAR(255)", "progress_percent": "INTEGER", "cancel_requested_at": "DATETIME",
+            # Storage-Move von/zu SMB3-Freigaben (2026-09-29).
+            "destination_smb_server": "VARCHAR(255)", "destination_smb_share": "VARCHAR(255)",
+        },
     )
     with engine.connect() as conn:
         conn.execute(text("UPDATE alert_config SET site_mismatch_grace_minutes = 120 WHERE site_mismatch_grace_minutes IS NULL"))

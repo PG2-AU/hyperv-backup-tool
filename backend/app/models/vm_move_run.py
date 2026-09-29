@@ -44,12 +44,23 @@ class VmMoveRun(Base):
     # Abbruch-Anforderung aus der GUI (der Lauf bricht den WMI-
     # Migrationsjob beim naechsten Fortschritts-Poll ab).
     destination_csv_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Alternativ zur Ziel-CSV: Ziel-SMB3-Freigabe (2026-09-29) -- genau eines
+    # von beiden ist bei einem Storage-Move gesetzt.
+    destination_smb_server: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    destination_smb_share: Mapped[str | None] = mapped_column(String(255), nullable=True)
     progress_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[RestoreStatus] = mapped_column(String(20), default=RestoreStatus.RUNNING)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def destination_label(self) -> str | None:
+        """Anzeigename des Storage-Ziels: CSV-Name oder \\\\server\\share."""
+        if self.destination_smb_server and self.destination_smb_share:
+            return f"\\\\{self.destination_smb_server}\\{self.destination_smb_share}"
+        return self.destination_csv_name
 
     steps = relationship(
         "VmMoveRunStep", back_populates="run", cascade="all, delete-orphan", order_by="VmMoveRunStep.created_at",

@@ -75,7 +75,8 @@ export function useStartStorageMove() {
     mutationFn: async (payload: {
       cluster_id: string;
       vm_name: string;
-      destination_csv_name: string;
+      // CSV-Name oder \\server\share
+      destination_name: string;
       acknowledge_protection_change: boolean;
     }) => (await apiClient.post<VmMoveRun>("/vm-moves/storage", payload)).data,
   });

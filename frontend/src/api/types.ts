@@ -1261,6 +1261,10 @@ export interface VmMoveRun {
   source_node?: string | null;
   target_node: string;
   destination_csv_name?: string | null;
+  destination_smb_server?: string | null;
+  destination_smb_share?: string | null;
+  // CSV-Name oder \\server\share
+  destination_label?: string | null;
   progress_percent?: number | null;
   cancel_requested_at?: string | null;
   status: "running" | "succeeded" | "failed";
@@ -1270,8 +1274,12 @@ export interface VmMoveRun {
   steps: VmMoveRunStep[];
 }
 
+// Storage-Ziel: CSV oder (kind "smb") SMB3-Freigabe, name = \\server\share
 export interface VmStorageTargetCsv {
+  kind: "csv" | "smb";
   name: string;
+  smb_server?: string | null;
+  smb_share?: string | null;
   path?: string | null;
   capacity_bytes?: number | null;
   free_bytes?: number | null;

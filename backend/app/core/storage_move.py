@@ -7,7 +7,12 @@ C:\\ClusterStorage\\<Ziel-CSV>\\ abgebildet -- liegt die VM auf der Quelle
 in einem eigenen Ordner (z.B. ...\\VM01\\Virtual Hard Disks\\VM01.vhdx),
 entsteht auf dem Ziel exakt derselbe Ordner; liegt eine VHDX direkt im
 CSV-Stamm, landet sie auch auf dem Ziel direkt im Stamm. Reine Funktion
-ohne WinRM, damit sie isoliert pruefbar ist."""
+ohne WinRM, damit sie isoliert pruefbar ist.
+
+Seit 2026-09-29 ist ein Ablageort entweder eine CSV
+(C:\\ClusterStorage\\<Name>) ODER eine SMB3-Freigabe (\\\\server\\share) --
+dieselbe 1:1-Abbildung gilt in alle Richtungen (CSV->SMB, SMB->CSV,
+SMB->SMB), die Freigabe-Wurzel spielt die Rolle des CSV-Stamms."""
 
 import re
 from dataclasses import dataclass, field
@@ -16,6 +21,7 @@ from ntpath import join as win_join
 from app.services.hyperv_service import VmStorageLayout
 
 _CSV_PATH_RE = re.compile(r"^(?P<root>[A-Za-z]:\\ClusterStorage\\[^\\]+)(?P<rest>\\.*)?$", re.IGNORECASE)
+_UNC_PATH_RE = re.compile(r"^(?P<root>\\\\[^\\]+\\[^\\]+)(?P<rest>\\.*)?$")
 
 
 def split_csv_path(path: str | None) -> tuple[str, str] | None:
@@ -27,6 +33,22 @@ def split_csv_path(path: str | None) -> tuple[str, str] | None:
     if not match:
         return None
     return match.group("root"), match.group("rest") or ""
+
+
+def split_storage_path(path: str | None) -> tuple[str, str] | None:
+    """Wie split_csv_path, akzeptiert zusaetzlich einen UNC-Pfad auf eine
+    SMB3-Freigabe: ('\\\\srv\\share', '\\VM01\\disk.vhdx')."""
+    parts = split_csv_path(path)
+    if parts is not None or not path:
+        return parts
+    match = _UNC_PATH_RE.match(path.strip().rstrip("\\"))
+    if not match:
+        return None
+    return match.group("root"), match.group("rest") or ""
+
+
+def is_unc(path: str | None) -> bool:
+    return bool(path) and path.startswith("\\\\")
 
 
 def _same(a: str, b: str) -> bool:
@@ -60,8 +82,9 @@ class StorageMovePlan:
 
 
 def plan_storage_move(layout: VmStorageLayout, destination_root: str) -> StorageMovePlan:
-    """Bildet alle Ablageorte der VM auf die Ziel-CSV ab. Bereits auf der
-    Ziel-CSV liegende Orte bleiben unangetastet. Blockierende Gruende
+    """Bildet alle Ablageorte der VM auf das Ziel ab (CSV-Stamm oder
+    Freigabe-Wurzel, siehe split_storage_path). Bereits am Ziel liegende
+    Orte bleiben unangetastet. Blockierende Gruende
     (Checkpoints, AVHDX, Pfade ausserhalb einer CSV, doppelte Zielpfade)
     landen in plan.errors -- der Aufrufer bricht dann VOR dem Move ab."""
     plan = StorageMovePlan()
@@ -76,9 +99,11 @@ def plan_storage_move(layout: VmStorageLayout, destination_root: str) -> Storage
     def _map(path: str | None, label: str) -> str | None:
         if not path:
             return None
-        parts = split_csv_path(path)
+        parts = split_storage_path(path)
         if parts is None:
-            plan.errors.append(f"{label} liegt nicht auf einer CSV ({path}) -- wird von der Verschiebung nicht unterstützt.")
+            plan.errors.append(
+                f"{label} liegt weder auf einer CSV noch auf einer SMB3-Freigabe ({path}) -- wird von der Verschiebung nicht unterstützt."
+            )
             return None
         root, rest = parts
         if _same(root, dest_root):
@@ -113,7 +138,7 @@ def plan_storage_move(layout: VmStorageLayout, destination_root: str) -> Storage
     plan.smart_paging_file_path = _map(layout.smart_paging_file_path, "Der Smart-Paging-Ordner")
 
     if not plan.errors and plan.is_empty:
-        plan.errors.append("Alle Dateien der VM liegen bereits auf der Ziel-CSV.")
+        plan.errors.append("Alle Dateien der VM liegen bereits am Ziel.")
     return plan
 
 

@@ -1,8 +1,10 @@
 """VM verschieben ueber die App (Nutzer-Vorgabe 2026-09-25), als Aktion in
 Inventory > VMs. Stufe 1: Host-Move per Live-Migration innerhalb des
 Failover-Clusters. Stufe 2: Storage-Move per Move-VMStorage auf eine andere
-CSV, Ordnerstruktur der Quelle bleibt erhalten (app.core.storage_move),
-mit Fortschritt, Abbruch und Warnung bei geaendertem Backup-Schutz.
+CSV oder (seit 2026-09-29) von/zu einer SMB3-Freigabe, Ordnerstruktur der
+Quelle bleibt erhalten (app.core.storage_move), mit Fortschritt, Abbruch und
+Warnung bei geaendertem Backup-Schutz. Ist eine Freigabe beteiligt, laufen
+Kollisionspruefung und Move ueber eine gezielte CredSSP-Sitzung (Double-Hop).
 
 Sperren (in beide Richtungen, siehe [[feedback_live_vm_testing]] fuer den
 Vorfall, bei dem eine Ueberschneidung mit einem Backup einen Checkpoint
@@ -27,18 +29,23 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _get_vm_settled, _refresh_csv_rows
+from app.api.routes.hyperv_clusters import (
+    _apply_vm_discovery_refresh,
+    _get_vm_settled,
+    _refresh_csv_rows,
+    _refresh_smb_share_rows,
+)
 from app.api.routes.restore import _restore_settings, _StepCtx
 from app.api.routes.vms import _annotate_vm
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.core.sites import SiteResolver, normalize_node_name, vhds_by_vm_uuid
-from app.core.storage_move import plan_storage_move, verify_storage_move
+from app.core.storage_move import is_unc, plan_storage_move, verify_storage_move
 from app.db.session import SessionLocal, get_db
 from app.models.backup_run import BackupRun, JobStatus
 from app.models.hyperv_cluster import HyperVCluster
-from app.models.hyperv_discovery import HyperVCsv, HyperVVhd, HyperVVm
+from app.models.hyperv_discovery import HyperVCsv, HyperVSmbShare, HyperVVhd, HyperVVm
 from app.models.resource_group import ResourceGroup
 from app.models.restore_run import RestoreStatus
 from app.models.system_log import SystemLogEvent
@@ -68,6 +75,10 @@ class VmMoveRunRead(BaseModel):
     source_node: str | None = None
     target_node: str
     destination_csv_name: str | None = None
+    destination_smb_server: str | None = None
+    destination_smb_share: str | None = None
+    # CSV-Name oder \\\\server\\share
+    destination_label: str | None = None
     progress_percent: int | None = None
     cancel_requested_at: datetime | None = None
     status: str
@@ -433,15 +444,23 @@ def start_host_move(
 class StorageMoveRequest(BaseModel):
     cluster_id: str
     vm_name: str = Field(min_length=1)
-    destination_csv_name: str = Field(min_length=1)
+    # Name des Ziels aus StorageTargetsRead.csvs: CSV-Name oder, fuer eine
+    # SMB3-Freigabe, der UNC-Pfad \\\\server\\share.
+    destination_name: str = Field(min_length=1)
     # Pflicht, sobald sich der Backup-Schutz der VM durch den Move aendert
     # (protection_change != 'same') -- der Dialog zeigt die Warnung vorher.
     acknowledge_protection_change: bool = False
 
 
 class StorageTargetCsv(BaseModel):
+    """Ein moegliches Storage-Ziel -- trotz des (historischen) Namens auch
+    eine SMB3-Freigabe (kind='smb', name = \\\\server\\share)."""
+
+    kind: str = "csv"
     name: str
     path: str | None = None
+    smb_server: str | None = None
+    smb_share: str | None = None
     capacity_bytes: int | None = None
     free_bytes: int | None = None
     # Platz, den die VM auf DIESER CSV zusaetzlich belegen wuerde, wenn sie
@@ -464,6 +483,7 @@ class StorageTargetCsv(BaseModel):
 
 class StorageTargetsRead(BaseModel):
     vm_name: str
+    # Aktuelle Ablageorte: CSV-Namen und/oder \\\\server\\share
     current_csvs: list[str]
     host_site: SiteBadge | None = None
     required_bytes: int
@@ -483,8 +503,6 @@ def _storage_blocked_reason(db: Session, vm: HyperVVm, vhds: list[HyperVVhd]) ->
     reason = _blocked_reason(db, vm)
     if reason:
         return reason
-    if any(v.smb_server for v in vhds):
-        return "Die VM liegt (teilweise) auf einer SMB3-Freigabe -- Storage-Move wird bisher nur zwischen CSVs unterstützt."
     if vm.checkpoints:
         return (
             f"Die VM hat {len(vm.checkpoints)} Checkpoint(s). Bitte vorher entfernen bzw. zusammenführen, "
@@ -497,13 +515,15 @@ def _storage_blocked_reason(db: Session, vm: HyperVVm, vhds: list[HyperVVhd]) ->
     return None
 
 
-def _protection_for(vm: HyperVVm, csv_names: list[str], groups: list[ResourceGroup]) -> list[str]:
-    """Protection Groups, die die VM haette, wenn ihre Disks auf genau
-    diesen CSVs laegen -- dieselbe Logik wie im Inventory (_annotate_vm:
-    direkte VM-Mitgliedschaft ODER indirekt ueber eine CSV-Group)."""
+def _protection_for(vm: HyperVVm, locations: list[str], groups: list[ResourceGroup]) -> list[str]:
+    """Protection Groups, die die VM haette, wenn ihre Disks an genau diesen
+    Orten laegen (CSV-Namen und/oder \\\\server\\share) -- dieselbe Logik wie
+    im Inventory (_annotate_vm: direkte VM-Mitgliedschaft ODER indirekt
+    ueber eine CSV- bzw. SMB3-Group)."""
     probe = VmRead(
         id=vm.id, name=vm.name, state=vm.state or "", host=vm.host_name or "", cluster_id=vm.cluster_id,
-        csv_paths=[f"C:\\ClusterStorage\\{n}" for n in csv_names],
+        csv_paths=[f"C:\\ClusterStorage\\{n}" for n in locations if not is_unc(n)],
+        smb_share_paths=[n for n in locations if is_unc(n)],
     )
     return _annotate_vm(probe, groups).resource_group_names
 
@@ -520,23 +540,23 @@ def get_storage_targets(
     vm = _get_vm_or_404(db, cluster_id, vm_name)
     live_usage, usage_note = _live_csv_usage(db, cluster_id)
     vhds = [v for v in db.query(HyperVVhd).filter(HyperVVhd.cluster_id == cluster_id, HyperVVhd.vm_uuid == vm.vm_uuid).all()] if vm.vm_uuid else []
-    current_csvs = sorted({v.csv_name for v in vhds if v.csv_name})
+    current = sorted({_vhd_location(v) for v in vhds if _vhd_location(v)})
+    current_keys = {c.lower() for c in current}
     groups = db.query(ResourceGroup).all()
-    groups_now = _protection_for(vm, current_csvs, groups)
+    groups_now = _protection_for(vm, current, groups)
     resolver = SiteResolver(db)
     # Belegter Platz der Disks (Basis-VHDX bei AVHDX); bei dynamischen Disks
     # die tatsaechliche Dateigroesse, nicht die Maximalgroesse.
-    required = sum((v.base_used_bytes or v.used_bytes or v.size_bytes or 0) for v in vhds)
+    required = sum(_vhd_bytes(v) for v in vhds)
 
-    csvs: list[StorageTargetCsv] = []
-    for csv in db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).order_by(HyperVCsv.name).all():
-        is_current = bool(current_csvs) and current_csvs == [csv.name]
-        capacity, used = live_usage.get(csv.name, (csv.capacity_bytes, csv.used_bytes))
+    def _target(kind: str, name: str, capacity: int | None, used: int | None, site, **extra) -> StorageTargetCsv:
+        key = name.lower()
+        is_current = current_keys == {key}
         free = (capacity - used) if capacity is not None and used is not None else None
-        # Nur der Anteil, der tatsaechlich auf diese CSV wandert, zaehlt.
-        needed = sum((v.base_used_bytes or v.used_bytes or v.size_bytes or 0) for v in vhds if v.csv_name != csv.name)
-        freed = sum((v.base_used_bytes or v.used_bytes or v.size_bytes or 0) for v in vhds if v.csv_name == csv.name)
-        groups_after = _protection_for(vm, [csv.name], groups)
+        # Nur der Anteil, der tatsaechlich an dieses Ziel wandert, zaehlt.
+        needed = sum(_vhd_bytes(v) for v in vhds if (_vhd_location(v) or "").lower() != key)
+        freed = sum(_vhd_bytes(v) for v in vhds if (_vhd_location(v) or "").lower() == key)
+        groups_after = _protection_for(vm, [name], groups)
         if set(groups_after) == set(groups_now):
             change = "same"
         elif not groups_after:
@@ -545,30 +565,55 @@ def get_storage_targets(
             change = "gained"
         else:
             change = "changed"
+        return StorageTargetCsv(
+            kind=kind, name=name, capacity_bytes=capacity, free_bytes=free, needed_bytes=needed, freed_bytes=freed,
+            free_after_bytes=(free - needed) if free is not None and not is_current else None,
+            site=SiteBadge.model_validate(site) if site else None, is_current=is_current,
+            # Reserve -- ein randvoll gelaufener Speicher legt alle VMs darauf lahm.
+            fits=free is None or free - needed >= _CSV_RESERVE_PERCENT * (capacity or 0) // 100,
+            protection_groups_after=groups_after, protection_change=change, **extra,
+        )
+
+    csvs: list[StorageTargetCsv] = []
+    for csv in db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).order_by(HyperVCsv.name).all():
+        capacity, used = live_usage.get(csv.name, (csv.capacity_bytes, csv.used_bytes))
         site, _ = resolver.csv_site(csv)
+        csvs.append(_target("csv", csv.name, capacity, used, site, path=csv.path))
+    # SMB3-Freigaben, die dieser Cluster bereits nutzt (Discovery-Stand; die
+    # Groesse ist die des NetApp-Volumes darunter, siehe _refresh_smb_share_rows).
+    for share in db.query(HyperVSmbShare).filter(HyperVSmbShare.cluster_id == cluster_id).order_by(HyperVSmbShare.server, HyperVSmbShare.share).all():
+        unc = f"\\\\{share.server}\\{share.share}"
         csvs.append(
-            StorageTargetCsv(
-                name=csv.name, path=csv.path, capacity_bytes=capacity, free_bytes=free,
-                needed_bytes=needed, freed_bytes=freed,
-                free_after_bytes=(free - needed) if free is not None and not is_current else None,
-                site=SiteBadge.model_validate(site) if site else None, is_current=is_current,
-                # Reserve -- eine randvoll gelaufene CSV legt alle VMs darauf lahm.
-                fits=free is None or free - needed >= _CSV_RESERVE_PERCENT * (capacity or 0) // 100,
-                protection_groups_after=groups_after, protection_change=change,
+            _target(
+                "smb", unc, share.capacity_bytes, share.used_bytes, resolver.smb_share_site(share),
+                path=unc, smb_server=share.server, smb_share=share.share,
             )
         )
 
     host_site = resolver.node_site(cluster_id, vm.host_name)
     recommended, reason = _recommend_csv(csvs, host_site.id if host_site else None)
     return StorageTargetsRead(
-        vm_name=vm.name, current_csvs=current_csvs,
+        vm_name=vm.name, current_csvs=current,
         host_site=SiteBadge.model_validate(host_site) if host_site else None,
         required_bytes=required, protection_groups_now=groups_now, csvs=csvs,
         usage_live=bool(live_usage), usage_note=usage_note,
-        reserve_hint=f"{_CSV_RESERVE_PERCENT} % der CSV-Kapazität",
+        reserve_hint=f"{_CSV_RESERVE_PERCENT} % der Kapazität",
         recommended_csv=recommended, recommended_reason=reason,
         blocked_reason=_storage_blocked_reason(db, vm, vhds),
     )
+
+
+def _vhd_location(vhd: HyperVVhd) -> str | None:
+    """Ablageort einer VHD als Ziel-Name: CSV-Name oder \\\\server\\share."""
+    if vhd.csv_name:
+        return vhd.csv_name
+    if vhd.smb_server and vhd.smb_share:
+        return f"\\\\{vhd.smb_server}\\{vhd.smb_share}"
+    return None
+
+
+def _vhd_bytes(vhd: HyperVVhd) -> int:
+    return vhd.base_used_bytes or vhd.used_bytes or vhd.size_bytes or 0
 
 
 _CSV_RESERVE_PERCENT = 10
@@ -592,18 +637,23 @@ def _live_csv_usage(db: Session, cluster_id: str) -> tuple[dict[str, tuple[int, 
 
 
 def _recommend_csv(csvs: list[StorageTargetCsv], host_site_id: str | None) -> tuple[str | None, str | None]:
-    """Empfohlene Ziel-CSV: nicht die aktuelle, genug Platz, und -- falls der
-    Host-Standort bekannt ist -- NUR am Standort des Hosts. Darunter zuerst
-    eine CSV, auf der sich der Backup-Schutz nicht aendert, dann die mit dem
-    meisten freien Platz."""
+    """Empfohlenes Ziel (CSV oder SMB3-Freigabe): nicht das aktuelle, genug
+    Platz, und -- falls der Host-Standort bekannt ist -- NUR am Standort des
+    Hosts. Darunter zuerst eines, bei dem der Backup-Schutz gleich bleibt,
+    dann eines mit anderem Schutz, zuletzt eines ohne; bei Gleichstand das
+    mit dem meisten freien Platz."""
     candidates = [c for c in csvs if not c.is_current and c.fits]
     if host_site_id:
         candidates = [c for c in candidates if c.site and c.site.id == host_site_id]
         if not candidates:
-            return None, "Keine CSV mit genug Platz am Standort des Hosts."
+            return None, "Kein Ziel mit genug Platz am Standort des Hosts."
     if not candidates:
-        return None, "Keine CSV mit genug freiem Platz."
-    best = max(candidates, key=lambda c: (c.protection_change in ("same", "gained"), c.free_after_bytes or 0))
+        return None, "Kein Ziel mit genug freiem Platz."
+    # Schutz bleibt/kommt hinzu vor "anderes Profil" vor "danach ungeschuetzt"
+    # -- sonst gewann bei lauter Schutzwechseln einfach das Ziel mit dem
+    # meisten Platz, auch wenn die VM dort ungeschuetzt waere.
+    protection_rank = {"same": 2, "gained": 2, "changed": 1, "lost": 0}
+    best = max(candidates, key=lambda c: (protection_rank.get(c.protection_change, 0), c.free_after_bytes or 0))
     parts = []
     if host_site_id and best.site:
         parts.append(f"gleicher Standort wie der Host ({best.site.name})")
@@ -622,11 +672,11 @@ def start_storage_move(
     targets = get_storage_targets(payload.cluster_id, payload.vm_name, db, user)
     if targets.blocked_reason:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=targets.blocked_reason)
-    destination = next((c for c in targets.csvs if c.name == payload.destination_csv_name), None)
+    destination = next((c for c in targets.csvs if c.name.lower() == payload.destination_name.lower()), None)
     if destination is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"CSV '{payload.destination_csv_name}' nicht gefunden")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ziel '{payload.destination_name}' nicht gefunden")
     if destination.is_current:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Die VM liegt bereits vollständig auf dieser CSV")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Die VM liegt bereits vollständig an diesem Ziel")
     if not destination.fits:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Zu wenig freier Platz auf '{destination.name}' (10 % Reserve)")
     if destination.protection_change != "same" and not payload.acknowledge_protection_change:
@@ -639,7 +689,10 @@ def start_storage_move(
         hyperv_cluster_id=payload.cluster_id, vm_name=vm.name, vm_uuid=vm.vm_uuid, move_type="storage",
         # Storage-Moves laufen auf dem Owner-Knoten -- im Vorab-Check live
         # aktualisiert, hier nur der Discovery-Stand als Startwert.
-        target_node=vm.host_name or "?", destination_csv_name=destination.name,
+        target_node=vm.host_name or "?",
+        destination_csv_name=destination.name if destination.kind == "csv" else None,
+        destination_smb_server=destination.smb_server if destination.kind == "smb" else None,
+        destination_smb_share=destination.smb_share if destination.kind == "smb" else None,
         requested_by=user.display_name or user.username, status=RestoreStatus.RUNNING,
         started_at=datetime.now(timezone.utc),
     )
@@ -682,11 +735,15 @@ def _execute_storage_move(run_id: str) -> None:  # noqa: C901
                 cluster = db.get(HyperVCluster, run.hyperv_cluster_id)
                 if cluster is None:
                     raise RuntimeError("Hyper-V-Cluster nicht gefunden")
-                dest_csv = db.query(HyperVCsv).filter(
-                    HyperVCsv.cluster_id == run.hyperv_cluster_id, HyperVCsv.name == run.destination_csv_name,
-                ).first()
-                if dest_csv is None or not dest_csv.path:
-                    raise RuntimeError(f"Ziel-CSV '{run.destination_csv_name}' (bzw. ihr Pfad) nicht gefunden -- Discovery ausführen")
+                if run.destination_smb_server and run.destination_smb_share:
+                    destination_root = run.destination_label
+                else:
+                    dest_csv = db.query(HyperVCsv).filter(
+                        HyperVCsv.cluster_id == run.hyperv_cluster_id, HyperVCsv.name == run.destination_csv_name,
+                    ).first()
+                    if dest_csv is None or not dest_csv.path:
+                        raise RuntimeError(f"Ziel-CSV '{run.destination_csv_name}' (bzw. ihr Pfad) nicht gefunden -- Discovery ausführen")
+                    destination_root = dest_csv.path
                 password = decrypt_secret(cluster.encrypted_password)
                 # Kerberos -> NTLM wie bei Restore/Recreate: Aenderungen an den
                 # Datentraegern einer geclusterten VM loesen intern ein
@@ -706,15 +763,36 @@ def _execute_storage_move(run_id: str) -> None:  # noqa: C901
 
             with _StepCtx(db, run.id, "plan", "Ablageorte lesen und Zielpfade planen", step_model=VmMoveRunStep) as ctx:
                 layout = node.get_vm_storage_layout(node_session, run.vm_name)
-                plan = plan_storage_move(layout, dest_csv.path)
+                plan = plan_storage_move(layout, destination_root)
                 if plan.errors:
                     raise RuntimeError(" ".join(plan.errors))
-                collisions = node.existing_paths(node_session, plan.collision_candidates)
+                # Liegt Quelle oder Ziel auf einer SMB3-Freigabe, greift Hyper-V
+                # (VMMS) im Namen des Aufrufers auf die Freigabe zu -- ein echter
+                # Double-Hop, den weder NTLM noch Kerberos ohne Delegation
+                # erlauben. Wie beim SMB3-Restore (_execute_smb_restore_add)
+                # deshalb gezielt eine CredSSP-Sitzung NUR fuer Kollisions-
+                # pruefung und Move; Fortschritt/Abbruch laufen lokal per WMI.
+                touched = [p for pair in plan.vhd_moves for p in pair] + [
+                    p for p in (
+                        layout.configuration_location, layout.snapshot_file_location, layout.smart_paging_file_path,
+                        plan.virtual_machine_path, plan.snapshot_file_path, plan.smart_paging_file_path,
+                    ) if p
+                ]
+                uses_smb = any(is_unc(p) for p in touched)
+                if uses_smb:
+                    credssp_settings = copy.copy(settings)
+                    credssp_settings.winrm_transport = "credssp"
+                    move_service = HyperVService(credssp_settings, node_address, use_https=cluster.use_https, node_hostname=owner)
+                else:
+                    move_service = node
+                collisions = move_service.existing_paths(
+                    move_service.connect(cluster.username, password) if uses_smb else node_session, plan.collision_candidates,
+                )
                 if collisions:
                     raise RuntimeError(f"Am Ziel existieren bereits: {', '.join(collisions)}")
-                ctx.row.message = plan.summary()[:2000]
+                ctx.row.message = (plan.summary() + (" (SMB3: CredSSP)" if uses_smb else ""))[:2000]
 
-            with _StepCtx(db, run.id, "move", f"Dateien nach '{run.destination_csv_name}' verschieben", step_model=VmMoveRunStep) as ctx:
+            with _StepCtx(db, run.id, "move", f"Dateien nach '{run.destination_label}' verschieben", step_model=VmMoveRunStep) as ctx:
                 started = time.monotonic()
                 box: dict = {}
 
@@ -723,8 +801,8 @@ def _execute_storage_move(run_id: str) -> None:  # noqa: C901
                     # Fortschritts-Abfragen unten laufen parallel ueber
                     # node_session.
                     try:
-                        move_session = node.connect(cluster.username, password, read_timeout_sec=90, operation_timeout_sec=60)
-                        box["result"] = node.move_vm_storage(
+                        move_session = move_service.connect(cluster.username, password, read_timeout_sec=90, operation_timeout_sec=60)
+                        box["result"] = move_service.move_vm_storage(
                             move_session, run.vm_name,
                             virtual_machine_path=plan.virtual_machine_path, snapshot_file_path=plan.snapshot_file_path,
                             smart_paging_file_path=plan.smart_paging_file_path, vhd_moves=plan.vhd_moves,
@@ -777,7 +855,7 @@ def _execute_storage_move(run_id: str) -> None:  # noqa: C901
                     raise RuntimeError(f"{command_error or 'Verschiebung unvollständig'} -- {'; '.join(problems)}")
                 run.progress_percent = 100
                 note = f" (Move-VMStorage meldete trotzdem: {command_error})" if command_error else ""
-                ctx.row.message = f"Alle Dateien auf '{run.destination_csv_name}', Dauer {duration // 60} min {duration % 60} s{note}"[:2000]
+                ctx.row.message = f"Alle Dateien auf '{run.destination_label}', Dauer {duration // 60} min {duration % 60} s{note}"[:2000]
 
             with _StepCtx(db, run.id, "update-inventory", "Inventory aktualisieren", step_model=VmMoveRunStep) as ctx:
                 # Best-effort: die Dateien liegen bereits am Ziel, ein Fehler
@@ -790,7 +868,14 @@ def _execute_storage_move(run_id: str) -> None:  # noqa: C901
                     if refreshed is not None and vm_fresh is not None:
                         _apply_vm_discovery_refresh(db, run.hyperv_cluster_id, vm_fresh, refreshed)
                     _refresh_csv_rows(db, run.hyperv_cluster_id, cno.list_csvs(cno_session))
-                    ctx.row.message = "VM und CSV-Belegung aktualisiert"
+                    # SMB3-Freigaben werden aus den VHD-Zeilen des ganzen
+                    # Clusters abgeleitet -- nach dem Move ggf. eine neue
+                    # Freigabe bzw. eine, die keine VM mehr traegt.
+                    _refresh_smb_share_rows(
+                        db, run.hyperv_cluster_id,
+                        db.query(HyperVVhd).filter(HyperVVhd.cluster_id == run.hyperv_cluster_id).all(),
+                    )
+                    ctx.row.message = "VM, CSV- und SMB3-Belegung aktualisiert"
                 except Exception as exc:  # noqa: BLE001
                     db.rollback()
                     ctx.row.message = f"Aktualisierung fehlgeschlagen (Move war erfolgreich, nächste Discovery korrigiert es): {exc}"
@@ -798,7 +883,7 @@ def _execute_storage_move(run_id: str) -> None:  # noqa: C901
             run.status = RestoreStatus.SUCCEEDED
             run.finished_at = datetime.now(timezone.utc)
             db.commit()
-            _log(db, f"Storage von VM '{run.vm_name}' nach CSV '{run.destination_csv_name}' verschoben (durch {run.requested_by})")
+            _log(db, f"Storage von VM '{run.vm_name}' nach '{run.destination_label}' verschoben (durch {run.requested_by})")
         except Exception as exc:
             db.rollback()
             run = db.get(VmMoveRun, run_id)
@@ -807,7 +892,7 @@ def _execute_storage_move(run_id: str) -> None:  # noqa: C901
             run.finished_at = datetime.now(timezone.utc)
             db.commit()
             _log(
-                db, f"Storage-Move von VM '{run.vm_name}' nach CSV '{run.destination_csv_name}' fehlgeschlagen: {exc} "
+                db, f"Storage-Move von VM '{run.vm_name}' nach '{run.destination_label}' fehlgeschlagen: {exc} "
                 f"(durch {run.requested_by})", level="ERROR",
             )
     finally:

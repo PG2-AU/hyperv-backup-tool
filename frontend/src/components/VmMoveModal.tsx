@@ -22,6 +22,7 @@ import {
   IconArrowLeft,
   IconCheck,
   IconDatabase,
+  IconInfoCircle,
   IconMinus,
   IconRefresh,
   IconServer,
@@ -210,7 +211,7 @@ export function VmMoveModal({ opened, onClose, vm, fixSiteMismatch = false }: Vm
           {run?.status === "succeeded" && (
             <Alert icon={<IconCheck size={16} />} color="green" variant="light">
               {run.move_type === "storage"
-                ? `Alle Dateien der VM liegen jetzt auf ${run.destination_csv_name}.`
+                ? `Alle Dateien der VM liegen jetzt auf ${run.destination_label ?? run.destination_csv_name}.`
                 : `VM läuft jetzt auf ${run.target_node}.`}
             </Alert>
           )}
@@ -415,7 +416,7 @@ const PROTECTION_CHANGE_TEXT: Record<VmStorageTargetCsv["protection_change"], st
   same: "",
   lost: "Die VM ist danach durch KEINE Protection Group mehr geschützt.",
   changed: "Die VM wird danach durch andere Protection Groups gesichert.",
-  gained: "Die VM wird danach zusätzlich durch eine CSV-Protection-Group gesichert.",
+  gained: "Die VM wird danach zusätzlich durch eine CSV- bzw. SMB3-Protection-Group gesichert.",
 };
 
 function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProps) {
@@ -444,7 +445,7 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
       .mutateAsync({
         cluster_id: vm.cluster_id,
         vm_name: vm.name,
-        destination_csv_name: destination,
+        destination_name: destination,
         acknowledge_protection_change: acknowledged,
       })
       .then((started) => onStarted(started.id))
@@ -460,13 +461,13 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
   return (
     <Stack gap="sm">
       <Text size="sm" c="dimmed">
-        Verschiebt Konfiguration und Festplatten der VM im laufenden Betrieb auf eine andere CSV. Die Ordnerstruktur bleibt dabei
-        erhalten (z.B. ...\Volume1\VM01\… → ...\Volume2\VM01\…). Der Host ändert sich nicht.
+        Verschiebt Konfiguration und Festplatten der VM im laufenden Betrieb auf eine andere CSV oder SMB3-Freigabe. Die
+        Ordnerstruktur bleibt dabei erhalten (z.B. ...\Volume1\VM01\… → \\server\share\VM01\…). Der Host ändert sich nicht.
       </Text>
       {isLoading && <Loader size="xs" />}
       {error && (
         <Alert color="red" icon={<IconX size={16} />}>
-          {apiErrorMessage(error, "Ziel-CSVs konnten nicht ermittelt werden.")}
+          {apiErrorMessage(error, "Mögliche Ziele konnten nicht ermittelt werden.")}
         </Alert>
       )}
       {targets && (
@@ -490,8 +491,9 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
             {targets.protection_groups_now.length > 0 ? targets.protection_groups_now.join(", ") : "keine Protection Group"}
           </Text>
           <Text size="xs" c={targets.usage_note ? "orange" : "dimmed"}>
-            Platzbedarf der VM: {formatBytes(targets.required_bytes)} · Reserve auf der Ziel-CSV: {targets.reserve_hint} ·{" "}
-            {targets.usage_note ?? (targets.usage_live ? "Belegung live abgefragt" : "Belegung laut letzter Discovery")}
+            Platzbedarf der VM: {formatBytes(targets.required_bytes)} · Reserve am Ziel: {targets.reserve_hint} ·{" "}
+            {targets.usage_note ?? (targets.usage_live ? "CSV-Belegung live abgefragt" : "Belegung laut letzter Discovery")}
+            {targets.csvs.some((c) => c.kind === "smb") ? " · SMB3-Belegung laut letzter Discovery" : ""}
           </Text>
           {targets.recommended_csv ? (
             <Text size="xs">
@@ -510,7 +512,7 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
               {targets.blocked_reason}
             </Alert>
           )}
-          <Radio.Group label="Ziel-CSV" value={destination} onChange={setDestination}>
+          <Radio.Group label="Ziel (CSV oder SMB3-Freigabe)" value={destination} onChange={setDestination}>
             <Stack gap={6} mt={6}>
               {targets.csvs.map((csv) => {
                 const matchesHost = !!csv.site && !!targets.host_site && csv.site.id === targets.host_site.id;
@@ -525,6 +527,11 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
                       <Stack gap={2}>
                         <Group gap={6} wrap="wrap">
                           <Text size="sm">{csv.name}</Text>
+                          {csv.kind === "smb" && (
+                            <Badge size="sm" variant="light" color="grape">
+                              SMB3
+                            </Badge>
+                          )}
                           {csv.name === targets.recommended_csv && (
                             <Badge size="sm" variant="filled" color="green">
                               Empfohlen
@@ -570,6 +577,15 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
               })}
             </Stack>
           </Radio.Group>
+          {selected && (selected.kind === "smb" || targets.current_csvs.some((c) => c.startsWith("\\\\"))) && (
+            <Alert color="blue" variant="light" icon={<IconInfoCircle size={16} />}>
+              <Text size="xs">
+                SMB3 im Spiel: Hyper-V greift beim Verschieben im Namen des App-Kontos auf die Freigabe zu, die App nutzt dafür
+                eine CredSSP-Verbindung zum Host. Die Computerkonten aller Hyper-V-Knoten und das Cluster-Konto brauchen
+                Vollzugriff auf die Freigabe (Freigabe- und NTFS-Rechte), sonst scheitert der Move mit „Zugriff verweigert“.
+              </Text>
+            </Alert>
+          )}
           {selected && needsAck && (
             <Alert color={selected.protection_change === "lost" ? "red" : "yellow"} icon={<IconAlertTriangle size={16} />}>
               <Stack gap={6}>
@@ -578,7 +594,7 @@ function StorageMoveForm({ vm, opened, preselect, onStarted, onClose }: FormProp
                   Vorher: {targets.protection_groups_now.join(", ") || "keine"} · Nachher:{" "}
                   {selected.protection_groups_after.join(", ") || "keine"}
                 </Text>
-                <Text size="xs">Bestehende Wiederherstellungspunkte bleiben auf der bisherigen CSV und sind weiter nutzbar.</Text>
+                <Text size="xs">Bestehende Wiederherstellungspunkte bleiben am bisherigen Speicherort und sind weiter nutzbar.</Text>
                 <Checkbox
                   label="Verstanden, trotzdem verschieben"
                   checked={acknowledged}
@@ -705,9 +721,9 @@ function MoveTypeChoice({
     {
       mode: "storage",
       icon: <IconDatabase size={22} />,
-      title: "Storage (andere CSV)",
-      text: "Dateien der VM auf eine andere CSV, Ordnerstruktur bleibt erhalten. Dauert je nach VM-Größe, der Host bleibt gleich.",
-      query: "Fragt als Nächstes die Belegung aller CSVs ab.",
+      title: "Storage (CSV oder SMB3)",
+      text: "Dateien der VM auf eine andere CSV oder SMB3-Freigabe, Ordnerstruktur bleibt erhalten. Dauert je nach VM-Größe, der Host bleibt gleich.",
+      query: "Fragt als Nächstes die Belegung aller CSVs und SMB3-Freigaben ab.",
     },
   ];
   return (
