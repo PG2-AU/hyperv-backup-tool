@@ -1179,6 +1179,23 @@ class HyperVService:
             args.append(f"-Vhds @({tables})")
         return self._run_ps(node_session, f"Move-VMStorage {' '.join(args)} -ErrorAction Stop")
 
+    def update_cluster_vm_configuration(self, node_session: winrm.Session, vm_name: str) -> CommandResult:
+        """Gleicht die Cluster-Ressource "Virtual Machine Configuration" mit
+        der aktuellen VM-Konfiguration ab (wie "Konfiguration aktualisieren"
+        im Failover Cluster Manager). Move-VMStorage macht das selbst, scheitert
+        daran aber in einer CredSSP-Sitzung (SMB3-Move, live 2026-09-29:
+        "The Update-ClusterVirtualMachineConfiguration command could not be
+        completed", Dateien trotzdem korrekt verschoben) -- ueber eine normale
+        NTLM-Sitzung laeuft derselbe Abgleich sauber durch. Ausgabe
+        'notclustered' bei einer nicht geclusterten VM (dann nichts zu tun)."""
+        vm = vm_name.replace("'", "''")
+        return self._run_ps(
+            node_session,
+            f"$v = Get-VM -Name '{vm}' -ErrorAction Stop; "
+            "if (-not $v.IsClustered) { 'notclustered' } else { "
+            "Update-ClusterVirtualMachineConfiguration -VMId $v.Id -ErrorAction Stop | Out-Null; 'ok' }",
+        )
+
     def storage_move_progress(self, node_session: winrm.Session, vm_name: str, vm_uuid: str | None) -> int | None:
         """Fortschritt (0-100) eines laufenden Storage-Moves: bevorzugt ueber
         den WMI-Migrationsjob der VM (Msvm_MigrationJob, VirtualSystemName =

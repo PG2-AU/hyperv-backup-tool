@@ -854,8 +854,35 @@ def _execute_storage_move(run_id: str) -> None:  # noqa: C901
                         )
                     raise RuntimeError(f"{command_error or 'Verschiebung unvollständig'} -- {'; '.join(problems)}")
                 run.progress_percent = 100
-                note = f" (Move-VMStorage meldete trotzdem: {command_error})" if command_error else ""
+                # Bekannter Fall bei SMB3 (CredSSP): nur der abschliessende
+                # Cluster-Abgleich scheiterte -- holt der naechste Schritt nach.
+                if command_error and "Update-ClusterVirtualMachineConfiguration" in command_error:
+                    note = " (Cluster-Abgleich durch Move-VMStorage fehlgeschlagen, wird im nächsten Schritt nachgeholt)"
+                else:
+                    note = f" (Move-VMStorage meldete trotzdem: {command_error})" if command_error else ""
                 ctx.row.message = f"Alle Dateien auf '{run.destination_label}', Dauer {duration // 60} min {duration % 60} s{note}"[:2000]
+
+            with _StepCtx(db, run.id, "cluster-config", "Cluster-Konfiguration der VM abgleichen", step_model=VmMoveRunStep) as ctx:
+                # Immer explizit ueber die normale (NTLM-)Sitzung nachziehen --
+                # Move-VMStorage versucht das zwar selbst, scheitert daran aber
+                # in der CredSSP-Sitzung eines SMB3-Moves (siehe
+                # update_cluster_vm_configuration). Best-effort: die Dateien
+                # liegen bereits korrekt am Ziel, ein Fehler hier wird nur
+                # gemeldet (der Cluster-Pfad selbst stimmte laut Live-Pruefung
+                # auch ohne den Abgleich bereits).
+                try:
+                    result = node.update_cluster_vm_configuration(node_session, run.vm_name)
+                    if not result.success:
+                        ctx.row.message = (
+                            f"Abgleich fehlgeschlagen ({result.error[:300]}) -- im Failover Cluster Manager an der VM "
+                            "'Konfiguration aktualisieren' ausführen"
+                        )
+                    elif "notclustered" in result.output:
+                        ctx.row.message = "VM ist keine Cluster-Rolle, nichts abzugleichen"
+                    else:
+                        ctx.row.message = "Cluster kennt den neuen Ablageort"
+                except Exception as exc:  # noqa: BLE001
+                    ctx.row.message = f"Abgleich fehlgeschlagen ({exc}) -- im Failover Cluster Manager 'Konfiguration aktualisieren'"
 
             with _StepCtx(db, run.id, "update-inventory", "Inventory aktualisieren", step_model=VmMoveRunStep) as ctx:
                 # Best-effort: die Dateien liegen bereits am Ziel, ein Fehler
