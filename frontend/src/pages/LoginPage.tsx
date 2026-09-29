@@ -35,12 +35,15 @@ export function LoginPage() {
   }
 
   return (
-    <Container size={420} style={{ paddingTop: "12vh" }}>
+    <Container size={480} style={{ paddingTop: "12vh" }}>
       <Stack align="center" gap={4} mb="lg">
         <Box bg="white" px={16} py={10} mb={4} style={{ borderRadius: 8, lineHeight: 0 }}>
           <img src={logo} alt="Advanced Unibyte" height={40} style={{ display: "block" }} />
         </Box>
-        <Title order={2}>AU Storage Manager for Hyper-V</Title>
+        {/* U+2011 (geschuetzter Bindestrich): "Hyper-V" darf nie am Bindestrich umbrechen */}
+        <Title order={2} ta="center">
+          AU Storage Manager for Hyper‑V
+        </Title>
         <Text c="dimmed" size="sm">
           Anmelden mit lokalem Konto oder Active-Directory-Benutzer
         </Text>
