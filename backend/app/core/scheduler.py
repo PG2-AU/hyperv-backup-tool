@@ -1854,11 +1854,28 @@ def _cleanup_stuck_checkpoints() -> None:
         for run in candidates:
             try:
                 steps = db.query(BackupRunStep.step, BackupRunStep.status).filter(BackupRunStep.run_id == run.id).all()
-                created_vms = {
-                    step[len("checkpoint-create-") :]
+                create_status_by_vm = {
+                    step[len("checkpoint-create-") :]: step_status
                     for step, step_status in steps
-                    if step.startswith("checkpoint-create-") and step_status == RestoreStepStatus.SUCCESS
+                    if step.startswith("checkpoint-create-")
                 }
+                created_vms = {vm for vm, st in create_status_by_vm.items() if st == RestoreStepStatus.SUCCESS}
+                if create_status_by_vm and run.status == JobStatus.FAILED:
+                    # Lauf ist MITTEN in der Checkpoint-Phase abgestuerzt
+                    # (Exception im Haupt-Thread, live 2026-09-28): die
+                    # Knoten-Worker laufen beim Verlassen des ThreadPool-
+                    # Blocks noch zu Ende und erstellen weitere Checkpoints,
+                    # deren "start"/"done"-Meldungen nie mehr verarbeitet
+                    # werden -- es gibt fuer diese VMs gar keinen (oder nur
+                    # einen RUNNING-) Schritt. Daher hier ALLE VMs des Laufs
+                    # einbeziehen, ausser explizit uebersprungenen (dort
+                    # wurde sicher nichts erstellt). Entfernen ist
+                    # idempotent, siehe Docstring.
+                    created_vms |= {
+                        vm_name
+                        for (vm_name,) in db.query(BackupRunVmConfig.vm_name).filter(BackupRunVmConfig.run_id == run.id)
+                        if create_status_by_vm.get(vm_name) != RestoreStepStatus.SKIPPED
+                    }
                 if not created_vms:
                     run.checkpoint_cleanup_at = datetime.now(timezone.utc)
                     db.commit()
@@ -1952,7 +1969,15 @@ def _cleanup_stuck_checkpoints() -> None:
                         node_service, node_session = node_sessions[node_key]
                         try:
                             result = node_service.remove_checkpoint(node_session, vm_name, checkpoint_name)
-                            if result.success or "cannot find" in (result.error or "").lower():
+                            # "Nicht vorhanden" zaehlt als Erfolg -- seit der Einbeziehung
+                            # aller VMs eines abgestuerzten Laufs (siehe oben) der
+                            # Normalfall fuer VMs, deren Worker nie so weit kam.
+                            # Remove-VMSnapshot meldet das je nach Version/Sprache
+                            # unterschiedlich ("Unable to find a snapshot matching ...").
+                            error_lower = (result.error or "").lower()
+                            if result.success or any(
+                                marker in error_lower for marker in ("cannot find", "unable to find", "nicht gefunden")
+                            ):
                                 _log(
                                     db,
                                     f"Checkpoint-Nachlese: '{checkpoint_name}' auf '{vm_name}' entfernt "

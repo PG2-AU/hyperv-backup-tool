@@ -30,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from ntpath import basename as win_basename
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -1288,7 +1289,16 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             clusters_by_name[c.name] = c
             if c.ontap_cluster_name:
                 clusters_by_name[c.ontap_cluster_name] = c
-        volumes_by_key = {(v.cluster_id, v.svm_name, v.name): v for v in db.query(NetAppVolume).all()}
+        # Nur die UUID als Skalarwert (siehe hyperv_vm_meta/hv_csvs_by_cluster
+        # unten): die NetApp-Discovery ersetzt NetAppVolume-Zeilen ebenfalls
+        # per delete+reinsert, eine ueber die Checkpoint-Phase gehaltene
+        # ORM-Instanz liefe sonst in denselben ObjectDeletedError.
+        volume_uuids_by_key = {
+            (cluster_id, svm_name, name): uuid
+            for cluster_id, svm_name, name, uuid in db.query(
+                NetAppVolume.cluster_id, NetAppVolume.svm_name, NetAppVolume.name, NetAppVolume.uuid
+            ).all()
+        }
         # Fuer den Checkpoint-Refresh unten (siehe [[avhdx-without-checkpoint-discovery-freeze]],
         # Teil 3) -- gleiche Form wie cluster_ids_by_name in _start_job_run.
         cluster_ids_by_name = {name: c.id for name, c in clusters_by_name.items()}
@@ -1407,9 +1417,23 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                 # Fuer die CSV-Verschiebungs-Erkennung unten (Umbenennungs-
                 # sicherer Abgleich Mount-Ordner -> echter CSV-Name, siehe
                 # _resolve_csv_name) -- einmal pro betroffenem Cluster, nicht
-                # pro VM/Checkpoint-Ergebnis.
-                hv_csvs_by_cluster: dict[str, list[HyperVCsv]] = {
-                    cluster_id: db.query(HyperVCsv).filter(HyperVCsv.cluster_id == cluster_id).all()
+                # pro VM/Checkpoint-Ergebnis. Nur Skalarwerte (name/path),
+                # KEINE HyperVCsv-ORM-Instanzen: dieselbe Falle wie bei
+                # hyperv_vm_meta oben -- jedes db.commit() der Checkpoint-
+                # Schleife expired die Instanzen, und ersetzt zwischendurch
+                # _refresh_csv_rows (CSV vergroessern, Restore, VM-Move,
+                # Discovery) alle CSV-Zeilen des Clusters, lief der naechste
+                # Attributzugriff ins Leere ("Instance '<HyperVCsv ...>' has
+                # been deleted") und brach den Lauf mitten in der Checkpoint-
+                # Phase ab (live 2026-09-28: Silver_CSV01 parallel zu "CSV
+                # vergroessern", ein verwaister Checkpoint auf win10client01).
+                hv_csvs_by_cluster: dict[str, list[SimpleNamespace]] = {
+                    cluster_id: [
+                        SimpleNamespace(name=name, path=path)
+                        for name, path in db.query(HyperVCsv.name, HyperVCsv.path)
+                        .filter(HyperVCsv.cluster_id == cluster_id)
+                        .all()
+                    ]
                     for cluster_id in vms_by_cluster
                 }
 
@@ -1664,9 +1688,9 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                 vm_names=sorted(v for v in target.vm_names if v not in not_captured_vm_names),
             )
             cluster = clusters_by_id.get(target.netapp_cluster_id)
-            volume = volumes_by_key.get((target.netapp_cluster_id, target.svm_name, target.volume_name))
-            if volume is not None:
-                row.volume_uuid = volume.uuid
+            volume_uuid = volume_uuids_by_key.get((target.netapp_cluster_id, target.svm_name, target.volume_name))
+            if volume_uuid is not None:
+                row.volume_uuid = volume_uuid
 
             target_label = target.volume_name or ", ".join(sorted(target.csv_names)) or "?"
 
