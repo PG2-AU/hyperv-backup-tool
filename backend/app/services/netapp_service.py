@@ -1185,7 +1185,7 @@ class NetAppOntapService:
         with self._connection():
             try:
                 volume = Volume(uuid=volume_uuid)
-                volume.get(fields="name,svm.name,space,aggregates,guarantee,autosize")
+                volume.get(fields="name,svm.name,space,aggregates,guarantee,autosize,nas.path")
                 luns = list(Lun.get_collection(**{"location.volume.uuid": volume_uuid}, fields="name,space.size"))
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"Volume konnte nicht gelesen werden: {exc}") from exc
@@ -1202,6 +1202,7 @@ class NetAppOntapService:
                 "snapshot_used_bytes": _get_nested(volume, "space.snapshot.used"),
                 "guarantee": _get_nested(volume, "guarantee.type"),
                 "autosize_mode": _get_nested(volume, "autosize.mode"),
+                "junction_path": _get_nested(volume, "nas.path"),
                 "aggregate_names": [n for n in (_get_nested(a, "name") for a in aggregates) if n],
                 "luns": [
                     {"name": _get_nested(l, "name"), "size_bytes": _get_nested(l, "space.size") or 0} for l in luns

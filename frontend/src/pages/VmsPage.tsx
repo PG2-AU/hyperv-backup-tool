@@ -44,6 +44,7 @@ import { SearchInput } from "@/components/SearchInput";
 import { SiteBadgeView } from "@/components/SiteBadge";
 import { VmMoveModal } from "@/components/VmMoveModal";
 import { CsvResizeModal } from "@/components/CsvResizeModal";
+import { SmbShareResizeModal } from "@/components/SmbShareResizeModal";
 import type { BackupScope, Csv, ResourceGroup, SmbShare, Vm } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
@@ -564,6 +565,9 @@ export function VmsPage() {
   const storageLocked = storageAccess ? !storageAccess.actions_enabled : false;
   const canResizeCsv = canManageHyperv && hasPermission("storage:manage") && !storageLocked;
   const [resizeCsv, setResizeCsv] = useState<Csv | null>(null);
+  // SMB3 vergroessern aendert nur das NetApp-Volume -- kein Hyper-V-Recht noetig.
+  const canResizeSmb = hasPermission("storage:manage") && !storageLocked;
+  const [resizeSmbShare, setResizeSmbShare] = useState<SmbShare | null>(null);
   const [params, setParams] = useSearchParams();
   const tabParam = params.get("tab");
   const activeTab = tabParam === "csv" ? "csv" : tabParam === "smb" ? "smb" : "vms";
@@ -1357,6 +1361,23 @@ export function VmsPage() {
                               <IconHistory size={16} />
                             </ActionIcon>
                           </Tooltip>
+                          <Tooltip
+                            label={
+                              storageLocked
+                                ? "Freigabe vergrößern -- Storage-Aktionen sind gesperrt (Settings > Storage)"
+                                : share.volume_name
+                                  ? "Freigabe vergrößern (NetApp-Volume)"
+                                  : "Freigabe vergrößern -- kein NetApp-Volume zugeordnet"
+                            }
+                          >
+                            <ActionIcon
+                              variant="light"
+                              disabled={!canResizeSmb || !share.cluster_id || !share.volume_name}
+                              onClick={() => setResizeSmbShare(share)}
+                            >
+                              <IconArrowAutofitWidth size={16} />
+                            </ActionIcon>
+                          </Tooltip>
                         </Group>
                       </Table.Td>
                     </Table.Tr>
@@ -1376,6 +1397,7 @@ export function VmsPage() {
       </Tabs>
 
       <CsvResizeModal opened={resizeCsv !== null} onClose={() => setResizeCsv(null)} csv={resizeCsv} />
+      <SmbShareResizeModal share={resizeSmbShare} onClose={() => setResizeSmbShare(null)} />
       <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} fixSiteMismatch={moveFixSite} />
       <BackupsModal
         opened={!!backupsTarget}

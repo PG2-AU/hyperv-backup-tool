@@ -297,14 +297,14 @@ function ResizeForm({
 
 // --- Berechnung -------------------------------------------------------------------
 
-interface Segment {
+export interface Segment {
   value: number;
   color: string;
   label: string;
   striped?: boolean;
 }
 
-interface BarModel {
+export interface BarModel {
   scale: number;
   segments: Segment[];
   // Position der bisherigen Groesse (Markierung), falls die neue groesser ist
@@ -479,7 +479,7 @@ function cssColor(mantine: string): string {
   return `var(--mantine-color-${name}-${shade ?? 6})`;
 }
 
-function UsageBar({ title, scale, segments, marker, summary, level = "ok" }: BarModel & { title: string }) {
+export function UsageBar({ title, scale, segments, marker, summary, level = "ok" }: BarModel & { title: string }) {
   const border =
     level === "error"
       ? "var(--mantine-color-red-6)"

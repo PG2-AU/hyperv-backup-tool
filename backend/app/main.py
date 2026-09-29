@@ -26,6 +26,7 @@ from app.api.routes import (
     search,
     settings as settings_routes,
     sites,
+    smb_resize,
     snapmirror_labels,
     storage,
     storage_access,
@@ -103,6 +104,7 @@ app.include_router(vm_moves.router)
 app.include_router(config_transfer.router)
 app.include_router(db_backup.router)
 app.include_router(csv_resize.router)
+app.include_router(smb_resize.router)
 
 
 @app.get("/api/health")
