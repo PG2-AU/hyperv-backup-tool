@@ -1554,3 +1554,94 @@ export interface CsvDeleteRun {
   finished_at?: string | null;
   steps: { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null }[];
 }
+
+// SMB3-Freigabe anlegen/loeschen (backend app.api.routes.smb_create/smb_delete).
+export interface SmbCreateHyperVOptions {
+  cluster_id: string;
+  domain: string;
+  accounts: { account: string; source: string }[];
+  existing_shares: string[];
+  busy_reason?: string | null;
+  warnings: string[];
+}
+
+export interface SmbCreateNetAppOptions {
+  netapp_cluster_id: string;
+  svms: { name: string; cifs_server: string }[];
+  aggregates: { name: string; state?: string | null; size_bytes?: number | null; available_bytes?: number | null }[];
+}
+
+export interface SmbCreatePayload {
+  cluster_id: string;
+  netapp_cluster_id: string;
+  svm_name: string;
+  aggregate_name: string | null;
+  volume_name: string;
+  share_name: string;
+  volume_size_bytes: number;
+  autosize_grow: boolean;
+  accounts: string[];
+  resource_group_id: string | null;
+}
+
+type RunStep = { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null };
+
+export interface SmbCreateRun {
+  id: string;
+  svm_name: string;
+  volume_name: string;
+  share_name: string;
+  volume_size_bytes: number;
+  cifs_server?: string | null;
+  unc_path?: string | null;
+  created_volume_uuid?: string | null;
+  share_created: boolean;
+  rollback_declined: boolean;
+  has_created_objects: boolean;
+  status: "running" | "succeeded" | "failed" | "cleaned_up";
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: RunStep[];
+}
+
+export interface SmbDeleteInfo {
+  cluster_id: string;
+  server: string;
+  share: string;
+  share_path?: string | null;
+  netapp_cluster_id: string;
+  netapp_cluster_name: string;
+  svm_name: string;
+  volume_uuid: string;
+  volume_name: string;
+  volume_size_bytes: number;
+  used_bytes?: number | null;
+  other_shares: string[];
+  lun_count: number;
+  volume_deletable: boolean;
+  snapshots: { total: number; backup_count: number; oldest_backup?: string | null; newest_backup?: string | null };
+  snapmirror_destinations: string[];
+  vms: string[];
+  vm_files: { path: string; size_bytes: number }[];
+  other_files: { path: string; size_bytes: number }[];
+  files_truncated: boolean;
+  protection_groups: string[];
+  blocked_reasons: string[];
+  warnings: string[];
+}
+
+export interface SmbDeleteRun {
+  id: string;
+  server: string;
+  share: string;
+  volume_name: string;
+  delete_volume: boolean;
+  capacity_bytes?: number | null;
+  removed_from_groups: string[];
+  status: "running" | "succeeded" | "failed";
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: RunStep[];
+}

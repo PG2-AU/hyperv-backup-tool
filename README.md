@@ -106,6 +106,14 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   Live-Scan) oder das Volume SnapMirror-Quelle ist; andere Dateien und die mitgeloeschten
   Backup-Snapshots (Anzahl, Zeitraum) als Warnung, Backup-Eintraege werden danach als nicht
   mehr vorhanden markiert (SnapMirror-Kopien bleiben). Bestaetigung per CSV-Namen.
+- **SMB3-Freigabe anlegen/loeschen** -- in Inventory > SMB3-Freigaben: Volume (Junction
+  /<volume>, NTFS, thin, Snapshot-Policy none, Reserve 0 %, optional Autosize) + CIFS-Freigabe
+  (continuously available, Oplocks) mit Vollzugriff fuer die Computerkonten der Knoten,
+  des Clusters (CNO) und des Restore-Proxy-Hosts sowie BUILTIN\Administrators -- ohne
+  Everyone (live vorgeschlagen, im Dialog aenderbar); Zugriffstest von jedem Knoten per
+  CredSSP, optional Protection Group; bei Fehler Rueckfrage Zurueckrollen/Behalten.
+  Loeschen mit denselben Regeln wie bei der CSV (Dateiscan ueber die ONTAP-Datei-API,
+  Volume Opt-out und nur, wenn keine weitere Freigabe/LUN darin liegt).
 - **Kapazitaetsverlauf** -- taeglicher Messpunkt je VHD/CSV/LUN/Volume/Aggregat
   (`CapacitySample`, ueber einen aus stabilen Objekteigenschaften abgeleiteten
   Schluessel statt der bei jeder Discovery neu vergebenen Zeilen-ID), als

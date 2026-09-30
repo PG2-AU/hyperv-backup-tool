@@ -1484,6 +1484,40 @@ class HyperVService:
             raise RuntimeError(f"CSV-Ordner konnte nicht umbenannt werden: {result.error}")
         return result.output.strip().splitlines()[-1].strip() if result.output.strip() else ""
 
+    def cluster_computer_accounts(self, cno_session: winrm.Session) -> dict:
+        """NetBIOS-Domaene, Cluster-Name (CNO) und Knotennamen -- fuer die
+        Freigaberechte einer neuen SMB3-Freigabe (DOMAIN\\NAME$)."""
+        script = (
+            "$dom = (Get-CimInstance Win32_NTDomain | Where-Object { $_.DnsForestName } | Select-Object -First 1).DomainName; "
+            "if (-not $dom) { $dom = $env:USERDOMAIN }; "
+            "[PSCustomObject]@{ Domain = $dom; Cluster = (Get-Cluster).Name; "
+            "Nodes = @(Get-ClusterNode | ForEach-Object { $_.Name }) } | ConvertTo-Json -Depth 3"
+        )
+        result = self._run_ps(cno_session, script)
+        if not result.success:
+            raise RuntimeError(f"Computerkonten konnten nicht ermittelt werden: {result.error}")
+        data = json.loads(result.output)
+        nodes = data.get("Nodes") or []
+        return {
+            "domain": (data.get("Domain") or "").strip(),
+            "cluster": (data.get("Cluster") or "").strip(),
+            "nodes": nodes if isinstance(nodes, list) else [nodes],
+        }
+
+    def test_unc_write(self, session: winrm.Session, unc_path: str, marker: str) -> None:
+        """Legt auf der Freigabe eine Testdatei an und loescht sie wieder --
+        braucht eine CredSSP-Sitzung (Double-Hop zur Freigabe)."""
+        path = unc_path.rstrip("\\").replace("'", "''")
+        name = marker.replace("'", "")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"$f = Join-Path '{path}' '.hvnb-access-test-{name}'; "
+            "Set-Content -LiteralPath $f -Value 'hvnb' ; Remove-Item -LiteralPath $f -Force; 'ok'"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(result.error.strip()[:300] or "Zugriff fehlgeschlagen")
+
     _VM_FILE_EXTENSIONS = (".vhd", ".vhdx", ".avhd", ".avhdx", ".vhds", ".vmcx", ".vmrs", ".vmgs", ".vsv")
 
     def scan_csv_files(self, session: winrm.Session, csv_path: str, limit: int = 200) -> dict:

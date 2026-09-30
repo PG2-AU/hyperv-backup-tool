@@ -28,6 +28,8 @@ from app.api.routes import (
     search,
     settings as settings_routes,
     sites,
+    smb_create,
+    smb_delete,
     smb_resize,
     snapmirror_labels,
     storage,
@@ -119,6 +121,8 @@ app.include_router(db_backup.router)
 app.include_router(csv_resize.router)
 app.include_router(csv_create.router)
 app.include_router(csv_delete.router)
+app.include_router(smb_create.router)
+app.include_router(smb_delete.router)
 app.include_router(smb_resize.router)
 
 

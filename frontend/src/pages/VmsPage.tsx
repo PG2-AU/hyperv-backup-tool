@@ -47,6 +47,8 @@ import { VmMoveModal } from "@/components/VmMoveModal";
 import { CsvCreateModal } from "@/components/CsvCreateModal";
 import { CsvDeleteModal } from "@/components/CsvDeleteModal";
 import { CsvResizeModal } from "@/components/CsvResizeModal";
+import { SmbShareCreateModal } from "@/components/SmbShareCreateModal";
+import { SmbShareDeleteModal } from "@/components/SmbShareDeleteModal";
 import { SmbShareResizeModal } from "@/components/SmbShareResizeModal";
 import type { BackupScope, Csv, ResourceGroup, SmbShare, Vm } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
@@ -574,6 +576,10 @@ export function VmsPage() {
   // SMB3 vergroessern aendert nur das NetApp-Volume -- kein Hyper-V-Recht noetig.
   const canResizeSmb = hasPermission("storage:manage") && !storageLocked;
   const [resizeSmbShare, setResizeSmbShare] = useState<SmbShare | null>(null);
+  // SMB3-Freigabe anlegen/loeschen aendert Storage UND die Hyper-V-Zuordnung --
+  // gleiche Rechte wie CSV anlegen/loeschen.
+  const [createSmbOpen, setCreateSmbOpen] = useState(false);
+  const [deleteSmbShare, setDeleteSmbShare] = useState<SmbShare | null>(null);
   const [params, setParams] = useSearchParams();
   const tabParam = params.get("tab");
   const activeTab = tabParam === "csv" ? "csv" : tabParam === "smb" ? "smb" : "vms";
@@ -1303,8 +1309,13 @@ export function VmsPage() {
               <Title order={5} mb="sm">
                 SMB3-Freigaben
               </Title>
-              <Group justify="flex-start" mb="sm">
+              <Group justify="space-between" mb="sm">
                 <SearchInput value={smbShareSearch} onChange={setSmbShareSearch} />
+                {canResizeCsv && (
+                  <Button leftSection={<IconPlus size={16} />} onClick={() => setCreateSmbOpen(true)}>
+                    Neue Freigabe
+                  </Button>
+                )}
               </Group>
               <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
               <Table striped highlightOnHover>
@@ -1406,6 +1417,22 @@ export function VmsPage() {
                               <IconArrowAutofitWidth size={16} />
                             </ActionIcon>
                           </Tooltip>
+                          <Tooltip
+                            label={
+                              storageLocked
+                                ? "Freigabe löschen -- Storage-Aktionen sind gesperrt (Settings > Storage)"
+                                : "Freigabe löschen (optional mit Volume)"
+                            }
+                          >
+                            <ActionIcon
+                              variant="light"
+                              color="red"
+                              disabled={!canResizeCsv || !share.cluster_id || !share.volume_name}
+                              onClick={() => setDeleteSmbShare(share)}
+                            >
+                              <IconTrash size={16} />
+                            </ActionIcon>
+                          </Tooltip>
                         </Group>
                       </Table.Td>
                     </Table.Tr>
@@ -1433,6 +1460,8 @@ export function VmsPage() {
       <CsvDeleteModal opened={deleteCsv !== null} onClose={() => setDeleteCsv(null)} csv={deleteCsv} />
       <CsvResizeModal opened={resizeCsv !== null} onClose={() => setResizeCsv(null)} csv={resizeCsv} />
       <SmbShareResizeModal share={resizeSmbShare} onClose={() => setResizeSmbShare(null)} />
+      <SmbShareCreateModal opened={createSmbOpen} onClose={() => setCreateSmbOpen(false)} />
+      <SmbShareDeleteModal share={deleteSmbShare} onClose={() => setDeleteSmbShare(null)} />
       <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} fixSiteMismatch={moveFixSite} />
       <BackupsModal
         opened={!!backupsTarget}

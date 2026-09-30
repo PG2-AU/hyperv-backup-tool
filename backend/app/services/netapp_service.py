@@ -32,8 +32,10 @@ from netapp_ontap.resources import (
     BroadcastDomain,
     CifsService,
     CifsShare,
+    CifsShareAcl,
     Cluster,
     ClusterPeer,
+    FileInfo,
     Igroup,
     IgroupInitiator,
     IpInterface,
@@ -1094,6 +1096,7 @@ class NetAppOntapService:
 
     def create_cifs_share(
         self, svm_name: str, volume_name: str, share_name: str, *, path: str = "/", acls: list[dict] | None = None,
+        properties: dict | None = None,
     ) -> None:
         """Legt eine CIFS-Freigabe an (Backlog #22, isolierte Side-by-side-
         Wiederherstellung: eine temporaere Freigabe auf einem per
@@ -1109,6 +1112,8 @@ class NetAppOntapService:
             payload: dict = {"svm": {"name": svm_name}, "volume": {"name": volume_name}, "name": share_name, "path": path}
             if acls:
                 payload["acls"] = acls
+            if properties:
+                payload.update(properties)
             try:
                 CifsShare.from_dict(payload).post(poll=True, poll_timeout=60)
             except NetAppRestError as exc:
@@ -1287,10 +1292,12 @@ class NetAppOntapService:
 
     def create_csv_volume(
         self, svm_name: str, name: str, aggregate_name: str | None, size_bytes: int, *, autosize_grow: bool,
+        junction_path: str | None = None,
     ) -> str:
         """Volume fuer genau eine CSV-LUN (Nutzer-Vorgabe 2026-09-30): thin
         (guarantee none), KEINE ONTAP-Snapshot-Policy (die Snapshots macht die
-        App), Snapshot-Reserve 0 %, optional Autosize 'grow'. Liefert die UUID."""
+        App), Snapshot-Reserve 0 %, optional Autosize 'grow'. Liefert die UUID.
+        Mit `junction_path` (SMB3-Freigabe): eingehaengt, Sicherheitsstil NTFS."""
         with self._connection():
             payload: dict = {
                 "name": name,
@@ -1301,6 +1308,8 @@ class NetAppOntapService:
                 "snapshot_policy": {"name": "none"},
                 "space": {"snapshot": {"reserve_percent": 0}},
             }
+            if junction_path:
+                payload["nas"] = {"path": junction_path, "security_style": "ntfs"}
             if aggregate_name:
                 payload["aggregates"] = [{"name": aggregate_name}]
             if autosize_grow:
@@ -1382,6 +1391,92 @@ class NetAppOntapService:
             except NetAppRestError as exc:
                 raise NetAppConnectionError(f"SnapMirror-Beziehungen konnten nicht gelesen werden: {exc}") from exc
             return [p for p in (_get_nested(r, "destination.path") for r in rels) if p]
+
+    # --- SMB3-Freigabe anlegen/loeschen (siehe app.api.routes.smb_create/smb_delete) ---
+
+    def svm_cifs_server(self, svm_name: str) -> str | None:
+        """NetBIOS-Name des CIFS-Servers der SVM (= Server im UNC-Pfad)."""
+        with self._connection():
+            try:
+                services = list(CifsService.get_collection(**{"svm.name": svm_name}, fields="name,enabled"))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"CIFS-Server konnte nicht gelesen werden: {exc}") from exc
+            return _get_nested(services[0], "name") if services else None
+
+    def cifs_share_exists(self, svm_name: str, share_name: str) -> bool:
+        with self._connection():
+            try:
+                return bool(list(CifsShare.get_collection(name=share_name, **{"svm.name": svm_name}, fields="name")))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"CIFS-Freigaben konnten nicht gelesen werden: {exc}") from exc
+
+    def remove_share_acl(self, svm_name: str, share_name: str, user_or_group: str) -> bool:
+        """Entfernt einen Eintrag aus den Freigaberechten (z.B. den von ONTAP
+        automatisch gesetzten 'Everyone'). True = war vorhanden."""
+        with self._connection():
+            try:
+                svm = Svm.find(name=svm_name)
+                if svm is None:
+                    raise NetAppConnectionError(f"SVM '{svm_name}' nicht gefunden")
+                acls = list(CifsShareAcl.get_collection(svm.uuid, share_name, fields="user_or_group,type"))
+                found = False
+                for acl in acls:
+                    if (_get_nested(acl, "user_or_group") or "").lower() == user_or_group.lower():
+                        acl.delete()
+                        found = True
+                return found
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Freigaberecht '{user_or_group}' konnte nicht entfernt werden: {exc}") from exc
+
+    def share_acl_names(self, svm_name: str, share_name: str) -> list[str]:
+        with self._connection():
+            try:
+                svm = Svm.find(name=svm_name)
+                acls = list(CifsShareAcl.get_collection(svm.uuid, share_name, fields="user_or_group"))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Freigaberechte konnten nicht gelesen werden: {exc}") from exc
+            return [n for n in (_get_nested(a, "user_or_group") for a in acls) if n]
+
+    def cifs_shares_on_volume(self, volume_uuid: str) -> list[str]:
+        with self._connection():
+            try:
+                shares = list(CifsShare.get_collection(**{"volume.uuid": volume_uuid}, fields="name"))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"CIFS-Freigaben konnten nicht gelesen werden: {exc}") from exc
+            return [n for n in (_get_nested(s, "name") for s in shares) if n]
+
+    # ONTAP-interne Verzeichnisse, die nicht als Inhalt zaehlen (.copy_offload:
+    # ODX-Arbeitsverzeichnis, von ONTAP selbst angelegt).
+    _SCAN_SKIP = {".", "..", ".snapshot", ".copy_offload"}
+
+    def volume_file_scan(self, volume_uuid: str, path: str = "/", limit: int = 200) -> dict:
+        """Dateien eines Volumes (rekursiv, per ONTAP-Datei-API statt per SMB
+        -- kein Double-Hop). `path` volume-relativ ('/' = Wurzel). Bricht nach
+        `limit` Dateien ab; 'truncated' = es gibt mehr."""
+        files: list[dict] = []
+        truncated = False
+        root = path.strip("/")
+        queue = [root]
+        with self._connection():
+            while queue and not truncated:
+                current = queue.pop(0)
+                try:
+                    entries = list(FileInfo.get_collection(volume_uuid, current or "/", fields="name,type,size"))
+                except NetAppRestError as exc:
+                    raise NetAppConnectionError(f"Dateien konnten nicht gelesen werden ({current or '/'}): {exc}") from exc
+                for entry in entries:
+                    name = _get_nested(entry, "name") or ""
+                    if name in self._SCAN_SKIP:
+                        continue
+                    rel = f"{current}/{name}" if current else name
+                    if _get_nested(entry, "type") == "directory":
+                        queue.append(rel)
+                    else:
+                        if len(files) >= limit:
+                            truncated = True
+                            break
+                        files.append({"path": "/" + rel, "size_bytes": int(_get_nested(entry, "size") or 0)})
+        return {"files": files, "truncated": truncated}
 
     def delete_volume_forced(self, uuid: str) -> None:
         """Offline nehmen und loeschen (Zurueckrollen im CSV-Assistenten)."""

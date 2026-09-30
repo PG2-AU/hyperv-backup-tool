@@ -406,10 +406,11 @@ def keep_objects(run_id: str, db: Session = Depends(get_db), user=Depends(_requi
 # --- Ausfuehrung ----------------------------------------------------------------------
 
 
-def _soft_step(db: Session, run_id: str, step: str, label: str, fn, warnings: list[str]) -> None:
+def _soft_step(db: Session, run_id: str, step: str, label: str, fn, warnings: list[str], step_model: type = CsvCreateRunStep) -> None:
     """Schritt nach der fertigen CSV: ein Fehler wird als Warnung
-    protokolliert (Schritt rot), bricht den Lauf aber nicht ab."""
-    with _StepCtx(db, run_id, step, label, step_model=CsvCreateRunStep) as ctx:
+    protokolliert (Schritt rot), bricht den Lauf aber nicht ab. Auch von
+    smb_create genutzt (dort mit eigenem step_model)."""
+    with _StepCtx(db, run_id, step, label, step_model=step_model) as ctx:
         try:
             ctx.row.message = fn() or None
         except Exception as exc:  # noqa: BLE001
