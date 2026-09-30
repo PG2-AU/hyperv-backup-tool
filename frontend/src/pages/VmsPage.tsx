@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActionIcon, Badge, Box, Group, Paper, Progress, SegmentedControl, Select, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Box, Button, Group, Paper, Progress, SegmentedControl, Select, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
   IconAlertTriangle,
@@ -15,6 +15,7 @@ import {
   IconHistory,
   IconInfoCircle,
   IconNetwork,
+  IconPlus,
   IconRefresh,
   IconServer,
   IconServer2,
@@ -43,6 +44,7 @@ import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
 import { SiteBadgeView } from "@/components/SiteBadge";
 import { VmMoveModal } from "@/components/VmMoveModal";
+import { CsvCreateModal } from "@/components/CsvCreateModal";
 import { CsvResizeModal } from "@/components/CsvResizeModal";
 import { SmbShareResizeModal } from "@/components/SmbShareResizeModal";
 import type { BackupScope, Csv, ResourceGroup, SmbShare, Vm } from "@/api/types";
@@ -565,6 +567,8 @@ export function VmsPage() {
   const storageLocked = storageAccess ? !storageAccess.actions_enabled : false;
   const canResizeCsv = canManageHyperv && hasPermission("storage:manage") && !storageLocked;
   const [resizeCsv, setResizeCsv] = useState<Csv | null>(null);
+  // Neue CSV anlegen (Backlog #68) -- gleiche Rechte wie CSV vergroessern.
+  const [createCsvOpen, setCreateCsvOpen] = useState(false);
   // SMB3 vergroessern aendert nur das NetApp-Volume -- kein Hyper-V-Recht noetig.
   const canResizeSmb = hasPermission("storage:manage") && !storageLocked;
   const [resizeSmbShare, setResizeSmbShare] = useState<SmbShare | null>(null);
@@ -1114,8 +1118,13 @@ export function VmsPage() {
             <Title order={5} mb="sm">
               Cluster Shared Volumes
             </Title>
-            <Group justify="flex-start" mb="sm">
+            <Group justify="space-between" mb="sm">
               <SearchInput value={csvSearch} onChange={setCsvSearch} />
+              {canResizeCsv && (
+                <Button leftSection={<IconPlus size={16} />} onClick={() => setCreateCsvOpen(true)}>
+                  Neue CSV
+                </Button>
+              )}
             </Group>
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             <Table striped highlightOnHover>
@@ -1402,6 +1411,7 @@ export function VmsPage() {
           </Tabs.Panel>
       </Tabs>
 
+      <CsvCreateModal opened={createCsvOpen} onClose={() => setCreateCsvOpen(false)} />
       <CsvResizeModal opened={resizeCsv !== null} onClose={() => setResizeCsv(null)} csv={resizeCsv} />
       <SmbShareResizeModal share={resizeSmbShare} onClose={() => setResizeSmbShare(null)} />
       <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} fixSiteMismatch={moveFixSite} />

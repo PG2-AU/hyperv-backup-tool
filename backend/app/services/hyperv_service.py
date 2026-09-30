@@ -1319,6 +1319,191 @@ class HyperVService:
         before, after = result.output.strip().splitlines()[-1].split(";")
         return int(before), int(after)
 
+    # --- Neue CSV per Assistent (Backlog #68, siehe app.api.routes.csv_create) ---
+
+    def list_initiator_ports(self, session: winrm.Session) -> list[dict]:
+        """iSCSI-IQNs und FC-WWPNs DIESES Knotens (Get-InitiatorPort) fuer den
+        Abgleich mit den Initiatoren der ONTAP-igroups. iSCSI: NodeAddress,
+        FC: PortAddress (WWPN ohne Doppelpunkte)."""
+        result = self._run_ps(
+            session,
+            "@(Get-InitiatorPort | Select-Object @{N='Type';E={[string]$_.ConnectionType}}, NodeAddress, PortAddress) "
+            "| ConvertTo-Json -Depth 2",
+        )
+        if not result.success:
+            raise RuntimeError(f"Get-InitiatorPort fehlgeschlagen: {result.error}")
+        raw = json.loads(result.output or "[]") if result.output.strip() else []
+        entries = raw if isinstance(raw, list) else [raw]
+        ports = []
+        for e in entries:
+            kind = (e.get("Type") or "").lower()
+            if "iscsi" in kind and e.get("NodeAddress"):
+                ports.append({"type": "iscsi", "address": e["NodeAddress"]})
+            elif "fibre" in kind and e.get("PortAddress"):
+                ports.append({"type": "fc", "address": e["PortAddress"]})
+        return ports
+
+    @staticmethod
+    def _new_disk_lookup(serial_number: str) -> str:
+        """PowerShell-Baustein: $c = alle Disk-Objekte mit dieser Seriennummer,
+        $d = das zu verwendende. MPIO-Disk ('... Multi-Path Disk') vor einem
+        von MPIO nicht beanspruchten zweiten Pfad (siehe _csv_partition_lookup,
+        live 2026-09-29), dann Online vor Offline."""
+        serial = serial_number.replace("'", "''")
+        return (
+            f"$c = @(Get-Disk | Where-Object {{ $_.SerialNumber -and $_.SerialNumber.Trim() -eq '{serial}' }}); "
+            "$d = $c | Sort-Object @{E={$_.FriendlyName -notlike '*Multi-Path*'}}, IsOffline, Number | Select-Object -First 1; "
+        )
+
+    def find_disk_by_serial(self, session: winrm.Session, serial_number: str) -> dict | None:
+        """Sieht dieser Knoten die LUN? None = (noch) nicht."""
+        script = (
+            self._new_disk_lookup(serial_number)
+            + "if ($d) { \"$($d.Number);$($d.Size);$([string]$d.PartitionStyle);$($d.IsOffline);$($c.Count)\" } else { 'none' }"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Disk konnte nicht gesucht werden: {result.error}")
+        line = result.output.strip().splitlines()[-1] if result.output.strip() else "none"
+        if line == "none":
+            return None
+        number, size, style, offline, count = line.split(";")
+        return {
+            "disk_number": int(number), "size_bytes": int(size), "partition_style": style,
+            "is_offline": offline.lower() == "true", "paths": int(count),
+        }
+
+    def initialize_and_format_disk(
+        self, session: winrm.Session, serial_number: str, *, file_system: str, allocation_unit: int, label: str,
+    ) -> dict:
+        """Neue CSV-Disk online nehmen, GPT initialisieren, eine Partition
+        ueber die volle Groesse anlegen und formatieren. Bricht ab, wenn die
+        Disk nicht RAW (leer) ist -- es wird nie eine Disk mit vorhandenen
+        Partitionen angefasst. Kein Laufwerksbuchstabe (CSV braucht keinen)."""
+        fs = "ReFS" if file_system.lower() == "refs" else "NTFS"
+        escaped_label = label.replace("'", "''")[:32]
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            + self._new_disk_lookup(serial_number)
+            + f"if (-not $d) {{ throw \"Keine Disk mit Seriennummer '{serial_number}' auf diesem Knoten\" }}; "
+            "if ([string]$d.PartitionStyle -ne 'RAW') { "
+            "throw \"Disk $($d.Number) ist nicht leer (Partitionsstil $($d.PartitionStyle)) -- Abbruch, es wird nichts formatiert\" }; "
+            "if ($d.IsOffline) { Set-Disk -Number $d.Number -IsOffline $false }; "
+            "if ($d.IsReadOnly) { Set-Disk -Number $d.Number -IsReadOnly $false }; "
+            "Initialize-Disk -Number $d.Number -PartitionStyle GPT; "
+            "$p = New-Partition -DiskNumber $d.Number -UseMaximumSize; "
+            f"Format-Volume -Partition $p -FileSystem {fs} -AllocationUnitSize {int(allocation_unit)} "
+            f"-NewFileSystemLabel '{escaped_label}' -Confirm:$false | Out-Null; "
+            "$p = Get-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber; "
+            "if ($p.DriveLetter) { Remove-PartitionAccessPath -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber "
+            "-AccessPath \"$($p.DriveLetter):\\\" -ErrorAction SilentlyContinue }; "
+            "$d = Get-Disk -Number $d.Number; "
+            "\"$($d.Number);$($d.Guid);$($p.Size);$($c.Count)\""
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Disk konnte nicht initialisiert/formatiert werden: {result.error}")
+        number, guid, part_size, count = result.output.strip().splitlines()[-1].split(";")
+        return {"disk_number": int(number), "disk_guid": guid.strip(), "partition_size_bytes": int(part_size), "paths": int(count)}
+
+    def set_disk_offline_by_serial(self, session: winrm.Session, serial_number: str) -> None:
+        script = self._new_disk_lookup(serial_number) + "if ($d -and -not $d.IsOffline) { Set-Disk -Number $d.Number -IsOffline $true }"
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Disk konnte nicht offline genommen werden: {result.error}")
+
+    def cluster_resource_exists(self, cno_session: winrm.Session, name: str) -> bool:
+        escaped = name.replace("'", "''")
+        result = self._run_ps(cno_session, f"if (Get-ClusterResource -Name '{escaped}' -ErrorAction SilentlyContinue) {{ 'yes' }} else {{ 'no' }}")
+        if not result.success:
+            raise RuntimeError(f"Cluster-Ressourcen konnten nicht gelesen werden: {result.error}")
+        return result.output.strip().endswith("yes")
+
+    def add_cluster_disk(self, cno_session: winrm.Session, disk_guid: str, disk_size_bytes: int, resource_name: str) -> str:
+        """Nimmt die frisch formatierte Disk in den Cluster auf und benennt
+        die Ressource ('Cluster Disk N') um. Zuordnung ueber die GPT-Disk-GUID
+        (= ClusterAvailableDisk.Id); Rueckfall: genau eine verfuegbare Disk
+        mit exakt dieser Groesse. Get-ClusterAvailableDisk listet nur Disks,
+        die ALLE Knoten sehen -- deshalb ein paar Versuche."""
+        guid = disk_guid.strip("{} ").lower().replace("'", "")
+        name = resource_name.replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"if (Get-ClusterResource -Name '{name}' -ErrorAction SilentlyContinue) {{ throw \"Cluster-Ressource '{name}' existiert bereits\" }}; "
+            "$a = $null; $all = @(); "
+            "foreach ($i in 1..10) { "
+            "$all = @(Get-ClusterAvailableDisk); "
+            f"$a = $all | Where-Object {{ ([string]$_.Id).Trim('{{}} ').ToLower() -eq '{guid}' }} | Select-Object -First 1; "
+            f"if (-not $a) {{ $s = @($all | Where-Object {{ $_.Size -eq {int(disk_size_bytes)} }}); if ($s.Count -eq 1) {{ $a = $s[0] }} }}; "
+            "if ($a) { break }; Start-Sleep -Seconds 3 }; "
+            "if (-not $a) { throw \"Disk ist nicht als verfuegbare Cluster-Disk sichtbar (sehen alle Knoten die LUN?). "
+            "Verfuegbar: $(($all | ForEach-Object { \"$($_.Name) [$($_.Id), $($_.Size)]\" }) -join ', ')\" }; "
+            "$r = $a | Add-ClusterDisk; "
+            f"$r.Name = '{name}'; "
+            f"(Get-ClusterResource -Name '{name}').Name"
+        )
+        result = self._run_ps(cno_session, script)
+        if not result.success:
+            raise RuntimeError(f"Disk konnte nicht in den Cluster aufgenommen werden: {result.error}")
+        return result.output.strip().splitlines()[-1].strip()
+
+    def add_cluster_shared_volume(self, cno_session: winrm.Session, resource_name: str) -> str:
+        """Macht die Cluster-Disk zur CSV. Liefert den CSV-Pfad
+        (C:\\ClusterStorage\\VolumeN\\)."""
+        name = resource_name.replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"Add-ClusterSharedVolume -Name '{name}' | Out-Null; "
+            "$path = $null; foreach ($i in 1..10) { "
+            f"$path = (Get-ClusterSharedVolume -Name '{name}').SharedVolumeInfo.FriendlyVolumeName; "
+            "if ($path) { break }; Start-Sleep -Seconds 2 }; "
+            "$path"
+        )
+        result = self._run_ps(cno_session, script)
+        if not result.success:
+            raise RuntimeError(f"CSV konnte nicht angelegt werden: {result.error}")
+        return result.output.strip().splitlines()[-1].strip() if result.output.strip() else ""
+
+    def rename_csv_folder(self, session: winrm.Session, resource_name: str, folder_name: str) -> str:
+        """Benennt den Mount-Ordner C:\\ClusterStorage\\VolumeN in den CSV-Namen
+        um (von Microsoft unterstuetzt, gilt clusterweit). Liefert den neuen Pfad."""
+        name = resource_name.replace("'", "''")
+        folder = folder_name.replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"$p = (Get-ClusterSharedVolume -Name '{name}').SharedVolumeInfo.FriendlyVolumeName.TrimEnd('\\'); "
+            f"if ((Split-Path $p -Leaf) -ne '{folder}') {{ "
+            f"$target = Join-Path (Split-Path $p -Parent) '{folder}'; "
+            "if (Test-Path $target) { throw \"Ordner $target existiert bereits\" }; "
+            f"Rename-Item -Path $p -NewName '{folder}' }}; "
+            "Start-Sleep -Seconds 2; "
+            f"(Get-ClusterSharedVolume -Name '{name}').SharedVolumeInfo.FriendlyVolumeName"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"CSV-Ordner konnte nicht umbenannt werden: {result.error}")
+        return result.output.strip().splitlines()[-1].strip() if result.output.strip() else ""
+
+    def remove_cluster_shared_volume(self, cno_session: winrm.Session, resource_name: str) -> None:
+        name = resource_name.replace("'", "''")
+        result = self._run_ps(
+            cno_session,
+            f"if (Get-ClusterSharedVolume -Name '{name}' -ErrorAction SilentlyContinue) {{ Remove-ClusterSharedVolume -Name '{name}' -ErrorAction Stop | Out-Null }}",
+        )
+        if not result.success:
+            raise RuntimeError(f"CSV konnte nicht entfernt werden: {result.error}")
+
+    def remove_cluster_resource(self, cno_session: winrm.Session, resource_name: str) -> None:
+        name = resource_name.replace("'", "''")
+        result = self._run_ps(
+            cno_session,
+            f"if (Get-ClusterResource -Name '{name}' -ErrorAction SilentlyContinue) {{ "
+            f"Stop-ClusterResource -Name '{name}' -ErrorAction SilentlyContinue | Out-Null; "
+            f"Remove-ClusterResource -Name '{name}' -Force -ErrorAction Stop }}",
+        )
+        if not result.success:
+            raise RuntimeError(f"Cluster-Disk konnte nicht entfernt werden: {result.error}")
+
     def detach_vhd(self, session: winrm.Session, vm_name: str, vhd_path: str) -> CommandResult:
         escaped = vhd_path.replace("'", "''")
         script = (

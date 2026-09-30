@@ -1438,3 +1438,70 @@ export interface CsvResizeRun {
   finished_at?: string | null;
   steps: { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null }[];
 }
+
+// Neue CSV per Assistent (backend app.api.routes.csv_create, Backlog #68).
+export interface CsvCreateNode {
+  name: string;
+  state: string;
+  initiators: { type: "iscsi" | "fc"; address: string }[];
+  error?: string | null;
+}
+
+export interface CsvCreateHyperVOptions {
+  cluster_id: string;
+  nodes: CsvCreateNode[];
+  csv_names: string[];
+  busy_reason?: string | null;
+}
+
+export interface CsvCreateNetAppOptions {
+  netapp_cluster_id: string;
+  system_type: string;
+  svms: { name: string; allowed_protocols?: string | null }[];
+  aggregates: { name: string; state?: string | null; size_bytes?: number | null; available_bytes?: number | null }[];
+  igroups: { name: string; svm_name?: string | null; os_type?: string | null; protocol?: string | null; initiators: string[] }[];
+}
+
+export interface CsvCreatePayload {
+  cluster_id: string;
+  netapp_cluster_id: string;
+  svm_name: string;
+  aggregate_name: string | null;
+  csv_name: string;
+  volume_name: string;
+  lun_name: string;
+  lun_size_bytes: number;
+  volume_size_bytes: number;
+  autosize_grow: boolean;
+  igroup_names: string[];
+  file_system: "NTFS" | "ReFS";
+  allocation_unit: 4096 | 65536;
+  rename_folder: boolean;
+  resource_group_id: string | null;
+}
+
+export interface CsvCreateRun {
+  id: string;
+  csv_name: string;
+  svm_name: string;
+  volume_name: string;
+  lun_name: string;
+  volume_size_bytes: number;
+  lun_size_bytes: number;
+  created_volume_uuid?: string | null;
+  created_lun_uuid?: string | null;
+  lun_id?: number | null;
+  mapped_igroups: string[];
+  format_node?: string | null;
+  disk_formatted: boolean;
+  cluster_resource_name?: string | null;
+  csv_added: boolean;
+  csv_path?: string | null;
+  rollback_declined: boolean;
+  has_created_objects: boolean;
+  status: "running" | "succeeded" | "failed" | "cleaned_up";
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null }[];
+}

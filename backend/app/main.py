@@ -9,6 +9,7 @@ from app.api.routes import (
     auth,
     capacity_history,
     config_transfer,
+    csv_create,
     csv_resize,
     db_backup,
     email_config,
@@ -115,6 +116,7 @@ app.include_router(vm_moves.router)
 app.include_router(config_transfer.router)
 app.include_router(db_backup.router)
 app.include_router(csv_resize.router)
+app.include_router(csv_create.router)
 app.include_router(smb_resize.router)
 
 

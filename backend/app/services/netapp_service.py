@@ -1227,6 +1227,147 @@ class NetAppOntapService:
                 "available_bytes": _get_nested(agg, "space.block_storage.available"),
             }
 
+    # --- Neue CSV per Assistent (Backlog #68, siehe app.api.routes.csv_create) ---
+
+    def csv_create_aggregates(self) -> list[dict]:
+        """Aggregate mit freiem Platz fuer die Auswahl im Assistenten. Bei
+        einem als SVM registrierten System (vsadmin) sind Aggregate nicht
+        lesbar -- dann die der SVM zugewiesenen Aggregate ohne Platzangaben,
+        notfalls leer (ONTAP waehlt beim Anlegen dann selbst)."""
+        with self._connection():
+            try:
+                aggregates = list(Aggregate.get_collection(fields="name,state,space.block_storage"))
+                return [
+                    {
+                        "name": _get_nested(a, "name"),
+                        "state": _get_nested(a, "state"),
+                        "size_bytes": _get_nested(a, "space.block_storage.size"),
+                        "available_bytes": _get_nested(a, "space.block_storage.available"),
+                    }
+                    for a in aggregates
+                ]
+            except NetAppRestError:
+                pass
+            try:
+                result = []
+                for svm in Svm.get_collection(fields="name,aggregates"):
+                    for agg in _get_nested(svm, "aggregates") or []:
+                        name = _get_nested(agg, "name")
+                        if name and all(r["name"] != name for r in result):
+                            result.append({"name": name, "state": None, "size_bytes": None, "available_bytes": None})
+                return result
+            except NetAppRestError:
+                return []
+
+    def csv_create_igroups(self) -> list[dict]:
+        """igroups live inkl. Initiatoren -- die Discovery speichert nur deren
+        Anzahl, der Assistent gleicht aber gegen die IQNs/WWPNs der Knoten ab."""
+        with self._connection():
+            try:
+                igroups = list(Igroup.get_collection(fields="name,svm.name,os_type,protocol,initiators.name"))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Initiator-Gruppen konnten nicht gelesen werden: {exc}") from exc
+            return [
+                {
+                    "name": _get_nested(ig, "name"),
+                    "svm_name": _get_nested(ig, "svm.name"),
+                    "os_type": _get_nested(ig, "os_type"),
+                    "protocol": _get_nested(ig, "protocol"),
+                    "initiators": [n for n in (_get_nested(i, "name") for i in (_get_nested(ig, "initiators") or [])) if n],
+                }
+                for ig in igroups
+            ]
+
+    def volume_exists(self, svm_name: str, name: str) -> bool:
+        with self._connection():
+            try:
+                return bool(list(Volume.get_collection(name=name, **{"svm.name": svm_name}, fields="uuid")))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Volume konnte nicht geprueft werden: {exc}") from exc
+
+    def create_csv_volume(
+        self, svm_name: str, name: str, aggregate_name: str | None, size_bytes: int, *, autosize_grow: bool,
+    ) -> str:
+        """Volume fuer genau eine CSV-LUN (Nutzer-Vorgabe 2026-09-30): thin
+        (guarantee none), KEINE ONTAP-Snapshot-Policy (die Snapshots macht die
+        App), Snapshot-Reserve 0 %, optional Autosize 'grow'. Liefert die UUID."""
+        with self._connection():
+            payload: dict = {
+                "name": name,
+                "svm": {"name": svm_name},
+                "size": size_bytes,
+                "type": "rw",
+                "guarantee": {"type": "none"},
+                "snapshot_policy": {"name": "none"},
+                "space": {"snapshot": {"reserve_percent": 0}},
+            }
+            if aggregate_name:
+                payload["aggregates"] = [{"name": aggregate_name}]
+            if autosize_grow:
+                payload["autosize"] = {"mode": "grow"}
+            try:
+                volume = Volume.from_dict(payload)
+                volume.post(hydrate=True, poll=True, poll_timeout=180)
+                if not getattr(volume, "uuid", None):
+                    volume = Volume.find(name=name, **{"svm.name": svm_name})
+                return volume.uuid
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"Volume konnte nicht angelegt werden: {exc}") from exc
+
+    def create_csv_lun(self, svm_name: str, volume_name: str, lun_name: str, size_bytes: int) -> dict:
+        """LUN fuer eine CSV: OS-Type hyper_v, thin (keine Platzreservierung),
+        Space Allocation an (SCSI UNMAP -- Windows gibt geloeschten Platz an
+        die NetApp zurueck). Liefert uuid, name (Pfad) und serial_number."""
+        path = f"/vol/{volume_name}/{lun_name}"
+        with self._connection():
+            payload = {
+                "name": path,
+                "svm": {"name": svm_name},
+                "os_type": "hyper_v",
+                "space": {
+                    "size": size_bytes,
+                    "guarantee": {"requested": False},
+                    "scsi_thin_provisioning_support_enabled": True,
+                },
+            }
+            try:
+                Lun.from_dict(payload).post()
+                lun = Lun.find(name=path, **{"svm.name": svm_name})
+                if lun is None:
+                    raise NetAppConnectionError(f"LUN '{path}' nach dem Anlegen nicht gefunden")
+                lun.get(fields="name,serial_number,space.size")
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN konnte nicht angelegt werden: {exc}") from exc
+            return {
+                "uuid": lun.uuid, "name": _get_nested(lun, "name") or path,
+                "serial_number": _get_nested(lun, "serial_number"), "size_bytes": _get_nested(lun, "space.size"),
+            }
+
+    def map_lun(self, svm_name: str, lun_path: str, igroup_name: str, lun_id: int | None = None) -> int | None:
+        """Mappt die LUN auf eine igroup -- mit fester LUN-ID, falls angegeben
+        (gleiche ID auf allen igroups/Knoten). Liefert die vergebene LUN-ID."""
+        with self._connection():
+            payload: dict = {"svm": {"name": svm_name}, "lun": {"name": lun_path}, "igroup": {"name": igroup_name}}
+            if lun_id is not None:
+                payload["logical_unit_number"] = lun_id
+            try:
+                LunMap.from_dict(payload).post()
+                maps = list(
+                    LunMap.get_collection(**{"lun.name": lun_path, "igroup.name": igroup_name, "svm.name": svm_name},
+                                          fields="logical_unit_number")
+                )
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN konnte nicht auf '{igroup_name}' gemappt werden: {exc}") from exc
+            return _get_nested(maps[0], "logical_unit_number") if maps else lun_id
+
+    def delete_volume_forced(self, uuid: str) -> None:
+        """Offline nehmen und loeschen (Zurueckrollen im CSV-Assistenten)."""
+        try:
+            self.update_volume(uuid, state="offline")
+        except NetAppConnectionError:
+            pass
+        self.delete_volume(uuid)
+
     def delete_lun(self, uuid: str) -> None:
         with self._connection():
             try:

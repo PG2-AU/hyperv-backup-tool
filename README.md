@@ -90,6 +90,15 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   LUN, Snapshot-Reserve), danach Volume -> LUN -> Datentraeger auf allen Knoten neu
   einlesen -> Partition auf dem Owner-Knoten erweitern, im laufenden Betrieb; nur
   Vergroessern, erkennt und erweitert auch bereits unpartitionierten Platz.
+- **Neue CSV anlegen** -- Button "Neue CSV" in Inventory > CSVs: Volume (thin,
+  Snapshot-Policy none, Reserve 0 %, optional Autosize grow, Groesse = LUN + Puffer
+  fuer Snapshots) und LUN (hyper_v, thin, Space Allocation an) auf der NetApp anlegen,
+  auf die igroup(s) der Knoten mappen (Vorschlag per IQN/WWPN-Abgleich, gleiche LUN-ID),
+  auf allen Knoten einlesen, auf einem Knoten GPT + NTFS 64 KB (ReFS mit Warnung),
+  Cluster-Disk + CSV, Mount-Ordner optional in den CSV-Namen umbenennen, Inventory
+  aktualisieren (Standort erbt die CSV vom NetApp-System), optional direkt einer
+  Protection Group zuordnen. Formatiert nur leere (RAW-)Disks. Bei einem Fehler fragt
+  der Dialog nach: Zurueckrollen (entfernt genau die angelegten Objekte) oder Behalten.
 - **Kapazitaetsverlauf** -- taeglicher Messpunkt je VHD/CSV/LUN/Volume/Aggregat
   (`CapacitySample`, ueber einen aus stabilen Objekteigenschaften abgeleiteten
   Schluessel statt der bei jeder Discovery neu vergebenen Zeilen-ID), als

@@ -1368,6 +1368,8 @@ zu einem Sprungbrett für die gesamte Domäne bzw. den gesamten Forest.
 > `Add-ClusterVirtualMachineRole`, für "VM verschieben" zusätzlich
 > `Move-ClusterVirtualMachineRole`/`Move-ClusterGroup` und `Move-VMStorage`,
 > für "CSV vergrößern" `Update-HostStorageCache` und `Resize-Partition`,
+> für "Neue CSV" `Get-InitiatorPort`, `Initialize-Disk`/`New-Partition`/`Format-Volume`,
+> `Add-ClusterDisk` und `Add-ClusterSharedVolume` (Rückfall auf CredSSP wie beim Host-Move),
 > für die RAM-Anzeige beim Host-Move `Get-CimInstance Win32_OperatingSystem`
 > direkt auf jedem Knoten). Für die Disk-/iSCSI-Verwaltung gibt es unter
 > Windows **keine** eigene, schmalere eingebaute Gruppe (anders als bei

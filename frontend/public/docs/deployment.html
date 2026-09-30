@@ -1634,6 +1634,8 @@ sowie Cluster-Abfragen und -Aktionen (<code>Get-ClusterSharedVolume</code>, <cod
 <code>Add-ClusterVirtualMachineRole</code>, für &quot;VM verschieben&quot; zusätzlich
 <code>Move-ClusterVirtualMachineRole</code>/<code>Move-ClusterGroup</code> und <code>Move-VMStorage</code>,
 für &quot;CSV vergrößern&quot; <code>Update-HostStorageCache</code> und <code>Resize-Partition</code>,
+für &quot;Neue CSV&quot; <code>Get-InitiatorPort</code>, <code>Initialize-Disk</code>/<code>New-Partition</code>/<code>Format-Volume</code>,
+<code>Add-ClusterDisk</code> und <code>Add-ClusterSharedVolume</code> (Rückfall auf CredSSP wie beim Host-Move),
 für die RAM-Anzeige beim Host-Move <code>Get-CimInstance Win32_OperatingSystem</code>
 direkt auf jedem Knoten). Für die Disk-/iSCSI-Verwaltung gibt es unter
 Windows <strong>keine</strong> eigene, schmalere eingebaute Gruppe (anders als bei
