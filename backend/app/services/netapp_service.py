@@ -1360,6 +1360,29 @@ class NetAppOntapService:
                 raise NetAppConnectionError(f"LUN konnte nicht auf '{igroup_name}' gemappt werden: {exc}") from exc
             return _get_nested(maps[0], "logical_unit_number") if maps else lun_id
 
+    # --- CSV loeschen (siehe app.api.routes.csv_delete) ---
+
+    def lun_igroup_names(self, lun_uuid: str) -> list[str]:
+        with self._connection():
+            try:
+                maps = list(LunMap.get_collection(**{"lun.uuid": lun_uuid}, fields="igroup.name"))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"LUN-Zuordnungen konnten nicht gelesen werden: {exc}") from exc
+            return [n for n in (_get_nested(m, "igroup.name") for m in maps) if n]
+
+    def snapmirror_destinations_of(self, svm_name: str, volume_name: str) -> list[str]:
+        """Ziel-Pfade aller SnapMirror-Beziehungen, deren QUELLE dieses Volume
+        ist -- auf dem Quellsystem nur ueber list_destinations_only sichtbar
+        (normale Abfrage liefert dort nur Beziehungen, deren Ziel es ist)."""
+        with self._connection():
+            try:
+                rels = list(SnapmirrorRelationship.get_collection(
+                    list_destinations_only=True, **{"source.path": f"{svm_name}:{volume_name}"}, fields="destination.path",
+                ))
+            except NetAppRestError as exc:
+                raise NetAppConnectionError(f"SnapMirror-Beziehungen konnten nicht gelesen werden: {exc}") from exc
+            return [p for p in (_get_nested(r, "destination.path") for r in rels) if p]
+
     def delete_volume_forced(self, uuid: str) -> None:
         """Offline nehmen und loeschen (Zurueckrollen im CSV-Assistenten)."""
         try:

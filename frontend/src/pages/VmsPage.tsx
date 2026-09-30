@@ -45,6 +45,7 @@ import { SearchInput } from "@/components/SearchInput";
 import { SiteBadgeView } from "@/components/SiteBadge";
 import { VmMoveModal } from "@/components/VmMoveModal";
 import { CsvCreateModal } from "@/components/CsvCreateModal";
+import { CsvDeleteModal } from "@/components/CsvDeleteModal";
 import { CsvResizeModal } from "@/components/CsvResizeModal";
 import { SmbShareResizeModal } from "@/components/SmbShareResizeModal";
 import type { BackupScope, Csv, ResourceGroup, SmbShare, Vm } from "@/api/types";
@@ -569,6 +570,7 @@ export function VmsPage() {
   const [resizeCsv, setResizeCsv] = useState<Csv | null>(null);
   // Neue CSV anlegen (Backlog #68) -- gleiche Rechte wie CSV vergroessern.
   const [createCsvOpen, setCreateCsvOpen] = useState(false);
+  const [deleteCsv, setDeleteCsv] = useState<Csv | null>(null);
   // SMB3 vergroessern aendert nur das NetApp-Volume -- kein Hyper-V-Recht noetig.
   const canResizeSmb = hasPermission("storage:manage") && !storageLocked;
   const [resizeSmbShare, setResizeSmbShare] = useState<SmbShare | null>(null);
@@ -1251,6 +1253,22 @@ export function VmsPage() {
                             <IconArrowAutofitWidth size={16} />
                           </ActionIcon>
                         </Tooltip>
+                        <Tooltip
+                          label={
+                            storageLocked
+                              ? "CSV löschen -- Storage-Aktionen sind gesperrt (Settings > Storage)"
+                              : "CSV löschen (optional mit LUN und Volume)"
+                          }
+                        >
+                          <ActionIcon
+                            variant="light"
+                            color="red"
+                            disabled={!canResizeCsv || !csv.cluster_id}
+                            onClick={() => setDeleteCsv(csv)}
+                          >
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Tooltip>
                       </Group>
                     </Table.Td>
                   </Table.Tr>
@@ -1412,6 +1430,7 @@ export function VmsPage() {
       </Tabs>
 
       <CsvCreateModal opened={createCsvOpen} onClose={() => setCreateCsvOpen(false)} />
+      <CsvDeleteModal opened={deleteCsv !== null} onClose={() => setDeleteCsv(null)} csv={deleteCsv} />
       <CsvResizeModal opened={resizeCsv !== null} onClose={() => setResizeCsv(null)} csv={resizeCsv} />
       <SmbShareResizeModal share={resizeSmbShare} onClose={() => setResizeSmbShare(null)} />
       <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} fixSiteMismatch={moveFixSite} />

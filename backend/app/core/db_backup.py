@@ -40,6 +40,7 @@ from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.models.backup_run import BackupRun, JobStatus
 from app.models.csv_create_run import CsvCreateRun
+from app.models.csv_delete_run import CsvDeleteRun
 from app.models.csv_resize_run import CsvResizeRun
 from app.models.db_backup import DbBackupConfig
 from app.models.file_restore_run import FileRestoreRun
@@ -376,7 +377,7 @@ def running_jobs(db: Session) -> list[str]:
         reasons.append(f"{backups} laufende(r) Backup-Lauf/Läufe")
     for model, label in (
         (RestoreRun, "Restore"), (VmRecreateRun, "VM-Neuerstellung"), (FileRestoreRun, "offene Datei-Restore-Sitzung"),
-        (VmMoveRun, "VM-Verschiebung"), (CsvResizeRun, "CSV-Vergrößerung"), (CsvCreateRun, "CSV-Anlage"),
+        (VmMoveRun, "VM-Verschiebung"), (CsvResizeRun, "CSV-Vergrößerung"), (CsvCreateRun, "CSV-Anlage"), (CsvDeleteRun, "CSV-Löschung"),
     ):
         count = db.query(model).filter(model.status == RestoreStatus.RUNNING).count()
         if count:

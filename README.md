@@ -99,6 +99,13 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   aktualisieren (Standort erbt die CSV vom NetApp-System), optional direkt einer
   Protection Group zuordnen. Formatiert nur leere (RAW-)Disks. Bei einem Fehler fragt
   der Dialog nach: Zurueckrollen (entfernt genau die angelegten Objekte) oder Behalten.
+- **CSV loeschen** -- Papierkorb-Aktion in Inventory > CSVs: CSV und Cluster-Disk
+  entfernen, aus allen Protection Groups austragen, optional (Opt-out) LUN samt Mapping
+  und -- nur wenn einzige LUN darin -- das Volume auf der NetApp loeschen, danach auf allen
+  Knoten neu einlesen. Gesperrt, solange VMs/VM-Dateien auf der CSV liegen (Inventory +
+  Live-Scan) oder das Volume SnapMirror-Quelle ist; andere Dateien und die mitgeloeschten
+  Backup-Snapshots (Anzahl, Zeitraum) als Warnung, Backup-Eintraege werden danach als nicht
+  mehr vorhanden markiert (SnapMirror-Kopien bleiben). Bestaetigung per CSV-Namen.
 - **Kapazitaetsverlauf** -- taeglicher Messpunkt je VHD/CSV/LUN/Volume/Aggregat
   (`CapacitySample`, ueber einen aus stabilen Objekteigenschaften abgeleiteten
   Schluessel statt der bei jeder Discovery neu vergebenen Zeilen-ID), als

@@ -23,6 +23,7 @@ from app.models.role import Role, RoleAssignment
 from app.models.scheduler_config import SchedulerConfig
 from app.models.csv_resize_run import CsvResizeRun, CsvResizeRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.csv_create_run import CsvCreateRun, CsvCreateRunStep  # noqa: F401  (nur fuer create_all)
+from app.models.csv_delete_run import CsvDeleteRun, CsvDeleteRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.db_backup import DbBackupConfig  # noqa: F401  (nur fuer create_all)
 from app.models.vm_move_run import VmMoveRun, VmMoveRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.site import CsvSiteOverride, HyperVNodeSite, Site, VmSiteMismatchObservation  # noqa: F401  (nur fuer create_all)
@@ -192,7 +193,7 @@ def _reap_orphaned_in_progress_runs(engine) -> None:
         # RestoreRun/VmRecreateRun/FileRestoreRun nutzen (anders als
         # BackupRun) eine String-Spalte statt SQLAlchemy Enum(...) -- dort
         # steht der rohe .value-String ('running'), nicht der Enum-NAME.
-        for table in ("restore_runs", "vm_recreate_runs", "file_restore_runs", "vm_move_runs", "csv_resize_runs", "csv_create_runs"):
+        for table in ("restore_runs", "vm_recreate_runs", "file_restore_runs", "vm_move_runs", "csv_resize_runs", "csv_create_runs", "csv_delete_runs"):
             conn.execute(
                 text(f"UPDATE {table} SET status = 'failed', error_message = :msg, finished_at = CURRENT_TIMESTAMP WHERE status = 'running'"),
                 {"msg": message},

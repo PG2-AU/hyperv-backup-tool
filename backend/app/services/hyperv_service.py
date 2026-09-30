@@ -1484,6 +1484,34 @@ class HyperVService:
             raise RuntimeError(f"CSV-Ordner konnte nicht umbenannt werden: {result.error}")
         return result.output.strip().splitlines()[-1].strip() if result.output.strip() else ""
 
+    _VM_FILE_EXTENSIONS = (".vhd", ".vhdx", ".avhd", ".avhdx", ".vhds", ".vmcx", ".vmrs", ".vmgs", ".vsv")
+
+    def scan_csv_files(self, session: winrm.Session, csv_path: str, limit: int = 200) -> dict:
+        """Dateien auf einer CSV (vor dem Loeschen). Bricht nach `limit`
+        Dateien ab (-First stoppt die Aufzaehlung), 'System Volume
+        Information' und Papierkorb zaehlen nicht. Liefert die Dateien mit
+        Groesse; 'truncated' = es gibt mehr als `limit`."""
+        root = csv_path.rstrip("\\").replace("'", "''")
+        script = (
+            f"$root = '{root}'; "
+            "if (-not (Test-Path -LiteralPath $root)) { throw \"CSV-Pfad $root nicht erreichbar\" }; "
+            "$f = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction SilentlyContinue | "
+            "Where-Object { $_.FullName -notlike '*\\System Volume Information\\*' -and $_.FullName -notlike '*\\$RECYCLE.BIN\\*' } | "
+            f"Select-Object -First {int(limit) + 1}); "
+            "@($f | ForEach-Object { [PSCustomObject]@{ Path = $_.FullName; Size = $_.Length } }) | ConvertTo-Json -Depth 2 -Compress"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Dateien auf der CSV konnten nicht gelesen werden: {result.error}")
+        text = result.output.strip()
+        raw = json.loads(text) if text else []
+        entries = raw if isinstance(raw, list) else [raw]
+        files = [{"path": e.get("Path") or "", "size_bytes": int(e.get("Size") or 0)} for e in entries if e]
+        truncated = len(files) > limit
+        files = files[:limit]
+        vm_files = [f for f in files if f["path"].lower().endswith(self._VM_FILE_EXTENSIONS)]
+        return {"files": files, "vm_files": vm_files, "truncated": truncated}
+
     def remove_cluster_shared_volume(self, cno_session: winrm.Session, resource_name: str) -> None:
         name = resource_name.replace("'", "''")
         result = self._run_ps(

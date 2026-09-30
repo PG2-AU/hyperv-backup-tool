@@ -1505,3 +1505,52 @@ export interface CsvCreateRun {
   finished_at?: string | null;
   steps: { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null }[];
 }
+
+// CSV loeschen (backend app.api.routes.csv_delete).
+export interface CsvDeleteInfo {
+  cluster_id: string;
+  csv_name: string;
+  csv_path?: string | null;
+  owner_node?: string | null;
+  state?: string | null;
+  capacity_bytes?: number | null;
+  used_bytes?: number | null;
+  serial_number: string;
+  netapp_cluster_id: string;
+  netapp_cluster_name: string;
+  lun_uuid: string;
+  lun_name: string;
+  svm_name?: string | null;
+  lun_size_bytes: number;
+  igroups: string[];
+  volume_uuid: string;
+  volume_name: string;
+  volume_size_bytes: number;
+  other_luns: string[];
+  volume_deletable: boolean;
+  snapshots: { total: number; backup_count: number; oldest_backup?: string | null; newest_backup?: string | null };
+  snapmirror_destinations: string[];
+  vms: string[];
+  vm_files: { path: string; size_bytes: number }[];
+  other_files: { path: string; size_bytes: number }[];
+  files_truncated: boolean;
+  protection_groups: string[];
+  blocked_reasons: string[];
+  warnings: string[];
+}
+
+export interface CsvDeleteRun {
+  id: string;
+  csv_name: string;
+  lun_name: string;
+  volume_name: string;
+  delete_lun: boolean;
+  delete_volume: boolean;
+  capacity_bytes?: number | null;
+  removed_from_groups: string[];
+  status: "running" | "succeeded" | "failed";
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null }[];
+}
