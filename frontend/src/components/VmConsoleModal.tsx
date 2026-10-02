@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Divider, Group, Kbd, Loader, Modal, SegmentedControl, Select, Stack, Text } from "@mantine/core";
+import { Alert, Button, Divider, Group, Kbd, Loader, Modal, SegmentedControl, Select, Stack, Text, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconDeviceDesktop, IconDownload, IconInfoCircle } from "@tabler/icons-react";
 
@@ -7,6 +7,10 @@ import { downloadVmRdp, useVmConsoleInfo } from "@/api/hooks.vmConsole";
 import { apiErrorMessage } from "@/utils/errors";
 
 const VIA_KEY = "hvnb.vmConsole.via";
+// Zuletzt genutzte Benutzernamen (Konto auf dem Knoten bzw. im Gast) -- nur
+// der Name, ein Kennwort kann eine .rdp-Datei nicht mitgeben.
+const HOST_USER_KEY = "hvnb.vmConsole.hostUser";
+const GUEST_USER_KEY = "hvnb.vmConsole.guestUser";
 
 interface VmConsoleModalProps {
   vm: { name: string; cluster_id?: string | null } | null;
@@ -24,6 +28,8 @@ export function VmConsoleModal({ vm, onClose }: VmConsoleModalProps) {
   // Knoten per Name oder per IP ansprechen -- ein PC ausserhalb der Domaene
   // kann den Namen nicht aufloesen. Die Wahl bleibt im Browser gespeichert.
   const [via, setVia] = useState<"name" | "ip">(() => (localStorage.getItem(VIA_KEY) === "ip" ? "ip" : "name"));
+  const [hostUser, setHostUser] = useState(() => localStorage.getItem(HOST_USER_KEY) ?? "");
+  const [guestUser, setGuestUser] = useState(() => localStorage.getItem(GUEST_USER_KEY) ?? "");
   function chooseVia(value: string) {
     const next = value === "ip" ? "ip" : "name";
     setVia(next);
@@ -37,7 +43,15 @@ export function VmConsoleModal({ vm, onClose }: VmConsoleModalProps) {
   function download(kind: "console" | "guest") {
     if (!vm?.cluster_id) return;
     setBusy(kind);
-    downloadVmRdp(vm.cluster_id, vm.name, kind, kind === "guest" ? (address ?? undefined) : effectiveVia)
+    localStorage.setItem(HOST_USER_KEY, hostUser.trim());
+    localStorage.setItem(GUEST_USER_KEY, guestUser.trim());
+    downloadVmRdp(
+      vm.cluster_id,
+      vm.name,
+      kind,
+      kind === "guest" ? (address ?? undefined) : effectiveVia,
+      kind === "guest" ? guestUser : hostUser,
+    )
       .catch((err) =>
         notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Die Datei konnte nicht erzeugt werden."), color: "red" }),
       )
@@ -95,6 +109,15 @@ export function VmConsoleModal({ vm, onClose }: VmConsoleModalProps) {
                   </Text>
                 </Group>
               )}
+              <TextInput
+                size="xs"
+                label="Benutzername (optional)"
+                description="Konto mit Hyper-V-Rechten auf dem Knoten -- wird in der Datei vorbelegt, das Kennwort fragt der Client ab"
+                placeholder="DOMÄNE\Benutzer"
+                value={hostUser}
+                onChange={(e) => setHostUser(e.currentTarget.value)}
+                w={360}
+              />
               {info.state !== "Running" && (
                 <Alert color="yellow" py={6} icon={<IconInfoCircle size={16} />}>
                   Die VM ist nicht eingeschaltet (Status {info.state}) -- die Konsole zeigt dann nur einen leeren Bildschirm.
@@ -113,7 +136,17 @@ export function VmConsoleModal({ vm, onClose }: VmConsoleModalProps) {
                   Direkte Remotedesktop-Verbindung zur IP-Adresse der VM. Braucht Netzwerk und aktiviertes RDP im Gast (Windows).
                 </Text>
                 {info.ip_addresses.length > 0 ? (
-                  <Select mt={4} data={info.ip_addresses} value={address} onChange={setAddress} allowDeselect={false} w={260} />
+                  <Group mt={4} align="flex-end">
+                    <Select size="xs" label="IP-Adresse" data={info.ip_addresses} value={address} onChange={setAddress} allowDeselect={false} w={200} />
+                    <TextInput
+                      size="xs"
+                      label="Benutzername (optional)"
+                      placeholder="DOMÄNE\Benutzer"
+                      value={guestUser}
+                      onChange={(e) => setGuestUser(e.currentTarget.value)}
+                      w={240}
+                    />
+                  </Group>
                 ) : (
                   <Text size="xs" c="orange" mt={4}>
                     Die VM meldet keine IP-Adresse (ausgeschaltet, kein Netzwerk oder keine Integrationsdienste).

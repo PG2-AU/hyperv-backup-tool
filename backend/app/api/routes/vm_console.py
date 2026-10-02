@@ -101,6 +101,17 @@ def _rdp_response(lines: list[str], filename: str) -> Response:
     )
 
 
+def _username_line(username: str | None) -> list[str]:
+    """Optional vorbelegter Benutzername (DOMAENE\\Name oder UPN). Ein
+    Kennwort laesst sich in einer .rdp-Datei nicht mitgeben."""
+    value = (username or "").strip()
+    if not value:
+        return []
+    if len(value) > 200 or any(ord(ch) < 32 for ch in value):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ungültiger Benutzername.")
+    return [f"username:s:{value}"]
+
+
 def _log(db: Session, user, message: str) -> None:
     db.add(SystemLogEvent(level="INFO", source="vm-console", message=f"{message} (durch {user.display_name or user.username})"))
     db.commit()
@@ -116,7 +127,7 @@ def get_info(
 
 @router.get("/{cluster_id}/{vm_name}/console.rdp")
 def console_rdp(
-    cluster_id: str, vm_name: str, via: str = "name", db: Session = Depends(get_db),
+    cluster_id: str, vm_name: str, via: str = "name", username: str | None = None, db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.VM_CONSOLE)),
 ) -> Response:
     """`via=ip`: Management-IP des Knotens statt seines Namens."""
@@ -136,6 +147,7 @@ def console_rdp(
             f"pcb:s:{info.vm_id.upper()}",  # Schreibweise wie im live geprueften Vorab-Test
             "negotiate security layer:i:0",
             "prompt for credentials:i:1",
+            *_username_line(username),
         ],
         f"{vm_name}-Konsole.rdp",
     )
@@ -143,7 +155,7 @@ def console_rdp(
 
 @router.get("/{cluster_id}/{vm_name}/guest.rdp")
 def guest_rdp(
-    cluster_id: str, vm_name: str, address: str, db: Session = Depends(get_db),
+    cluster_id: str, vm_name: str, address: str, username: str | None = None, db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.VM_CONSOLE)),
 ) -> Response:
     vm = db.query(HyperVVm).filter(HyperVVm.cluster_id == cluster_id, HyperVVm.name == vm_name).first()
@@ -154,4 +166,6 @@ def guest_rdp(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ungültige IP-Adresse.") from exc
     _log(db, user, f"Remote-Sitzung: RDP ins Gastsystem von VM '{vm_name}' angefordert ({ip})")
-    return _rdp_response([f"full address:s:{ip}", "prompt for credentials:i:1"], f"{vm_name}-RDP.rdp")
+    return _rdp_response(
+        [f"full address:s:{ip}", "prompt for credentials:i:1", *_username_line(username)], f"{vm_name}-RDP.rdp",
+    )
