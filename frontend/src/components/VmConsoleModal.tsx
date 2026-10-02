@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Divider, Group, Loader, Modal, Select, Stack, Text } from "@mantine/core";
+import { Alert, Button, Divider, Group, Kbd, Loader, Modal, Select, Stack, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconDeviceDesktop, IconDownload, IconInfoCircle } from "@tabler/icons-react";
 
@@ -103,6 +103,9 @@ export function VmConsoleModal({ vm, onClose }: VmConsoleModalProps) {
               </Button>
             </Group>
 
+            <Alert color="blue" variant="light" py={6} icon={<IconInfoCircle size={16} />}>
+              Strg+Alt+Entf in der Sitzung: <Kbd>Strg</Kbd> + <Kbd>Alt</Kbd> + <Kbd>Ende</Kbd> drücken.
+            </Alert>
             <Text size="xs" c="dimmed">
               Es wird jeweils eine .rdp-Datei heruntergeladen -- per Doppelklick öffnet sie die Remotedesktopverbindung. Die App
               gibt keine Zugangsdaten weiter; der Download wird im System-Log vermerkt.
