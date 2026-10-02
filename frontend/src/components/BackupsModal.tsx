@@ -1,5 +1,7 @@
-import { ActionIcon, Badge, Group, Loader, Menu, Modal, ScrollArea, Stack, Table, Text, Tooltip } from "@mantine/core";
+import { useEffect, useState } from "react";
+import { ActionIcon, Badge, Button, Checkbox, Group, Loader, Menu, Modal, Progress, ScrollArea, Stack, Table, Text, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { useQueryClient } from "@tanstack/react-query";
 import { IconDotsVertical, IconDatabaseImport, IconTrash, IconUnlink } from "@tabler/icons-react";
 
 import {
@@ -9,7 +11,9 @@ import {
   useDeleteBackupSnapshot,
   useDetachVmFromBackupSnapshot,
 } from "@/api/hooks";
+import { apiClient } from "@/api/client";
 import type { BackupScope, BackupSnapshot } from "@/api/types";
+import { useAuthStore } from "@/store/authStore";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatSmbShareKey } from "@/utils/format";
@@ -106,6 +110,90 @@ function SecondaryStatus({ status }: { status: BackupSecondaryStatus[] }) {
 export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRestoreWizard }: BackupsModalProps) {
   const { data: backups, isLoading } = useBackupsForObject(scope, name, clusterId, opened, true);
   const { data: secondaryStatus } = useBackupSecondaryStatus(scope, name, clusterId, opened);
+
+  // CSV/SMB3 (Nutzerwunsch 2026-10-02): mehrere Snapshots auswaehlen und in
+  // einem Zug loeschen statt einzeln ueber das Drei-Punkte-Menue. Bei VMs
+  // bleibt das Menue (Restore-Wizard, VM-Informationen entfernen).
+  // Gleicher Aufbau wie Storage > Volumes > Snapshots (VolumeSnapshotsModal).
+  const canDelete = useAuthStore((s) => s.hasPermission("backup:delete"));
+  const multiSelect = scope !== "vm" && canDelete;
+  const showMenu = scope === "vm";
+  const queryClient = useQueryClient();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  useEffect(() => {
+    if (!opened) setSelected(new Set());
+  }, [opened, name]);
+  // Loeschbar ist nur, was noch auf dem Primaersystem liegt -- eine reine
+  // Ziel-Kopie raeumt die SnapMirror-Policy auf.
+  const deletable = (backups ?? []).filter((b) => b.restore_source === "primary");
+  const selectedBackups = deletable.filter((b) => selected.has(b.id));
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function deleteSelected(items: BackupSnapshot[]) {
+    setBulkProgress({ done: 0, total: items.length });
+    const failed: string[] = [];
+    for (const [index, b] of items.entries()) {
+      try {
+        await apiClient.delete(`/jobs/backups/${b.id}`);
+      } catch (err) {
+        failed.push(`${b.snapshot_name ?? b.id}: ${apiErrorMessage(err, "nicht löschbar")}`);
+      }
+      setBulkProgress({ done: index + 1, total: items.length });
+    }
+    setBulkProgress(null);
+    setSelected(new Set());
+    queryClient.invalidateQueries({ queryKey: ["backups", scope, name] });
+    const ok = items.length - failed.length;
+    if (ok > 0) {
+      notifications.show({ title: "Snapshots gelöscht", message: `${ok} von ${items.length} Snapshot(s) gelöscht.`, color: "green" });
+    }
+    if (failed.length > 0) {
+      notifications.show({
+        title: `${failed.length} Snapshot(s) nicht gelöscht`,
+        message: failed.join("\n"),
+        color: "red",
+        autoClose: false,
+      });
+    }
+  }
+
+  function confirmDeleteSelected() {
+    const items = selectedBackups;
+    if (items.length === 0) return;
+    const vms = Array.from(new Set(items.flatMap((b) => b.vm_names))).sort();
+    const withSecondary = items.filter((b) => b.destinations.some((d) => d.present)).length;
+    confirmAction({
+      title: `${items.length} Snapshot(s) löschen`,
+      message: (
+        <Stack gap={6}>
+          <Text size="sm">
+            {items.length} Snapshot(s) unwiderruflich auf dem Primärsystem löschen? Die Backups dieser VMs an diesen Zeitpunkten
+            gehen dort verloren:
+          </Text>
+          <Text size="xs" c="dimmed">
+            {vms.join(", ") || "–"}
+          </Text>
+          {withSecondary > 0 && (
+            <Text size="sm">
+              {withSecondary} davon haben eine Kopie auf dem SnapMirror-Ziel -- die bleibt bestehen und in der Liste als „Sekundär“
+              sichtbar.
+            </Text>
+          )}
+        </Stack>
+      ),
+      confirmLabel: `${items.length} löschen`,
+      onConfirm: () => void deleteSelected(items),
+    });
+  }
   const deleteSnapshot = useDeleteBackupSnapshot(scope, name);
   const detachVm = useDetachVmFromBackupSnapshot(scope, name);
 
@@ -151,7 +239,7 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
   const displayName = name && scope === "smb_share" ? formatSmbShareKey(name) : name;
 
   return (
-    <Modal opened={opened} onClose={onClose} title={`Vorhandene Backups: ${displayName ?? ""}`} size="min(1400px, 95vw)">
+    <Modal opened={opened} onClose={bulkProgress ? () => undefined : onClose} withCloseButton={!bulkProgress} title={`Vorhandene Backups: ${displayName ?? ""}`} size="min(1400px, 95vw)">
       <Stack>
         {isLoading && <Loader size="sm" />}
         {!isLoading && backups?.length === 0 && (
@@ -160,11 +248,38 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
           </Text>
         )}
         {!isLoading && secondaryStatus && secondaryStatus.length > 0 && <SecondaryStatus status={secondaryStatus} />}
+        {!isLoading && multiSelect && backups && backups.length > 0 && (
+          <Group justify="space-between">
+            <Text size="sm" c="dimmed">
+              {backups.length} Backup(s)
+              {selectedBackups.length > 0 ? ` · ${selectedBackups.length} ausgewählt` : ""}
+            </Text>
+            <Button
+              color="red"
+              size="xs"
+              leftSection={<IconTrash size={16} />}
+              disabled={selectedBackups.length === 0 || bulkProgress !== null}
+              onClick={confirmDeleteSelected}
+            >
+              {selectedBackups.length > 0 ? `${selectedBackups.length} löschen` : "Ausgewählte löschen"}
+            </Button>
+          </Group>
+        )}
+        {bulkProgress && (
+          <Stack gap={4}>
+            <Text size="sm">
+              Lösche Snapshot {Math.min(bulkProgress.done + 1, bulkProgress.total)} von {bulkProgress.total}...
+            </Text>
+            <Progress value={(bulkProgress.done / bulkProgress.total) * 100} animated />
+          </Stack>
+        )}
         {!isLoading && backups && backups.length > 0 && (
           <ScrollArea type="auto" offsetScrollbars>
             <Table striped highlightOnHover style={{ whiteSpace: "nowrap" }}>
               <Table.Thead>
                 <Table.Tr>
+                  {/* Bewusst kein "alle auswählen" (Nutzer-Vorgabe 2026-10-02) -- nur einzelne Zeilen. */}
+                  {multiSelect && <Table.Th w={36} />}
                   <Table.Th>Erstellt</Table.Th>
                   <Table.Th>Konsistenz</Table.Th>
                   <Table.Th>System</Table.Th>
@@ -172,12 +287,28 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                   <Table.Th>Policy</Table.Th>
                   <Table.Th>VMs</Table.Th>
                   <Table.Th>Snapshot</Table.Th>
-                  <Table.Th />
+                  {showMenu && <Table.Th />}
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {backups.map((b) => (
                   <Table.Tr key={b.id}>
+                    {multiSelect && (
+                      <Table.Td>
+                        {b.restore_source === "primary" ? (
+                          <Checkbox
+                            aria-label="Auswählen"
+                            checked={selected.has(b.id)}
+                            disabled={bulkProgress !== null}
+                            onChange={() => toggle(b.id)}
+                          />
+                        ) : (
+                          <Tooltip label="Liegt nur noch auf dem SnapMirror-Ziel -- dort räumt die SnapMirror-Policy auf">
+                            <Checkbox aria-label="Nicht löschbar" disabled checked={false} readOnly />
+                          </Tooltip>
+                        )}
+                      </Table.Td>
+                    )}
                     <Table.Td>{new Date(b.created_at).toLocaleString("de-DE")}</Table.Td>
                     <Table.Td>
                       <Badge color={b.consistency === "ApplicationConsistent" ? "green" : "gray"} variant="light">
@@ -199,30 +330,32 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                     <Table.Td ff="monospace" fz="xs">
                       {b.snapshot_name ?? "-"}
                     </Table.Td>
-                    <Table.Td>
-                      <Menu position="bottom-end" withinPortal>
-                        <Menu.Target>
-                          <ActionIcon variant="subtle" color="gray">
-                            <IconDotsVertical size={16} />
-                          </ActionIcon>
-                        </Menu.Target>
-                        <Menu.Dropdown>
-                          {scope === "vm" && onOpenRestoreWizard && isRestorable(b) && (
-                            <Menu.Item leftSection={<IconDatabaseImport size={14} />} onClick={() => onOpenRestoreWizard(b.id)}>
-                              Im Restore-Wizard öffnen
+                    {showMenu && (
+                      <Table.Td>
+                        <Menu position="bottom-end" withinPortal>
+                          <Menu.Target>
+                            <ActionIcon variant="subtle" color="gray">
+                              <IconDotsVertical size={16} />
+                            </ActionIcon>
+                          </Menu.Target>
+                          <Menu.Dropdown>
+                            {scope === "vm" && onOpenRestoreWizard && isRestorable(b) && (
+                              <Menu.Item leftSection={<IconDatabaseImport size={14} />} onClick={() => onOpenRestoreWizard(b.id)}>
+                                Im Restore-Wizard öffnen
+                              </Menu.Item>
+                            )}
+                            {scope === "vm" && (
+                              <Menu.Item leftSection={<IconUnlink size={14} />} onClick={() => handleDetachVm(b)}>
+                                VM-Informationen aus diesem Backup entfernen
+                              </Menu.Item>
+                            )}
+                            <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={() => handleDeleteSnapshot(b)}>
+                              Snapshot komplett löschen
                             </Menu.Item>
-                          )}
-                          {scope === "vm" && (
-                            <Menu.Item leftSection={<IconUnlink size={14} />} onClick={() => handleDetachVm(b)}>
-                              VM-Informationen aus diesem Backup entfernen
-                            </Menu.Item>
-                          )}
-                          <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={() => handleDeleteSnapshot(b)}>
-                            Snapshot komplett löschen
-                          </Menu.Item>
-                        </Menu.Dropdown>
-                      </Menu>
-                    </Table.Td>
+                          </Menu.Dropdown>
+                        </Menu>
+                      </Table.Td>
+                    )}
                   </Table.Tr>
                 ))}
               </Table.Tbody>

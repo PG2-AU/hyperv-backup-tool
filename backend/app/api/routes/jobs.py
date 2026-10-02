@@ -925,6 +925,11 @@ def delete_backup_snapshot(
     row = db.get(BackupRunSnapshot, snapshot_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot nicht gefunden")
+    if not row.success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Der Snapshot liegt nicht mehr auf dem Primärsystem -- die Kopie auf dem SnapMirror-Ziel räumt dessen SnapMirror-Policy auf.",
+        )
     if not row.volume_uuid or not row.snapshot_uuid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Snapshot hat keine Volume-/Snapshot-UUID")
 
@@ -937,7 +942,14 @@ def delete_backup_snapshot(
     if not result.success:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Snapshot konnte nicht geloescht werden: {result.message}")
 
-    db.delete(row)
+    if any(d.present for d in row.destinations):
+        # Eine Kopie liegt noch auf einem SnapMirror-Ziel: Eintrag behalten
+        # (wie beim Loeschen ueber Storage > Volumes > Snapshots), damit sie
+        # sichtbar und -- mit Restore-Setup -- wiederherstellbar bleibt.
+        row.success = False
+        row.error_message = f"Snapshot manuell gelöscht (Vorhandene Backups, {user.username}, {datetime.now(timezone.utc):%d.%m.%Y %H:%M} UTC)"
+    else:
+        db.delete(row)
     db.commit()
 
 
