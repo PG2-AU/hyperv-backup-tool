@@ -51,6 +51,7 @@ import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
 import { SiteBadgeView } from "@/components/SiteBadge";
 import { VmConsoleModal } from "@/components/VmConsoleModal";
+import { VmCreateModal } from "@/components/VmCreateModal";
 import { VmMoveModal } from "@/components/VmMoveModal";
 import { useVmPower, useVmPowerActions, VM_POWER_LABEL, type VmPowerActionName } from "@/api/hooks.vmPower";
 import { CsvCreateModal } from "@/components/CsvCreateModal";
@@ -607,6 +608,8 @@ export function VmsPage() {
   // Remote-Sitzung (Backlog #75) -- eigenes Recht vm:console.
   const canOpenConsole = hasPermission("vm:console");
   const [consoleVm, setConsoleVm] = useState<Vm | null>(null);
+  // Neue VM per Assistent (Backlog #74).
+  const [createVmOpen, setCreateVmOpen] = useState(false);
   // Stufe 3: Dialog im "Standort-Abweichung beheben"-Modus geoeffnet.
   const [moveFixSite, setMoveFixSite] = useState(false);
   // Standort-Filter (Settings > Standorte) -- nur sichtbar, sobald
@@ -957,6 +960,11 @@ export function VmsPage() {
                     { value: "unassigned", label: `Ohne Standort (${siteUnassignedCount})` },
                   ]}
                 />
+              )}
+              {canManageHyperv && (
+                <Button ml="auto" leftSection={<IconPlus size={16} />} onClick={() => setCreateVmOpen(true)}>
+                  Neue VM
+                </Button>
               )}
             </Group>
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
@@ -1587,6 +1595,7 @@ export function VmsPage() {
       <SmbShareCreateModal opened={createSmbOpen} onClose={() => setCreateSmbOpen(false)} />
       <SmbShareDeleteModal share={deleteSmbShare} onClose={() => setDeleteSmbShare(null)} />
       <VmConsoleModal vm={consoleVm} onClose={() => setConsoleVm(null)} />
+      <VmCreateModal opened={createVmOpen} onClose={() => setCreateVmOpen(false)} />
       <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} fixSiteMismatch={moveFixSite} />
       <BackupsModal
         opened={!!backupsTarget}

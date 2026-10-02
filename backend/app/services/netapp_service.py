@@ -1449,17 +1449,22 @@ class NetAppOntapService:
     # ODX-Arbeitsverzeichnis, von ONTAP selbst angelegt).
     _SCAN_SKIP = {".", "..", ".snapshot", ".copy_offload"}
 
-    def volume_file_scan(self, volume_uuid: str, path: str = "/", limit: int = 200) -> dict:
+    def volume_file_scan(
+        self, volume_uuid: str, path: str = "/", limit: int = 200, *,
+        suffixes: tuple[str, ...] | None = None, max_depth: int | None = None,
+    ) -> dict:
         """Dateien eines Volumes (rekursiv, per ONTAP-Datei-API statt per SMB
         -- kein Double-Hop). `path` volume-relativ ('/' = Wurzel). Bricht nach
-        `limit` Dateien ab; 'truncated' = es gibt mehr."""
+        `limit` Dateien ab; 'truncated' = es gibt mehr. `suffixes`: nur
+        Dateien mit dieser Endung (z.B. ISO-Suche), `max_depth`: so viele
+        Ordnerebenen unterhalb von `path`."""
         files: list[dict] = []
         truncated = False
         root = path.strip("/")
-        queue = [root]
+        queue: list[tuple[str, int]] = [(root, 0)]
         with self._connection():
             while queue and not truncated:
-                current = queue.pop(0)
+                current, depth = queue.pop(0)
                 try:
                     entries = list(FileInfo.get_collection(volume_uuid, current or "/", fields="name,type,size"))
                 except NetAppRestError as exc:
@@ -1470,8 +1475,9 @@ class NetAppOntapService:
                         continue
                     rel = f"{current}/{name}" if current else name
                     if _get_nested(entry, "type") == "directory":
-                        queue.append(rel)
-                    else:
+                        if max_depth is None or depth < max_depth:
+                            queue.append((rel, depth + 1))
+                    elif suffixes is None or name.lower().endswith(suffixes):
                         if len(files) >= limit:
                             truncated = True
                             break

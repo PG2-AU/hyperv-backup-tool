@@ -1637,6 +1637,8 @@ für &quot;CSV vergrößern&quot; <code>Update-HostStorageCache</code> und <code
 für &quot;Neue CSV&quot; <code>Get-InitiatorPort</code>, <code>Initialize-Disk</code>/<code>New-Partition</code>/<code>Format-Volume</code>,
 <code>Add-ClusterDisk</code> und <code>Add-ClusterSharedVolume</code> (Rückfall auf CredSSP wie beim Host-Move),
 für &quot;CSV löschen&quot; <code>Remove-ClusterSharedVolume</code> und <code>Remove-ClusterResource</code>,
+für &quot;Neue VM&quot; <code>New-VM</code>, <code>New-VHD</code>, <code>Set-VMFirmware</code>, <code>Add-VMDvdDrive</code>, <code>Get-VMSwitch</code>, optional
+<code>Set-VMKeyProtector</code>/<code>Enable-VMTPM</code> (bei SMB3-Ablage per CredSSP),
 für &quot;Remote-Sitzung&quot; <code>Get-VMNetworkAdapter</code> (die Konsole selbst öffnet der PC des Benutzers direkt
 zum Knoten auf TCP 2179 -- dieser Port muss vom Benutzer-PC aus erreichbar sein, nicht von der App),
 für die RAM-Anzeige beim Host-Move <code>Get-CimInstance Win32_OperatingSystem</code>

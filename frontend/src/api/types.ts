@@ -1645,3 +1645,82 @@ export interface SmbDeleteRun {
   finished_at?: string | null;
   steps: RunStep[];
 }
+
+// Neue VM per Assistent (backend app.api.routes.vm_create, Backlog #74).
+export interface VmCreateNode {
+  name: string;
+  state: string;
+  site?: SiteBadge | null;
+  vm_count: number;
+  memory_total_bytes?: number | null;
+  memory_free_bytes?: number | null;
+  switches: { name: string; type: string }[];
+  error?: string | null;
+}
+
+export interface VmCreateLocation {
+  kind: "csv" | "smb";
+  key: string;
+  label: string;
+  root: string;
+  capacity_bytes?: number | null;
+  used_bytes?: number | null;
+  site?: SiteBadge | null;
+}
+
+export interface VmCreateOptions {
+  cluster_id: string;
+  nodes: VmCreateNode[];
+  locations: VmCreateLocation[];
+  vm_names: string[];
+  busy_reason?: string | null;
+}
+
+export interface VmCreateIsoList {
+  isos: { path: string; size_bytes: number }[];
+  warnings: string[];
+}
+
+export interface VmCreatePayload {
+  cluster_id: string;
+  vm_name: string;
+  node_name: string;
+  location_kind: "csv" | "smb";
+  location_key: string;
+  generation: 1 | 2;
+  cpu_count: number;
+  memory_startup_bytes: number;
+  dynamic_memory: boolean;
+  memory_minimum_bytes: number | null;
+  memory_maximum_bytes: number | null;
+  disk_size_bytes: number;
+  disk_dynamic: boolean;
+  data_disks: { size_bytes: number; dynamic: boolean }[];
+  switch_name: string | null;
+  vlan_id: number | null;
+  secure_boot: boolean;
+  secure_boot_template: string;
+  tpm: boolean;
+  iso_path: string | null;
+  high_availability: boolean;
+  start_after: boolean;
+  resource_group_id: string | null;
+}
+
+export interface VmCreateRun {
+  id: string;
+  vm_name: string;
+  node_name: string;
+  storage_root: string;
+  vm_folder: string;
+  new_vm_uuid?: string | null;
+  vm_created: boolean;
+  cluster_role_added: boolean;
+  rollback_declined: boolean;
+  has_created_objects: boolean;
+  status: "running" | "succeeded" | "failed" | "cleaned_up";
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null }[];
+}

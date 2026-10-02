@@ -84,6 +84,13 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   bei geaendertem Backup-Schutz). Gesperrt waehrend eines Backups der VM; Backups
   ueberspringen umgekehrt eine VM, die gerade verschoben wird. "Beheben" an einer
   Standort-Abweichung oeffnet den Dialog mit vorgeschlagenem Ziel.
+- **Neue VM anlegen** -- Button "Neue VM" in Inventory > VMs: leere VM auf einer CSV oder
+  SMB3-Freigabe (<Ablage>\<VM-Name>\ + Virtual Hard Disks\), Knoten-Vorschlag nach Standort
+  der Ablage und freiem RAM, Generation 2/1, vCPU, RAM statisch/dynamisch, Checkpoint-Typ
+  Production, System- und Datendisks (dynamisch/fest), vSwitch + VLAN, Secure Boot (Vorlage
+  Windows/UEFI CA), vTPM optional, ISO von CSV/SMB3 (Suche bzw. Pfad) mit DVD als erstem
+  Boot-Geraet, Cluster-Rolle, optional starten und Protection Group. SMB3-Ablage/-ISO per
+  CredSSP. Bei Fehler Rueckfrage Zurueckrollen (VM + Ordner entfernen) oder Behalten.
 - **VM starten/herunterfahren** -- Power-Menue je VM in Inventory > VMs: Starten (pausierte
   VM: Fortsetzen), Herunterfahren ueber das Gastbetriebssystem (`Stop-VM -Force`) und
   Ausschalten (hart, `Stop-VM -TurnOff`), beides mit Rueckfrage. Laeuft im Hintergrund,

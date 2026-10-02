@@ -1053,6 +1053,168 @@ class HyperVService:
         if not result.success:
             raise RuntimeError(f"Netzwerkadapter fuer '{vm_name}' konnte nicht angelegt werden: {result.error}")
 
+    # --- Neue VM per Assistent (Backlog #74, siehe app.api.routes.vm_create) ---
+
+    def list_vm_switches(self, node_session: winrm.Session) -> list[dict]:
+        """Virtuelle Switches DIESES Knotens (Name + Typ External/Internal/Private)."""
+        result = self._run_ps(
+            node_session,
+            "@(Get-VMSwitch | Select-Object Name, @{N='Type';E={[string]$_.SwitchType}}) | ConvertTo-Json -Depth 2",
+        )
+        if not result.success:
+            raise RuntimeError(f"Get-VMSwitch fehlgeschlagen: {result.error}")
+        raw = json.loads(result.output) if result.output.strip() else []
+        entries = raw if isinstance(raw, list) else [raw]
+        return [{"name": e["Name"], "type": e.get("Type") or ""} for e in entries if e and e.get("Name")]
+
+    def find_iso_files(self, session: winrm.Session, depth: int = 3, limit: int = 200) -> list[dict]:
+        """*.iso auf allen CSVs (C:\\ClusterStorage\\*), begrenzte Tiefe."""
+        script = (
+            f"@(Get-ChildItem -Path 'C:\\ClusterStorage\\*' -Recurse -Depth {int(depth)} -Filter *.iso -File "
+            f"-ErrorAction SilentlyContinue | Select-Object -First {int(limit)} | "
+            "ForEach-Object { [PSCustomObject]@{ Path = $_.FullName; Size = $_.Length } }) | ConvertTo-Json -Depth 2 -Compress"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"ISO-Suche fehlgeschlagen: {result.error}")
+        raw = json.loads(result.output) if result.output.strip() else []
+        entries = raw if isinstance(raw, list) else [raw]
+        return [{"path": e["Path"], "size_bytes": int(e.get("Size") or 0)} for e in entries if e and e.get("Path")]
+
+    def vm_or_group_exists(self, cno_session: winrm.Session, vm_name: str) -> bool:
+        """Gibt es im Cluster bereits eine Rolle bzw. auf dem CNO-Knoten eine
+        VM mit diesem Namen?"""
+        vm = vm_name.replace("'", "''")
+        result = self._run_ps(
+            cno_session,
+            f"if ((Get-ClusterGroup -Name '{vm}' -ErrorAction SilentlyContinue) -or "
+            f"(Get-VM -Name '{vm}' -ErrorAction SilentlyContinue)) {{ 'yes' }} else {{ 'no' }}",
+        )
+        if not result.success:
+            raise RuntimeError(f"VM-Name konnte nicht geprueft werden: {result.error}")
+        return result.output.strip().endswith("yes")
+
+    def configure_new_vm(
+        self, session: winrm.Session, vm_name: str, *, cpu_count: int, memory_startup_bytes: int,
+        memory_minimum_bytes: int | None, memory_maximum_bytes: int | None,
+    ) -> None:
+        """CPU, RAM (statisch, oder dynamisch wenn Min/Max gesetzt) und
+        Checkpoint-Typ Production (applikationskonsistent, Voraussetzung fuer
+        die Backups dieser App)."""
+        vm = vm_name.replace("'", "''")
+        if memory_minimum_bytes and memory_maximum_bytes:
+            memory = (
+                f"-DynamicMemoryEnabled $true -StartupBytes {int(memory_startup_bytes)} "
+                f"-MinimumBytes {int(memory_minimum_bytes)} -MaximumBytes {int(memory_maximum_bytes)}"
+            )
+        else:
+            memory = f"-DynamicMemoryEnabled $false -StartupBytes {int(memory_startup_bytes)}"
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"Set-VMProcessor -VMName '{vm}' -Count {int(cpu_count)}; "
+            f"Set-VMMemory -VMName '{vm}' {memory}; "
+            f"Set-VM -Name '{vm}' -CheckpointType Production"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Hardware von '{vm_name}' konnte nicht eingestellt werden: {result.error}")
+
+    def create_and_attach_vhd(self, session: winrm.Session, vm_name: str, vhd_path: str, size_bytes: int, dynamic: bool) -> None:
+        vm = vm_name.replace("'", "''")
+        path = vhd_path.replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"if (Test-Path -LiteralPath '{path}') {{ throw \"Datei {path} existiert bereits\" }}; "
+            f"New-Item -ItemType Directory -Force -Path (Split-Path -Parent '{path}') | Out-Null; "
+            f"New-VHD -Path '{path}' -SizeBytes {int(size_bytes)} {'-Dynamic' if dynamic else '-Fixed'} | Out-Null; "
+            f"Add-VMHardDiskDrive -VMName '{vm}' -Path '{path}'"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Festplatte {vhd_path} konnte nicht angelegt werden: {result.error}")
+
+    def connect_default_adapter(self, session: winrm.Session, vm_name: str, switch_name: str, vlan_id: int | None) -> None:
+        """New-VM legt bereits einen (unverbundenen) Netzwerkadapter an --
+        diesen verbinden statt einen zweiten anzulegen."""
+        vm = vm_name.replace("'", "''")
+        switch = switch_name.replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"$a = Get-VMNetworkAdapter -VMName '{vm}' | Select-Object -First 1; "
+            f"if (-not $a) {{ $a = Add-VMNetworkAdapter -VMName '{vm}' -Passthru }}; "
+            f"Connect-VMNetworkAdapter -VMNetworkAdapter $a -SwitchName '{switch}'; "
+        )
+        if vlan_id:
+            script += f"Set-VMNetworkAdapterVlan -VMNetworkAdapter $a -Access -VlanId {int(vlan_id)}"
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Netzwerk von '{vm_name}' konnte nicht verbunden werden: {result.error}")
+
+    def configure_new_vm_boot(
+        self, session: winrm.Session, vm_name: str, *, generation: int, secure_boot: bool, secure_boot_template: str,
+        tpm: bool, iso_path: str | None,
+    ) -> None:
+        """Generation 2: Secure Boot (+Vorlage), optional vTPM mit lokalem
+        Schluesselschutz, optional ISO als DVD und DVD als erstes Boot-Geraet.
+        Generation 1: nur ISO ins vorhandene DVD-Laufwerk (bootet ohnehin
+        zuerst von CD)."""
+        vm = vm_name.replace("'", "''")
+        iso = (iso_path or "").replace("'", "''")
+        parts = ["$ErrorActionPreference = 'Stop'; "]
+        if generation == 2:
+            template = secure_boot_template.replace("'", "")
+            if secure_boot:
+                parts.append(f"Set-VMFirmware -VMName '{vm}' -EnableSecureBoot On -SecureBootTemplate '{template}'; ")
+            else:
+                parts.append(f"Set-VMFirmware -VMName '{vm}' -EnableSecureBoot Off; ")
+            if tpm:
+                parts.append(f"Set-VMKeyProtector -VMName '{vm}' -NewLocalKeyProtector; Enable-VMTPM -VMName '{vm}'; ")
+            if iso:
+                parts.append(
+                    f"$dvd = Add-VMDvdDrive -VMName '{vm}' -Path '{iso}' -Passthru; "
+                    f"Set-VMFirmware -VMName '{vm}' -FirstBootDevice $dvd; "
+                )
+        elif iso:
+            parts.append(
+                f"$dvd = Get-VMDvdDrive -VMName '{vm}' | Select-Object -First 1; "
+                f"if ($dvd) {{ Set-VMDvdDrive -VMName '{vm}' -ControllerNumber $dvd.ControllerNumber "
+                f"-ControllerLocation $dvd.ControllerLocation -Path '{iso}' }} "
+                f"else {{ Add-VMDvdDrive -VMName '{vm}' -Path '{iso}' }}; "
+            )
+        if len(parts) == 1:
+            return
+        result = self._run_ps(session, "".join(parts))
+        if not result.success:
+            raise RuntimeError(f"Firmware/Installationsmedium von '{vm_name}' konnte nicht eingestellt werden: {result.error}")
+
+    def remove_cluster_vm_role(self, cno_session: winrm.Session, vm_name: str) -> None:
+        """Nimmt die VM aus dem Cluster (die VM selbst bleibt auf dem Knoten)."""
+        vm = vm_name.replace("'", "''")
+        result = self._run_ps(
+            cno_session,
+            f"$g = Get-ClusterGroup -Name '{vm}' -ErrorAction SilentlyContinue; "
+            "if ($g) { $g | Remove-ClusterGroup -RemoveResources -Force -ErrorAction Stop }",
+        )
+        if not result.success:
+            raise RuntimeError(f"Cluster-Rolle von '{vm_name}' konnte nicht entfernt werden: {result.error}")
+
+    def remove_vm_and_folder(self, session: winrm.Session, vm_name: str, vm_folder: str) -> None:
+        """Zurueckrollen einer gerade angelegten VM: ausschalten, VM
+        entfernen, ihren Ordner loeschen. `vm_folder` muss der vom Assistenten
+        selbst angelegte Ordner <Ablage>\\<VM-Name> sein (dort geprueft)."""
+        vm = vm_name.replace("'", "''")
+        folder = vm_folder.rstrip("\\").replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"$v = Get-VM -Name '{vm}' -ErrorAction SilentlyContinue; "
+            "if ($v) { if ([string]$v.State -ne 'Off') { Stop-VM -VM $v -TurnOff -Force -Confirm:$false }; "
+            "Remove-VM -VM $v -Force -Confirm:$false }; "
+            f"if (Test-Path -LiteralPath '{folder}') {{ Remove-Item -LiteralPath '{folder}' -Recurse -Force }}"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"VM '{vm_name}' konnte nicht entfernt werden: {result.error}")
+
     def register_cluster_role(self, cno_session: winrm.Session, vm_name: str) -> None:
         """Registriert eine bereits existierende (aber noch nicht
         hochverfuegbare) VM als Cluster-Rolle -- Single-Hop-Abfrage gegen
