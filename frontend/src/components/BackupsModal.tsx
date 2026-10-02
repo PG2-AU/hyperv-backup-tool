@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Loader, Menu, Modal, ScrollArea, Stack, Table, Text } from "@mantine/core";
+import { ActionIcon, Badge, Group, Loader, Menu, Modal, ScrollArea, Stack, Table, Text, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconDotsVertical, IconDatabaseImport, IconTrash, IconUnlink } from "@tabler/icons-react";
 
@@ -23,8 +23,47 @@ interface BackupsModalProps {
   onOpenRestoreWizard?: (snapshotId: string) => void;
 }
 
+// Wiederherstellbar = Snapshot noch auf dem Primaersystem ODER auf einem
+// SnapMirror-Ziel, fuer dessen SVM ein Restore-Setup existiert.
+function isRestorable(b: BackupSnapshot): boolean {
+  return b.restore_source === "primary" || b.destinations.some((d) => d.restorable);
+}
+
+// Wo der Snapshot tatsaechlich liegt: Primaer und/oder Sekundaer (SnapMirror-
+// Ziel) -- frueher stand hier nur, woher ein Restore kaeme, die zusaetzliche
+// sekundaere Kopie war unsichtbar (live gemeldet 2026-10-02).
+function SystemBadges({ backup }: { backup: BackupSnapshot }) {
+  const present = backup.destinations.filter((d) => d.present);
+  return (
+    <Group gap={4} wrap="nowrap">
+      {backup.restore_source === "primary" && (
+        <Badge color="blue" variant="light">
+          Primär
+        </Badge>
+      )}
+      {present.map((d) => (
+        <Tooltip
+          key={`${d.svm_name}:${d.volume_name}`}
+          label={`${d.cluster_name ? `${d.cluster_name} · ` : ""}${d.svm_name}:${d.volume_name} · geprüft ${new Date(d.last_checked_at).toLocaleString("de-DE")}${
+            d.restorable ? "" : " · kein Restore-Setup für diese SVM (Restore > Setup), daher von hier nicht wiederherstellbar"
+          }`}
+        >
+          <Badge color="orange" variant={d.restorable ? "light" : "outline"}>
+            Sekundär
+          </Badge>
+        </Tooltip>
+      ))}
+      {backup.restore_source !== "primary" && present.length === 0 && (
+        <Badge color="gray" variant="light">
+          nicht mehr vorhanden
+        </Badge>
+      )}
+    </Group>
+  );
+}
+
 export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRestoreWizard }: BackupsModalProps) {
-  const { data: backups, isLoading } = useBackupsForObject(scope, name, clusterId, opened);
+  const { data: backups, isLoading } = useBackupsForObject(scope, name, clusterId, opened, true);
   const deleteSnapshot = useDeleteBackupSnapshot(scope, name);
   const detachVm = useDetachVmFromBackupSnapshot(scope, name);
 
@@ -103,9 +142,7 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      <Badge color={b.restore_source === "secondary" ? "orange" : "blue"} variant="light">
-                        {b.restore_source === "secondary" ? "Sekundär" : "Primär"}
-                      </Badge>
+                      <SystemBadges backup={b} />
                     </Table.Td>
                     <Table.Td>
                       {b.vhds.some((v) => v.is_avhdx) && (
@@ -127,7 +164,7 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                           </ActionIcon>
                         </Menu.Target>
                         <Menu.Dropdown>
-                          {scope === "vm" && onOpenRestoreWizard && (
+                          {scope === "vm" && onOpenRestoreWizard && isRestorable(b) && (
                             <Menu.Item leftSection={<IconDatabaseImport size={14} />} onClick={() => onOpenRestoreWizard(b.id)}>
                               Im Restore-Wizard öffnen
                             </Menu.Item>

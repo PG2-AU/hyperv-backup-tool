@@ -714,10 +714,17 @@ def list_backups_for_object(
     scope: BackupScope,
     name: str,
     cluster_id: str | None = None,
+    include_unrestorable: bool = False,
     db: Session = Depends(get_db),
     user=Depends(require_permission(Permission.BACKUP_VIEW)),
 ) -> list[BackupSnapshotRead]:
-    """Vorhandene (erfolgreiche) Snapshots, die eine bestimmte VM oder ein
+    """`include_unrestorable` (Dialog "Vorhandene Backups", live gewuenscht
+    2026-10-02): auch Snapshots zeigen, die nur noch auf einem SnapMirror-
+    Ziel liegen, fuer dessen SVM KEIN Restore-Setup existiert -- sie sind
+    vorhanden, aber (noch) nicht wiederherstellbar. Der Restore-Wizard
+    laesst den Schalter aus und sieht weiter nur Wiederherstellbares.
+
+    Vorhandene (erfolgreiche) Snapshots, die eine bestimmte VM oder ein
     bestimmtes CSV abdecken -- unabhaengig davon, ueber welche Policy sie
     entstanden sind. Wird vom Inventory (Rechtsklick -> Backups anzeigen)
     verwendet. `cluster_id` optional fuer Abwaertskompatibilitaet, sollte
@@ -747,7 +754,10 @@ def list_backups_for_object(
     rows = db.query(BackupRunSnapshot).all()
     matched = [
         r for r in rows
-        if (r.netapp_cluster_id, r.svm_name or "", r.volume_name or "") in keys and (r.success or _restorable_destination(r) is not None)
+        if (r.netapp_cluster_id, r.svm_name or "", r.volume_name or "") in keys and (
+            r.success or _restorable_destination(r) is not None
+            or (include_unrestorable and any(d.present for d in r.destinations))
+        )
     ]
     if scope == BackupScope.VM:
         # Ein Snapshot deckt ggf. mehrere VMs ab (gemeinsames CSV/Volume) --

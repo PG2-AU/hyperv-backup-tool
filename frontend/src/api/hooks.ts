@@ -311,11 +311,18 @@ export function useBackupsForObject(
   name: string | undefined,
   clusterId: string | undefined | null,
   enabled: boolean,
+  // Auch Backups, die nur noch auf einem SnapMirror-Ziel ohne Restore-Setup
+  // liegen (Dialog "Vorhandene Backups") -- der Restore-Wizard laesst das aus.
+  includeUnrestorable = false,
 ) {
   return useQuery({
-    queryKey: ["backups", scope, name, clusterId],
+    queryKey: ["backups", scope, name, clusterId, includeUnrestorable],
     queryFn: async () =>
-      (await apiClient.get<BackupSnapshot[]>("/jobs/backups", { params: { scope, name, cluster_id: clusterId } })).data,
+      (
+        await apiClient.get<BackupSnapshot[]>("/jobs/backups", {
+          params: { scope, name, cluster_id: clusterId, include_unrestorable: includeUnrestorable || undefined },
+        })
+      ).data,
     enabled: enabled && !!name,
   });
 }
