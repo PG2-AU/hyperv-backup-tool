@@ -327,6 +327,42 @@ export function useBackupsForObject(
   });
 }
 
+export interface BackupSecondaryStatus {
+  source_system?: string | null;
+  source_path: string;
+  backups: number;
+  relationships: {
+    destination_path?: string | null;
+    reported_by?: string | null;
+    ontap_destination_cluster?: string | null;
+    destination_system?: string | null;
+    destination_volume_known: boolean;
+    restore_setup: boolean;
+    state?: string | null;
+    healthy: boolean;
+    tracked: number;
+    present: number;
+    last_checked_at?: string | null;
+  }[];
+}
+
+// Diagnose zum Dialog "Vorhandene Backups": was weiss die App ueber die
+// SnapMirror-Beziehung(en) der Volumes dieses Objekts.
+export function useBackupSecondaryStatus(
+  scope: BackupScope,
+  name: string | undefined,
+  clusterId: string | undefined | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["backups", scope, name, clusterId, "secondary-status"],
+    queryFn: async () =>
+      (await apiClient.get<BackupSecondaryStatus[]>("/jobs/backups/secondary-status", { params: { scope, name, cluster_id: clusterId } }))
+        .data,
+    enabled: enabled && !!name,
+  });
+}
+
 export function useDeleteBackupSnapshot(scope: BackupScope, name: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({

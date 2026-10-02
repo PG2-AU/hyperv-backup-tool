@@ -2,7 +2,13 @@ import { ActionIcon, Badge, Group, Loader, Menu, Modal, ScrollArea, Stack, Table
 import { notifications } from "@mantine/notifications";
 import { IconDotsVertical, IconDatabaseImport, IconTrash, IconUnlink } from "@tabler/icons-react";
 
-import { useBackupsForObject, useDeleteBackupSnapshot, useDetachVmFromBackupSnapshot } from "@/api/hooks";
+import {
+  type BackupSecondaryStatus,
+  useBackupSecondaryStatus,
+  useBackupsForObject,
+  useDeleteBackupSnapshot,
+  useDetachVmFromBackupSnapshot,
+} from "@/api/hooks";
 import type { BackupScope, BackupSnapshot } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
@@ -62,8 +68,44 @@ function SystemBadges({ backup }: { backup: BackupSnapshot }) {
   );
 }
 
+// Was die App ueber die SnapMirror-Beziehung der Volumes dieses Objekts
+// weiss -- macht sichtbar, WARUM sekundaere Kopien (nicht) erscheinen.
+function SecondaryStatus({ status }: { status: BackupSecondaryStatus[] }) {
+  return (
+    <Stack gap={2}>
+      {status.map((s) =>
+        s.relationships.length === 0 ? (
+          <Text key={s.source_path} size="xs" c="orange.8">
+            Sekundär: für {s.source_path} ist keine SnapMirror-Beziehung bekannt -- Beziehungen meldet nur das Ziel-System; ist es in
+            der App registriert und discovert (Storage)?
+          </Text>
+        ) : (
+          s.relationships.map((r) => {
+            const problems = [
+              !r.destination_system && `Ziel-System '${r.ontap_destination_cluster ?? "?"}' ist nicht in der App registriert`,
+              r.destination_system && !r.destination_volume_known && "Ziel-Volume nicht discovert (Discovery des Ziel-Systems ausführen)",
+              r.destination_system && r.destination_volume_known && r.tracked === 0 && "noch nie abgeglichen (Settings > Hintergrundjobs > Snapshot-Abgleich jetzt ausführen)",
+            ].filter(Boolean);
+            return (
+              <Text key={`${s.source_path}-${r.destination_path}`} size="xs" c={problems.length ? "orange.8" : "dimmed"}>
+                Sekundär: {s.source_path} → {r.destination_path}
+                {r.destination_system ? ` auf ${r.destination_system}` : ""} · {r.present} von {s.backups} Backups mit bestätigter
+                Kopie
+                {r.last_checked_at ? ` · zuletzt geprüft ${new Date(r.last_checked_at).toLocaleString("de-DE")}` : ""}
+                {r.restore_setup ? " · Restore-Setup vorhanden" : " · kein Restore-Setup (Anzeige ja, Restore von dort nein)"}
+                {problems.length ? ` · ${problems.join("; ")}` : ""}
+              </Text>
+            );
+          })
+        ),
+      )}
+    </Stack>
+  );
+}
+
 export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRestoreWizard }: BackupsModalProps) {
   const { data: backups, isLoading } = useBackupsForObject(scope, name, clusterId, opened, true);
+  const { data: secondaryStatus } = useBackupSecondaryStatus(scope, name, clusterId, opened);
   const deleteSnapshot = useDeleteBackupSnapshot(scope, name);
   const detachVm = useDetachVmFromBackupSnapshot(scope, name);
 
@@ -117,6 +159,7 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
             Keine vorhandenen Backups fuer dieses Objekt gefunden.
           </Text>
         )}
+        {!isLoading && secondaryStatus && secondaryStatus.length > 0 && <SecondaryStatus status={secondaryStatus} />}
         {!isLoading && backups && backups.length > 0 && (
           <ScrollArea type="auto" offsetScrollbars>
             <Table striped highlightOnHover style={{ whiteSpace: "nowrap" }}>

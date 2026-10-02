@@ -853,6 +853,65 @@ def list_backups_for_object(
     ]
 
 
+@router.get("/backups/secondary-status")
+def secondary_status_for_object(
+    scope: BackupScope, name: str, cluster_id: str | None = None, db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.BACKUP_VIEW)),
+) -> list[dict]:
+    """Diagnose fuer den Dialog "Vorhandene Backups" (live gewuenscht
+    2026-10-02, Produktiv: sekundaere Kopien liegen auf dem Ziel, erscheinen
+    aber nicht): je Quell-Volume des Objekts, was die App ueber dessen
+    SnapMirror-Beziehung(en) weiss -- Beziehung bekannt? Ziel-System
+    registriert? Ziel-Volume discovert? Restore-Setup? Wie viele Backups
+    haben eine bestaetigte Kopie, wann zuletzt geprueft? Rein aus der DB."""
+    keys = _resolve_volume_keys_for_object(db, scope, name, cluster_id)
+    clusters = {c.id: c for c in db.query(NetAppCluster).all()}
+    by_name: dict[str, NetAppCluster] = {}
+    for c in clusters.values():
+        for cluster_name in (c.ontap_cluster_name, c.name):
+            if cluster_name:
+                by_name[cluster_name.lower()] = c
+    infra_keys = {(c.netapp_cluster_id, c.svm_name) for c in db.query(RestoreInfraConfig).all()}
+    result = []
+    for source_cluster_id, svm_name, volume_name in sorted(keys, key=lambda k: (k[1], k[2])):
+        rows = [
+            r for r in db.query(BackupRunSnapshot).filter(
+                BackupRunSnapshot.netapp_cluster_id == source_cluster_id, BackupRunSnapshot.svm_name == svm_name,
+                BackupRunSnapshot.volume_name == volume_name,
+            )
+            if r.success or any(d.present for d in r.destinations)
+        ]
+        source_path = f"{svm_name}:{volume_name}"
+        entry = {
+            "source_system": clusters[source_cluster_id].name if source_cluster_id in clusters else None,
+            "source_path": source_path, "backups": len(rows), "relationships": [],
+        }
+        for rel in db.query(NetAppSnapMirrorRelationship).filter(NetAppSnapMirrorRelationship.source_path == source_path):
+            dest_cluster = by_name.get((rel.destination_cluster_name or "").lower()) or clusters.get(rel.cluster_id)
+            dest_svm, _, dest_volume = (rel.destination_path or ":").partition(":")
+            volume_known = bool(dest_cluster) and db.query(NetAppVolume).filter(
+                NetAppVolume.cluster_id == dest_cluster.id, NetAppVolume.svm_name == dest_svm, NetAppVolume.name == dest_volume,
+                NetAppVolume.uuid.isnot(None),
+            ).first() is not None
+            dests = [
+                d for r in rows for d in r.destinations
+                if d.destination_svm_name == dest_svm and d.destination_volume_name == dest_volume
+            ]
+            entry["relationships"].append({
+                "destination_path": rel.destination_path,
+                "reported_by": clusters[rel.cluster_id].name if rel.cluster_id in clusters else None,
+                "ontap_destination_cluster": rel.destination_cluster_name,
+                "destination_system": dest_cluster.name if dest_cluster else None,
+                "destination_volume_known": volume_known,
+                "restore_setup": bool(dest_cluster) and (dest_cluster.id, dest_svm) in infra_keys,
+                "state": rel.state, "healthy": rel.healthy,
+                "tracked": len(dests), "present": sum(1 for d in dests if d.present),
+                "last_checked_at": max((d.last_checked_at for d in dests), default=None),
+            })
+        result.append(entry)
+    return result
+
+
 @router.delete("/backups/{snapshot_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_backup_snapshot(
     snapshot_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_DELETE)),
