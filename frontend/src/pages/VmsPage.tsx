@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActionIcon, Badge, Box, Button, Group, Menu, Paper, Progress, SegmentedControl, Select, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Alert, Badge, Box, Button, Group, Menu, Paper, Progress, SegmentedControl, Select, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
+import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -746,11 +747,28 @@ export function VmsPage() {
       if (a.status === "running" || reportedPower.current.has(a.id)) continue;
       reportedPower.current.add(a.id);
       queryClient.invalidateQueries({ queryKey: ["vms"] });
-      notifications.show(
-        a.status === "succeeded"
-          ? { title: a.vm_name, message: `${VM_POWER_LABEL[a.action]} abgeschlossen -- Status ${a.state_after ?? "?"}.`, color: "green" }
-          : { title: a.vm_name, message: `${VM_POWER_LABEL[a.action]} fehlgeschlagen: ${a.error_message}`, color: "red", autoClose: false },
-      );
+      if (a.status === "succeeded") {
+        notifications.show({
+          title: a.vm_name,
+          message: `${VM_POWER_LABEL[a.action]} abgeschlossen -- Status ${a.state_after ?? "?"}.`,
+          color: "green",
+        });
+      } else {
+        // Hyper-V-Fehlertexte sind lang -- als Dialog statt als Hinweis-Kachel,
+        // die den Text abschneidet (live gefunden 2026-10-02).
+        modals.open({
+          title: `${a.vm_name}: ${VM_POWER_LABEL[a.action]} fehlgeschlagen`,
+          size: "lg",
+          children: (
+            <Stack gap="sm">
+              {a.hint && <Alert color="yellow">{a.hint}</Alert>}
+              <Text size="sm" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "50vh", overflowY: "auto" }}>
+                {a.error_message}
+              </Text>
+            </Stack>
+          ),
+        });
+      }
     }
   }, [powerActions, queryClient]);
   const runningPower = (vm: Vm) =>

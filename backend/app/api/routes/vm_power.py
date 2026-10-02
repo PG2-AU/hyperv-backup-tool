@@ -8,6 +8,7 @@ Anzeige einer laufenden Aktion), Ergebnis zusaetzlich im System-Log.
 Gesperrt, solange ein Backup die VM gerade sichert oder ein Restore bzw. eine
 Verschiebung der VM laeuft."""
 
+import re
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -52,6 +53,8 @@ class PowerAction(BaseModel):
     status: Literal["running", "succeeded", "failed"] = "running"
     state_after: str | None = None
     error_message: str | None = None
+    # Klartext-Hinweis zu einer bekannten Ursache (z.B. zu wenig RAM auf dem Knoten).
+    hint: str | None = None
     requested_by: str | None = None
     started_at: datetime
     finished_at: datetime | None = None
@@ -117,6 +120,33 @@ def start_action(
     return action
 
 
+def readable_ps_error(text: str) -> str:
+    """Hyper-V-Fehler aus PowerShell lesbar machen: Positions-/Kategorie-
+    Anhang ('At line:1 char:...', '+ CategoryInfo') abschneiden, die in jedem
+    Satz wiederholte '(Virtual machine ID ...)' entfernen, doppelte Saetze
+    nur einmal nennen."""
+    cut = re.split(r"\s(?:At line:\d+|In Zeile:\d+|\+ CategoryInfo)", " " + text, maxsplit=1)[0]
+    cut = re.sub(r"\(Virtual machine ID [0-9A-Fa-f-]{36}\)", "", cut)
+    cut = re.sub(r"\s+", " ", cut).strip()
+    cut = re.sub(r"^[A-Za-z]+-[A-Za-z]+ : ", "", cut)  # fuehrendes 'Start-VM : '
+    seen: list[str] = []
+    for sentence in re.split(r"(?<=[.)])\s+(?=['A-ZÄÖÜ])", cut):
+        sentence = sentence.strip()
+        if sentence and sentence not in seen:
+            seen.append(sentence)
+    return " ".join(seen) or text.strip()
+
+
+def _hint(action: str, message: str) -> str | None:
+    lowered = message.lower()
+    if action == "start" and ("0x8007000e" in lowered or "not enough memory" in lowered or "nicht genügend arbeitsspeicher" in lowered):
+        return (
+            "Auf dem Knoten ist nicht genug freier Arbeitsspeicher für diese VM. Die VM vorher auf einen Knoten mit "
+            "mehr freiem RAM verschieben (VM verschieben > Host) oder dort andere VMs herunterfahren."
+        )
+    return None
+
+
 def _finish(key: tuple[str, str], action_id: str, **changes) -> None:
     with _lock:
         current = _actions.get(key)
@@ -167,12 +197,13 @@ def _execute(action_id: str, key: tuple[str, str]) -> None:
             _finish(key, action_id, status="succeeded", state_after=state or None)
         except Exception as exc:  # noqa: BLE001
             db.rollback()
-            message = str(exc)[:1000]
+            message = readable_ps_error(str(exc))[:1500]
+            hint = _hint(action.action, message)
             db.add(SystemLogEvent(
                 level="ERROR", source="vm-power",
                 message=f"VM '{vm_name}': {label} fehlgeschlagen: {message} (durch {action.requested_by})",
             ))
             db.commit()
-            _finish(key, action_id, status="failed", error_message=message)
+            _finish(key, action_id, status="failed", error_message=message, hint=hint)
     finally:
         db.close()

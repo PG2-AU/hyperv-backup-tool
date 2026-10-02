@@ -14,6 +14,7 @@ export interface VmPowerAction {
   status: "running" | "succeeded" | "failed";
   state_after?: string | null;
   error_message?: string | null;
+  hint?: string | null;
   started_at: string;
   finished_at?: string | null;
 }
