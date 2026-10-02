@@ -1215,6 +1215,89 @@ class HyperVService:
         if not result.success:
             raise RuntimeError(f"VM '{vm_name}' konnte nicht entfernt werden: {result.error}")
 
+    # --- VM loeschen (siehe app.api.routes.vm_delete) ---
+
+    def vm_delete_info(self, session: winrm.Session, vm_name: str) -> dict:
+        """Status, Ablageorte und ALLE Disk-Dateien der VM inkl. der
+        Elternketten (Checkpoints: aktuelle AVHDX -> ... -> Basis-VHDX) und
+        der Disks, die nur noch an Checkpoints haengen. Eine Datei, deren
+        Kette sich nicht lesen laesst, wird trotzdem genannt (ohne Eltern)."""
+        vm = vm_name.replace("'", "''")
+        script = (
+            f"$v = Get-VM -Name '{vm}' -ErrorAction Stop; "
+            "$start = @(Get-VMHardDiskDrive -VM $v | Where-Object { $_.Path } | ForEach-Object { $_.Path }); "
+            "$start += @(Get-VMSnapshot -VM $v -ErrorAction SilentlyContinue | Get-VMHardDiskDrive | "
+            "Where-Object { $_.Path } | ForEach-Object { $_.Path }); "
+            "$seen = @{}; $files = @(); "
+            "foreach ($p in $start) { while ($p -and -not $seen.ContainsKey($p.ToLower())) { "
+            "$seen[$p.ToLower()] = $true; $size = $null; $parent = $null; "
+            "try { $size = (Get-Item -LiteralPath $p -ErrorAction Stop).Length } catch {}; "
+            "if ($p -match '\\.a?vhdx?$') { try { $parent = (Get-VHD -Path $p -ErrorAction Stop).ParentPath } catch {} }; "
+            "$files += [PSCustomObject]@{ Path = $p; Size = $size }; $p = $parent } }; "
+            "[PSCustomObject]@{ Id = [string]$v.Id; State = [string]$v.State; "
+            "ConfigurationLocation = $v.ConfigurationLocation; SnapshotFileLocation = $v.SnapshotFileLocation; "
+            "SmartPagingFilePath = $v.SmartPagingFilePath; "
+            "CheckpointCount = @(Get-VMSnapshot -VM $v -ErrorAction SilentlyContinue).Count; "
+            "Files = $files } | ConvertTo-Json -Depth 4"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"VM '{vm_name}' konnte nicht gelesen werden: {result.error}")
+        data = json.loads(result.output)
+        files = data.get("Files") or []
+        files = files if isinstance(files, list) else [files]
+        return {
+            "vm_id": data.get("Id") or "", "state": data.get("State") or "",
+            "configuration_location": data.get("ConfigurationLocation") or None,
+            "snapshot_file_location": data.get("SnapshotFileLocation") or None,
+            "smart_paging_file_path": data.get("SmartPagingFilePath") or None,
+            "checkpoint_count": int(data.get("CheckpointCount") or 0),
+            "files": [{"path": f["Path"], "size_bytes": int(f["Size"]) if f.get("Size") is not None else None} for f in files if f and f.get("Path")],
+        }
+
+    def remove_vm(self, session: winrm.Session, vm_name: str, turn_off: bool) -> None:
+        """Entfernt die VM aus Hyper-V (Konfiguration + Checkpoints; die
+        Disk-Dateien bleiben liegen). Eine nicht ausgeschaltete VM nur mit
+        `turn_off` -- dann vorher hart ausschalten."""
+        vm = vm_name.replace("'", "''")
+        off = "Stop-VM -VM $v -TurnOff -Force -Confirm:$false" if turn_off else "throw \"VM ist nicht ausgeschaltet (Status $($v.State))\""
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"$v = Get-VM -Name '{vm}'; "
+            f"if ([string]$v.State -ne 'Off') {{ {off} }}; "
+            "Remove-VM -VM $v -Force -Confirm:$false"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"VM '{vm_name}' konnte nicht entfernt werden: {result.error}")
+
+    def delete_vm_files(self, session: winrm.Session, files: list[str], folders: list[str]) -> dict:
+        """Loescht die genannten Dateien und danach NUR LEER gewordene Ordner
+        aus `folders` (in der angegebenen Reihenfolge, tiefste zuerst) --
+        nie rekursiv, fremde Dateien bleiben samt ihrem Ordner stehen.
+        Liefert, was geloescht wurde und welche Ordner nicht leer waren."""
+        def _list(items: list[str]) -> str:
+            return ", ".join("'" + i.replace("'", "''") + "'" for i in items) or ""
+
+        script = (
+            f"$files = @({_list(files)}); $folders = @({_list(folders)}); $deleted = @(); $failed = @(); $removed = @(); $kept = @(); "
+            "foreach ($f in $files) { if (Test-Path -LiteralPath $f) { "
+            "try { Remove-Item -LiteralPath $f -Force -ErrorAction Stop; $deleted += $f } catch { $failed += \"$f ($($_.Exception.Message))\" } } }; "
+            "foreach ($d in $folders) { if (Test-Path -LiteralPath $d -PathType Container) { "
+            "if (@(Get-ChildItem -LiteralPath $d -Force -ErrorAction SilentlyContinue).Count -eq 0) { "
+            "try { Remove-Item -LiteralPath $d -Force -ErrorAction Stop; $removed += $d } catch { $kept += $d } } else { $kept += $d } } }; "
+            "[PSCustomObject]@{ Deleted = $deleted; Failed = $failed; Removed = $removed; Kept = $kept } | ConvertTo-Json -Depth 3"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"Dateien konnten nicht geloescht werden: {result.error}")
+        data = json.loads(result.output)
+
+        def _as_list(value) -> list[str]:
+            return [] if value is None else (value if isinstance(value, list) else [value])
+
+        return {k.lower(): _as_list(data.get(k)) for k in ("Deleted", "Failed", "Removed", "Kept")}
+
     def register_cluster_role(self, cno_session: winrm.Session, vm_name: str) -> None:
         """Registriert eine bereits existierende (aber noch nicht
         hochverfuegbare) VM als Cluster-Rolle -- Single-Hop-Abfrage gegen

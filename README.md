@@ -91,6 +91,12 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   Windows/UEFI CA), vTPM optional, ISO von CSV/SMB3 (Suche bzw. Pfad) mit DVD als erstem
   Boot-Geraet, Cluster-Rolle, optional starten und Protection Group. SMB3-Ablage/-ISO per
   CredSSP. Bei Fehler Rueckfrage Zurueckrollen (VM + Ordner entfernen) oder Behalten.
+- **VM loeschen** -- Eintrag im Power-Menue der VM: Cluster-Rolle und VM entfernen, aus allen
+  Protection Groups austragen, Festplatten-Dateien inkl. Checkpoint-Ketten loeschen (Opt-out)
+  und danach nur leer gewordene Ordner des eigenen VM-Ordners entfernen. Laufende VM nur mit
+  "vorher hart ausschalten"; von anderen VMs mitbenutzte Disks bleiben stehen; gesperrt
+  waehrend Backup, Restore oder Verschiebung. Backups der VM bleiben erhalten. Bestaetigung
+  per VM-Namen.
 - **VM starten/herunterfahren** -- Power-Menue je VM in Inventory > VMs: Starten (pausierte
   VM: Fortsetzen), Herunterfahren ueber das Gastbetriebssystem (`Stop-VM -Force`) und
   Ausschalten (hart, `Stop-VM -TurnOff`), beides mit Rueckfrage. Laeuft im Hintergrund,

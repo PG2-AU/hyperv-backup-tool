@@ -1724,3 +1724,35 @@ export interface VmCreateRun {
   finished_at?: string | null;
   steps: { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null }[];
 }
+
+// VM loeschen (backend app.api.routes.vm_delete).
+export interface VmDeleteInfo {
+  cluster_id: string;
+  vm_name: string;
+  vm_id: string;
+  state: string;
+  node: string;
+  configuration_location?: string | null;
+  checkpoint_count: number;
+  files: { path: string; size_bytes?: number | null; shared_with?: string | null }[];
+  folders: string[];
+  total_bytes: number;
+  backup_count: number;
+  protection_groups: string[];
+  blocked_reasons: string[];
+  warnings: string[];
+}
+
+export interface VmDeleteRun {
+  id: string;
+  vm_name: string;
+  node_name?: string | null;
+  delete_files: boolean;
+  turn_off: boolean;
+  removed_from_groups: string[];
+  status: "running" | "succeeded" | "failed";
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null }[];
+}
