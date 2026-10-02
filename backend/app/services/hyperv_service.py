@@ -951,6 +951,25 @@ class HyperVService:
             raise RuntimeError(result.error.strip() or "unbekannter Fehler")
         return result.output.strip().splitlines()[-1].strip() if result.output.strip() else ""
 
+    def vm_console_info(self, session: winrm.Session, vm_name: str) -> dict:
+        """VM-ID, Status und die vom Gast gemeldeten IP-Adressen (ueber die
+        Integrationsdienste) -- fuer die Remote-Sitzung, siehe
+        app.api.routes.vm_console."""
+        vm = vm_name.replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"$v = Get-VM -Name '{vm}'; "
+            "[PSCustomObject]@{ Id = $v.Id.ToString(); State = [string]$v.State; "
+            f"Ips = @(Get-VMNetworkAdapter -VMName '{vm}' | ForEach-Object {{ $_.IPAddresses }} | Where-Object {{ $_ }}) }} "
+            "| ConvertTo-Json -Depth 3"
+        )
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(f"VM '{vm_name}' konnte nicht gelesen werden: {result.error}")
+        data = json.loads(result.output)
+        ips = data.get("Ips") or []
+        return {"vm_id": data.get("Id") or "", "state": data.get("State") or "", "ip_addresses": ips if isinstance(ips, list) else [ips]}
+
     def attach_vhd(self, session: winrm.Session, vm_name: str, vhd_path: str) -> dict:
         """Haengt eine VHDX als zusaetzliche Disk an die VM. Liefert die
         Controller-Position zurueck (fuer ein spaeteres praezises Abhaengen

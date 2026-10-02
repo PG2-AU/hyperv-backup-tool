@@ -12,6 +12,7 @@ import {
   IconChevronsRight,
   IconCpu,
   IconDatabase,
+  IconDeviceDesktop,
   IconFileText,
   IconFolder,
   IconHistory,
@@ -49,6 +50,7 @@ import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
 import { SiteBadgeView } from "@/components/SiteBadge";
+import { VmConsoleModal } from "@/components/VmConsoleModal";
 import { VmMoveModal } from "@/components/VmMoveModal";
 import { useVmPower, useVmPowerActions, VM_POWER_LABEL, type VmPowerActionName } from "@/api/hooks.vmPower";
 import { CsvCreateModal } from "@/components/CsvCreateModal";
@@ -602,6 +604,9 @@ export function VmsPage() {
   );
   const [vmSearch, setVmSearch] = useState("");
   const [moveVm, setMoveVm] = useState<Vm | null>(null);
+  // Remote-Sitzung (Backlog #75) -- eigenes Recht vm:console.
+  const canOpenConsole = hasPermission("vm:console");
+  const [consoleVm, setConsoleVm] = useState<Vm | null>(null);
   // Stufe 3: Dialog im "Standort-Abweichung beheben"-Modus geoeffnet.
   const [moveFixSite, setMoveFixSite] = useState(false);
   // Standort-Filter (Settings > Standorte) -- nur sichtbar, sobald
@@ -1160,6 +1165,11 @@ export function VmsPage() {
                           </Menu.Item>
                         </Menu.Dropdown>
                       </Menu>
+                      <Tooltip label="Remote-Sitzung (Konsole / RDP)">
+                        <ActionIcon variant="light" disabled={!canOpenConsole || !vm.cluster_id} onClick={() => setConsoleVm(vm)}>
+                          <IconDeviceDesktop size={16} />
+                        </ActionIcon>
+                      </Tooltip>
                       <Tooltip label="Backup jetzt starten">
                         <ActionIcon variant="light" disabled={!canRunBackup} onClick={() => runBackupNow(vm)}>
                           <IconBolt size={16} />
@@ -1576,6 +1586,7 @@ export function VmsPage() {
       <SmbShareResizeModal share={resizeSmbShare} onClose={() => setResizeSmbShare(null)} />
       <SmbShareCreateModal opened={createSmbOpen} onClose={() => setCreateSmbOpen(false)} />
       <SmbShareDeleteModal share={deleteSmbShare} onClose={() => setDeleteSmbShare(null)} />
+      <VmConsoleModal vm={consoleVm} onClose={() => setConsoleVm(null)} />
       <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} fixSiteMismatch={moveFixSite} />
       <BackupsModal
         opened={!!backupsTarget}

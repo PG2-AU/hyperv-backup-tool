@@ -29,6 +29,10 @@ class Permission(StrEnum):
     # von VMs/Checkpoints/Discovery innerhalb eines bereits registrierten
     # Clusters (bleibt HYPERV_MANAGE).
     HYPERV_CLUSTER_MANAGE = "hyperv:cluster_manage"
+    # Remote-Sitzung auf eine VM (Konsole ueber den Host bzw. RDP ins
+    # Gastsystem, Backlog #75) -- eigenes Recht, weil es Zugriff IN die VM
+    # eroeffnet statt sie nur zu verwalten.
+    VM_CONSOLE = "vm:console"
 
     # System / Admin
     USER_MANAGE = "user:manage"
@@ -58,6 +62,7 @@ DEFAULT_ROLES: dict[str, set[Permission]] = {
         Permission.STORAGE_MANAGE,
         Permission.HYPERV_VIEW,
         Permission.HYPERV_MANAGE,
+        Permission.VM_CONSOLE,
         Permission.LOGS_VIEW,
     },
     "Viewer": {

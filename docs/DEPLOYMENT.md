@@ -1371,6 +1371,8 @@ zu einem Sprungbrett für die gesamte Domäne bzw. den gesamten Forest.
 > für "Neue CSV" `Get-InitiatorPort`, `Initialize-Disk`/`New-Partition`/`Format-Volume`,
 > `Add-ClusterDisk` und `Add-ClusterSharedVolume` (Rückfall auf CredSSP wie beim Host-Move),
 > für "CSV löschen" `Remove-ClusterSharedVolume` und `Remove-ClusterResource`,
+> für "Remote-Sitzung" `Get-VMNetworkAdapter` (die Konsole selbst öffnet der PC des Benutzers direkt
+> zum Knoten auf TCP 2179 -- dieser Port muss vom Benutzer-PC aus erreichbar sein, nicht von der App),
 > für die RAM-Anzeige beim Host-Move `Get-CimInstance Win32_OperatingSystem`
 > direkt auf jedem Knoten). Für die Disk-/iSCSI-Verwaltung gibt es unter
 > Windows **keine** eigene, schmalere eingebaute Gruppe (anders als bei

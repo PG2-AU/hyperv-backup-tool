@@ -88,6 +88,11 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   VM: Fortsetzen), Herunterfahren ueber das Gastbetriebssystem (`Stop-VM -Force`) und
   Ausschalten (hart, `Stop-VM -TurnOff`), beides mit Rueckfrage. Laeuft im Hintergrund,
   Ergebnis als Meldung + System-Log; gesperrt waehrend Backup, Restore oder Verschiebung der VM.
+- **Remote-Sitzung auf eine VM** -- Aktion je VM in Inventory > VMs (Recht `vm:console`,
+  Administrator + Operator): laedt eine .rdp-Datei fuer die Konsole der VM ueber den
+  Hyper-V-Knoten (Port 2179 + VM-ID, wie VMConnect -- geht ohne Netzwerk im Gast) oder
+  fuer RDP direkt ins Gastsystem (IP live aus den Integrationsdiensten). Die App gibt
+  keine Zugangsdaten weiter; jeder Download steht im System-Log.
 - **CSV vergroessern** -- Aktion in Inventory > CSVs: Aggregat, Volume und LUN/CSV live
   als Balken, Volume und LUN im Dialog manuell vergroessern (Balken und Warnungen
   aktualisieren sich sofort: Aggregat-Platz, Ueberbuchung des Volumes, platzreservierte
