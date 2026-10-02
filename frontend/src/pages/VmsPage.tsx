@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { ActionIcon, Badge, Box, Button, Group, Paper, Progress, SegmentedControl, Select, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ActionIcon, Badge, Box, Button, Group, Menu, Paper, Progress, SegmentedControl, Select, Stack, Table, Tabs, Text, Title, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   IconAlertTriangle,
   IconArrowsRightLeft,
@@ -15,7 +16,11 @@ import {
   IconHistory,
   IconInfoCircle,
   IconNetwork,
+  IconPlayerPlay,
+  IconPlayerStop,
+  IconPlug,
   IconPlus,
+  IconPower,
   IconRefresh,
   IconServer,
   IconServer2,
@@ -44,6 +49,7 @@ import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
 import { SiteBadgeView } from "@/components/SiteBadge";
 import { VmMoveModal } from "@/components/VmMoveModal";
+import { useVmPower, useVmPowerActions, VM_POWER_LABEL, type VmPowerActionName } from "@/api/hooks.vmPower";
 import { CsvCreateModal } from "@/components/CsvCreateModal";
 import { CsvDeleteModal } from "@/components/CsvDeleteModal";
 import { CsvResizeModal } from "@/components/CsvResizeModal";
@@ -723,6 +729,58 @@ export function VmsPage() {
     return vm.vhds.filter((v) => v.name.toLowerCase().endsWith(".avhdx"));
   }
 
+  // VM starten/herunterfahren (app.api.routes.vm_power): laeuft im Backend im
+  // Hintergrund; hier wird der Stand gepollt und das Ergebnis gemeldet.
+  const queryClient = useQueryClient();
+  const vmPower = useVmPower();
+  const { data: powerActions } = useVmPowerActions(canManageHyperv);
+  const reportedPower = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!powerActions) return;
+    // Beim ersten Laden bereits beendete Aktionen nicht nachtraeglich melden.
+    if (reportedPower.current === null) {
+      reportedPower.current = new Set(powerActions.filter((a) => a.status !== "running").map((a) => a.id));
+      return;
+    }
+    for (const a of powerActions) {
+      if (a.status === "running" || reportedPower.current.has(a.id)) continue;
+      reportedPower.current.add(a.id);
+      queryClient.invalidateQueries({ queryKey: ["vms"] });
+      notifications.show(
+        a.status === "succeeded"
+          ? { title: a.vm_name, message: `${VM_POWER_LABEL[a.action]} abgeschlossen -- Status ${a.state_after ?? "?"}.`, color: "green" }
+          : { title: a.vm_name, message: `${VM_POWER_LABEL[a.action]} fehlgeschlagen: ${a.error_message}`, color: "red", autoClose: false },
+      );
+    }
+  }, [powerActions, queryClient]);
+  const runningPower = (vm: Vm) =>
+    powerActions?.find((a) => a.status === "running" && a.cluster_id === vm.cluster_id && a.vm_name === vm.name);
+
+  function powerVm(vm: Vm, action: VmPowerActionName) {
+    if (!vm.cluster_id) return;
+    const clusterId = vm.cluster_id;
+    const run = () =>
+      vmPower
+        .mutateAsync({ cluster_id: clusterId, vm_name: vm.name, action })
+        .catch((err) =>
+          notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Aktion konnte nicht gestartet werden."), color: "red" }),
+        );
+    if (action === "start") {
+      run();
+      return;
+    }
+    confirmAction({
+      title: action === "shutdown" ? "VM herunterfahren" : "VM ausschalten",
+      message:
+        action === "shutdown"
+          ? `"${vm.name}" über das Gastbetriebssystem herunterfahren? Ungesicherte Daten in der VM haben bis zu 5 Minuten Zeit.`
+          : `"${vm.name}" hart ausschalten? Das entspricht dem Ziehen des Netzsteckers -- ungesicherte Daten in der VM gehen verloren.`,
+      confirmLabel: action === "shutdown" ? "Herunterfahren" : "Ausschalten",
+      color: action === "shutdown" ? "orange" : "red",
+      onConfirm: run,
+    });
+  }
+
   function discoverVmNow(vm: Vm) {
     if (!vm.cluster_id) return;
     discoverVm.mutate(
@@ -899,6 +957,7 @@ export function VmsPage() {
                 const vhdxPct = hasVhdxUsage ? Math.round((vm.vhdx_used_bytes! / vm.vhdx_size_bytes!) * 100) : null;
                 const avhdxVhds = avhdxVhdsOf(vm);
                 const visibleCheckpoints = visibleCheckpointsOf(vm);
+                const power = runningPower(vm);
                 return (
                 <Table.Tr
                   key={vm.id}
@@ -1046,6 +1105,43 @@ export function VmsPage() {
                   </Table.Td>
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
+                      <Menu position="bottom-start" withinPortal>
+                        <Menu.Target>
+                          <ActionIcon
+                            variant="light"
+                            disabled={!canManageHyperv || !vm.cluster_id}
+                            loading={!!power}
+                            title={power ? `${VM_POWER_LABEL[power.action]} läuft…` : "Starten / Herunterfahren"}
+                          >
+                            <IconPower size={16} />
+                          </ActionIcon>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Menu.Item
+                            leftSection={<IconPlayerPlay size={14} />}
+                            disabled={vm.state === "Running"}
+                            onClick={() => powerVm(vm, "start")}
+                          >
+                            {vm.state === "Paused" ? "Fortsetzen" : "Starten"}
+                          </Menu.Item>
+                          <Menu.Item
+                            leftSection={<IconPlayerStop size={14} />}
+                            disabled={vm.state !== "Running"}
+                            onClick={() => powerVm(vm, "shutdown")}
+                          >
+                            Herunterfahren
+                          </Menu.Item>
+                          <Menu.Divider />
+                          <Menu.Item
+                            color="red"
+                            leftSection={<IconPlug size={14} />}
+                            disabled={vm.state === "Off"}
+                            onClick={() => powerVm(vm, "turn_off")}
+                          >
+                            Ausschalten (hart)
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
                       <Tooltip label="Backup jetzt starten">
                         <ActionIcon variant="light" disabled={!canRunBackup} onClick={() => runBackupNow(vm)}>
                           <IconBolt size={16} />

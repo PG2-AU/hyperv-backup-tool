@@ -84,6 +84,10 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   bei geaendertem Backup-Schutz). Gesperrt waehrend eines Backups der VM; Backups
   ueberspringen umgekehrt eine VM, die gerade verschoben wird. "Beheben" an einer
   Standort-Abweichung oeffnet den Dialog mit vorgeschlagenem Ziel.
+- **VM starten/herunterfahren** -- Power-Menue je VM in Inventory > VMs: Starten (pausierte
+  VM: Fortsetzen), Herunterfahren ueber das Gastbetriebssystem (`Stop-VM -Force`) und
+  Ausschalten (hart, `Stop-VM -TurnOff`), beides mit Rueckfrage. Laeuft im Hintergrund,
+  Ergebnis als Meldung + System-Log; gesperrt waehrend Backup, Restore oder Verschiebung der VM.
 - **CSV vergroessern** -- Aktion in Inventory > CSVs: Aggregat, Volume und LUN/CSV live
   als Balken, Volume und LUN im Dialog manuell vergroessern (Balken und Warnungen
   aktualisieren sich sofort: Aggregat-Platz, Ueberbuchung des Volumes, platzreservierte

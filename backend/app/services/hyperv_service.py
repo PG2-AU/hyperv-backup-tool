@@ -927,6 +927,30 @@ class HyperVService:
     def start_vm(self, session: winrm.Session, vm_name: str) -> CommandResult:
         return self._run_ps(session, f"Start-VM -Name '{vm_name}' -Confirm:$false -ErrorAction Stop")
 
+    # --- VM starten/herunterfahren (siehe app.api.routes.vm_power) ---
+
+    def power_vm(self, session: winrm.Session, vm_name: str, action: str) -> str:
+        """start: Start-VM (pausierte VM: Resume-VM). shutdown: Stop-VM -Force
+        = Herunterfahren ueber das Gastbetriebssystem ohne Rueckfrage (laut
+        Microsoft bis zu 5 Minuten fuer ungesicherte Daten, eine gesperrte VM
+        sofort) -- braucht die Integrationsdienste im Gast. turn_off: Stop-VM
+        -TurnOff = hartes Ausschalten wie Stecker ziehen. Liefert den Status
+        danach."""
+        vm = vm_name.replace("'", "''")
+        commands = {
+            "start": (
+                f"if ([string](Get-VM -Name '{vm}').State -eq 'Paused') {{ Resume-VM -Name '{vm}' }} "
+                f"else {{ Start-VM -Name '{vm}' }}"
+            ),
+            "shutdown": f"Stop-VM -Name '{vm}' -Force -Confirm:$false",
+            "turn_off": f"Stop-VM -Name '{vm}' -TurnOff -Force -Confirm:$false",
+        }
+        script = f"$ErrorActionPreference = 'Stop'; {commands[action]}; [string](Get-VM -Name '{vm}').State"
+        result = self._run_ps(session, script)
+        if not result.success:
+            raise RuntimeError(result.error.strip() or "unbekannter Fehler")
+        return result.output.strip().splitlines()[-1].strip() if result.output.strip() else ""
+
     def attach_vhd(self, session: winrm.Session, vm_name: str, vhd_path: str) -> dict:
         """Haengt eine VHDX als zusaetzliche Disk an die VM. Liefert die
         Controller-Position zurueck (fuer ein spaeteres praezises Abhaengen

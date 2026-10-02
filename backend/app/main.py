@@ -36,6 +36,7 @@ from app.api.routes import (
     storage_access,
     users,
     vm_moves,
+    vm_power,
     vms,
     winrm_certs,
 )
@@ -116,6 +117,7 @@ app.include_router(ad_config_routes.router)
 app.include_router(capacity_history.router)
 app.include_router(sites.router)
 app.include_router(vm_moves.router)
+app.include_router(vm_power.router)
 app.include_router(config_transfer.router)
 app.include_router(db_backup.router)
 app.include_router(csv_resize.router)
