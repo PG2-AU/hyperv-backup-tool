@@ -912,6 +912,57 @@ def secondary_status_for_object(
     return result
 
 
+def _delete_secondary_copies(db: Session, row: BackupRunSnapshot) -> None:
+    """Loescht einen nur noch auf dem SnapMirror-Ziel vorhandenen Snapshot
+    dort (auf jedem Ziel, das ihn laut letztem Abgleich noch hat). Der
+    Snapshot wird auf dem Ziel-Volume ueber seinen NAMEN gesucht (dort hat er
+    eine eigene UUID). ONTAP lehnt gesperrte Snapshots und den aktuellen
+    SnapMirror-Basis-Snapshot selbst ab -- die Meldung wird durchgereicht.
+    Bleibt danach keine Kopie uebrig, verschwindet der Eintrag."""
+    present = [d for d in row.destinations if d.present]
+    if not present:
+        db.delete(row)
+        db.commit()
+        return
+    errors = []
+    for dest in present:
+        label = f"{dest.destination_svm_name}:{dest.destination_volume_name}"
+        cluster = db.get(NetAppCluster, dest.destination_netapp_cluster_id) if dest.destination_netapp_cluster_id else None
+        if cluster is None:
+            errors.append(f"{label}: Ziel-System ist nicht in der App registriert")
+            continue
+        volume_uuid = dest.destination_volume_uuid
+        if not volume_uuid:
+            volume = db.query(NetAppVolume).filter(
+                NetAppVolume.cluster_id == cluster.id, NetAppVolume.svm_name == dest.destination_svm_name,
+                NetAppVolume.name == dest.destination_volume_name,
+            ).first()
+            volume_uuid = volume.uuid if volume else None
+        if not volume_uuid:
+            errors.append(f"{label}: Ziel-Volume nicht discovert")
+            continue
+        service = _netapp_service_for(cluster)
+        try:
+            match = next((snap for snap in service.list_snapshots(volume_uuid) if snap["name"] == row.snapshot_name), None)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{label}: {exc}")
+            continue
+        if match is not None:
+            result = service.delete_snapshot(volume_uuid, match["uuid"])
+            if not result.success:
+                errors.append(f"{label}: {result.message}")
+                continue
+        dest.present = False
+        dest.last_checked_at = datetime.now(timezone.utc)
+    if not any(d.present for d in row.destinations):
+        db.delete(row)
+    db.commit()
+    if errors:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Sekundäre Kopie konnte nicht gelöscht werden: " + " | ".join(errors),
+        )
+
+
 @router.delete("/backups/{snapshot_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_backup_snapshot(
     snapshot_id: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_DELETE)),
@@ -926,10 +977,10 @@ def delete_backup_snapshot(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot nicht gefunden")
     if not row.success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Der Snapshot liegt nicht mehr auf dem Primärsystem -- die Kopie auf dem SnapMirror-Ziel räumt dessen SnapMirror-Policy auf.",
-        )
+        # Nur noch sekundaer vorhanden (Nutzerwunsch 2026-10-02): die Kopie(n)
+        # auf dem SnapMirror-Ziel loeschen.
+        _delete_secondary_copies(db, row)
+        return
     if not row.volume_uuid or not row.snapshot_uuid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Snapshot hat keine Volume-/Snapshot-UUID")
 

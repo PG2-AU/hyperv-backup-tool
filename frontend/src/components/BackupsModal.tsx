@@ -124,9 +124,9 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
   useEffect(() => {
     if (!opened) setSelected(new Set());
   }, [opened, name]);
-  // Loeschbar ist nur, was noch auf dem Primaersystem liegt -- eine reine
-  // Ziel-Kopie raeumt die SnapMirror-Policy auf.
-  const deletable = (backups ?? []).filter((b) => b.restore_source === "primary");
+  // Waehlbar: Snapshot auf dem Primaersystem (wird dort geloescht) oder nur
+  // noch auf dem SnapMirror-Ziel (wird dort geloescht, Nutzerwunsch 2026-10-02).
+  const deletable = (backups ?? []).filter((b) => b.restore_source === "primary" || b.destinations.some((d) => d.present));
   const selectedBackups = deletable.filter((b) => selected.has(b.id));
 
   function toggle(id: string) {
@@ -170,22 +170,31 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
     const items = selectedBackups;
     if (items.length === 0) return;
     const vms = Array.from(new Set(items.flatMap((b) => b.vm_names))).sort();
-    const withSecondary = items.filter((b) => b.destinations.some((d) => d.present)).length;
+    const primary = items.filter((b) => b.restore_source === "primary");
+    const secondaryOnly = items.length - primary.length;
+    const withSecondary = primary.filter((b) => b.destinations.some((d) => d.present)).length;
     confirmAction({
       title: `${items.length} Snapshot(s) löschen`,
       message: (
         <Stack gap={6}>
           <Text size="sm">
-            {items.length} Snapshot(s) unwiderruflich auf dem Primärsystem löschen? Die Backups dieser VMs an diesen Zeitpunkten
-            gehen dort verloren:
+            {items.length} Snapshot(s) unwiderruflich löschen
+            {secondaryOnly > 0 ? ` -- ${primary.length} auf dem Primärsystem, ${secondaryOnly} auf dem SnapMirror-Ziel` : " (Primärsystem)"}
+            ? Die Backups dieser VMs an diesen Zeitpunkten gehen dort verloren:
           </Text>
           <Text size="xs" c="dimmed">
             {vms.join(", ") || "–"}
           </Text>
           {withSecondary > 0 && (
             <Text size="sm">
-              {withSecondary} davon haben eine Kopie auf dem SnapMirror-Ziel -- die bleibt bestehen und in der Liste als „Sekundär“
-              sichtbar.
+              {withSecondary} der Primär-Snapshots haben eine Kopie auf dem SnapMirror-Ziel -- die bleibt bestehen und in der Liste als
+              „Sekundär“ sichtbar; zum Löschen dort danach erneut auswählen.
+            </Text>
+          )}
+          {secondaryOnly > 0 && (
+            <Text size="sm">
+              {secondaryOnly} liegen nur noch auf dem SnapMirror-Ziel und werden dort gelöscht -- danach gibt es von diesen Backups
+              keine Kopie mehr.
             </Text>
           )}
         </Stack>
@@ -295,7 +304,7 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                   <Table.Tr key={b.id}>
                     {multiSelect && (
                       <Table.Td>
-                        {b.restore_source === "primary" ? (
+                        {b.restore_source === "primary" || b.destinations.some((d) => d.present) ? (
                           <Checkbox
                             aria-label="Auswählen"
                             checked={selected.has(b.id)}
@@ -303,7 +312,7 @@ export function BackupsModal({ opened, onClose, scope, name, clusterId, onOpenRe
                             onChange={() => toggle(b.id)}
                           />
                         ) : (
-                          <Tooltip label="Liegt nur noch auf dem SnapMirror-Ziel -- dort räumt die SnapMirror-Policy auf">
+                          <Tooltip label="Auf keinem System mehr vorhanden">
                             <Checkbox aria-label="Nicht löschbar" disabled checked={false} readOnly />
                           </Tooltip>
                         )}
