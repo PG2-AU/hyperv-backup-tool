@@ -9,12 +9,12 @@ from datetime import datetime, timezone
 
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.core.rbac import Permission
-from app.core.scheduler import DISCOVERY_INTERVAL_ANCHOR, INTERVAL_ANCHOR, get_scheduler
+from app.core.scheduler import DISCOVERY_INTERVAL_ANCHOR, INTERVAL_ANCHOR, get_scheduler, run_snapshot_reconciliation
 from app.db.session import get_db
 from app.models.scheduler_config import SchedulerConfig
 from app.schemas.scheduler_config import SchedulerConfigRead, SchedulerConfigUpdate
@@ -73,3 +73,14 @@ def update_scheduler_config(
         scheduler.reschedule_job("retention-cleanup", trigger=CronTrigger(hour=config.retention_cleanup_hour, minute=15))
 
     return config
+
+
+@router.post("/run-snapshot-reconciliation", status_code=202)
+def run_snapshot_reconciliation_now(
+    background_tasks: BackgroundTasks, user=Depends(require_permission(Permission.SETTINGS_MANAGE)),
+) -> dict:
+    """Snapshot-Abgleich (Primaer + SnapMirror-Ziele) sofort im Hintergrund
+    starten statt bis zur taeglichen Uhrzeit zu warten -- z.B. nach dem
+    Registrieren eines Ziel-Systems. Ergebnis im System-Log."""
+    background_tasks.add_task(run_snapshot_reconciliation)
+    return {"status": "started"}

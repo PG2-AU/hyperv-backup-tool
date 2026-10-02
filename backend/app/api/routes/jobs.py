@@ -1768,9 +1768,12 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                             # Quell-Cluster-Verbindung schlug mit einem
                             # verwirrenden ONTAP-Fehler ueber eine (aus
                             # Quell-Cluster-Sicht nicht existente) SVM fehl.
+                            # Letzter Ausweg rel.cluster_id: die Beziehung
+                            # wurde vom Ziel-System gemeldet (siehe
+                            # _reconcile_snapshot_destinations in scheduler.py).
                             dest_cluster = (
                                 clusters_by_name.get(rel.destination_cluster_name) if rel.destination_cluster_name else None
-                            )
+                            ) or clusters_by_id.get(rel.cluster_id)
                             if dest_cluster is not None:
                                 target_service = _netapp_service_for(dest_cluster)
                             else:

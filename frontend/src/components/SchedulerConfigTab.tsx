@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Group, NumberInput, Paper, Select, Stack, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 
+import { apiClient } from "@/api/client";
 import { useSchedulerConfig, useUpdateSchedulerConfig } from "@/api/hooks";
 import type { SchedulerConfigWritePayload } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
@@ -30,6 +31,24 @@ export function SchedulerConfigTab() {
     setRunMaxDurationMinutes(config.backup_run_max_duration_minutes);
     setCheckpointParallelism(config.backup_checkpoint_parallelism);
   }, [config]);
+
+  const [reconciling, setReconciling] = useState(false);
+  function runReconciliationNow() {
+    setReconciling(true);
+    apiClient
+      .post("/scheduler-config/run-snapshot-reconciliation")
+      .then(() =>
+        notifications.show({
+          title: "Snapshot-Abgleich gestartet",
+          message: "Läuft im Hintergrund -- das Ergebnis steht in wenigen Minuten im System Log.",
+          color: "green",
+        }),
+      )
+      .catch((err) =>
+        notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Abgleich konnte nicht gestartet werden."), color: "red" }),
+      )
+      .finally(() => setReconciling(false));
+  }
 
   function handleSave() {
     const payload: SchedulerConfigWritePayload = {
@@ -85,6 +104,14 @@ export function SchedulerConfigTab() {
           onChange={(v) => v && setSnapshotHour(v)}
           allowDeselect={false}
         />
+        <Group gap="sm" mt={-8}>
+          <Button size="compact-sm" variant="light" loading={reconciling} onClick={runReconciliationNow}>
+            Snapshot-Abgleich jetzt ausführen
+          </Button>
+          <Text size="xs" c="dimmed">
+            prüft auch die sekundären Kopien auf den SnapMirror-Zielen; Ergebnis im System Log
+          </Text>
+        </Group>
         <Select
           label="Retention-Cleanup"
           description="Tägliche Uhrzeit, zu der die Policy-Retention durchgesetzt wird (überfällige Snapshots löschen)"

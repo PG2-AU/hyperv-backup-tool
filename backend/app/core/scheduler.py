@@ -295,8 +295,33 @@ def _reconcile_snapshot_destinations(db: Session, rows: list[BackupRunSnapshot],
     run_snapshot_reconciliation (dort curated der Aufrufer bereits die
     richtige Zeilen-Auswahl: success=True + zuletzt bekannt praesente
     success=False-Zeilen)."""
-    clusters_by_name = {c.name: c for c in clusters.values()}
+    # Ziel-System einer Beziehung: Anzeigename ODER ONTAP-Clustername (ohne
+    # Gross-/Kleinschreibung) -- live gefunden 2026-10-02 (Produktiv, echte
+    # Cross-Cluster-Beziehung): frueher zaehlte hier nur der Anzeigename in
+    # der App, wich er vom ONTAP-Namen ab, wurde das Ziel NIE geprueft und
+    # die sekundaeren Snapshots erschienen nirgends (der Backup-Lauf selbst
+    # kannte schon beide Namen, siehe clusters_by_name in jobs.py). Letzter
+    # Ausweg: das System, das die Beziehung gemeldet hat -- SnapMirror-
+    # Beziehungen sind ONTAP-seitig Objekte des ZIEL-Clusters, die Discovery
+    # findet sie also genau dort (rel.cluster_id); deckt auch den Fall ab,
+    # dass ONTAP 'destination.cluster.name' gar nicht liefert.
+    clusters_by_name: dict[str, NetAppCluster] = {}
+    for c in clusters.values():
+        for cluster_name in (c.ontap_cluster_name, c.name):
+            if cluster_name:
+                clusters_by_name[cluster_name.lower()] = c
+
+    def _destination_cluster(rel: NetAppSnapMirrorRelationship) -> NetAppCluster | None:
+        if rel.destination_cluster_name and rel.destination_cluster_name.lower() in clusters_by_name:
+            return clusters_by_name[rel.destination_cluster_name.lower()]
+        return clusters.get(rel.cluster_id)
+
     now = datetime.now(timezone.utc)
+    # Diagnose fuers System-Log: warum ein Ziel NICHT geprueft werden konnte
+    # (je Ursache einmal, nicht je Snapshot).
+    problems: set[str] = set()
+    checked = found = 0
+    sources_without_relationship: set[str] = set()
 
     for row in rows:
         if not row.snapshot_name or not row.svm_name or not row.volume_name:
@@ -307,6 +332,7 @@ def _reconcile_snapshot_destinations(db: Session, rows: list[BackupRunSnapshot],
             .all()
         )
         if not relationships:
+            sources_without_relationship.add(f"{row.svm_name}:{row.volume_name}")
             continue
 
         existing_by_key = {(d.destination_svm_name, d.destination_volume_name): d for d in row.destinations}
@@ -324,11 +350,14 @@ def _reconcile_snapshot_destinations(db: Session, rows: list[BackupRunSnapshot],
             dest.relationship_uuid = rel.uuid
             dest.destination_netapp_cluster_name = rel.destination_cluster_name
 
-            dest_cluster = clusters_by_name.get(rel.destination_cluster_name) if rel.destination_cluster_name else None
+            dest_cluster = _destination_cluster(rel)
             if dest_cluster is None:
                 # Ziel-Cluster nicht in dieser App registriert -- Praesenz
                 # kann nicht live geprueft werden, letzter bekannter Stand
                 # bleibt unveraendert stehen.
+                problems.add(
+                    f"{rel.destination_path}: Ziel-System '{rel.destination_cluster_name or '?'}' ist nicht in der App registriert"
+                )
                 continue
             dest.destination_netapp_cluster_id = dest_cluster.id
 
@@ -338,6 +367,10 @@ def _reconcile_snapshot_destinations(db: Session, rows: list[BackupRunSnapshot],
                 .first()
             )
             if dest_volume_row is None or not dest_volume_row.uuid:
+                problems.add(
+                    f"{rel.destination_path}: Ziel-Volume ist auf System '{dest_cluster.name}' nicht discovert "
+                    "(Discovery des Ziel-Systems ausfuehren)"
+                )
                 continue
             dest.destination_volume_uuid = dest_volume_row.uuid
 
@@ -345,11 +378,27 @@ def _reconcile_snapshot_destinations(db: Session, rows: list[BackupRunSnapshot],
                 dest_service = _netapp_service_for(dest_cluster)
                 dest_names = dest_service.list_snapshot_names(dest_volume_row.uuid)
             except Exception as exc:
-                _log(db, f"Ziel-Abgleich uebersprungen fuer '{dest_svm}:{dest_volume}': {exc}", level="WARNING")
+                problems.add(f"{dest_svm}:{dest_volume}: Snapshots nicht lesbar ({str(exc)[:200]})")
                 continue
             dest.present = row.snapshot_name in dest_names
             dest.last_checked_at = now
+            checked += 1
+            found += 1 if dest.present else 0
         db.commit()
+
+    _log(db, f"Snapshot-Abgleich Sekundaer: {checked} Ziel-Kopie(n) geprueft, {found} vorhanden")
+    for problem in sorted(problems):
+        _log(db, f"Snapshot-Abgleich Sekundaer nicht moeglich -- {problem}", level="WARNING")
+    if sources_without_relationship and not checked:
+        # Nur wenn gar nichts geprueft werden konnte: sonst sind Volumes ohne
+        # SnapMirror schlicht normal.
+        sample = ", ".join(sorted(sources_without_relationship)[:5])
+        _log(
+            db,
+            f"Snapshot-Abgleich Sekundaer: keine SnapMirror-Beziehung fuer {len(sources_without_relationship)} Quell-Volume(s) "
+            f"bekannt (z.B. {sample}) -- ist das Ziel-System in der App registriert und discovert? Beziehungen sieht nur "
+            "das ZIEL-System.",
+        )
 
 
 def run_retention_cleanup() -> None:
