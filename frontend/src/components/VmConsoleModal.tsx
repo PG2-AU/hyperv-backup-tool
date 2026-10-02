@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Divider, Group, Kbd, Loader, Modal, Select, Stack, Text } from "@mantine/core";
+import { Alert, Button, Divider, Group, Kbd, Loader, Modal, SegmentedControl, Select, Stack, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconDeviceDesktop, IconDownload, IconInfoCircle } from "@tabler/icons-react";
 
 import { downloadVmRdp, useVmConsoleInfo } from "@/api/hooks.vmConsole";
 import { apiErrorMessage } from "@/utils/errors";
+
+const VIA_KEY = "hvnb.vmConsole.via";
 
 interface VmConsoleModalProps {
   vm: { name: string; cluster_id?: string | null } | null;
@@ -19,6 +21,14 @@ export function VmConsoleModal({ vm, onClose }: VmConsoleModalProps) {
   const { data: info, isLoading, error } = useVmConsoleInfo(vm?.cluster_id, vm?.name, opened);
   const [address, setAddress] = useState<string | null>(null);
   const [busy, setBusy] = useState<"console" | "guest" | null>(null);
+  // Knoten per Name oder per IP ansprechen -- ein PC ausserhalb der Domaene
+  // kann den Namen nicht aufloesen. Die Wahl bleibt im Browser gespeichert.
+  const [via, setVia] = useState<"name" | "ip">(() => (localStorage.getItem(VIA_KEY) === "ip" ? "ip" : "name"));
+  function chooseVia(value: string) {
+    const next = value === "ip" ? "ip" : "name";
+    setVia(next);
+    localStorage.setItem(VIA_KEY, next);
+  }
 
   useEffect(() => {
     setAddress(info?.ip_addresses[0] ?? null);
@@ -27,12 +37,14 @@ export function VmConsoleModal({ vm, onClose }: VmConsoleModalProps) {
   function download(kind: "console" | "guest") {
     if (!vm?.cluster_id) return;
     setBusy(kind);
-    downloadVmRdp(vm.cluster_id, vm.name, kind, address ?? undefined)
+    downloadVmRdp(vm.cluster_id, vm.name, kind, kind === "guest" ? (address ?? undefined) : effectiveVia)
       .catch((err) =>
         notifications.show({ title: "Fehler", message: apiErrorMessage(err, "Die Datei konnte nicht erzeugt werden."), color: "red" }),
       )
       .finally(() => setBusy(null));
   }
+
+  const effectiveVia = via === "ip" && info?.host_address ? "ip" : "name";
 
   return (
     <Modal opened={opened} onClose={onClose} title={`Remote-Sitzung: ${vm?.name ?? ""}`} size={620}>
@@ -66,6 +78,23 @@ export function VmConsoleModal({ vm, onClose }: VmConsoleModalProps) {
                   Konsole öffnen
                 </Button>
               </Group>
+              {info.host_address && (
+                <Group gap="xs">
+                  <Text size="xs">Verbinden über</Text>
+                  <SegmentedControl
+                    size="xs"
+                    value={effectiveVia}
+                    onChange={chooseVia}
+                    data={[
+                      { value: "name", label: `Name (${info.host})` },
+                      { value: "ip", label: `IP-Adresse (${info.host_address})` },
+                    ]}
+                  />
+                  <Text size="xs" c="dimmed">
+                    IP-Adresse wählen, wenn der PC den Knotennamen nicht auflösen kann (z. B. nicht in der Domäne).
+                  </Text>
+                </Group>
+              )}
               {info.state !== "Running" && (
                 <Alert color="yellow" py={6} icon={<IconInfoCircle size={16} />}>
                   Die VM ist nicht eingeschaltet (Status {info.state}) -- die Konsole zeigt dann nur einen leeren Bildschirm.

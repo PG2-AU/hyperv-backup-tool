@@ -42,6 +42,10 @@ class VmConsoleInfo(BaseModel):
     vm_id: str
     state: str
     host: str
+    # Management-IP des Knotens -- fuer PCs ausserhalb der Domaene, die den
+    # Knotennamen nicht aufloesen koennen (live gefunden 2026-10-02). None,
+    # wenn sie sich nicht ermitteln liess.
+    host_address: str | None = None
     console_port: int = CONSOLE_PORT
     # IPv4 zuerst; Link-Local/APIPA ausgefiltert.
     ip_addresses: list[str]
@@ -75,7 +79,8 @@ def _load(db: Session, cluster_id: str, vm_name: str) -> VmConsoleInfo:
         owner = cno.get_vm_owner_node(cno_session, vm_name) or vm.host_name
         if not owner:
             raise RuntimeError("Der Knoten der VM ist nicht bekannt -- bitte Discovery ausführen")
-        node = HyperVService(settings, cno.resolve_node_address(cno_session, owner), use_https=cluster.use_https, node_hostname=owner)
+        address = cno.resolve_node_address(cno_session, owner)
+        node = HyperVService(settings, address, use_https=cluster.use_https, node_hostname=owner)
         info = node.vm_console_info(node.connect(cluster.username, password), vm_name)
     except HTTPException:
         raise
@@ -83,6 +88,7 @@ def _load(db: Session, cluster_id: str, vm_name: str) -> VmConsoleInfo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Hyper-V-Abfrage fehlgeschlagen: {exc}") from exc
     return VmConsoleInfo(
         cluster_id=cluster_id, vm_name=vm_name, vm_id=info["vm_id"] or (vm.vm_uuid or ""), state=info["state"], host=owner,
+        host_address=address if address and address.lower() != owner.lower() else None,
         ip_addresses=_usable_ips(info["ip_addresses"]),
     )
 
@@ -110,15 +116,22 @@ def get_info(
 
 @router.get("/{cluster_id}/{vm_name}/console.rdp")
 def console_rdp(
-    cluster_id: str, vm_name: str, db: Session = Depends(get_db), user=Depends(require_permission(Permission.VM_CONSOLE)),
+    cluster_id: str, vm_name: str, via: str = "name", db: Session = Depends(get_db),
+    user=Depends(require_permission(Permission.VM_CONSOLE)),
 ) -> Response:
+    """`via=ip`: Management-IP des Knotens statt seines Namens."""
     info = _load(db, cluster_id, vm_name)
     if not info.vm_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Die VM-ID ist nicht bekannt.")
-    _log(db, user, f"Remote-Sitzung: Konsole von VM '{vm_name}' angefordert (Knoten {info.host}:{CONSOLE_PORT})")
+    target = info.host
+    if via == "ip":
+        if not info.host_address:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Die IP-Adresse des Knotens ist nicht bekannt.")
+        target = info.host_address
+    _log(db, user, f"Remote-Sitzung: Konsole von VM '{vm_name}' angefordert (Knoten {info.host}, {target}:{CONSOLE_PORT})")
     return _rdp_response(
         [
-            f"full address:s:{info.host}",
+            f"full address:s:{target}",
             f"server port:i:{CONSOLE_PORT}",
             f"pcb:s:{info.vm_id.upper()}",  # Schreibweise wie im live geprueften Vorab-Test
             "negotiate security layer:i:0",

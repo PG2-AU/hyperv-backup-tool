@@ -10,6 +10,7 @@ export interface VmConsoleInfo {
   vm_id: string;
   state: string;
   host: string;
+  host_address?: string | null;
   console_port: number;
   ip_addresses: string[];
 }
@@ -31,9 +32,10 @@ export function useVmConsoleInfo(clusterId: string | null | undefined, vmName: s
 }
 
 // Laedt die .rdp-Datei mit Anmelde-Header und uebergibt sie dem Browser als Download.
-export async function downloadVmRdp(clusterId: string, vmName: string, kind: "console" | "guest", address?: string) {
+// `target`: Gast-IP (kind "guest") bzw. "name" | "ip" fuer die Adresse des Knotens (kind "console").
+export async function downloadVmRdp(clusterId: string, vmName: string, kind: "console" | "guest", target?: string) {
   const response = await apiClient.get(`${base(clusterId, vmName)}/${kind}.rdp`, {
-    params: kind === "guest" ? { address } : undefined,
+    params: kind === "guest" ? { address: target } : { via: target ?? "name" },
     responseType: "blob",
   });
   const url = URL.createObjectURL(response.data as Blob);
