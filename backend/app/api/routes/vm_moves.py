@@ -790,7 +790,7 @@ def _execute_storage_move(run_id: str) -> None:  # noqa: C901
                 )
                 if collisions:
                     raise RuntimeError(f"Am Ziel existieren bereits: {', '.join(collisions)}")
-                ctx.row.message = (plan.summary() + (" (SMB3: CredSSP)" if uses_smb else ""))[:2000]
+                ctx.row.message = (plan.summary() + ("\n(SMB3: per CredSSP)" if uses_smb else ""))[:2000]
 
             with _StepCtx(db, run.id, "move", f"Dateien nach '{run.destination_label}' verschieben", step_model=VmMoveRunStep) as ctx:
                 started = time.monotonic()

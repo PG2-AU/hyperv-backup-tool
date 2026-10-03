@@ -78,7 +78,8 @@ class StorageMovePlan:
         ):
             if value:
                 lines.append(f"{label} → {value}")
-        return "; ".join(lines)
+        # Eine Zeile je Objekt (Nutzer-Vorgabe 2026-10-03), Anzeige mit white-space: pre-line.
+        return "\n".join(lines)
 
 
 def plan_storage_move(layout: VmStorageLayout, destination_root: str) -> StorageMovePlan:

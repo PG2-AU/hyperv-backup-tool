@@ -579,7 +579,7 @@ function RunView({ runId, onClose }: { runId: string; onClose: () => void }) {
           <Stepper.Step
             key={s.step}
             label={s.label}
-            description={s.message && s.message !== "OK" ? s.message : undefined}
+            description={s.message && s.message !== "OK" ? <span style={{ whiteSpace: "pre-line" }}>{s.message}</span> : undefined}
             color={s.status === "error" ? "red" : undefined}
             loading={s.status === "running"}
             completedIcon={s.status === "error" ? <IconX size={16} /> : <IconCheck size={16} />}

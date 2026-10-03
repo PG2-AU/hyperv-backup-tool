@@ -181,7 +181,7 @@ export function VmMoveModal({ opened, onClose, vm, fixSiteMismatch = false }: Vm
                   {s.label}
                 </Text>
                 {s.message && s.message !== "OK" && (
-                  <Text size="xs" c={s.status === "error" ? "red" : "dimmed"} style={{ wordBreak: "break-all" }}>
+                  <Text size="xs" c={s.status === "error" ? "red" : "dimmed"} style={{ wordBreak: "break-all", whiteSpace: "pre-line" }}>
                     {s.message}
                   </Text>
                 )}

@@ -329,7 +329,9 @@ function ActivityDetailModal({ activity, onClose }: { activity: Activity | null;
                 <Stepper.Step
                   key={`${i}-${s.label}`}
                   label={s.label}
-                  description={s.message && s.message !== "OK" ? s.message : undefined}
+                  description={
+                    s.message && s.message !== "OK" ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-all" }}>{s.message}</span> : undefined
+                  }
                   color={s.status === "error" ? "red" : undefined}
                   loading={s.status === "running"}
                   completedIcon={s.status === "error" ? <IconX size={16} /> : <IconCheck size={16} />}
