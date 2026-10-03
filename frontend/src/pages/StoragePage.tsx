@@ -807,6 +807,7 @@ export function StoragePage() {
       if (activeTab === "volumes") setVolumeSearch(q);
       else if (activeTab === "luns") setLunSearch(q);
       else if (activeTab === "cifs-shares") setCifsShareSearch(q);
+      else if (activeTab === "aggregates") setAggregateSearch(q);
     }
     const next = new URLSearchParams(params);
     next.delete("q");

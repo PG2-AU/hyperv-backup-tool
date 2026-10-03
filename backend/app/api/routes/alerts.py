@@ -26,7 +26,10 @@ from app.schemas.alert import AlertConfigRead, AlertConfigUpdate, AlertRead, All
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
-_CAPACITY_TYPES = {AlertType.CAPACITY_VOLUME, AlertType.CAPACITY_LUN}
+_CAPACITY_TYPES = {
+    AlertType.CAPACITY_VOLUME, AlertType.CAPACITY_LUN,
+    AlertType.CAPACITY_FORECAST_VOLUME, AlertType.CAPACITY_FORECAST_LUN, AlertType.CAPACITY_FORECAST_AGGREGATE,
+}
 
 
 @router.get("", response_model=list[AlertRead])

@@ -25,6 +25,9 @@ import { matchesAllColumns } from "@/utils/search";
 const TYPE_LABEL: Record<AlertType, string> = {
   capacity_volume: "Kapazität (Volume)",
   capacity_lun: "Kapazität (LUN)",
+  capacity_forecast_volume: "Prognose: Volume läuft voll",
+  capacity_forecast_lun: "Prognose: LUN läuft voll",
+  capacity_forecast_aggregate: "Prognose: Aggregat läuft voll",
   hyperv_cluster_unhealthy: "Hyper-V-Cluster",
   netapp_cluster_unhealthy: "NetApp-Cluster",
   snapmirror_unhealthy: "SnapMirror",
@@ -44,6 +47,9 @@ const TYPE_LABEL: Record<AlertType, string> = {
 const TYPE_COLOR: Record<AlertType, string> = {
   capacity_volume: "orange",
   capacity_lun: "orange",
+  capacity_forecast_volume: "yellow",
+  capacity_forecast_lun: "yellow",
+  capacity_forecast_aggregate: "yellow",
   hyperv_cluster_unhealthy: "red",
   netapp_cluster_unhealthy: "red",
   snapmirror_unhealthy: "grape",
@@ -63,14 +69,23 @@ const TYPE_COLOR: Record<AlertType, string> = {
 function AlertAction({ alert }: { alert: Alert }) {
   const navigate = useNavigate();
 
-  if (alert.alert_type === "capacity_volume" && alert.object_uuid) {
+  if (alert.alert_type === "capacity_forecast_aggregate") {
+    return (
+      <Tooltip label="Zu Storage > Aggregate (Verlauf mit Prognose)">
+        <ActionIcon component={Link} to={`/storage?tab=aggregates&q=${encodeURIComponent(alert.object_name)}`} variant="subtle">
+          <IconExternalLink size={16} />
+        </ActionIcon>
+      </Tooltip>
+    );
+  }
+  if ((alert.alert_type === "capacity_volume" || alert.alert_type === "capacity_forecast_volume") && alert.object_uuid) {
     return (
       <Button size="xs" variant="light" onClick={() => navigate(`/storage?tab=volumes&editUuid=${alert.object_uuid}`)}>
         Volume vergrößern
       </Button>
     );
   }
-  if (alert.alert_type === "capacity_lun" && alert.object_uuid) {
+  if ((alert.alert_type === "capacity_lun" || alert.alert_type === "capacity_forecast_lun") && alert.object_uuid) {
     return (
       <Button size="xs" variant="light" onClick={() => navigate(`/storage?tab=luns&editUuid=${alert.object_uuid}`)}>
         LUN vergrößern

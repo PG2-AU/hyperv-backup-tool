@@ -32,6 +32,7 @@ from app.api.routes.netapp_clusters import _discover_and_persist as _run_netapp_
 from app.api.routes.netapp_clusters import _refresh_status as _refresh_netapp_status
 from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
 from app.api.routes.restore import _slugify
+from app.core.capacity_forecast import WINDOW_DAYS, forecast
 from app.core.capacity_history import capacity_key
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
@@ -535,6 +536,66 @@ def _parse_lag_minutes(lag_time: str | None) -> int | None:
     return days * 24 * 60 + hours * 60 + minutes + seconds // 60
 
 
+def _check_capacity_forecast(
+    db: Session, now: datetime, active_by_key: dict, seen_keys: set, trigger, netapp_cluster_names: dict[str, str],
+    referenced_lun_ids: set[str] | None, referenced_volume_keys: set[tuple[str, str, str]] | None,
+) -> None:
+    """Kapazitaetsprognose (Backlog #79): LUN/Volume/Aggregat, das laut Trend
+    der letzten 30 Tage innerhalb von 4 Wochen vollaeuft -> Alarm. Gleiche
+    Scope-Filterung wie die Schwellwert-Alarme (Aggregate immer). Ein aktiver
+    Alarm bekommt bei jedem Check die aktuelle Rest-Laufzeit in den Text; er
+    loest sich ueber die seen_keys-Logik von selbst, sobald die Prognose
+    nicht mehr innerhalb von 4 Wochen voll ergibt (z.B. nach Vergroessern
+    oder Aufraeumen). Nur DB-Werte (CapacitySample), keine API-Aufrufe."""
+    since = now - timedelta(days=WINDOW_DAYS + 1)
+    samples: dict[tuple[str, str], list] = defaultdict(list)
+    for row in (
+        db.query(CapacitySample.object_type, CapacitySample.object_key, CapacitySample.sampled_at,
+                 CapacitySample.used_bytes, CapacitySample.capacity_bytes)
+        .filter(CapacitySample.object_type.in_(("lun", "volume", "aggregate")), CapacitySample.sampled_at >= since)
+        .all()
+    ):
+        samples[(row.object_type, row.object_key)].append((row.sampled_at, row.used_bytes, row.capacity_bytes))
+
+    objects: list[tuple[AlertType, str, object, str]] = []
+    for vol in db.query(NetAppVolume).all():
+        if referenced_volume_keys is not None and (vol.cluster_id, vol.svm_name, vol.name) not in referenced_volume_keys:
+            continue
+        objects.append((AlertType.CAPACITY_FORECAST_VOLUME, "volume", vol, capacity_key("volume", vol.cluster_id, uuid=vol.uuid, name=vol.name)))
+    for lun in db.query(NetAppLun).all():
+        if referenced_lun_ids is not None and lun.id not in referenced_lun_ids:
+            continue
+        objects.append((AlertType.CAPACITY_FORECAST_LUN, "lun", lun, capacity_key("lun", lun.cluster_id, uuid=lun.uuid, name=lun.name)))
+    for agg in db.query(NetAppAggregate).all():
+        objects.append((AlertType.CAPACITY_FORECAST_AGGREGATE, "aggregate", agg, capacity_key("aggregate", agg.cluster_id, uuid=agg.uuid, name=agg.name)))
+
+    labels = {"volume": "Volume", "lun": "LUN", "aggregate": "Aggregat"}
+    for alert_type, object_type, obj, sample_key in objects:
+        prediction = forecast(samples.get((object_type, sample_key), []))
+        if prediction is None or not prediction.full_within_horizon:
+            continue
+        key = obj.uuid or f"{obj.cluster_id}:{obj.name}"
+        seen_keys.add((alert_type, key))
+        days = max(0, int(prediction.days_to_full))
+        free = max(prediction.capacity_bytes - prediction.last_used_bytes, 0)
+        message = (
+            f"{labels[object_type]} läuft voraussichtlich "
+            + ("bereits jetzt voll" if days == 0 else f"in ca. {days} Tag(en) voll (um den {prediction.full_at:%d.%m.%Y})")
+            + f" -- Zuwachs ca. {prediction.growth_bytes_per_day / 1024**3:.1f} GB/Tag, frei {free / 1024**3:.1f} GB"
+        )[:500]
+        percent = round(prediction.last_used_bytes / prediction.capacity_bytes * 100) if prediction.capacity_bytes else None
+        existing = active_by_key.get((alert_type, key))
+        if existing is not None:
+            existing.message = message
+            existing.triggered_percent = percent
+            continue
+        trigger(
+            alert_type, key, object_name=obj.name, netapp_cluster_id=obj.cluster_id,
+            netapp_cluster_name=netapp_cluster_names.get(obj.cluster_id), svm_name=getattr(obj, "svm_name", None),
+            message=message, triggered_percent=percent,
+        )
+
+
 def _hyperv_referenced_keys(db: Session) -> tuple[set[str], set[tuple[str, str, str]]]:
     """Ermittelt, welche NetApp-LUNs/-Volumes tatsaechlich als Hyper-V-
     Storage genutzt werden -- fuer AlertScope.HYPERV_REFERENCED in
@@ -932,6 +993,10 @@ def run_alert_check() -> None:
                     svm_name=lun.svm_name, message=f"LUN zu {percent}% belegt (Schwellwert {lun_threshold}%)",
                     threshold_percent=lun_threshold, triggered_percent=percent,
                 )
+
+        _check_capacity_forecast(
+            db, now, active_by_key, seen_keys, _trigger, netapp_cluster_names, referenced_lun_ids, referenced_volume_keys,
+        )
 
         for cluster in db.query(HyperVCluster).all():
             if cluster.health == HyperVClusterHealth.HEALTHY:

@@ -37,6 +37,11 @@ class AlertType(str, enum.Enum):
     DB_BACKUP_FAILED = "db_backup_failed"
     DB_BACKUP_OVERDUE = "db_backup_overdue"
     HYPERV_VM_AVHDX_WITHOUT_CHECKPOINT = "hyperv_vm_avhdx_without_checkpoint"
+    # Kapazitaetsprognose (Backlog #79): laeuft laut Trend der letzten 30
+    # Tage innerhalb von 4 Wochen voll, siehe app.core.capacity_forecast.
+    CAPACITY_FORECAST_VOLUME = "capacity_forecast_volume"
+    CAPACITY_FORECAST_LUN = "capacity_forecast_lun"
+    CAPACITY_FORECAST_AGGREGATE = "capacity_forecast_aggregate"
 
 
 class AlertScope(str, enum.Enum):

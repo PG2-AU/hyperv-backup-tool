@@ -31,9 +31,19 @@ function hasSnapshots(s: CapacitySeries): boolean {
   return s.points.some((p) => p.snapshot_used_bytes != null);
 }
 
+// Prognose 4 Wochen voraus (Backlog #79): eigene, gestrichelte Serie je
+// Objekt, beginnt am letzten echten Messpunkt (Tag 0), damit sie nahtlos an
+// die Kurve anschliesst.
+function forecastKey(name: string): string {
+  return `${name} – Prognose`;
+}
+
 function buildChartData(series: CapacitySeries[]): Record<string, number | string | null>[] {
   const dateSet = new Set<string>();
-  series.forEach((s) => s.points.forEach((p) => dateSet.add(p.sampled_at.slice(0, 10))));
+  series.forEach((s) => {
+    s.points.forEach((p) => dateSet.add(p.sampled_at.slice(0, 10)));
+    s.forecast?.points.forEach((p) => dateSet.add(p.sampled_at.slice(0, 10)));
+  });
   const dates = [...dateSet].sort();
   return dates.map((date) => {
     const row: Record<string, number | string | null> = { date };
@@ -43,9 +53,31 @@ function buildChartData(series: CapacitySeries[]): Record<string, number | strin
       if (hasSnapshots(s)) {
         row[snapshotKey(s.object_name)] = point?.snapshot_used_bytes != null ? point.snapshot_used_bytes / BYTES_PER_GIB : null;
       }
+      if (s.forecast) {
+        const predicted = s.forecast.points.find((p) => p.sampled_at.slice(0, 10) === date);
+        row[forecastKey(s.object_name)] = predicted?.used_bytes != null ? predicted.used_bytes / BYTES_PER_GIB : null;
+      }
     });
     return row;
   });
+}
+
+function forecastText(s: CapacitySeries): { text: string; color: string } {
+  const f = s.forecast;
+  if (!f) return { text: "Prognose: noch zu wenige Messpunkte (mind. 5 Tage über 1 Woche)", color: "dimmed" };
+  const perDay = `${f.growth_bytes_per_day >= 0 ? "+" : "−"}${formatBytes(Math.abs(f.growth_bytes_per_day))}/Tag`;
+  if (f.days_to_full == null || f.growth_bytes_per_day <= 0) return { text: `Prognose: wächst nicht (${perDay})`, color: "dimmed" };
+  const days = Math.max(0, Math.floor(f.days_to_full));
+  const when = f.full_at ? new Date(f.full_at).toLocaleDateString("de-DE") : "";
+  if (days <= f.horizon_days)
+    return {
+      text: days === 0 ? `Prognose: bereits voll (${perDay})` : `Prognose: voll in ca. ${days} Tagen, um den ${when} (${perDay})`,
+      color: "red",
+    };
+  return {
+    text: `Prognose: in den nächsten ${Math.round(f.horizon_days / 7)} Wochen nicht voll -- bei gleichem Trend in ca. ${days} Tagen (${perDay})`,
+    color: "dimmed",
+  };
 }
 
 export function CapacityHistoryPanel({
@@ -76,13 +108,19 @@ export function CapacityHistoryPanel({
           label: hasSnapshots(s) ? `${s.object_name} (belegt)` : s.object_name,
           color: SERIES_COLORS[i % SERIES_COLORS.length],
         };
-        return hasSnapshots(s)
-          ? [base, { name: snapshotKey(s.object_name), label: "davon Snapshots", color: "grape.6" }]
-          : [base];
+        const extra = [];
+        if (hasSnapshots(s)) extra.push({ name: snapshotKey(s.object_name), label: "davon Snapshots", color: "grape.6" });
+        if (s.forecast)
+          extra.push({ name: forecastKey(s.object_name), label: `${s.object_name} – Prognose`, color: base.color, strokeDasharray: "6 4" });
+        return [base, ...extra];
       }),
     [series],
   );
   const totalPoints = (series ?? []).reduce((sum, s) => sum + s.points.length, 0);
+  // Kapazitaetslinie nur bei genau einem Objekt (bei mehreren VHDs waeren es
+  // mehrere unterschiedliche Grenzen).
+  const single = series?.length === 1 ? series[0] : null;
+  const capacityBytes = single?.forecast?.capacity_bytes ?? single?.points[single.points.length - 1]?.capacity_bytes ?? null;
 
   return (
     <Group align="flex-start" justify="space-between" wrap="nowrap" gap="md">
@@ -102,6 +140,12 @@ export function CapacityHistoryPanel({
             type="default"
             withLegend={chartSeries.length > 1}
             series={chartSeries}
+            areaProps={(item) => (item.name.endsWith("– Prognose") ? { fillOpacity: 0 } : {})}
+            referenceLines={
+              capacityBytes
+                ? [{ y: capacityBytes / BYTES_PER_GIB, label: `Kapazität ${formatBytes(capacityBytes)}`, color: "red.6" }]
+                : undefined
+            }
             valueFormatter={(v) => formatBytes(v * BYTES_PER_GIB)}
             curveType="linear"
             withGradient={false}
@@ -109,6 +153,17 @@ export function CapacityHistoryPanel({
             connectNulls
           />
         )}
+        {!isLoading &&
+          totalPoints >= 2 &&
+          (series ?? []).map((s) => {
+            const { text, color } = forecastText(s);
+            return (
+              <Text key={s.object_key} size="xs" c={color} mt={4}>
+                {(series?.length ?? 0) > 1 ? `${s.object_name}: ` : ""}
+                {text}
+              </Text>
+            );
+          })}
       </div>
       <div>
         <Text size="xs" c="dimmed" tt="uppercase" fw={700} mb={4}>

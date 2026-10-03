@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_user_permissions
+from app.core.capacity_forecast import HORIZON_DAYS, WINDOW_DAYS, forecast
 from app.core.capacity_history import CapacityObjectType, capacity_key
 from app.core.rbac import Permission
 from app.db.session import get_db
@@ -22,7 +23,7 @@ from app.models.capacity_history import CapacitySample
 from app.models.hyperv_discovery import HyperVVhd
 from app.models.netapp_discovery import NetAppAggregate, NetAppLun, NetAppVolume
 from app.models.user import User
-from app.schemas.capacity_history import CapacitySamplePoint, CapacitySeries
+from app.schemas.capacity_history import CapacityForecastRead, CapacitySamplePoint, CapacitySeries
 
 router = APIRouter(prefix="/api/capacity-history", tags=["capacity-history"])
 
@@ -35,20 +36,36 @@ def _require_view(object_type: CapacityObjectType, user: User, db: Session) -> N
 
 
 def _series_for_key(db: Session, object_type: str, key: str, name: str, since: datetime) -> CapacitySeries:
+    # Fuer die Prognose immer mindestens das Regressionsfenster laden, auch
+    # wenn nur "1 Monat" angezeigt wird.
+    load_since = min(since, datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS + 1))
     rows = (
         db.query(CapacitySample)
-        .filter(CapacitySample.object_type == object_type, CapacitySample.object_key == key, CapacitySample.sampled_at >= since)
+        .filter(CapacitySample.object_type == object_type, CapacitySample.object_key == key, CapacitySample.sampled_at >= load_since)
         .order_by(CapacitySample.sampled_at)
         .all()
     )
+    prediction = forecast([(r.sampled_at, r.used_bytes, r.capacity_bytes) for r in rows])
     return CapacitySeries(
         object_key=key,
         object_name=name,
         points=[CapacitySamplePoint(
             sampled_at=r.sampled_at, capacity_bytes=r.capacity_bytes, used_bytes=r.used_bytes,
             snapshot_used_bytes=r.snapshot_used_bytes,
-        ) for r in rows],
+        ) for r in rows if _aware(r.sampled_at) >= since],
+        forecast=CapacityForecastRead(
+            growth_bytes_per_day=prediction.growth_bytes_per_day, capacity_bytes=prediction.capacity_bytes,
+            days_to_full=prediction.days_to_full, full_at=prediction.full_at, horizon_days=HORIZON_DAYS,
+            points=[
+                CapacitySamplePoint(sampled_at=at, used_bytes=used, capacity_bytes=prediction.capacity_bytes)
+                for at, used in prediction.points
+            ],
+        ) if prediction else None,
     )
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 @router.get("", response_model=list[CapacitySeries])

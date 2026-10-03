@@ -587,6 +587,9 @@ export interface BackupPolicy {
 export type AlertType =
   | "capacity_volume"
   | "capacity_lun"
+  | "capacity_forecast_volume"
+  | "capacity_forecast_lun"
+  | "capacity_forecast_aggregate"
   | "hyperv_cluster_unhealthy"
   | "netapp_cluster_unhealthy"
   | "snapmirror_unhealthy"
@@ -1144,10 +1147,22 @@ export interface CapacitySamplePoint {
   snapshot_used_bytes?: number | null;
 }
 
+// Prognose 4 Wochen voraus (Backlog #79, backend app.core.capacity_forecast).
+export interface CapacityForecast {
+  growth_bytes_per_day: number;
+  capacity_bytes: number;
+  days_to_full?: number | null;
+  full_at?: string | null;
+  horizon_days: number;
+  points: CapacitySamplePoint[];
+}
+
 export interface CapacitySeries {
   object_key: string;
   object_name: string;
   points: CapacitySamplePoint[];
+  // null = zu wenige Messpunkte fuer eine Prognose.
+  forecast?: CapacityForecast | null;
 }
 
 // --- Standorte (Settings > Standorte, siehe backend app.models.site) ---

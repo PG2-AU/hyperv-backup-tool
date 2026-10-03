@@ -91,6 +91,12 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   Windows/UEFI CA), vTPM optional, ISO von CSV/SMB3 (Suche bzw. Pfad) mit DVD als erstem
   Boot-Geraet, Cluster-Rolle, optional starten und Protection Group. SMB3-Ablage/-ISO per
   CredSSP. Bei Fehler Rueckfrage Zurueckrollen (VM + Ordner entfernen) oder Behalten.
+- **Kapazitaetsprognose** -- aus dem Kapazitaetsverlauf (lineare Regression ueber die letzten
+  30 Tage, mind. 5 Messtage ueber 1 Woche) 4 Wochen voraus: gestrichelte Prognoselinie und
+  Kapazitaetslinie im Verlaufsdiagramm, Text "voll in ca. N Tagen" darunter; Alarm
+  "Prognose: Volume/LUN/Aggregat laeuft voll", wenn es bei echtem Zuwachs innerhalb von 4
+  Wochen vollaeuft (Text mit Rest-Tagen wird bei jedem Check aktualisiert, loest sich von
+  selbst). Scope wie die Schwellwert-Alarme.
 - **Globale Suche** -- Suchfeld in der Kopfzeile (Strg+K oder /) ueber VMs, CSVs, SMB3- und
   CIFS-Freigaben, Volumes, LUNs und die Backup-Snapshots der App; '*'/'?' als Platzhalter.
   Treffer erscheinen beim Tippen sofort: ein kompakter Index (GET /api/search/index, nur
