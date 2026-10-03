@@ -7,6 +7,7 @@ import { useStartVmDelete, useVmDeleteInfo, useVmDeleteRun } from "@/api/hooks.v
 import type { VmDeleteInfo } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
+import { BackgroundRunHint } from "@/components/BackgroundRunHint";
 
 interface VmDeleteModalProps {
   vm: { name: string; cluster_id?: string | null } | null;
@@ -30,8 +31,8 @@ export function VmDeleteModal({ vm, onClose }: VmDeleteModalProps) {
   return (
     <Modal
       opened={opened}
-      onClose={running ? () => undefined : onClose}
-      withCloseButton={!running}
+      onClose={onClose}
+      closeOnClickOutside={!running}
       title={`VM löschen: ${vm?.name ?? ""}`}
       size={820}
     >
@@ -49,6 +50,7 @@ export function VmDeleteModal({ vm, onClose }: VmDeleteModalProps) {
           {info && <DeleteForm info={info} onStarted={setRunId} onClose={onClose} />}
         </Stack>
       )}
+      {running && <BackgroundRunHint onClose={onClose} />}
     </Modal>
   );
 }

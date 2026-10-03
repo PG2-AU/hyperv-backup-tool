@@ -37,6 +37,7 @@ import { UsageBar } from "@/components/CsvResizeModal";
 import { useAuthStore } from "@/store/authStore";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
+import { BackgroundRunHint } from "@/components/BackgroundRunHint";
 
 const GIB = 1024 ** 3;
 
@@ -58,8 +59,10 @@ export function VmCreateModal({ opened, onClose }: { opened: boolean; onClose: (
   }, [opened, queryClient]);
 
   return (
-    <Modal opened={opened} onClose={running ? () => undefined : onClose} withCloseButton={!running} title="Neue VM anlegen" size={940}>
+    <Modal opened={opened} onClose={onClose}
+      closeOnClickOutside={!running} title="Neue VM anlegen" size={940}>
       {runId ? <RunView runId={runId} onClose={onClose} /> : <CreateForm opened={opened} onStarted={setRunId} onClose={onClose} />}
+      {running && <BackgroundRunHint onClose={onClose} />}
     </Modal>
   );
 }

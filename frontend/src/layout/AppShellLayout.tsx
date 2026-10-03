@@ -32,7 +32,6 @@ import logo from "@/assets/logo.png";
 import { ACTIVITY_FOOTER_COLLAPSED, ACTIVITY_FOOTER_EXPANDED, ActivityFooter } from "@/components/ActivityFooter";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { GlobalSearch } from "@/components/GlobalSearch";
-import { RunningJobsIndicator } from "@/components/RunningJobsIndicator";
 import { VersionFooter } from "@/components/VersionFooter";
 import { NAV_ITEMS } from "@/layout/navConfig";
 import { useAuthStore } from "@/store/authStore";
@@ -96,7 +95,6 @@ export function AppShellLayout() {
 
           <Group wrap="nowrap">
             <GlobalSearch />
-            <RunningJobsIndicator />
             <Tooltip label="System Log">
               <ActionIcon variant="default" size="lg" component={Link} to="/logs">
                 <IconTerminal2 size={18} />

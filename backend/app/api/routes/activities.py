@@ -70,6 +70,10 @@ class ActivityDetail(BaseModel):
     # API-Pfade (ohne /api) fuer die Rueckfrage, nur bei needs_decision.
     rollback_path: str | None = None
     keep_path: str | None = None
+    # Abbrechen moeglich (laufendes Backup, laufender Storage-Move); seit der
+    # Fusszeile entfaellt die Backup-Anzeige in der Kopfzeile, die das bisher bot.
+    cancel_path: str | None = None
+    cancel_requested: bool = False
 
 
 @dataclass
@@ -217,7 +221,14 @@ def get_activity(kind_name: str, run_id: str, db: Session = Depends(get_db), use
     running = next((s.label for s in steps if s.status == "running"), None)
     activity = _to_activity(kind_name, kind, run, running)
     decision = activity.needs_decision
+    cancel_path = None
+    if activity.status == "running":
+        if kind_name == "backup":
+            cancel_path = f"/jobs/runs/{run_id}/cancel"
+        elif kind_name == "vm_move" and run.move_type == "storage":
+            cancel_path = f"/vm-moves/{run_id}/cancel"
     return ActivityDetail(
+        cancel_path=cancel_path, cancel_requested=bool(getattr(run, "cancel_requested_at", None)),
         activity=activity, steps=steps, error_message=getattr(run, "error_message", None),
         rollback_path=f"{kind.decision_prefix}{run_id}/rollback" if decision else None,
         keep_path=f"{kind.decision_prefix}{run_id}/keep" if decision else None,

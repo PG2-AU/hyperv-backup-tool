@@ -35,6 +35,7 @@ import { UsageBar } from "@/components/CsvResizeModal";
 import { useAuthStore } from "@/store/authStore";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
+import { BackgroundRunHint } from "@/components/BackgroundRunHint";
 
 const GIB = 1024 ** 3;
 
@@ -59,12 +60,13 @@ export function SmbShareCreateModal({ opened, onClose }: { opened: boolean; onCl
   return (
     <Modal
       opened={opened}
-      onClose={running ? () => undefined : onClose}
-      withCloseButton={!running}
+      onClose={onClose}
+      closeOnClickOutside={!running}
       title="Neue SMB3-Freigabe anlegen"
       size={900}
     >
       {runId ? <RunView runId={runId} onClose={onClose} /> : <CreateForm opened={opened} onStarted={setRunId} onClose={onClose} />}
+      {running && <BackgroundRunHint onClose={onClose} />}
     </Modal>
   );
 }

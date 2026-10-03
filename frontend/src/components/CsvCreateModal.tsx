@@ -38,6 +38,7 @@ import { UsageBar } from "@/components/CsvResizeModal";
 import { useAuthStore } from "@/store/authStore";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
+import { BackgroundRunHint } from "@/components/BackgroundRunHint";
 
 const GIB = 1024 ** 3;
 
@@ -67,12 +68,13 @@ export function CsvCreateModal({ opened, onClose }: CsvCreateModalProps) {
   return (
     <Modal
       opened={opened}
-      onClose={running ? () => undefined : onClose}
-      withCloseButton={!running}
+      onClose={onClose}
+      closeOnClickOutside={!running}
       title="Neue CSV anlegen"
       size={960}
     >
       {runId ? <RunView runId={runId} onClose={onClose} /> : <CreateForm opened={opened} onStarted={setRunId} onClose={onClose} />}
+      {running && <BackgroundRunHint onClose={onClose} />}
     </Modal>
   );
 }

@@ -45,6 +45,7 @@ import type { VmMoveTargetNode, VmStorageTargetCsv } from "@/api/types";
 import { SiteBadgeView } from "@/components/SiteBadge";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
+import { BackgroundRunHint } from "@/components/BackgroundRunHint";
 
 const STEP_STATUS_ICON: Record<string, React.ReactNode> = {
   pending: <IconMinus size={16} color="var(--mantine-color-gray-5)" />,
@@ -119,8 +120,8 @@ export function VmMoveModal({ opened, onClose, vm, fixSiteMismatch = false }: Vm
   return (
     <Modal
       opened={opened}
-      onClose={running ? () => undefined : onClose}
-      withCloseButton={!running}
+      onClose={onClose}
+      closeOnClickOutside={!running}
       title={`${fixSiteMismatch ? "Standort-Abweichung beheben" : "VM verschieben"}: ${vm?.name ?? ""}`}
       size={960}
     >
@@ -227,6 +228,7 @@ export function VmMoveModal({ opened, onClose, vm, fixSiteMismatch = false }: Vm
           )}
         </Stack>
       )}
+      {running && <BackgroundRunHint onClose={onClose} />}
     </Modal>
   );
 }

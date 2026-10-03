@@ -21,6 +21,7 @@ import { useCsvDeleteInfo, useCsvDeleteRun, useStartCsvDelete } from "@/api/hook
 import type { CsvDeleteInfo } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, formatDateTime, lunShortName } from "@/utils/format";
+import { BackgroundRunHint } from "@/components/BackgroundRunHint";
 
 interface CsvDeleteModalProps {
   opened: boolean;
@@ -44,8 +45,8 @@ export function CsvDeleteModal({ opened, onClose, csv }: CsvDeleteModalProps) {
   return (
     <Modal
       opened={opened}
-      onClose={running ? () => undefined : onClose}
-      withCloseButton={!running}
+      onClose={onClose}
+      closeOnClickOutside={!running}
       title={`CSV löschen: ${csv?.name ?? ""}`}
       size={820}
     >
@@ -63,6 +64,7 @@ export function CsvDeleteModal({ opened, onClose, csv }: CsvDeleteModalProps) {
           {info && <DeleteForm info={info} onStarted={setRunId} onClose={onClose} />}
         </Stack>
       )}
+      {running && <BackgroundRunHint onClose={onClose} />}
     </Modal>
   );
 }

@@ -7,6 +7,7 @@ import { useRecreateVm, useVmBackupRuns, useVmRecreateRun } from "@/api/hooks";
 import type { VmWithBackups } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
+import { BackgroundRunHint } from "@/components/BackgroundRunHint";
 
 interface VmRecreateWizardModalProps {
   opened: boolean;
@@ -59,12 +60,13 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
   return (
     <Modal
       opened={opened}
-      onClose={done || active < 2 ? onClose : () => {}}
+      onClose={onClose}
       title={`VM neu erstellen: ${vm?.name ?? ""}`}
       size="xl"
       closeOnClickOutside={done || active < 2}
       closeOnEscape={done || active < 2}
     >
+      {/* Neuerstellung laeuft auf dem Server -- Dialog darf trotzdem zu (Nutzer-Vorgabe 2026-10-03). */}
       <Alert icon={<IconAlertTriangle size={16} />} color="orange" variant="light" mb="md">
         Diese VM existiert nicht mehr im Inventory. Aus dem gewählten Backup-Punkt wird eine komplett neue VM
         angelegt (Hardware/Netzwerk/VHDs gemäß gespeicherter Konfiguration). MAC-Adressen werden neu vergeben,
@@ -253,6 +255,7 @@ export function VmRecreateWizardModal({ opened, onClose, vm }: VmRecreateWizardM
           )}
         </Stack>
       )}
+      {active === 2 && !done && <BackgroundRunHint onClose={onClose} />}
     </Modal>
   );
 }

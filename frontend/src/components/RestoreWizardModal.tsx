@@ -40,6 +40,7 @@ import { SelectedFileList } from "@/components/SelectedFileList";
 import type { Csv, RestoreMode, RestoreRun, SmbShare, VmWithBackups } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
+import { BackgroundRunHint } from "@/components/BackgroundRunHint";
 
 type RestoreKind = RestoreMode | "files" | "clone";
 
@@ -636,7 +637,11 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
       ? active < 3 || fileRun?.status !== "running"
       : restoreKind === "clone"
         ? active < 3 || cloneDone
-        : batchDone || active < 3;
+        : // Disk-Restore: die Warteschlange mehrerer Disks treibt der Dialog
+          // selbst voran -- schliessen erst, wenn die LETZTE Disk laeuft; die
+          // laeuft dann auf dem Server weiter (Aktivitaeten-Leiste).
+          batchDone || active < 3 || (currentRunId !== null && queue.length === 0);
+  const backgroundCloseAvailable = restoreKind !== "files" && restoreKind !== "clone" && active >= 3 && !batchDone && currentRunId !== null && queue.length === 0;
 
   // Eine Checkpoint-Kette betrifft immer die GANZE VM (nie nur einzelne
   // Disks), daher ein gemeinsamer Auswahlblock fuer alle Modi ausser
@@ -1300,6 +1305,7 @@ export function RestoreWizardModal({ opened, onClose, vm, initialSnapshotId }: R
           )}
         </Stepper.Step>
       </Stepper>
+      {backgroundCloseAvailable && <BackgroundRunHint onClose={onClose} />}
     </Modal>
   );
 }

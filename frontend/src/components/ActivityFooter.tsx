@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActionIcon,
   Alert,
@@ -21,6 +21,8 @@ import { IconAlertTriangle, IconCheck, IconChevronDown, IconChevronUp, IconX } f
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/api/client";
+import { useAuthStore } from "@/store/authStore";
+import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 
 // Aktivitaeten-Fusszeile (Backlog #83, Nutzer-Vorgabe 2026-10-03): wie
@@ -49,6 +51,8 @@ interface ActivityDetail {
   error_message?: string | null;
   rollback_path?: string | null;
   keep_path?: string | null;
+  cancel_path?: string | null;
+  cancel_requested?: boolean;
 }
 
 export const ACTIVITY_FOOTER_COLLAPSED = 34;
@@ -115,8 +119,46 @@ function StatusCell({ a }: { a: Activity }) {
   );
 }
 
+// Endet ein Ablauf: betroffene Listen neu laden (u.a. Dashboard-/Kalender-
+// Zeitstrahl -- uebernommen von der frueheren Backup-Anzeige in der
+// Kopfzeile) und bei eigenen Ablaeufen eine Meldung zeigen, damit man ein im
+// Hintergrund weiterlaufendes Ergebnis nicht verpasst (VM-Power meldet selbst).
+const INVALIDATE_ON_FINISH = ["job-runs", "vms", "csvs", "smb-shares", "volumes", "luns", "resource-groups", "backups", "alerts"];
+
+function useFinishWatcher(activities: Activity[] | undefined) {
+  const queryClient = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const previous = useRef<Map<string, Activity> | null>(null);
+  useEffect(() => {
+    if (!activities) return;
+    const current = new Map(activities.map((a) => [`${a.kind}:${a.id}`, a]));
+    const before = previous.current;
+    previous.current = current;
+    if (!before) return;
+    const finished = [...before.values()].filter((old) => {
+      const now = current.get(`${old.kind}:${old.id}`);
+      return old.status === "running" && (!now || now.status !== "running");
+    });
+    if (finished.length === 0) return;
+    INVALIDATE_ON_FINISH.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }));
+    const mine = new Set([user?.display_name, user?.username].filter(Boolean));
+    for (const old of finished) {
+      const now = current.get(`${old.kind}:${old.id}`);
+      if (!now || old.kind === "vm_power" || !mine.has(now.initiator)) continue;
+      const s = STATUS[now.status] ?? { label: now.status, color: "gray" };
+      notifications.show({
+        title: `${now.task}: ${s.label}`,
+        message: `${now.target}${now.needs_decision ? " -- Rückfrage offen, siehe Aktivitäten" : ""}`,
+        color: s.color,
+        autoClose: now.status === "succeeded" ? 6000 : false,
+      });
+    }
+  }, [activities, queryClient, user]);
+}
+
 export function ActivityFooter({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const { data: activities } = useActivities();
+  useFinishWatcher(activities);
   const [filter, setFilter] = useState("all");
   const [selected, setSelected] = useState<Activity | null>(null);
   const items = activities ?? [];
@@ -230,7 +272,7 @@ export function ActivityFooter({ open, onToggle }: { open: boolean; onToggle: ()
 
 function ActivityDetailModal({ activity, onClose }: { activity: Activity | null; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [busy, setBusy] = useState<"rollback" | "keep" | null>(null);
+  const [busy, setBusy] = useState<"rollback" | "keep" | "cancel" | null>(null);
   const { data } = useQuery({
     queryKey: ["activity", activity?.kind, activity?.id],
     queryFn: async () => (await apiClient.get<ActivityDetail>(`/activities/${activity!.kind}/${activity!.id}`)).data,
@@ -238,7 +280,18 @@ function ActivityDetailModal({ activity, onClose }: { activity: Activity | null;
     refetchInterval: (query) => (query.state.data?.activity.status === "running" ? 2000 : false),
   });
 
-  function decide(kind: "rollback" | "keep", path: string) {
+  function cancel(path: string) {
+    confirmAction({
+      title: "Ablauf abbrechen",
+      message:
+        "Wirklich abbrechen? Ein Backup stoppt nach dem aktuellen Schritt, bereits erstellte Checkpoints werden aufgeräumt; ein Storage-Move bricht die Kopie ab, die VM bleibt am bisherigen Ort.",
+      confirmLabel: "Abbrechen",
+      color: "red",
+      onConfirm: () => decide("cancel", path),
+    });
+  }
+
+  function decide(kind: "rollback" | "keep" | "cancel", path: string) {
     setBusy(kind);
     apiClient
       .post(path)
@@ -283,6 +336,20 @@ function ActivityDetailModal({ activity, onClose }: { activity: Activity | null;
                 />
               ))}
             </Stepper>
+          )}
+          {data.cancel_path && (
+            <Group justify="flex-end">
+              <Button
+                color="red"
+                variant="light"
+                size="xs"
+                loading={busy === "cancel"}
+                disabled={data.cancel_requested}
+                onClick={() => cancel(data.cancel_path!)}
+              >
+                {data.cancel_requested ? "Abbruch angefordert" : "Ablauf abbrechen"}
+              </Button>
+            </Group>
           )}
           {data.error_message && data.activity.status !== "running" && (
             <Alert color={data.activity.status === "warning" ? "yellow" : "red"}>{data.error_message}</Alert>

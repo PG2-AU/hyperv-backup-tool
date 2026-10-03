@@ -7,6 +7,7 @@ import { useSmbDeleteInfo, useSmbDeleteRun, useStartSmbDelete } from "@/api/hook
 import type { SmbDeleteInfo } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes, formatDateTime } from "@/utils/format";
+import { BackgroundRunHint } from "@/components/BackgroundRunHint";
 
 interface SmbShareDeleteModalProps {
   onClose: () => void;
@@ -29,8 +30,8 @@ export function SmbShareDeleteModal({ onClose, share }: SmbShareDeleteModalProps
   return (
     <Modal
       opened={opened}
-      onClose={running ? () => undefined : onClose}
-      withCloseButton={!running}
+      onClose={onClose}
+      closeOnClickOutside={!running}
       title={`SMB3-Freigabe löschen: ${share ? `\\\\${share.server}\\${share.share}` : ""}`}
       size={820}
     >
@@ -48,6 +49,7 @@ export function SmbShareDeleteModal({ onClose, share }: SmbShareDeleteModalProps
           {info && <DeleteForm info={info} onStarted={setRunId} onClose={onClose} />}
         </Stack>
       )}
+      {running && <BackgroundRunHint onClose={onClose} />}
     </Modal>
   );
 }

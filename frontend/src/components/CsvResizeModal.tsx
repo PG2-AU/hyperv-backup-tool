@@ -22,6 +22,7 @@ import { resetCsvResizeQueries, useCsvResizeInfo, useCsvResizeRun, useStartCsvRe
 import type { CsvResizeInfo } from "@/api/types";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatBytes } from "@/utils/format";
+import { BackgroundRunHint } from "@/components/BackgroundRunHint";
 
 const GIB = 1024 ** 3;
 // Unter dieser Differenz gilt die Partition als voll ausgedehnt (wie im Backend).
@@ -61,8 +62,8 @@ export function CsvResizeModal({ opened, onClose, csv }: CsvResizeModalProps) {
   return (
     <Modal
       opened={opened}
-      onClose={running ? () => undefined : onClose}
-      withCloseButton={!running}
+      onClose={onClose}
+      closeOnClickOutside={!running}
       title={`CSV vergrößern: ${csv?.name ?? ""}`}
       size={960}
     >
@@ -89,6 +90,7 @@ export function CsvResizeModal({ opened, onClose, csv }: CsvResizeModalProps) {
           )}
         </Stack>
       )}
+      {running && <BackgroundRunHint onClose={onClose} />}
     </Modal>
   );
 }
