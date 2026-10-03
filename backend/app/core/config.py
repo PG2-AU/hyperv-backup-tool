@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     ontap_verify_ssl: bool = True
     ontap_is_metrocluster: bool = False
     netapp_cert_dir: str = "/data/netapp-certs"
+    # Erzeugte Reports (PDF/CSV, Backlog #84), 12 Monate aufbewahrt.
+    reports_dir: str = "/data/reports"
 
     # --- Hyper-V / WinRM ---
     winrm_transport: Literal["ntlm", "kerberos", "credssp"] = "ntlm"

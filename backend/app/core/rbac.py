@@ -40,6 +40,11 @@ class Permission(StrEnum):
     SETTINGS_MANAGE = "settings:manage"
     LOGS_VIEW = "logs:view"
 
+    # Reports (Backlog #84): erstellen/ansehen bzw. Vorlagen, Zeitplaene und
+    # Mailversand verwalten.
+    REPORT_VIEW = "report:view"
+    REPORT_MANAGE = "report:manage"
+
 
 # Vordefinierte Standardrollen. Zusaetzliche, individuell scopebare
 # Rollen (z.B. "nur VM-Gruppe X") werden ueber RoleAssignment.scope
@@ -64,12 +69,15 @@ DEFAULT_ROLES: dict[str, set[Permission]] = {
         Permission.HYPERV_MANAGE,
         Permission.VM_CONSOLE,
         Permission.LOGS_VIEW,
+        Permission.REPORT_VIEW,
+        Permission.REPORT_MANAGE,
     },
     "Viewer": {
         Permission.BACKUP_VIEW,
         Permission.STORAGE_VIEW,
         Permission.HYPERV_VIEW,
         Permission.LOGS_VIEW,
+        Permission.REPORT_VIEW,
     },
 }
 

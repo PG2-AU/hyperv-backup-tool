@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import smtplib
 from datetime import datetime, timezone
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -33,7 +35,10 @@ def get_email_config(db: Session) -> EmailConfig | None:
     return db.query(EmailConfig).first()
 
 
-def send_raw_email(config: EmailConfig, recipients: list[str], subject: str, html_body: str, text_body: str) -> None:
+def send_raw_email(
+    config: EmailConfig, recipients: list[str], subject: str, html_body: str, text_body: str,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> None:
     """Baut die Mail und liefert sie an den konfigurierten SMTP-Relay aus.
     Wirft bei jedem Fehler (Verbindung, Auth, Empfaenger abgelehnt) --
     Aufrufer entscheiden je nach Kontext, ob best-effort abgefangen wird
@@ -41,12 +46,25 @@ def send_raw_email(config: EmailConfig, recipients: list[str], subject: str, htm
     if not recipients:
         raise ValueError("Keine Empfaenger konfiguriert")
 
-    msg = MIMEMultipart("alternative")
+    body = MIMEMultipart("alternative")
+    body.attach(MIMEText(text_body, "plain"))
+    body.attach(MIMEText(html_body, "html"))
+    if attachments:
+        # Anhaenge (Reports, Backlog #84): (Dateiname, Inhalt, MIME-Typ).
+        msg = MIMEMultipart("mixed")
+        msg.attach(body)
+        for filename, content, mime_type in attachments:
+            main_type, _, sub_type = mime_type.partition("/")
+            part = MIMEBase(main_type, sub_type or "octet-stream")
+            part.set_payload(content)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment", filename=filename)
+            msg.attach(part)
+    else:
+        msg = body
     msg["Subject"] = subject
     msg["From"] = f"{config.from_name} <{config.from_address}>" if config.from_name else config.from_address
     msg["To"] = ", ".join(recipients)
-    msg.attach(MIMEText(text_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
 
     password = decrypt_secret(config.encrypted_password) if config.encrypted_password else None
 

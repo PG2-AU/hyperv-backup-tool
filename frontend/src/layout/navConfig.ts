@@ -2,6 +2,7 @@ import {
   IconActivity,
   IconDatabase,
   IconDatabaseImport,
+  IconReportAnalytics,
   IconLayoutDashboard,
   IconServerCog,
   IconSettings,
@@ -79,6 +80,16 @@ export const NAV_ITEMS: NavItem[] = [
     children: [
       { label: "Wiederherstellen", path: "/restore?tab=overview" },
       { label: "Setup", path: "/restore?tab=setup" },
+    ],
+  },
+  {
+    label: "Reports",
+    icon: IconReportAnalytics,
+    requiredPermission: "report:view",
+    children: [
+      { label: "Neuer Report", path: "/reports?tab=new" },
+      { label: "Gespeicherte Reports", path: "/reports?tab=saved" },
+      { label: "Historie", path: "/reports?tab=history" },
     ],
   },
   {

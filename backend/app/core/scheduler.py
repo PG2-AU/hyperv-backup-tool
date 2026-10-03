@@ -109,6 +109,23 @@ INTERVAL_ANCHOR = datetime(2020, 1, 1, tzinfo=timezone.utc)
 DISCOVERY_INTERVAL_ANCHOR = INTERVAL_ANCHOR + timedelta(minutes=7)
 
 
+def run_reports() -> None:
+    """Geplante Reports abarbeiten und die Historie auf 12 Monate kuerzen
+    (Backlog #84, siehe app.core.reports). Loggt nur, wenn etwas passiert."""
+    from app.core.reports import purge_old_reports, run_due_reports
+
+    db = SessionLocal()
+    try:
+        run_due_reports(db, lambda message, level="INFO": _log(db, message, level=level))
+        removed = purge_old_reports(db)
+        if removed:
+            _log(db, f"{removed} Report(s) älter als 12 Monate aus der Historie entfernt")
+    except Exception as exc:  # noqa: BLE001
+        _log(db, f"Report-Zeitplan fehlgeschlagen: {exc}", level="ERROR")
+    finally:
+        db.close()
+
+
 def _log(db: Session | None, message: str, level: str = "INFO") -> None:
     """Schreibt eine Hintergrund-Meldung ins Container-Log UND (falls eine
     DB-Session uebergeben wird) persistiert sie als SystemLogEvent, damit sie
@@ -2213,6 +2230,12 @@ def start_scheduler() -> BackgroundScheduler:
     scheduler.add_job(
         run_scheduled_db_backup, CronTrigger(hour=db_backup_hour, minute=30),
         id="db-backup", replace_existing=True, max_instances=1,
+    )
+    # Reports (Backlog #84): faellige Vorlagen erstellen/versenden, alte
+    # Reports (> 12 Monate) aus der Historie entfernen.
+    scheduler.add_job(
+        run_reports, IntervalTrigger(minutes=5, start_date=INTERVAL_ANCHOR),
+        id="reports", replace_existing=True, max_instances=1,
     )
     scheduler.start()
     startup_db = SessionLocal()

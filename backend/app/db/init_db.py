@@ -25,6 +25,7 @@ from app.models.csv_resize_run import CsvResizeRun, CsvResizeRunStep  # noqa: F4
 from app.models.csv_create_run import CsvCreateRun, CsvCreateRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.csv_delete_run import CsvDeleteRun, CsvDeleteRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.vm_create_run import VmCreateRun, VmCreateRunStep  # noqa: F401  (nur fuer create_all)
+from app.models.report import ReportDefinition, ReportRun  # noqa: F401  (nur fuer create_all)
 from app.models.vm_delete_run import VmDeleteRun, VmDeleteRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.smb_share_run import SmbCreateRun, SmbCreateRunStep, SmbDeleteRun, SmbDeleteRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.db_backup import DbBackupConfig  # noqa: F401  (nur fuer create_all)

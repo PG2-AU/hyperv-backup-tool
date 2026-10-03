@@ -104,6 +104,14 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   "Prognose: Volume/LUN/Aggregat laeuft voll", wenn es bei echtem Zuwachs innerhalb von 4
   Wochen vollaeuft (Text mit Rest-Tagen wird bei jedem Check aktualisiert, loest sich von
   selbst). Scope wie die Schwellwert-Alarme.
+- **Reports** (Stufe 1) -- Menuepunkt "Reports": Schutzstatus, Backup-Erfolg (mit Vergleich
+  zum Vorzeitraum) und Wiederherstellungspunkte, je Typ mit eigener Auswahl. Erzeugt ein PDF
+  (ReportLab, A4 quer, oeffnet im neuen Tab) plus CSV; Inhalts-SHA-256 im PDF-Fuss, Datei-
+  SHA-256 in der Historie. Historie 12 Monate (`HVNB_REPORTS_DIR`, Standard /data/reports).
+  Vorlagen mit Zeitplan (taeglich/woechentlich/monatlich) und Mailversand, optional nur bei
+  Auffaelligkeiten und mit CSV-Anhang; verpasste Termine werden nachgeholt. Rechte
+  `report:view` (Erstellen/Ansehen, alle Rollen) und `report:manage` (Vorlagen, Versand,
+  Loeschen; Administrator + Operator). API unter /api/reports.
 - **Globale Suche** -- Suchfeld in der Kopfzeile (Strg+K oder /) ueber VMs, CSVs, SMB3- und
   CIFS-Freigaben, Volumes, LUNs und die Backup-Snapshots der App; '*'/'?' als Platzhalter.
   Treffer erscheinen beim Tippen sofort: ein kompakter Index (GET /api/search/index, nur

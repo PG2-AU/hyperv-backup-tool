@@ -23,6 +23,9 @@ dependencies = [
     "apscheduler>=3.10",
     # DB-Sicherung auf CIFS-Freigabe ohne Kernel-Mount (Container laeuft rootless)
     "smbprotocol>=1.13",
+    # Reports als PDF (Backlog #84) -- reines Python, kein Systempaket noetig,
+    # kommt daher wie alle Abhaengigkeiten per Update (pip install).
+    "reportlab>=4.2",
 ]
 
 [project.optional-dependencies]

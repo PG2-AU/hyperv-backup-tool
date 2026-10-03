@@ -9,6 +9,7 @@ import { VmsPage } from "@/pages/VmsPage";
 import { StoragePage } from "@/pages/StoragePage";
 import { JobsPage } from "@/pages/JobsPage";
 import { RestorePage } from "@/pages/RestorePage";
+import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SystemLogPage } from "@/pages/SystemLogPage";
 import { DocsPage } from "@/pages/DocsPage";
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/storage" element={<StoragePage />} />
         <Route path="/jobs" element={<JobsPage />} />
         <Route path="/restore" element={<RestorePage />} />
+        <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/docs" element={<DocsPage src="/docs/architecture.html" title="Architektur-Dokumentation" />} />
         <Route
