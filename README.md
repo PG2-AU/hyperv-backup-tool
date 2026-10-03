@@ -91,6 +91,12 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   Windows/UEFI CA), vTPM optional, ISO von CSV/SMB3 (Suche bzw. Pfad) mit DVD als erstem
   Boot-Geraet, Cluster-Rolle, optional starten und Protection Group. SMB3-Ablage/-ISO per
   CredSSP. Bei Fehler Rueckfrage Zurueckrollen (VM + Ordner entfernen) oder Behalten.
+- **Globale Suche** -- Suchfeld in der Kopfzeile (Strg+K oder /) ueber VMs, CSVs, SMB3- und
+  CIFS-Freigaben, Volumes, LUNs und die Backup-Snapshots der App; '*'/'?' als Platzhalter.
+  Treffer erscheinen beim Tippen sofort: ein kompakter Index (GET /api/search/index, nur
+  Objekte mit Leserecht) wird einmal geladen und alle 5 Minuten aufgefrischt, gefiltert
+  wird im Browser. Ein Treffer springt auf die passende Seite und waehlt das Objekt aus bzw.
+  oeffnet bei Snapshots den Snapshots-Dialog des Volumes.
 - **VM loeschen** -- Eintrag im Power-Menue der VM: Cluster-Rolle und VM entfernen, aus allen
   Protection Groups austragen, Festplatten-Dateien inkl. Checkpoint-Ketten loeschen (Opt-out)
   und danach nur leer gewordene Ordner des eigenen VM-Ordners entfernen. Laufende VM nur mit

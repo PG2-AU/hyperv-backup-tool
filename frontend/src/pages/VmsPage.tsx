@@ -681,6 +681,29 @@ export function VmsPage() {
     setParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params, vms]);
+  // Globale Suche (Backlog #78): ?q= belegt die Tabellensuche des Reiters vor,
+  // ?csv=/?smb= waehlen das Objekt aus (Identitaet wie csvIdentity/
+  // smbShareIdentity). Einmalig anwenden, danach aus der URL entfernen --
+  // wie beim ?vm=-Deep-Link oben.
+  useEffect(() => {
+    const q = params.get("q");
+    const csvKey = params.get("csv");
+    const smbKey = params.get("smb");
+    if (q === null && csvKey === null && smbKey === null) return;
+    if (csvKey !== null && !csvs) return;
+    if (smbKey !== null && !smbShares) return;
+    if (q !== null) {
+      if (activeTab === "csv") setCsvSearch(q);
+      else if (activeTab === "smb") setSmbShareSearch(q);
+      else setVmSearch(q);
+    }
+    if (csvKey !== null) setSelectedCsv((csvs ?? []).find((c) => csvIdentity(c) === csvKey) ?? null);
+    if (smbKey !== null) setSelectedSmbShare((smbShares ?? []).find((sh) => smbShareIdentity(sh) === smbKey) ?? null);
+    const next = new URLSearchParams(params);
+    ["q", "csv", "smb"].forEach((key) => next.delete(key));
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params, csvs, smbShares]);
   const { runOrPickForGroups, step1GroupChoices, step2PolicyChoices, pickStep1Group, pickStep2Policy, closeStep1, closeStep2 } =
     useRunPolicy();
   const { data: resourceGroups } = useResourceGroups();

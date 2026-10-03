@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Badge,
@@ -62,10 +62,13 @@ export function VolumeSnapshotsModal({
   volume,
   canDelete,
   onClose,
+  initialSearch = "",
 }: {
   volume: NetAppVolume | null;
   canDelete: boolean;
   onClose: () => void;
+  // Vorbelegter Suchbegriff (Sprung aus der globalen Suche, Backlog #78).
+  initialSearch?: string;
 }) {
   const queryClient = useQueryClient();
   const queryKey = ["volume-snapshots", volume?.cluster_id, volume?.uuid];
@@ -76,6 +79,9 @@ export function VolumeSnapshotsModal({
       (await apiClient.get<VolumeSnapshot[]>(`/netapp/clusters/${volume!.cluster_id}/volumes/${volume!.uuid}/snapshots`)).data,
   });
   const [search, setSearch] = useState("");
+  useEffect(() => {
+    if (volume) setSearch(initialSearch);
+  }, [volume, initialSearch]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 

@@ -30,6 +30,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import logo from "@/assets/logo.png";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { GlobalSearch } from "@/components/GlobalSearch";
 import { RunningJobsIndicator } from "@/components/RunningJobsIndicator";
 import { VersionFooter } from "@/components/VersionFooter";
 import { NAV_ITEMS } from "@/layout/navConfig";
@@ -90,6 +91,7 @@ export function AppShellLayout() {
           </Group>
 
           <Group wrap="nowrap">
+            <GlobalSearch />
             <RunningJobsIndicator />
             <Tooltip label="System Log">
               <ActionIcon variant="default" size="lg" component={Link} to="/logs">

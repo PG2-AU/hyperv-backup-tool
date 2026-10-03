@@ -787,6 +787,33 @@ export function StoragePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, volumes, luns]);
+  // Globale Suche (Backlog #78): ?q= belegt die Suche des Reiters vor,
+  // ?snapshots=<Volume-UUID> oeffnet dessen Snapshots-Dialog mit ?q= als
+  // Suchbegriff. Einmalig anwenden, danach aus der URL entfernen.
+  const [snapshotsInitialSearch, setSnapshotsInitialSearch] = useState("");
+  useEffect(() => {
+    const q = params.get("q");
+    const snapshotsUuid = params.get("snapshots");
+    if (q === null && snapshotsUuid === null) return;
+    if (snapshotsUuid !== null && !volumes) return;
+    if (snapshotsUuid !== null) {
+      const vol = (volumes ?? []).find((v) => v.uuid === snapshotsUuid);
+      if (vol) {
+        setSnapshotsInitialSearch(q ?? "");
+        setSnapshotsVolume(vol);
+        setVolumeSearch(vol.name);
+      }
+    } else if (q !== null) {
+      if (activeTab === "volumes") setVolumeSearch(q);
+      else if (activeTab === "luns") setLunSearch(q);
+      else if (activeTab === "cifs-shares") setCifsShareSearch(q);
+    }
+    const next = new URLSearchParams(params);
+    next.delete("q");
+    next.delete("snapshots");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params, volumes, activeTab]);
   const [snapmirrorInitialSource, setSnapmirrorInitialSource] = useState<{
     clusterId: string;
     svmName: string;
@@ -2061,7 +2088,11 @@ export function StoragePage() {
       <VolumeSnapshotsModal
         volume={snapshotsVolume}
         canDelete={!locked && canManageStorage}
-        onClose={() => setSnapshotsVolume(null)}
+        initialSearch={snapshotsInitialSearch}
+        onClose={() => {
+          setSnapshotsVolume(null);
+          setSnapshotsInitialSearch("");
+        }}
       />
       <SnapmirrorEditModal
         opened={snapmirrorEditOpen}
