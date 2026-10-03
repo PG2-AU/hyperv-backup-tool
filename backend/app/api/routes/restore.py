@@ -2046,6 +2046,7 @@ def recreate_vm(
             )
 
     run = VmRecreateRun(
+        requested_by=user.display_name or user.username,
         hyperv_cluster_id=vm_config.hyperv_cluster_id, vm_name=vm_name, target_vm_name=target_name,
         disconnect_network=payload.disconnect_network, destination_csv_name=destination_csv_name,
         destination_smb_server=destination_smb_server, destination_smb_share=destination_smb_share,
@@ -2088,6 +2089,7 @@ def trigger_restore(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="VM nicht gefunden")
 
     run = RestoreRun(
+        requested_by=user.display_name or user.username,
         hyperv_cluster_id=vm.cluster_id, vm_name=payload.vm_name, source_snapshot_id=payload.snapshot_id,
         source_vhd_path=payload.source_vhd_path, mode=payload.mode, status=RestoreStatus.RUNNING,
         avhdx_checkpoint_id=payload.avhdx_checkpoint_id, started_at=datetime.now(timezone.utc),

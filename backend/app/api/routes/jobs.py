@@ -1100,7 +1100,7 @@ def _build_vhd_entries(
 
 
 def _start_job_run(
-    policy: BackupPolicy, db: Session, resource_group_ids: set[str] | None = None
+    policy: BackupPolicy, db: Session, resource_group_ids: set[str] | None = None, requested_by: str | None = None,
 ) -> tuple[BackupRun, list[str]]:
     """Schneller, rein lokaler Teil eines Backup-Laufs: Ziele aufloesen, Lauf-
     Zeile + VM-Konfiguration anlegen. Bewusst OHNE WinRM-/NetApp-Aufrufe,
@@ -1145,6 +1145,7 @@ def _start_job_run(
     now = datetime.now(timezone.utc)
     all_targets = sorted({vm for t in targets for vm in t.vm_names} | {csv for t in targets for csv in t.csv_names})
     run = BackupRun(
+        requested_by=requested_by,
         policy_id=policy.id,
         policy_name=policy.name,
         resource_group_id=single_group_id,
@@ -2228,7 +2229,9 @@ def trigger_job_run(
     if group_ids and len(group_ids) > 1:
         for group_id in group_ids:
             try:
-                run, warnings = _start_job_run(policy, db, resource_group_ids={group_id})
+                run, warnings = _start_job_run(
+                    policy, db, resource_group_ids={group_id}, requested_by=user.display_name or user.username,
+                )
             except (_JobAlreadyRunningError, _NoTargetsError) as exc:
                 errors.append(str(exc))
                 continue
@@ -2237,7 +2240,9 @@ def trigger_job_run(
     else:
         single_group_ids = {group_ids[0]} if group_ids else None
         try:
-            run, warnings = _start_job_run(policy, db, resource_group_ids=single_group_ids)
+            run, warnings = _start_job_run(
+                policy, db, resource_group_ids=single_group_ids, requested_by=user.display_name or user.username,
+            )
         except _JobAlreadyRunningError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except _NoTargetsError as exc:

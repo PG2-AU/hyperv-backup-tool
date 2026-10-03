@@ -6,7 +6,7 @@
 // gibt; hier wird sie nur eingebettet.
 export function DocsPage({ src, title }: { src: string; title: string }) {
   return (
-    <div style={{ margin: "-16px", height: "calc(100vh - 60px)" }}>
+    <div style={{ margin: "-16px", height: "calc(100vh - 60px - var(--app-shell-footer-height, 0px))" }}>
       <iframe src={src} title={title} style={{ width: "100%", height: "100%", border: "none", display: "block" }} />
     </div>
   );

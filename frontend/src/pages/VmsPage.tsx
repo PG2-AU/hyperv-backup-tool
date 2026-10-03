@@ -933,7 +933,7 @@ export function VmsPage() {
   }
 
   return (
-    <Stack style={{ height: "calc(100vh - 112px)" }} gap="md">
+    <Stack style={{ height: "calc(100vh - 112px - var(--app-shell-footer-height, 0px))" }} gap="md">
       <Title order={3}>Inventory</Title>
 
       <Tabs

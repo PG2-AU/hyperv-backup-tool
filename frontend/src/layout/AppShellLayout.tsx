@@ -14,7 +14,7 @@ import {
   UnstyledButton,
   useMantineColorScheme,
 } from "@mantine/core";
-import { useDisclosure } from "@mantine/hooks";
+import { useDisclosure, useLocalStorage } from "@mantine/hooks";
 import {
   IconChevronDown,
   IconCloudDownload,
@@ -29,6 +29,7 @@ import {
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import logo from "@/assets/logo.png";
+import { ACTIVITY_FOOTER_COLLAPSED, ACTIVITY_FOOTER_EXPANDED, ActivityFooter } from "@/components/ActivityFooter";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { RunningJobsIndicator } from "@/components/RunningJobsIndicator";
@@ -39,6 +40,8 @@ import { CONTENT_FONT_SCALE, useDisplayStore } from "@/store/displayStore";
 
 export function AppShellLayout() {
   const [navOpened, { toggle: toggleNav }] = useDisclosure();
+  // Aktivitaeten-Fusszeile (Backlog #83): auf-/zugeklappt im Browser gemerkt.
+  const [activitiesOpen, setActivitiesOpen] = useLocalStorage({ key: "hvnb.activityFooter.open", defaultValue: false });
   const location = useLocation();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
@@ -75,6 +78,7 @@ export function AppShellLayout() {
     <AppShell
       header={{ height: 60 }}
       navbar={{ width: 280, breakpoint: "sm", collapsed: { mobile: !navOpened } }}
+      footer={{ height: activitiesOpen ? ACTIVITY_FOOTER_EXPANDED : ACTIVITY_FOOTER_COLLAPSED }}
       padding="md"
       style={contentFontStyle}
     >
@@ -221,6 +225,9 @@ export function AppShellLayout() {
           <Outlet />
         </ErrorBoundary>
       </AppShell.Main>
+      <AppShell.Footer>
+        <ActivityFooter open={activitiesOpen} onToggle={() => setActivitiesOpen((v) => !v)} />
+      </AppShell.Footer>
     </AppShell>
   );
 }

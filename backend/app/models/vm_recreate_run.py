@@ -33,6 +33,8 @@ class VmRecreateRun(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     hyperv_cluster_id: Mapped[str] = mapped_column(String(36), ForeignKey("hyperv_clusters.id", ondelete="CASCADE"))
     vm_name: Mapped[str] = mapped_column(String(255))
+    # Wer den Lauf gestartet hat (Aktivitaeten-Fusszeile, Backlog #83).
+    requested_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Name, unter dem die VM in Hyper-V tatsaechlich angelegt wird. Normal-
     # fall (Neuerstellung einer geloeschten VM) == vm_name; bei einem
     # Side-by-side-Restore (Original existiert weiterhin) ein vom Nutzer

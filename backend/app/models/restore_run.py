@@ -53,6 +53,8 @@ class RestoreRun(Base):
     source_snapshot_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     source_vhd_path: Mapped[str] = mapped_column(String(1000))
     mode: Mapped[RestoreMode] = mapped_column(String(20))
+    # Wer den Lauf gestartet hat (Aktivitaeten-Fusszeile, Backlog #83).
+    requested_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Nur relevant, wenn die restorte VHD eine .avhdx ist (aktiver
     # Checkpoint zum Backup-Zeitpunkt): None = Stand zum Backup-Zeitpunkt
     # (voller Merge der ganzen Kette, Standard). Gesetzt = die Id EINES

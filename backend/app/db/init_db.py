@@ -488,6 +488,9 @@ def init_db(db: Session) -> None:
         },
     )
     _add_missing_columns(engine, "capacity_samples", {"snapshot_used_bytes": "INTEGER"})
+    # Initiator fuer die Aktivitaeten-Fusszeile (Backlog #83).
+    for table in ("backup_runs", "restore_runs", "vm_recreate_runs", "file_restore_runs"):
+        _add_missing_columns(engine, table, {"requested_by": "VARCHAR(255)"})
     # Produktname 2026-09-28 von "Hyper-V NetApp Backup" ueber "AU Hyper-V
     # Storage Manager" in "AU Storage Manager for Hyper-V" geaendert -- nur
     # einen unveraenderten frueheren Standard-Absendernamen mitziehen, einen

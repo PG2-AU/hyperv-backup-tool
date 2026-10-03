@@ -948,7 +948,7 @@ export function StoragePage() {
   }
 
   return (
-    <Stack style={{ height: "calc(100vh - 112px)" }} gap="md">
+    <Stack style={{ height: "calc(100vh - 112px - var(--app-shell-footer-height, 0px))" }} gap="md">
       <Title order={3}>Storage</Title>
 
       {locked && (

@@ -11,7 +11,7 @@ import { LogViewer } from "@/components/LogViewer";
 // Anwendungsfall, keine Dopplung mit diesem globalen System Log.
 export function SystemLogPage() {
   return (
-    <Paper p="md" style={{ height: "calc(100vh - 112px)", display: "flex", flexDirection: "column" }}>
+    <Paper p="md" style={{ height: "calc(100vh - 112px - var(--app-shell-footer-height, 0px))", display: "flex", flexDirection: "column" }}>
       <Title order={5} mb="sm">
         System Log
       </Title>

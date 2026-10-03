@@ -91,6 +91,13 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   Windows/UEFI CA), vTPM optional, ISO von CSV/SMB3 (Suche bzw. Pfad) mit DVD als erstem
   Boot-Geraet, Cluster-Rolle, optional starten und Protection Group. SMB3-Ablage/-ISO per
   CredSSP. Bei Fehler Rueckfrage Zurueckrollen (VM + Ordner entfernen) oder Behalten.
+- **Aktivitaeten-Fusszeile** -- wie "Kuerzlich bearbeitete Aufgaben" im vCenter: einklappbare
+  Leiste am unteren Rand mit allen laufenden und den Ablaeufen der letzten 24 Stunden (Backups,
+  Restores, VM-Neuerstellung, Datei-Restore, Verschiebungen, CSV/SMB3/VM anlegen und loeschen,
+  CSV vergroessern, VM-Power) mit Aufgabe, Ziel, Status bzw. aktuellem Schritt/Fortschritt,
+  Initiator (Benutzer oder System), Start, Ende, Dauer; Filter Alle/Laufend/Fehler. Klick zeigt
+  das Schritt-Protokoll; fehlgeschlagene Anlage-Laeufe mit offener Rueckfrage bleiben sichtbar
+  und lassen sich von dort zurueckrollen oder behalten. GET /api/activities.
 - **Kapazitaetsprognose** -- aus dem Kapazitaetsverlauf (lineare Regression ueber die letzten
   30 Tage, mind. 5 Messtage ueber 1 Woche) 4 Wochen voraus: gestrichelte Prognoselinie und
   Kapazitaetslinie im Verlaufsdiagramm, Text "voll in ca. N Tagen" darunter; Alarm

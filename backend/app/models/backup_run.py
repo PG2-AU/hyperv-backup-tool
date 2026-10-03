@@ -63,6 +63,9 @@ class BackupRun(Base):
     consistency: Mapped[str] = mapped_column(String(50))
     scope: Mapped[BackupScope | None] = mapped_column(Enum(BackupScope), nullable=True)
     targets: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # Wer den Lauf gestartet hat (Aktivitaeten-Fusszeile, Backlog #83);
+    # None = geplanter Lauf durch den Scheduler ("System").
+    requested_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)

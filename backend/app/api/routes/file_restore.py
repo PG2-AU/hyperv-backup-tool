@@ -168,6 +168,7 @@ def trigger_file_restore(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gewählter Snapshot ist ungültig")
 
     run = FileRestoreRun(
+        requested_by=user.display_name or user.username,
         vm_name=payload.vm_name, source_snapshot_id=payload.snapshot_id,
         source_vhd_path=payload.source_vhd_path, avhdx_checkpoint_id=payload.avhdx_checkpoint_id,
         status=RestoreStatus.RUNNING,

@@ -35,6 +35,8 @@ class FileRestoreRun(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     vm_name: Mapped[str] = mapped_column(String(255))
+    # Wer den Lauf gestartet hat (Aktivitaeten-Fusszeile, Backlog #83).
+    requested_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_snapshot_id: Mapped[str] = mapped_column(String(36))
     source_vhd_path: Mapped[str] = mapped_column(String(1000))
     # Siehe RestoreRun.avhdx_checkpoint_id -- hier nur relevant, wenn das
