@@ -32,20 +32,28 @@ function hasSnapshots(s: CapacitySeries): boolean {
 }
 
 // Prognose 4 Wochen voraus (Backlog #79): eigene, gestrichelte Serie je
-// Objekt, beginnt am letzten echten Messpunkt (Tag 0), damit sie nahtlos an
-// die Kurve anschliesst.
+// Objekt. Nutzer-Vorgabe 2026-10-03: nicht 28 einzelne Punkte, sondern nur
+// EIN Prognosepunkt (Wert in 28 Tagen), optisch immer im festen Abstand von
+// etwa 7 Tagen rechts vom letzten echten Messpunkt -- dazwischen leere
+// Platzhalter-Zeilen (die x-Achse ist kategorial: jede Zeile = ein Schritt).
+// Die Linie startet am letzten Messpunkt, damit sie nahtlos anschliesst.
+const FORECAST_GAP_SLOTS = 7;
+
 function forecastKey(name: string): string {
   return `${name} – Prognose`;
 }
 
+function forecastLabel(series: CapacitySeries[]): string | null {
+  const end = series.map((s) => s.forecast?.points[s.forecast.points.length - 1]?.sampled_at).find(Boolean);
+  return end ? `Prognose ${new Date(end).toLocaleDateString("de-DE")}` : null;
+}
+
 function buildChartData(series: CapacitySeries[]): Record<string, number | string | null>[] {
   const dateSet = new Set<string>();
-  series.forEach((s) => {
-    s.points.forEach((p) => dateSet.add(p.sampled_at.slice(0, 10)));
-    s.forecast?.points.forEach((p) => dateSet.add(p.sampled_at.slice(0, 10)));
-  });
+  series.forEach((s) => s.points.forEach((p) => dateSet.add(p.sampled_at.slice(0, 10))));
   const dates = [...dateSet].sort();
-  return dates.map((date) => {
+  const lastDate = dates[dates.length - 1];
+  const rows: Record<string, number | string | null>[] = dates.map((date) => {
     const row: Record<string, number | string | null> = { date };
     series.forEach((s) => {
       const point = s.points.find((p) => p.sampled_at.slice(0, 10) === date);
@@ -54,12 +62,25 @@ function buildChartData(series: CapacitySeries[]): Record<string, number | strin
         row[snapshotKey(s.object_name)] = point?.snapshot_used_bytes != null ? point.snapshot_used_bytes / BYTES_PER_GIB : null;
       }
       if (s.forecast) {
-        const predicted = s.forecast.points.find((p) => p.sampled_at.slice(0, 10) === date);
-        row[forecastKey(s.object_name)] = predicted?.used_bytes != null ? predicted.used_bytes / BYTES_PER_GIB : null;
+        // Startpunkt der Prognoselinie = letzter echter Messwert.
+        row[forecastKey(s.object_name)] = date === lastDate && point?.used_bytes != null ? point.used_bytes / BYTES_PER_GIB : null;
       }
     });
     return row;
   });
+
+  const label = forecastLabel(series);
+  if (label && rows.length > 0) {
+    // Leere Platzhalter mit unsichtbaren, eindeutigen Achsenbeschriftungen.
+    for (let i = 1; i < FORECAST_GAP_SLOTS; i++) rows.push({ date: "\u200b".repeat(i) });
+    const end: Record<string, number | string | null> = { date: label };
+    series.forEach((s) => {
+      const last = s.forecast?.points[s.forecast.points.length - 1];
+      if (last?.used_bytes != null) end[forecastKey(s.object_name)] = last.used_bytes / BYTES_PER_GIB;
+    });
+    rows.push(end);
+  }
+  return rows;
 }
 
 function forecastText(s: CapacitySeries): { text: string; color: string } {
