@@ -40,6 +40,7 @@ from app.api.deps import require_permission
 from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _parse_csv_name, _resolve_csv_name
 from app.api.routes.hyperv_clusters import _run_discovery as _run_hyperv_discovery
 from app.core.config import get_settings
+from app.core.run_steps import close_open_steps
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
 from app.db.session import SessionLocal, get_db
@@ -1385,6 +1386,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             run.status = JobStatus.FAILED
             run.error_message = "Policy wurde zwischenzeitlich geloescht"
             run.finished_at = datetime.now(timezone.utc)
+            close_open_steps(db, BackupRunStep, run.id, "abgebrochen")
             db.commit()
             return
 
@@ -2125,6 +2127,8 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
 
         run.finished_at = datetime.now(timezone.utc)
         all_messages = fatal_errors + errors
+        # Parallel gestartete Schritte, die beim Abbruch noch offen waren.
+        close_open_steps(db, BackupRunStep, run.id, "abgebrochen" if was_cancelled else "nicht abgeschlossen")
         if was_cancelled:
             run.status = JobStatus.CANCELLED
             run.error_message = "; ".join(["Manuell abgebrochen", *all_messages]) if all_messages else "Manuell abgebrochen"
@@ -2176,6 +2180,7 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
             run.status = JobStatus.FAILED
             run.error_message = str(exc)[:2000]
             run.finished_at = datetime.now(timezone.utc)
+            close_open_steps(db, BackupRunStep, run.id, "abgebrochen (Fehler im Lauf)")
             db.add(
                 BackupRunStep(
                     run_id=run.id, step="run-finished", label="Backup mit Fehlern beendet",

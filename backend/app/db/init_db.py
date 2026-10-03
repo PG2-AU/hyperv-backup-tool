@@ -201,6 +201,24 @@ def _reap_orphaned_in_progress_runs(engine) -> None:
                 text(f"UPDATE {table} SET status = 'failed', error_message = :msg, finished_at = CURRENT_TIMESTAMP WHERE status = 'running'"),
                 {"msg": message},
             )
+        # Schritte, die beim Neustart noch liefen, gehoeren per Definition zu
+        # einem gerade abgebrochenen Lauf -- sonst drehen sie sich im
+        # Protokoll ewig weiter (Nutzer-Meldung 2026-10-03).
+        existing_tables = {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
+        for table in (
+            "backup_run_steps", "restore_run_steps", "vm_recreate_run_steps", "file_restore_run_steps", "vm_move_run_steps",
+            "csv_resize_run_steps", "csv_create_run_steps", "csv_delete_run_steps", "smb_create_run_steps",
+            "smb_delete_run_steps", "vm_create_run_steps", "vm_delete_run_steps",
+        ):
+            if table not in existing_tables:
+                continue
+            conn.execute(
+                text(
+                    f"UPDATE {table} SET status = 'error', message = CASE WHEN message IS NULL OR message = '' "
+                    "THEN 'abgebrochen (Neustart)' ELSE message || ' -- abgebrochen (Neustart)' END WHERE status = 'running'"
+                )
+            )
+            conn.execute(text(f"UPDATE {table} SET status = 'skipped' WHERE status = 'pending'"))
         conn.commit()
 
 

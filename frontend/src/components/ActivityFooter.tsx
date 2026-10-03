@@ -11,13 +11,12 @@ import {
   ScrollArea,
   SegmentedControl,
   Stack,
-  Stepper,
   Table,
   Text,
   Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconAlertTriangle, IconCheck, IconChevronDown, IconChevronUp, IconX } from "@tabler/icons-react";
+import { IconAlertTriangle, IconCheck, IconChevronDown, IconChevronUp, IconMinus, IconX } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/api/client";
@@ -54,6 +53,14 @@ interface ActivityDetail {
   cancel_path?: string | null;
   cancel_requested?: boolean;
 }
+
+const STEP_ICON: Record<string, React.ReactNode> = {
+  running: <Loader size={14} />,
+  success: <IconCheck size={16} color="var(--mantine-color-green-6)" />,
+  error: <IconX size={16} color="var(--mantine-color-red-6)" />,
+  skipped: <IconMinus size={16} color="var(--mantine-color-gray-5)" />,
+  pending: <IconMinus size={16} color="var(--mantine-color-gray-4)" />,
+};
 
 export const ACTIVITY_FOOTER_COLLAPSED = 34;
 export const ACTIVITY_FOOTER_EXPANDED = 280;
@@ -305,7 +312,6 @@ function ActivityDetailModal({ activity, onClose }: { activity: Activity | null;
 
   const a = data?.activity ?? activity;
   const steps = data?.steps ?? [];
-  const active = steps.findIndex((s) => s.status === "running");
   return (
     <Modal opened={!!activity} onClose={onClose} title={a ? `${a.task}: ${a.target}` : ""} size="lg">
       {!data ? (
@@ -319,25 +325,26 @@ function ActivityDetailModal({ activity, onClose }: { activity: Activity | null;
             </Text>
           </Group>
           {steps.length > 0 && (
-            <Stepper
-              active={active === -1 ? steps.length : active}
-              size="sm"
-              orientation="vertical"
-              allowNextStepsSelect={false}
-            >
-              {steps.map((s, i) => (
-                <Stepper.Step
-                  key={`${i}-${s.label}`}
-                  label={s.label}
-                  description={
-                    s.message && s.message !== "OK" ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-all" }}>{s.message}</span> : undefined
-                  }
-                  color={s.status === "error" ? "red" : undefined}
-                  loading={s.status === "running"}
-                  completedIcon={s.status === "error" ? <IconX size={16} /> : <IconCheck size={16} />}
-                />
+            // Eigene Liste statt Stepper: Backup-Checkpoints laufen parallel,
+            // ein Stepper kennt nur EINEN aktiven Schritt und zeigte erledigte
+            // Schritte hinter einem laufenden als Nummer an.
+            <Stack gap={6}>
+              {steps.map((st, i) => (
+                <Group key={`${i}-${st.label}`} gap="xs" wrap="nowrap" align="flex-start">
+                  <div style={{ width: 18, flexShrink: 0, paddingTop: 2 }}>{STEP_ICON[st.status] ?? STEP_ICON.pending}</div>
+                  <Stack gap={0} style={{ minWidth: 0 }}>
+                    <Text size="sm" fw={500} c={st.status === "skipped" ? "dimmed" : undefined}>
+                      {st.label}
+                    </Text>
+                    {st.message && st.message !== "OK" && (
+                      <Text size="xs" c={st.status === "error" ? "red" : "dimmed"} style={{ whiteSpace: "pre-line", wordBreak: "break-all" }}>
+                        {st.message}
+                      </Text>
+                    )}
+                  </Stack>
+                </Group>
               ))}
-            </Stepper>
+            </Stack>
           )}
           {data.cancel_path && (
             <Group justify="flex-end">

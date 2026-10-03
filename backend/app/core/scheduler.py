@@ -33,6 +33,7 @@ from app.api.routes.netapp_clusters import _refresh_status as _refresh_netapp_st
 from app.api.routes.netapp_clusters import _service_for as _netapp_service_for
 from app.api.routes.restore import _slugify
 from app.core.capacity_forecast import WINDOW_DAYS, forecast
+from app.core.run_steps import close_open_steps
 from app.core.capacity_history import capacity_key
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
@@ -1893,6 +1894,7 @@ def force_cancel_timed_out_runs() -> None:
         for run, note in stuck.values():
             run.status = JobStatus.CANCELLED
             run.finished_at = datetime.now(timezone.utc)
+            close_open_steps(db, BackupRunStep, run.id, "abgebrochen (Zeitlimit)")
             run.error_message = f"{note}; {run.error_message}" if run.error_message else note
             db.add(
                 BackupRunStep(

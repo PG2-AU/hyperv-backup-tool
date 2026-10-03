@@ -220,6 +220,14 @@ def get_activity(kind_name: str, run_id: str, db: Session = Depends(get_db), use
         steps = [ActivityStep(label=s.label, status=str(getattr(s.status, "value", s.status)), message=s.message) for s in rows]
     running = next((s.label for s in steps if s.status == "running"), None)
     activity = _to_activity(kind_name, kind, run, running)
+    if activity.status != "running":
+        # Sicherheitsnetz: ein beendeter Lauf hat keine laufenden Schritte mehr
+        # (Altbestand vor close_open_steps bzw. unerwartete Abbrueche).
+        for s in steps:
+            if s.status == "running":
+                s.status = "error"
+            elif s.status == "pending":
+                s.status = "skipped"
     decision = activity.needs_decision
     cancel_path = None
     if activity.status == "running":
