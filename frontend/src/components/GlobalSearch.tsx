@@ -1,5 +1,5 @@
 import { useDeferredValue, useMemo, useRef, useState } from "react";
-import { Combobox, Group, Highlight, Kbd, Loader, Text, TextInput, useCombobox } from "@mantine/core";
+import { Badge, Combobox, Group, Highlight, Kbd, Loader, Text, TextInput, useCombobox } from "@mantine/core";
 import { useHotkeys } from "@mantine/hooks";
 import { IconSearch } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
@@ -24,14 +24,15 @@ interface IndexedEntry extends SearchEntry {
   haystack: string;
 }
 
-const GROUPS: { type: string; label: string; listLink?: (q: string) => string }[] = [
-  { type: "vm", label: "Virtuelle Maschinen", listLink: (q) => `/vms?tab=vms&q=${encodeURIComponent(q)}` },
-  { type: "csv", label: "Cluster Shared Volumes", listLink: (q) => `/vms?tab=csv&q=${encodeURIComponent(q)}` },
-  { type: "smb", label: "SMB3-Freigaben (Hyper-V)", listLink: (q) => `/vms?tab=smb&q=${encodeURIComponent(q)}` },
-  { type: "volume", label: "Volumes", listLink: (q) => `/storage?tab=volumes&q=${encodeURIComponent(q)}` },
-  { type: "lun", label: "LUNs", listLink: (q) => `/storage?tab=luns&q=${encodeURIComponent(q)}` },
-  { type: "cifs", label: "CIFS-Freigaben (NetApp)", listLink: (q) => `/storage?tab=cifs-shares&q=${encodeURIComponent(q)}` },
-  { type: "snapshot", label: "Backup-Snapshots" },
+// badge/color: Objekttyp direkt am Treffer (Nutzer-Vorgabe), where: Ziel des Klicks.
+const GROUPS: { type: string; label: string; badge: string; color: string; where: string; listLink?: (q: string) => string }[] = [
+  { type: "vm", label: "Virtuelle Maschinen", badge: "VM", color: "blue", where: "Inventory", listLink: (q) => `/vms?tab=vms&q=${encodeURIComponent(q)}` },
+  { type: "csv", label: "Cluster Shared Volumes", badge: "CSV", color: "teal", where: "Inventory", listLink: (q) => `/vms?tab=csv&q=${encodeURIComponent(q)}` },
+  { type: "smb", label: "SMB3-Freigaben (Hyper-V)", badge: "SMB3", color: "cyan", where: "Inventory", listLink: (q) => `/vms?tab=smb&q=${encodeURIComponent(q)}` },
+  { type: "volume", label: "Volumes", badge: "Volume", color: "grape", where: "Storage", listLink: (q) => `/storage?tab=volumes&q=${encodeURIComponent(q)}` },
+  { type: "lun", label: "LUNs", badge: "LUN", color: "violet", where: "Storage", listLink: (q) => `/storage?tab=luns&q=${encodeURIComponent(q)}` },
+  { type: "cifs", label: "CIFS-Freigaben (NetApp)", badge: "CIFS", color: "indigo", where: "Storage", listLink: (q) => `/storage?tab=cifs-shares&q=${encodeURIComponent(q)}` },
+  { type: "snapshot", label: "Backup-Snapshots", badge: "Snapshot", color: "orange", where: "Storage" },
 ];
 const PER_GROUP = 6;
 
@@ -151,14 +152,19 @@ export function GlobalSearch() {
               <Combobox.Group key={g.type} label={`${g.label} (${g.total})`}>
                 {g.hits.map((hit, index) => (
                   <Combobox.Option key={`${g.type}-${index}-${hit.link}`} value={hit.link}>
-                    <Highlight highlight={highlight} size="sm" fw={500}>
-                      {hit.title}
-                    </Highlight>
-                    {hit.subtitle && (
-                      <Text size="xs" c="dimmed" lineClamp={1}>
-                        {hit.subtitle}
-                      </Text>
-                    )}
+                    <Group gap="xs" wrap="nowrap" align="flex-start">
+                      <Badge color={g.color} variant="light" size="sm" w={72} style={{ flexShrink: 0 }} mt={2}>
+                        {g.badge}
+                      </Badge>
+                      <div style={{ minWidth: 0 }}>
+                        <Highlight highlight={highlight} size="sm" fw={500}>
+                          {hit.title}
+                        </Highlight>
+                        <Text size="xs" c="dimmed" lineClamp={1}>
+                          {[hit.subtitle, `→ ${g.where}`].filter(Boolean).join(" · ")}
+                        </Text>
+                      </div>
+                    </Group>
                   </Combobox.Option>
                 ))}
                 {g.total > g.hits.length && g.listLink && (
