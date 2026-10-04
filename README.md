@@ -104,14 +104,20 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   "Prognose: Volume/LUN/Aggregat laeuft voll", wenn es bei echtem Zuwachs innerhalb von 4
   Wochen vollaeuft (Text mit Rest-Tagen wird bei jedem Check aktualisiert, loest sich von
   selbst). Scope wie die Schwellwert-Alarme.
-- **Reports** (Stufe 1) -- Menuepunkt "Reports": Schutzstatus, Backup-Erfolg (mit Vergleich
-  zum Vorzeitraum) und Wiederherstellungspunkte, je Typ mit eigener Auswahl. Erzeugt ein PDF
-  (ReportLab, A4 quer, oeffnet im neuen Tab) plus CSV; Inhalts-SHA-256 im PDF-Fuss, Datei-
-  SHA-256 in der Historie. Historie 12 Monate (`HVNB_REPORTS_DIR`, Standard /data/reports).
-  Vorlagen mit Zeitplan (taeglich/woechentlich/monatlich) und Mailversand, optional nur bei
-  Auffaelligkeiten und mit CSV-Anhang; verpasste Termine werden nachgeholt. Rechte
-  `report:view` (Erstellen/Ansehen, alle Rollen) und `report:manage` (Vorlagen, Versand,
-  Loeschen; Administrator + Operator). API unter /api/reports.
+- **Reports** -- Menuepunkt "Reports" mit 8 Typen, je mit eigener Auswahl: Schutzstatus,
+  Backup-Erfolg, Wiederherstellungspunkte, Restore-Nachweis, Kapazitaet und Prognose,
+  SnapMirror/DR, Inventar, Audit-Trail (Zeitraum-Reports mit Vergleich zum Vorzeitraum).
+  Erzeugt ein PDF (ReportLab, A4 quer, oeffnet im neuen Tab) plus CSV; Inhalts-SHA-256 im
+  PDF-Fuss, Datei-SHA-256 in der Historie. Historie 12 Monate (`HVNB_REPORTS_DIR`, Standard
+  /data/reports). Vorlagen mit Zeitplan (taeglich/woechentlich/monatlich) und Mailversand,
+  optional nur bei Auffaelligkeiten und mit CSV-Anhang; verpasste Termine werden nachgeholt.
+  Rechte `report:view` (Erstellen/Ansehen, alle Rollen) und `report:manage` (Vorlagen,
+  Versand, Loeschen; Administrator + Operator). API unter /api/reports.
+- **Aenderungsprotokoll** -- jede aendernde API-Anfrage (POST/PUT/PATCH/DELETE) eines
+  angemeldeten Benutzers wird zentral protokolliert (Tabelle `audit_events`: wer, wann,
+  Bereich, Aktion, Objekt, HTTP-Ergebnis, Adresse; app/core/audit.py). Der Anfrage-Body
+  wird nie gespeichert, nur Namensfelder als Objekt. Grundlage des Reports "Audit-Trail",
+  Aufbewahrung ca. 13 Monate.
 - **Globale Suche** -- Suchfeld in der Kopfzeile (Strg+K oder /) ueber VMs, CSVs, SMB3- und
   CIFS-Freigaben, Volumes, LUNs und die Backup-Snapshots der App; '*'/'?' als Platzhalter.
   Treffer erscheinen beim Tippen sofort: ein kompakter Index (GET /api/search/index, nur

@@ -171,3 +171,23 @@ def pct(part: int, total: int) -> str:
 def fmt_num(value: float, digits: int = 1) -> str:
     """Dezimalzahl mit deutschem Komma."""
     return f"{value:.{digits}f}".replace(".", ",")
+
+
+def fmt_bytes(value: float | None) -> str:
+    """Groesse wie in der App (Basis 1024), deutsches Komma."""
+    if value is None:
+        return "–"
+    negative, value = value < 0, abs(float(value))
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if value < 1024 or unit == "PB":
+            text = f"{value:.0f} {unit}" if unit in ("B", "KB") or value >= 100 else f"{fmt_num(value)} {unit}"
+            return ("−" if negative else "") + text
+        value /= 1024
+    return "–"
+
+
+def aware(value: datetime | None) -> datetime | None:
+    """SQLite liefert naive UTC-Zeitstempel."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value

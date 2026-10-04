@@ -40,7 +40,7 @@ import {
 } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { useHyperVClusters, usePolicies, useResourceGroups, useVms } from "@/api/hooks";
+import { useHyperVClusters, useNetAppClusters, usePolicies, useResourceGroups, useVms } from "@/api/hooks";
 import {
   downloadReportFile,
   openReportPdf,
@@ -71,7 +71,25 @@ const DEFAULT_PARAMS: Record<string, ReportParams> = {
   protection_status: { max_age_hours: 26, include_csv: true, include_smb: true, only_findings: false },
   backup_success: { period: "previous_month", detail: false },
   restore_points: { include_secondary: true, only_findings: false },
+  restore_proof: { period: "previous_month", kinds: ["disk", "recreate", "file"], only_failed: false },
+  capacity: { object_types: ["aggregate", "volume", "csv", "smb_share"], hyperv_only: true, warn_percent: 85, crit_percent: 95, only_findings: false },
+  snapmirror: { max_copy_age_hours: 26, include_copies: true, only_findings: false },
+  inventory: { include_csv: true, include_smb: true },
+  audit: { period: "previous_month", include_runs: true, include_scheduled: false, include_logins: true },
 };
+
+const RESTORE_KINDS = [
+  { value: "disk", label: "Disk-Restore" },
+  { value: "recreate", label: "VM-Neuerstellung" },
+  { value: "file", label: "Datei-Restore" },
+];
+const CAPACITY_TYPES = [
+  { value: "aggregate", label: "Aggregate" },
+  { value: "volume", label: "Volumes" },
+  { value: "lun", label: "LUNs" },
+  { value: "csv", label: "CSVs" },
+  { value: "smb_share", label: "SMB3-Freigaben" },
+];
 
 const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 const SCHEDULE_LABEL: Record<ScheduleType, string> = { none: "Kein Zeitplan", daily: "Täglich", weekly: "Wöchentlich", monthly: "Monatlich" };
@@ -116,7 +134,63 @@ function ReportParamsForm({
   const { data: policies = [] } = usePolicies();
   const { data: sites = [] } = useSites();
   const { data: vms = [] } = useVms();
+  const { data: netappClusters = [] } = useNetAppClusters();
   const set = (key: string, v: unknown) => onChange({ ...value, [key]: v });
+  const num = (key: string, fallback: number) => (value[key] == null || value[key] === "" ? fallback : Number(value[key]));
+  const check = (key: string, label: string, defaultOn = false) => (
+    <Checkbox label={label} checked={defaultOn ? value[key] !== false : !!value[key]} onChange={(e) => set(key, e.currentTarget.checked)} />
+  );
+
+  const period = String(value.period ?? "previous_month");
+  const periodPicker = (
+    <Group align="flex-end">
+      <Select
+        label="Zeitraum"
+        data={Object.entries(options.periods).map(([v, label]) => ({ value: v, label }))}
+        value={period}
+        onChange={(v) => set("period", v ?? "previous_month")}
+        allowDeselect={false}
+        w={220}
+      />
+      {period === "custom" && (
+        <>
+          <TextInput label="von" type="date" value={String(value.period_from ?? "")} onChange={(e) => set("period_from", e.currentTarget.value)} />
+          <TextInput label="bis (inklusive)" type="date" value={String(value.period_to ?? "")} onChange={(e) => set("period_to", e.currentTarget.value)} />
+        </>
+      )}
+    </Group>
+  );
+  const siteSelect = (
+    <MultiSelect
+      label="Standorte"
+      placeholder={asList(value.site_ids).length ? undefined : "Alle"}
+      data={dedupeOptions(sites.map((s) => ({ value: s.id, label: s.name })))}
+      value={asList(value.site_ids)}
+      onChange={(v) => set("site_ids", v)}
+      clearable
+    />
+  );
+  const netappSelect = (
+    <MultiSelect
+      label="NetApp-Systeme"
+      placeholder={asList(value.netapp_cluster_ids).length ? undefined : "Alle"}
+      data={dedupeOptions(netappClusters.map((c) => ({ value: c.id, label: c.name })))}
+      value={asList(value.netapp_cluster_ids)}
+      onChange={(v) => set("netapp_cluster_ids", v)}
+      clearable
+    />
+  );
+  const vmSelect = (
+    <MultiSelect
+      label="VMs"
+      placeholder={asList(value.vm_names).length ? undefined : "Alle"}
+      data={dedupeOptions(vms.map((v) => ({ value: v.name, label: v.name })))}
+      value={asList(value.vm_names)}
+      onChange={(v) => set("vm_names", v)}
+      searchable
+      clearable
+    />
+  );
 
   const clusterSelect = (
     <MultiSelect
@@ -145,14 +219,7 @@ function ReportParamsForm({
       <Stack gap="sm">
         <SimpleGrid cols={{ base: 1, md: 3 }}>
           {clusterSelect}
-          <MultiSelect
-            label="Standorte"
-            placeholder={asList(value.site_ids).length ? undefined : "Alle"}
-            data={dedupeOptions(sites.map((s) => ({ value: s.id, label: s.name })))}
-            value={asList(value.site_ids)}
-            onChange={(v) => set("site_ids", v)}
-            clearable
-          />
+          {siteSelect}
           {groupSelect}
         </SimpleGrid>
         <NumberInput
@@ -174,25 +241,9 @@ function ReportParamsForm({
   }
 
   if (reportType === "backup_success") {
-    const period = String(value.period ?? "previous_month");
     return (
       <Stack gap="sm">
-        <Group align="flex-end">
-          <Select
-            label="Zeitraum"
-            data={Object.entries(options.periods).map(([v, label]) => ({ value: v, label }))}
-            value={period}
-            onChange={(v) => set("period", v ?? "previous_month")}
-            allowDeselect={false}
-            w={220}
-          />
-          {period === "custom" && (
-            <>
-              <TextInput label="von" type="date" value={String(value.period_from ?? "")} onChange={(e) => set("period_from", e.currentTarget.value)} />
-              <TextInput label="bis (inklusive)" type="date" value={String(value.period_to ?? "")} onChange={(e) => set("period_to", e.currentTarget.value)} />
-            </>
-          )}
-        </Group>
+        {periodPicker}
         <SimpleGrid cols={{ base: 1, md: 2 }}>
           <MultiSelect
             label="Policies"
@@ -223,15 +274,7 @@ function ReportParamsForm({
         <SimpleGrid cols={{ base: 1, md: 3 }}>
           {clusterSelect}
           {groupSelect}
-          <MultiSelect
-            label="VMs"
-            placeholder={asList(value.vm_names).length ? undefined : "Alle"}
-            data={dedupeOptions(vms.map((v) => ({ value: v.name, label: v.name })))}
-            value={asList(value.vm_names)}
-            onChange={(v) => set("vm_names", v)}
-            searchable
-            clearable
-          />
+          {vmSelect}
         </SimpleGrid>
         <Group>
           <Checkbox
@@ -244,13 +287,138 @@ function ReportParamsForm({
       </Stack>
     );
   }
+
+  if (reportType === "restore_proof") {
+    return (
+      <Stack gap="sm">
+        {periodPicker}
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          <MultiSelect
+            label="Art"
+            data={RESTORE_KINDS}
+            value={asList(value.kinds).length ? asList(value.kinds) : RESTORE_KINDS.map((k) => k.value)}
+            onChange={(v) => set("kinds", v)}
+          />
+          {vmSelect}
+        </SimpleGrid>
+        {check("only_failed", "Nur fehlgeschlagene Wiederherstellungen auflisten")}
+        <Text size="xs" c="dimmed">
+          Vergleicht mit dem gleich langen Vorzeitraum. Als Nachweis für Audits geeignet: wer hat wann welche VM aus welchem Backup-Stand wiederhergestellt.
+        </Text>
+      </Stack>
+    );
+  }
+
+  if (reportType === "capacity") {
+    return (
+      <Stack gap="sm">
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          <MultiSelect
+            label="Objekte"
+            data={CAPACITY_TYPES}
+            value={asList(value.object_types).length ? asList(value.object_types) : ["aggregate", "volume", "csv", "smb_share"]}
+            onChange={(v) => set("object_types", v)}
+          />
+          {netappSelect}
+        </SimpleGrid>
+        <Group align="flex-end">
+          <NumberInput label="Beobachten ab (% belegt)" min={1} max={100} w={200} value={num("warn_percent", 85)} onChange={(v) => set("warn_percent", v)} />
+          <NumberInput label="Kritisch ab (% belegt)" min={1} max={100} w={200} value={num("crit_percent", 95)} onChange={(v) => set("crit_percent", v)} />
+        </Group>
+        <Group>
+          {check("hyperv_only", "Nur von Hyper-V genutzte Volumes/LUNs", true)}
+          {check("only_findings", "Nur Auffälligkeiten auflisten")}
+        </Group>
+        <Text size="xs" c="dimmed">
+          Prognose wie im Kapazitätsverlauf (Trend der letzten 30 Tage). Kritisch zusätzlich, wenn ein Objekt in ≤ 28 Tagen vollläuft, beobachten bei ≤ 90 Tagen.
+        </Text>
+      </Stack>
+    );
+  }
+
+  if (reportType === "snapmirror") {
+    return (
+      <Stack gap="sm">
+        <SimpleGrid cols={{ base: 1, md: 2 }}>{netappSelect}</SimpleGrid>
+        <Group align="flex-end">
+          <NumberInput
+            label="Lag-Schwellwert (Stunden)"
+            description="Leer = Wert aus Settings > Alarms"
+            min={1}
+            w={240}
+            value={value.lag_hours == null ? "" : Number(value.lag_hours)}
+            onChange={(v) => set("lag_hours", v === "" ? null : v)}
+          />
+          <NumberInput
+            label="Kopie veraltet ab (Stunden)"
+            description="jüngste Backup-Kopie auf dem Ziel"
+            min={1}
+            w={240}
+            value={num("max_copy_age_hours", 26)}
+            onChange={(v) => set("max_copy_age_hours", v)}
+          />
+        </Group>
+        <Group>
+          {check("include_copies", "Backup-Kopien je Volume auflisten", true)}
+          {check("only_findings", "Nur Auffälligkeiten auflisten")}
+        </Group>
+      </Stack>
+    );
+  }
+
+  if (reportType === "inventory") {
+    return (
+      <Stack gap="sm">
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          {clusterSelect}
+          {siteSelect}
+        </SimpleGrid>
+        <Group>
+          {check("include_csv", "CSVs einbeziehen", true)}
+          {check("include_smb", "SMB3-Freigaben einbeziehen", true)}
+        </Group>
+        <Text size="xs" c="dimmed">
+          Stand der letzten Discovery. Die CSV-Datei enthält die VM-Liste.
+        </Text>
+      </Stack>
+    );
+  }
+
+  if (reportType === "audit") {
+    return (
+      <Stack gap="sm">
+        {periodPicker}
+        <TagsInput
+          label="Benutzer"
+          description="Leer = alle. Name eingeben und mit Enter bestätigen."
+          value={asList(value.usernames)}
+          onChange={(v) => set("usernames", v)}
+          clearable
+        />
+        <Group>
+          {check("include_runs", "Abläufe einbeziehen (Restore, VM/CSV anlegen, verschieben …)", true)}
+          {check("include_scheduled", "auch geplante Backups")}
+          {check("include_logins", "Anmeldungen einbeziehen", true)}
+        </Group>
+        <Text size="xs" c="dimmed">
+          Jede Änderung über die App wird seit diesem Update vollständig protokolliert (wer, wann, was, Ergebnis). Für die Zeit davor enthält der Report
+          nur die Einträge des System-Logs, die einen Benutzer nennen.
+        </Text>
+      </Stack>
+    );
+  }
   return null;
 }
 
 function paramsError(reportType: string, params: ReportParams): string | null {
-  if (reportType === "backup_success" && params.period === "custom") {
+  if (params.period === "custom") {
     if (!params.period_from || !params.period_to) return "Bitte Beginn und Ende des Zeitraums angeben.";
     if (String(params.period_from) > String(params.period_to)) return "Der Beginn liegt nach dem Ende.";
+  }
+  if (reportType === "restore_proof" && Array.isArray(params.kinds) && params.kinds.length === 0) return "Bitte mindestens eine Art wählen.";
+  if (reportType === "capacity") {
+    if (Array.isArray(params.object_types) && params.object_types.length === 0) return "Bitte mindestens einen Objekttyp wählen.";
+    if (Number(params.crit_percent ?? 95) < Number(params.warn_percent ?? 85)) return "„Kritisch ab“ muss mindestens so hoch sein wie „Beobachten ab“.";
   }
   return null;
 }
@@ -419,7 +587,7 @@ function NewReportTab({ options, onSaveAsTemplate }: { options: ReportOptions; o
 
   return (
     <Stack>
-      <SimpleGrid cols={{ base: 1, sm: 3 }}>
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
         {options.types.map((t) => (
           <Paper
             key={t.type}

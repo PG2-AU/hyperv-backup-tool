@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.audit import AuditMiddleware
+
 from app.api.routes import (
     ad_config as ad_config_routes,
     activities,
@@ -87,6 +89,9 @@ async def lifespan(app: FastAPI):
 settings = get_settings()
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
+
+# Aenderungsprotokoll fuer den Report "Audit-Trail" (Backlog #84)
+app.add_middleware(AuditMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

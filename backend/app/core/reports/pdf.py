@@ -19,7 +19,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import CondPageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.core.reports.base import ReportContent
 
@@ -39,8 +39,7 @@ _cell = ParagraphStyle("cell", parent=_body, fontSize=7.5, leading=9)
 _head = ParagraphStyle("head", parent=_cell, fontName="Helvetica-Bold", textColor=colors.white)
 _title = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=16, leading=20)
 _subtitle = ParagraphStyle("subtitle", parent=_body, fontSize=9, leading=12, textColor=colors.HexColor("#475467"))
-# keepWithNext: Ueberschrift nie allein am Seitenende
-_section = ParagraphStyle("section", fontName="Helvetica-Bold", fontSize=11, leading=14, spaceBefore=6, spaceAfter=4, keepWithNext=1)
+_section = ParagraphStyle("section", fontName="Helvetica-Bold", fontSize=11, leading=14, spaceBefore=6, spaceAfter=4)
 _kpi_label = ParagraphStyle("kpilabel", parent=_body, fontSize=7.5, textColor=colors.HexColor("#475467"))
 
 
@@ -113,7 +112,10 @@ def _kpi_table(content: ReportContent, width: float):
 
 
 def _section_table(section, width: float):
-    flow = [_p(section.title, _section)]
+    # Ueberschrift nie allein am Seitenende: Umbruch nur, wenn nicht einmal
+    # Ueberschrift + Kopfzeile + ein paar Zeilen passen. (keepWithNext haette
+    # lange Tabellen komplett auf die naechste Seite geschoben.)
+    flow = [CondPageBreak(30 * mm), _p(section.title, _section)]
     if not section.rows:
         flow.append(_p(section.empty_text, _body))
         return flow

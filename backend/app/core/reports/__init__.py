@@ -19,7 +19,7 @@ from typing import Callable
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.reports import backup_success, protection, restore_points
+from app.core.reports import audit, backup_success, capacity, inventory, protection, restore_points, restore_proof, snapmirror
 from app.core.reports.base import ReportContent, fmt_dt, local_tz
 from app.models.report import ReportDefinition, ReportRun
 
@@ -46,6 +46,26 @@ REPORT_TYPES: dict[str, ReportType] = {
     "restore_points": ReportType(
         "Wiederherstellungspunkte", "Je VM Anzahl, ältester und neuester Wiederherstellungspunkt primär und sekundär.",
         False, restore_points.build,
+    ),
+    "restore_proof": ReportType(
+        "Restore-Nachweis", "Alle Wiederherstellungen im Zeitraum (Disk, VM-Neuerstellung, Datei) mit Wer, Wann, Backup-Stand und Ergebnis.",
+        True, restore_proof.build,
+    ),
+    "capacity": ReportType(
+        "Kapazität und Prognose", "Belegung von Aggregaten, Volumes, LUNs, CSVs und SMB3, Zuwachs der letzten 30 Tage, voll in N Tagen.",
+        False, capacity.build,
+    ),
+    "snapmirror": ReportType(
+        "SnapMirror / DR", "Zustand und Lag aller SnapMirror-Beziehungen, Backup-Kopien je Volume auf dem Ziel.",
+        False, snapmirror.build,
+    ),
+    "inventory": ReportType(
+        "Inventar", "Alle VMs mit Host, Standort, Speicherort, vCPU/RAM, Disk-Größe und Protection Group; CSVs und SMB3-Freigaben.",
+        False, inventory.build,
+    ),
+    "audit": ReportType(
+        "Audit-Trail", "Wer hat im Zeitraum was angelegt, geändert, gelöscht oder wiederhergestellt; Abläufe und Anmeldungen.",
+        True, audit.build,
     ),
 }
 
@@ -214,7 +234,12 @@ def run_due_reports(db: Session, log) -> None:
 
 
 def purge_old_reports(db: Session) -> int:
+    from app.models.audit import AuditEvent
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
+    # Aenderungsprotokoll etwas laenger, damit ein Jahresreport vollstaendig bleibt
+    db.query(AuditEvent).filter(AuditEvent.timestamp < cutoff - timedelta(days=31)).delete()
+    db.commit()
     old = db.query(ReportRun).filter(ReportRun.created_at < cutoff).all()
     for run in old:
         for path in (run.pdf_path, run.csv_path):
