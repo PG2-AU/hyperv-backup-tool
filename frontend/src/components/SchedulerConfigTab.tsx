@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Group, NumberInput, Paper, Select, Stack, Text, Title } from "@mantine/core";
+import { Button, Group, NumberInput, Paper, Select, SimpleGrid, Stack, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 
 import { apiClient } from "@/api/client";
@@ -71,8 +71,10 @@ export function SchedulerConfigTab() {
       );
   }
 
+  // Zwei Spalten nach Thema (Nutzer-Wunsch 2026-10-04: mittlerweile zu viele
+  // Felder untereinander) -- links Ueberwachung/Snapshots, rechts Backup-Laeufe.
   return (
-    <Paper p="md" maw={560}>
+    <Paper p="md" maw={1200}>
       <Title order={5} mb={4}>
         Hintergrundjobs
       </Title>
@@ -80,103 +82,118 @@ export function SchedulerConfigTab() {
         Zeitpläne der periodischen Hintergrundjobs. Änderungen wirken sofort, ohne Neustart der Applikation. Snapshot-Abgleich und
         Retention-Cleanup laufen in UTC, nicht in der lokalen Zeitzone der Backup-Zeitpläne.
       </Text>
-      <Stack gap="md">
-        <NumberInput
-          label="Health-Check-Intervall"
-          description="Wie oft der Erreichbarkeits-Status aller Cluster geprüft wird, in Minuten"
-          min={1}
-          max={1440}
-          value={healthcheckMinutes}
-          onChange={setHealthcheckMinutes}
-          suffix=" min"
-        />
-        <NumberInput
-          label="Discovery-Intervall"
-          description="Wie oft VMs/CSVs/Volumes/LUNs neu discovert werden, in Minuten"
-          min={1}
-          max={1440}
-          value={discoveryMinutes}
-          onChange={setDiscoveryMinutes}
-          suffix=" min"
-        />
-        <Select
-          label="Snapshot-Abgleich"
-          description="Tägliche Uhrzeit, zu der Backup-Snapshots gegen den echten NetApp-Bestand abgeglichen werden"
-          data={HOUR_OPTIONS}
-          value={snapshotHour}
-          onChange={(v) => v && setSnapshotHour(v)}
-          allowDeselect={false}
-        />
-        <Group gap="sm" mt={-8}>
-          <Button size="compact-sm" variant="light" loading={reconciling} onClick={runReconciliationNow}>
-            Snapshot-Abgleich jetzt ausführen
-          </Button>
-          <Text size="xs" c="dimmed">
-            prüft auch die sekundären Kopien auf den SnapMirror-Zielen; Ergebnis im System Log
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="xl" verticalSpacing="lg">
+        <Stack gap="md">
+          <Text size="sm" fw={600}>
+            Überwachung
           </Text>
-        </Group>
-        <Select
-          label="Retention-Cleanup"
-          description="Tägliche Uhrzeit, zu der die Policy-Retention durchgesetzt wird (überfällige Snapshots löschen)"
-          data={HOUR_OPTIONS}
-          value={retentionHour}
-          onChange={(v) => v && setRetentionHour(v)}
-          allowDeselect={false}
-        />
-        <NumberInput
-          label="Abbruch-Zeitlimit (Watchdog)"
-          description={
-            "Reagiert ein Backup-Lauf so lange nicht auf 'Job abbrechen' (ein Schritt hängt), wird er hart abgeschlossen, damit " +
-            "die 'läuft'-Zeile nicht dauerhaft künftige Läufe derselben Gruppe blockiert. 0 = aus."
-          }
-          min={0}
-          max={180}
-          value={cancelForceTimeoutMinutes}
-          onChange={setCancelForceTimeoutMinutes}
-          suffix=" min"
-        />
-        <NumberInput
-          label="Maximale Laufzeit je Backup-Lauf"
-          description={
-            "Harte Obergrenze für die Gesamtdauer JEDES Backup-Laufs, auch ohne manuellen Abbruch. Großzügig wählen, damit ein " +
-            "echter Großlauf nicht abgeschnitten wird. 0 = keine Obergrenze."
-          }
-          min={0}
-          max={1440}
-          value={runMaxDurationMinutes}
-          onChange={setRunMaxDurationMinutes}
-          suffix=" min"
-        />
-        <NumberInput
-          label="Checkpoint-Parallelität"
-          description={
-            "Wie viele Hyper-V-Hosts gleichzeitig einen Checkpoint erstellen dürfen (Phase vor den Storage-Snapshots). " +
-            "Pro Host läuft immer nur einer. 0 = automatisch (alle beteiligten Hosts parallel) · 1 = nacheinander · " +
-            "N = höchstens N Hosts gleichzeitig."
-          }
-          min={0}
-          max={64}
-          value={checkpointParallelism}
-          onChange={setCheckpointParallelism}
-        />
-        <NumberInput
-          label="VM-Performance messen alle"
-          description={
-            "Storage-QoS-Werte je VM (IOPS, Latenz, Durchsatz) für Monitoring > Performance -- ein lesender WinRM-Aufruf je " +
-            "Hyper-V-Cluster und Messung. Rohwerte 7 Tage, danach Stundenmittel 90 Tage. 0 = aus."
-          }
-          min={0}
-          max={60}
-          value={vmPerfMinutes}
-          onChange={setVmPerfMinutes}
-          suffix=" min"
-        />
-        <Group justify="flex-end">
-          <Button onClick={handleSave} loading={updateConfig.isPending}>
-            Speichern
-          </Button>
-        </Group>
-      </Stack>
+          <NumberInput
+            label="Health-Check-Intervall"
+            description="Wie oft der Erreichbarkeits-Status aller Cluster geprüft wird, in Minuten"
+            min={1}
+            max={1440}
+            value={healthcheckMinutes}
+            onChange={setHealthcheckMinutes}
+            suffix=" min"
+          />
+          <NumberInput
+            label="Discovery-Intervall"
+            description="Wie oft VMs/CSVs/Volumes/LUNs neu discovert werden, in Minuten"
+            min={1}
+            max={1440}
+            value={discoveryMinutes}
+            onChange={setDiscoveryMinutes}
+            suffix=" min"
+          />
+          <NumberInput
+            label="VM-Performance messen alle"
+            description={
+              "Storage-QoS-Werte je VM (IOPS, Latenz, Durchsatz) für Monitoring > Performance -- ein lesender WinRM-Aufruf je " +
+              "Hyper-V-Cluster und Messung. Rohwerte 7 Tage, danach Stundenmittel 90 Tage. 0 = aus."
+            }
+            min={0}
+            max={60}
+            value={vmPerfMinutes}
+            onChange={setVmPerfMinutes}
+            suffix=" min"
+          />
+
+          <Text size="sm" fw={600} mt="sm">
+            Snapshots
+          </Text>
+          <Select
+            label="Snapshot-Abgleich"
+            description="Tägliche Uhrzeit, zu der Backup-Snapshots gegen den echten NetApp-Bestand abgeglichen werden"
+            data={HOUR_OPTIONS}
+            value={snapshotHour}
+            onChange={(v) => v && setSnapshotHour(v)}
+            allowDeselect={false}
+          />
+          <Group gap="sm" mt={-8}>
+            <Button size="compact-sm" variant="light" loading={reconciling} onClick={runReconciliationNow}>
+              Snapshot-Abgleich jetzt ausführen
+            </Button>
+            <Text size="xs" c="dimmed">
+              prüft auch die sekundären Kopien auf den SnapMirror-Zielen; Ergebnis im System Log
+            </Text>
+          </Group>
+          <Select
+            label="Retention-Cleanup"
+            description="Tägliche Uhrzeit, zu der die Policy-Retention durchgesetzt wird (überfällige Snapshots löschen)"
+            data={HOUR_OPTIONS}
+            value={retentionHour}
+            onChange={(v) => v && setRetentionHour(v)}
+            allowDeselect={false}
+          />
+        </Stack>
+
+        <Stack gap="md">
+          <Text size="sm" fw={600}>
+            Backup-Läufe
+          </Text>
+          <NumberInput
+            label="Abbruch-Zeitlimit (Watchdog)"
+            description={
+              "Reagiert ein Backup-Lauf so lange nicht auf 'Job abbrechen' (ein Schritt hängt), wird er hart abgeschlossen, damit " +
+              "die 'läuft'-Zeile nicht dauerhaft künftige Läufe derselben Gruppe blockiert. 0 = aus."
+            }
+            min={0}
+            max={180}
+            value={cancelForceTimeoutMinutes}
+            onChange={setCancelForceTimeoutMinutes}
+            suffix=" min"
+          />
+          <NumberInput
+            label="Maximale Laufzeit je Backup-Lauf"
+            description={
+              "Harte Obergrenze für die Gesamtdauer JEDES Backup-Laufs, auch ohne manuellen Abbruch. Großzügig wählen, damit ein " +
+              "echter Großlauf nicht abgeschnitten wird. 0 = keine Obergrenze."
+            }
+            min={0}
+            max={1440}
+            value={runMaxDurationMinutes}
+            onChange={setRunMaxDurationMinutes}
+            suffix=" min"
+          />
+          <NumberInput
+            label="Checkpoint-Parallelität"
+            description={
+              "Wie viele Hyper-V-Hosts gleichzeitig einen Checkpoint erstellen dürfen (Phase vor den Storage-Snapshots). " +
+              "Pro Host läuft immer nur einer. 0 = automatisch (alle beteiligten Hosts parallel) · 1 = nacheinander · " +
+              "N = höchstens N Hosts gleichzeitig."
+            }
+            min={0}
+            max={64}
+            value={checkpointParallelism}
+            onChange={setCheckpointParallelism}
+          />
+        </Stack>
+      </SimpleGrid>
+      <Group justify="flex-end" mt="lg">
+        <Button onClick={handleSave} loading={updateConfig.isPending}>
+          Speichern
+        </Button>
+      </Group>
     </Paper>
   );
 }
