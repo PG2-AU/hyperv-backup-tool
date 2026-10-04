@@ -2478,3 +2478,34 @@ class HyperVService:
         result = self._run_ps(session, script)
         if not result.success:
             raise RuntimeError(f"Kopieren nach '{destination_dir}' fehlgeschlagen: {result.error}")
+
+    def storage_qos_flows(self, cno_session: winrm.Session) -> list[dict]:
+        """VM-Performance je virtueller Disk aus Storage QoS (Backlog #80
+        Stufe 2) -- ein Aufruf clusterweit, rein lesend. Bewusst die WMI-
+        Klasse direkt statt Get-StorageQosFlow: das Cmdlet scheitert unter
+        Windows Server 2025 an seiner eigenen Abfrage ("Invalid property",
+        live gesehen 2026-10-04 auf svAUdemo7-hv1), die Klasse liefert
+        dieselben Daten. Nur Flows mit Initiator (= VM); die "DefaultFlow"-
+        Eintraege je CSV/Knoten ohne VM fallen weg.
+
+        Einheiten (wie im StorageQoS-Modul, Qos.Types.ps1xml): Latenz roh in
+        100 ns (/10000 = ms), IOPS normalisiert (Standard 8 KB je IO),
+        Bandbreite in Bytes/s. Nur CSV-gehostete Disks -- VMs auf SMB3-
+        Freigaben eines NetApp-Systems tauchen hier nicht auf."""
+        script = (
+            "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; "
+            "@(Get-CimInstance -Namespace root/microsoft/windows/storage -ClassName MSFT_StorageQoSFlow "
+            "| Where-Object { $_.InitiatorName } "
+            "| ForEach-Object { [PSCustomObject]@{ VmName = $_.InitiatorName; VmId = [string]$_.InitiatorId; "
+            "Node = $_.InitiatorNodeName; Path = $_.FilePath; Iops = [double]$_.InitiatorIOPS; "
+            "LatencyMs = [double]$_.InitiatorLatency / 10000; Bandwidth = [double]$_.InitiatorBandwidth } }) "
+            "| ConvertTo-Json -Depth 2 -Compress"
+        )
+        result = self._run_ps(cno_session, script)
+        if not result.success:
+            raise RuntimeError(f"Storage-QoS-Daten konnten nicht gelesen werden: {result.error.strip()[:500]}")
+        text = (result.output or "").strip()
+        if not text:
+            return []
+        data = json.loads(text)
+        return data if isinstance(data, list) else [data]

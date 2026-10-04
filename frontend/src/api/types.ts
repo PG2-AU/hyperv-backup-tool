@@ -677,6 +677,7 @@ export interface SchedulerConfig {
   backup_cancel_force_timeout_minutes: number;
   backup_run_max_duration_minutes: number;
   backup_checkpoint_parallelism: number;
+  vm_perf_interval_minutes: number;
   updated_at?: string | null;
 }
 
@@ -688,6 +689,7 @@ export interface SchedulerConfigWritePayload {
   backup_cancel_force_timeout_minutes: number;
   backup_run_max_duration_minutes: number;
   backup_checkpoint_parallelism: number;
+  vm_perf_interval_minutes: number;
 }
 
 export interface EmailConfig {

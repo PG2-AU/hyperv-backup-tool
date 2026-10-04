@@ -27,6 +27,7 @@ from app.models.csv_delete_run import CsvDeleteRun, CsvDeleteRunStep  # noqa: F4
 from app.models.vm_create_run import VmCreateRun, VmCreateRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.report import ReportDefinition, ReportRun  # noqa: F401  (nur fuer create_all)
 from app.models.audit import AuditEvent  # noqa: F401  (nur fuer create_all)
+from app.models.vm_performance import VmPerfSample  # noqa: F401  (nur fuer create_all)
 from app.models.vm_delete_run import VmDeleteRun, VmDeleteRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.smb_share_run import SmbCreateRun, SmbCreateRunStep, SmbDeleteRun, SmbDeleteRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.db_backup import DbBackupConfig  # noqa: F401  (nur fuer create_all)
@@ -434,6 +435,7 @@ def init_db(db: Session) -> None:
             "backup_cancel_force_timeout_minutes": "INTEGER",
             "backup_run_max_duration_minutes": "INTEGER",
             "backup_checkpoint_parallelism": "INTEGER",
+            "vm_perf_interval_minutes": "INTEGER",
         },
     )
     with engine.connect() as conn:
@@ -446,6 +448,7 @@ def init_db(db: Session) -> None:
         conn.execute(
             text("UPDATE scheduler_config SET backup_checkpoint_parallelism = 0 WHERE backup_checkpoint_parallelism IS NULL")
         )
+        conn.execute(text("UPDATE scheduler_config SET vm_perf_interval_minutes = 5 WHERE vm_perf_interval_minutes IS NULL"))
         conn.commit()
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     _add_missing_columns(engine, "netapp_aggregates", {"efficiency_ratio_wo_snapshots_flexclones": "FLOAT"})

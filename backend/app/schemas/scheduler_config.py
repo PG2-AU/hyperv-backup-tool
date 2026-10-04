@@ -13,6 +13,7 @@ class SchedulerConfigRead(BaseModel):
     backup_cancel_force_timeout_minutes: int
     backup_run_max_duration_minutes: int
     backup_checkpoint_parallelism: int
+    vm_perf_interval_minutes: int = 5
     updated_at: datetime | None = None
 
 
@@ -31,3 +32,5 @@ class SchedulerConfigUpdate(BaseModel):
     # 0 = automatisch (je Hyper-V-Host 1, ueber Hosts hinweg parallel),
     # 1 = nacheinander, N = hoechstens N Hosts gleichzeitig.
     backup_checkpoint_parallelism: int = Field(ge=0, le=64)
+    # 0 = aus; sonst Abstand der VM-Performance-Messung (Storage QoS).
+    vm_perf_interval_minutes: int = Field(default=5, ge=0, le=60)

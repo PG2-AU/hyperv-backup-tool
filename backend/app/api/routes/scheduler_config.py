@@ -54,6 +54,7 @@ def update_scheduler_config(
     config.backup_run_max_duration_minutes = payload.backup_run_max_duration_minutes
     # Kein reschedule_job(): _execute_job_run liest das Feld pro Lauf frisch.
     config.backup_checkpoint_parallelism = payload.backup_checkpoint_parallelism
+    config.vm_perf_interval_minutes = payload.vm_perf_interval_minutes
     config.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(config)
@@ -71,6 +72,10 @@ def update_scheduler_config(
         )
         scheduler.reschedule_job("snapshot-reconciliation", trigger=CronTrigger(hour=config.snapshot_reconcile_hour, minute=0))
         scheduler.reschedule_job("retention-cleanup", trigger=CronTrigger(hour=config.retention_cleanup_hour, minute=15))
+        # 0 = aus: Job laeuft weiter im Minutentakt, run_vm_performance_sampling kehrt dann sofort zurueck
+        scheduler.reschedule_job(
+            "vm-performance", trigger=IntervalTrigger(minutes=max(config.vm_perf_interval_minutes, 1), start_date=INTERVAL_ANCHOR)
+        )
 
     return config
 

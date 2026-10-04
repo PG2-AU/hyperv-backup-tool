@@ -47,7 +47,7 @@ import {
 import { useSites } from "@/api/hooks.sites";
 import { BackupsModal } from "@/components/BackupsModal";
 import { CapacityHistoryPanel } from "@/components/CapacityHistoryPanel";
-import { HyperVPerformancePanel } from "@/components/PerformancePanel";
+import { HyperVPerformancePanel, InventoryVmPerformancePanel } from "@/components/PerformancePanel";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
@@ -211,6 +211,8 @@ function VmChainHeader({
   onClose: () => void;
 }) {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [perfOpen, setPerfOpen] = useState(false);
+  const canViewStorage = useAuthStore((s) => s.hasPermission)("storage:view");
   const vhds = vm.vhds.length
     ? vm.vhds
     : [...vm.csv_paths, ...vm.smb_share_paths].map((p) => ({
@@ -233,6 +235,13 @@ function VmChainHeader({
               <IconChartLine size={14} />
             </ActionIcon>
           </Tooltip>
+          {canViewStorage && (
+            <Tooltip label="Performance (IOPS, Latenz, Durchsatz)">
+              <ActionIcon variant={perfOpen ? "light" : "subtle"} size="sm" onClick={() => setPerfOpen((v) => !v)}>
+                <IconGauge size={14} />
+              </ActionIcon>
+            </Tooltip>
+          )}
           <ActionIcon variant="subtle" size="sm" onClick={onClose}>
             <IconX size={14} />
           </ActionIcon>
@@ -242,6 +251,11 @@ function VmChainHeader({
       {historyOpen && (
         <Box mb="sm">
           <CapacityHistoryPanel objectType="vhd" clusterId={vm.cluster_id} vmUuid={vm.id} />
+        </Box>
+      )}
+      {perfOpen && (
+        <Box mb="sm">
+          <InventoryVmPerformancePanel inventoryId={vm.id} />
         </Box>
       )}
 

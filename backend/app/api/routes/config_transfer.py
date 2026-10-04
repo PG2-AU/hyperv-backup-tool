@@ -183,6 +183,9 @@ def _reschedule_background_jobs(db: Session) -> None:
         )
         scheduler.reschedule_job("snapshot-reconciliation", trigger=CronTrigger(hour=config.snapshot_reconcile_hour, minute=0))
         scheduler.reschedule_job("retention-cleanup", trigger=CronTrigger(hour=config.retention_cleanup_hour, minute=15))
+        scheduler.reschedule_job(
+            "vm-performance", trigger=IntervalTrigger(minutes=max(config.vm_perf_interval_minutes or 0, 1), start_date=INTERVAL_ANCHOR)
+        )
     alert_config = db.query(AlertConfig).first()
     if alert_config is not None:
         scheduler.reschedule_job(

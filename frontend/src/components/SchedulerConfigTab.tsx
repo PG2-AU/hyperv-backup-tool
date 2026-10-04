@@ -20,6 +20,7 @@ export function SchedulerConfigTab() {
   const [cancelForceTimeoutMinutes, setCancelForceTimeoutMinutes] = useState<number | string>(10);
   const [runMaxDurationMinutes, setRunMaxDurationMinutes] = useState<number | string>(0);
   const [checkpointParallelism, setCheckpointParallelism] = useState<number | string>(0);
+  const [vmPerfMinutes, setVmPerfMinutes] = useState<number | string>(5);
 
   useEffect(() => {
     if (!config) return;
@@ -30,6 +31,7 @@ export function SchedulerConfigTab() {
     setCancelForceTimeoutMinutes(config.backup_cancel_force_timeout_minutes);
     setRunMaxDurationMinutes(config.backup_run_max_duration_minutes);
     setCheckpointParallelism(config.backup_checkpoint_parallelism);
+    setVmPerfMinutes(config.vm_perf_interval_minutes ?? 5);
   }, [config]);
 
   const [reconciling, setReconciling] = useState(false);
@@ -59,6 +61,7 @@ export function SchedulerConfigTab() {
       backup_cancel_force_timeout_minutes: Number(cancelForceTimeoutMinutes),
       backup_run_max_duration_minutes: Number(runMaxDurationMinutes),
       backup_checkpoint_parallelism: Number(checkpointParallelism),
+      vm_perf_interval_minutes: Number(vmPerfMinutes),
     };
     updateConfig
       .mutateAsync(payload)
@@ -155,6 +158,18 @@ export function SchedulerConfigTab() {
           max={64}
           value={checkpointParallelism}
           onChange={setCheckpointParallelism}
+        />
+        <NumberInput
+          label="VM-Performance messen alle"
+          description={
+            "Storage-QoS-Werte je VM (IOPS, Latenz, Durchsatz) für Monitoring > Performance -- ein lesender WinRM-Aufruf je " +
+            "Hyper-V-Cluster und Messung. Rohwerte 7 Tage, danach Stundenmittel 90 Tage. 0 = aus."
+          }
+          min={0}
+          max={60}
+          value={vmPerfMinutes}
+          onChange={setVmPerfMinutes}
+          suffix=" min"
         />
         <Group justify="flex-end">
           <Button onClick={handleSave} loading={updateConfig.isPending}>

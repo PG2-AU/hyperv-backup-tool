@@ -47,4 +47,7 @@ class SchedulerConfig(Base):
     #       Rueckfallweg ueber die GUI, ohne Deploy)
     #   N>=2 = hoechstens N Knoten gleichzeitig (pro Knoten weiterhin 1)
     backup_checkpoint_parallelism: Mapped[int] = mapped_column(Integer, default=0)
+    # VM-Performance aus Storage QoS sammeln (Backlog #80 Stufe 2): Abstand
+    # in Minuten, 0 = aus. Ein lesender WinRM-Aufruf je Cluster und Lauf.
+    vm_perf_interval_minutes: Mapped[int] = mapped_column(Integer, default=5)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

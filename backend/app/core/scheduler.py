@@ -1543,6 +1543,23 @@ def run_daily_email_summary() -> None:
 CAPACITY_HISTORY_RETENTION_DAYS = 396  # ~13 Monate
 
 
+def run_vm_performance_sampling() -> None:
+    """VM-Performance aus Storage QoS sammeln (Backlog #80 Stufe 2), siehe
+    app.core.vm_performance. Abstand/aus ueber Settings > Hintergrundjobs."""
+    db = SessionLocal()
+    try:
+        config = db.query(SchedulerConfig).first()
+        if config is not None and not config.vm_perf_interval_minutes:
+            return
+        from app.core.vm_performance import run_collection
+
+        run_collection(db, lambda message, level: _log(db, message, level))
+    except Exception as exc:  # noqa: BLE001
+        _log(db, f"VM-Performance-Sammlung fehlgeschlagen: {exc}", "ERROR")
+    finally:
+        db.close()
+
+
 def run_capacity_history_sampling() -> None:
     """Schreibt einmal taeglich einen Kapazitaets-Messpunkt je VHD/CSV/LUN/
     Volume/Aggregat (Inventory/Storage > Verlauf-Chart) -- liest dabei NUR
@@ -2236,6 +2253,12 @@ def start_scheduler() -> BackgroundScheduler:
     scheduler.add_job(
         run_reports, IntervalTrigger(minutes=5, start_date=INTERVAL_ANCHOR),
         id="reports", replace_existing=True, max_instances=1,
+    )
+    # VM-Performance (Backlog #80 Stufe 2), 0 = aus (Job kehrt dann sofort zurueck)
+    vm_perf_interval = (config.vm_perf_interval_minutes if config and config.vm_perf_interval_minutes is not None else 5) or 1
+    scheduler.add_job(
+        run_vm_performance_sampling, IntervalTrigger(minutes=vm_perf_interval, start_date=INTERVAL_ANCHOR),
+        id="vm-performance", replace_existing=True, max_instances=1, coalesce=True,
     )
     scheduler.start()
     startup_db = SessionLocal()

@@ -81,3 +81,72 @@ export function usePerformanceHistory(
     refetchInterval: interval === "1h" ? 30_000 : interval === "1d" ? 300_000 : false,
   });
 }
+
+// --- VM-Seite (Stufe 2): aus der App-eigenen Sammlung (Storage QoS) ---
+
+export type VmPerfRange = "1d" | "1w" | "1m" | "3m";
+
+export interface VmPerfCsv {
+  csv_name: string;
+  iops: number;
+  latency_ms: number;
+  bandwidth: number;
+}
+
+export interface VmPerfRow {
+  inventory_id?: string | null;
+  cluster_id: string;
+  cluster_name?: string | null;
+  vm_uuid?: string | null;
+  vm_name: string;
+  host?: string | null;
+  state?: string | null;
+  sampled_at?: string | null;
+  iops?: number | null;
+  latency_ms?: number | null;
+  bandwidth?: number | null;
+  csvs: VmPerfCsv[];
+  note?: string | null;
+}
+
+export interface VmPerfCollector {
+  cluster_id: string;
+  cluster_name: string;
+  last_run_at?: string | null;
+  error?: string | null;
+  vm_rows: number;
+}
+
+export interface VmPerfOverview {
+  interval_minutes: number;
+  collectors: VmPerfCollector[];
+  rows: VmPerfRow[];
+}
+
+export interface VmPerfPoint {
+  timestamp: string;
+  iops: number;
+  latency_ms: number;
+  bandwidth: number;
+}
+
+/** Letzte Messung je VM (aus der DB, keine WinRM-Abfrage) -- jede Minute neu. */
+export function useVmPerformance(enabled = true) {
+  return useQuery({
+    queryKey: ["performance-vms"],
+    queryFn: async () => (await apiClient.get<VmPerfOverview>("/performance/vms")).data,
+    refetchInterval: 60_000,
+    enabled,
+  });
+}
+
+export function useVmPerformanceHistory(target: { clusterId?: string | null; vmUuid?: string | null }, range: VmPerfRange) {
+  const { clusterId, vmUuid } = target;
+  return useQuery({
+    queryKey: ["performance-vm-history", clusterId, vmUuid, range],
+    queryFn: async () =>
+      (await apiClient.get<VmPerfPoint[]>("/performance/vms/history", { params: { cluster_id: clusterId, vm_uuid: vmUuid, range } })).data,
+    enabled: !!(clusterId && vmUuid),
+    refetchInterval: range === "1d" ? 60_000 : false,
+  });
+}

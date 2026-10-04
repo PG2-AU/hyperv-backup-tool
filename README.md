@@ -113,13 +113,17 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   optional nur bei Auffaelligkeiten und mit CSV-Anhang; verpasste Termine werden nachgeholt.
   Rechte `report:view` (Erstellen/Ansehen, alle Rollen) und `report:manage` (Vorlagen,
   Versand, Loeschen; Administrator + Operator). API unter /api/reports.
-- **Performance** (Stufe 1, Storage-Seite) -- Monitoring > Performance: IOPS, Latenz und
-  Durchsatz (je Lesen/Schreiben) je CSV (ueber ihre LUN), SMB3-Freigabe (ueber ihr Volume)
-  und aller Volumes, live von ONTAP (15-s-Mittel, alle 30 s neu, Backend puffert 20 s);
-  Latenz orange ab 10 ms, rot ab 20 ms (ab 10 IOPS). Verlauf (1 Std. bis 1 Jahr) aus ONTAPs
-  eigener Statistik, die App sammelt nichts selbst -- auch in Inventory (CSV/SMB3-Details)
-  und Storage (Volumes/LUNs) per Tacho-Symbol. GET /api/performance/overview und /history,
-  Recht storage:view.
+- **Performance** -- Monitoring > Performance mit drei Reitern. *Storage-Seite:* IOPS, Latenz
+  und Durchsatz (je Lesen/Schreiben) je CSV (ueber ihre LUN), SMB3-Freigabe (ueber ihr Volume)
+  und aller Volumes, live von ONTAP (15-s-Mittel, alle 30 s neu, Backend puffert 20 s); Verlauf
+  (1 Std. bis 1 Jahr) aus ONTAPs eigener Statistik. *VM-Seite:* je VM IOPS, Latenz und Durchsatz
+  aus Storage QoS des Failover-Clusters (WMI-Klasse MSFT_StorageQoSFlow -- das Cmdlet
+  Get-StorageQosFlow ist unter Server 2025 defekt), von der App gesammelt: ein lesender
+  WinRM-Aufruf je Cluster alle 5 min (Settings > Hintergrundjobs, 0 = aus), Rohwerte 7 Tage,
+  danach Stundenmittel 90 Tage (Tabelle `vm_perf_samples`). Nur VMs auf CSVs (Storage QoS
+  erfasst keine SMB3-Freigaben). Zur CSV zusaetzlich "Top-VMs". Latenz orange ab 10 ms, rot ab
+  20 ms (ab 10 IOPS). Verlauf auch in Inventory (VM/CSV/SMB3) und Storage (Volumes/LUNs) per
+  Tacho-Symbol. API /api/performance/overview, /history, /vms, /vms/history; Recht storage:view.
 - **Aenderungsprotokoll** -- jede aendernde API-Anfrage (POST/PUT/PATCH/DELETE) eines
   angemeldeten Benutzers wird zentral protokolliert (Tabelle `audit_events`: wer, wann,
   Bereich, Aktion, Objekt, HTTP-Ergebnis, Adresse; app/core/audit.py). Der Anfrage-Body

@@ -3,8 +3,8 @@ import { Alert, Group, SegmentedControl, SimpleGrid, Skeleton, Stack, Text } fro
 import { IconInfoCircle } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
-import { usePerformanceHistory, usePerformanceOverview } from "@/api/hooks.performance";
-import type { PerfInterval, PerfObjectType, PerfPoint, PerfRow } from "@/api/hooks.performance";
+import { usePerformanceHistory, usePerformanceOverview, useVmPerformance, useVmPerformanceHistory } from "@/api/hooks.performance";
+import type { PerfInterval, PerfObjectType, PerfPoint, PerfRow, VmPerfRange } from "@/api/hooks.performance";
 import { apiErrorMessage } from "@/utils/errors";
 
 // Performance-Verlauf eines Volumes oder einer LUN (Backlog #80 Stufe 1):
@@ -68,10 +68,17 @@ function chartRows(points: PerfPoint[], interval: PerfInterval) {
 function Chart({ title, data, keys, unit, format }: {
   title: string;
   data: Record<string, string | number | null>[];
-  keys: [string, string];
+  keys: [string, string] | [string];
   unit: string;
   format: (v: number) => string;
 }) {
+  const series =
+    keys.length === 2
+      ? [
+          { name: keys[0], label: "Lesen", color: "blue.6" },
+          { name: keys[1], label: "Schreiben", color: "orange.6" },
+        ]
+      : [{ name: keys[0], label: title, color: "grape.6" }];
   return (
     <div>
       <Text size="xs" fw={600} c="dimmed" mb={4}>
@@ -81,16 +88,13 @@ function Chart({ title, data, keys, unit, format }: {
         h={170}
         data={data}
         dataKey="time"
-        series={[
-          { name: keys[0], label: "Lesen", color: "blue.6" },
-          { name: keys[1], label: "Schreiben", color: "orange.6" },
-        ]}
+        series={series}
         withDots={false}
         curveType="linear"
         strokeWidth={1.5}
         connectNulls
         valueFormatter={format}
-        withLegend
+        withLegend={keys.length === 2}
         legendProps={{ verticalAlign: "bottom", height: 24 }}
         xAxisProps={{ minTickGap: 40 }}
       />
@@ -162,4 +166,96 @@ export function HyperVPerformancePanel({ kind, name, hypervClusterName }: {
     );
   }
   return <PerformancePanel netappClusterId={row.netapp_cluster_id} objectType={row.object_type} uuid={row.object_uuid} />;
+}
+
+// --- VM-Seite (Stufe 2): Storage QoS, von der App gesammelt ---
+
+const VM_RANGES: { value: VmPerfRange; label: string }[] = [
+  { value: "1d", label: "1 Tag" },
+  { value: "1w", label: "1 Woche" },
+  { value: "1m", label: "1 Monat" },
+  { value: "3m", label: "3 Monate" },
+];
+
+function vmTimeLabel(iso: string, range: VmPerfRange): string {
+  const d = new Date(iso);
+  if (range === "1d") return d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  if (range === "1w") return `${d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })} ${d.getHours()}:00`;
+  return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+}
+
+export function VmPerformancePanel({ clusterId, vmUuid }: { clusterId?: string | null; vmUuid?: string | null }) {
+  const [range, setRange] = useState<VmPerfRange>("1d");
+  const { data: points, isLoading, error } = useVmPerformanceHistory({ clusterId, vmUuid }, range);
+  const data = useMemo(
+    () =>
+      (points ?? []).map((p) => ({
+        time: vmTimeLabel(p.timestamp, range),
+        IOPS: p.iops,
+        Latenz: p.latency_ms,
+        Durchsatz: p.bandwidth / 1024 ** 2,
+      })),
+    [points, range],
+  );
+  const mb = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2 });
+  return (
+    <Stack gap="xs">
+      <Group justify="space-between">
+        <Text size="xs" c="dimmed">
+          Quelle: Storage QoS des Clusters (alle virtuellen Disks der VM auf CSVs), von der App gesammelt; IOPS normalisiert auf 8 KB
+        </Text>
+        <SegmentedControl size="xs" value={range} onChange={(v) => setRange(v as VmPerfRange)} data={VM_RANGES} />
+      </Group>
+      {error ? (
+        <Alert color="red" variant="light">
+          {apiErrorMessage(error, "Verlauf konnte nicht geladen werden.")}
+        </Alert>
+      ) : isLoading ? (
+        <Skeleton height={170} />
+      ) : data.length < 2 ? (
+        <Alert color="gray" variant="light" icon={<IconInfoCircle size={16} />}>
+          Noch zu wenige Messpunkte -- die App sammelt die VM-Werte selbst (Settings &gt; Hintergrundjobs), der Verlauf beginnt mit der
+          ersten Messung.
+        </Alert>
+      ) : (
+        <SimpleGrid cols={{ base: 1, lg: 3 }}>
+          <Chart title="IOPS" unit="Ops/s" data={data} keys={["IOPS"]} format={(v) => NUMBER.format(v)} />
+          <Chart title="Latenz" unit="ms" data={data} keys={["Latenz"]} format={(v) => DECIMAL.format(v)} />
+          <Chart title="Durchsatz" unit="MB/s" data={data} keys={["Durchsatz"]} format={(v) => mb.format(v)} />
+        </SimpleGrid>
+      )}
+    </Stack>
+  );
+}
+
+/** Fuer Inventory > VM: Zeile der VM in der VM-Uebersicht suchen. */
+export function InventoryVmPerformancePanel({ inventoryId }: { inventoryId: string }) {
+  const { data, isLoading, error } = useVmPerformance();
+  if (isLoading) return <Skeleton height={170} />;
+  if (error) return <Alert color="red" variant="light">{apiErrorMessage(error, "Performance konnte nicht geladen werden.")}</Alert>;
+  const row = data?.rows.find((r) => r.inventory_id === inventoryId);
+  if (!row?.vm_uuid) {
+    return (
+      <Alert color="gray" variant="light" icon={<IconInfoCircle size={16} />}>
+        Für diese VM ist keine Hyper-V-VM-ID bekannt -- bitte Discovery ausführen.
+      </Alert>
+    );
+  }
+  return (
+    <Stack gap="xs">
+      {row.iops != null ? (
+        <Text size="sm">
+          Aktuell: <b>{formatIops(row.iops)} IOPS</b> · Latenz <b>{formatLatency(row.latency_ms)}</b> · {formatThroughput(row.bandwidth)}
+          {row.csvs.length > 1 && <> ({row.csvs.map((c) => `${c.csv_name}: ${formatIops(c.iops)}`).join(", ")})</>}
+        </Text>
+      ) : (
+        row.note && (
+          <Text size="sm" c="dimmed">
+            {row.note}
+          </Text>
+        )
+      )}
+      <VmPerformancePanel clusterId={row.cluster_id} vmUuid={row.vm_uuid} />
+    </Stack>
+  );
 }

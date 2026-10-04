@@ -3,9 +3,16 @@ import { ActionIcon, Alert, Badge, Box, Group, Paper, SegmentedControl, Stack, T
 import { IconRefresh, IconX } from "@tabler/icons-react";
 import { useSearchParams } from "react-router-dom";
 
-import { usePerformanceOverview } from "@/api/hooks.performance";
-import type { PerfRow } from "@/api/hooks.performance";
-import { PerformancePanel, formatIops, formatLatency, formatThroughput, latencyColor } from "@/components/PerformancePanel";
+import { usePerformanceOverview, useVmPerformance } from "@/api/hooks.performance";
+import type { PerfRow, VmPerfOverview, VmPerfRow } from "@/api/hooks.performance";
+import {
+  PerformancePanel,
+  VmPerformancePanel,
+  formatIops,
+  formatLatency,
+  formatThroughput,
+  latencyColor,
+} from "@/components/PerformancePanel";
 import { SearchInput } from "@/components/SearchInput";
 import { apiErrorMessage } from "@/utils/errors";
 import { lunShortName } from "@/utils/format";
@@ -132,6 +139,128 @@ function PerfTable({ rows, selected, onSelect, showHyperV }: {
   );
 }
 
+function sortVms(rows: VmPerfRow[], key: SortKey): VmPerfRow[] {
+  const value = (r: VmPerfRow) => (key === "iops" ? r.iops : key === "latency" ? r.latency_ms : r.bandwidth);
+  if (key === "name") return [...rows].sort((a, b) => a.vm_name.localeCompare(b.vm_name, "de"));
+  return [...rows].sort((a, b) => (value(b) ?? -1) - (value(a) ?? -1));
+}
+
+function VmTable({ rows, selected, onSelect }: { rows: VmPerfRow[]; selected: string | null; onSelect: (row: VmPerfRow) => void }) {
+  return (
+    <Box style={{ maxHeight: "calc(100vh - 420px)", minHeight: 240, overflowY: "auto" }}>
+      <Table striped highlightOnHover stickyHeader>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>VM</Table.Th>
+            <Table.Th>Cluster / Host</Table.Th>
+            <Table.Th>CSV</Table.Th>
+            <Table.Th ta="right">IOPS</Table.Th>
+            <Table.Th ta="right">Latenz</Table.Th>
+            <Table.Th ta="right">Durchsatz</Table.Th>
+            <Table.Th>Stand</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {rows.map((r) => {
+            const key = `${r.cluster_id}|${r.vm_uuid ?? r.vm_name}`;
+            const color = latencyColor(r.latency_ms, r.iops);
+            return (
+              <Table.Tr
+                key={key}
+                onClick={() => r.vm_uuid && onSelect(r)}
+                bg={selected === key ? "var(--mantine-color-blue-light)" : undefined}
+                style={{ cursor: r.vm_uuid ? "pointer" : undefined }}
+              >
+                <Table.Td>
+                  <Text size="sm" fw={500}>
+                    {r.vm_name}
+                  </Text>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="xs">{r.cluster_name ?? "–"}</Text>
+                  <Text size="xs" c="dimmed">
+                    {r.host ?? "–"}
+                  </Text>
+                </Table.Td>
+                <Table.Td>{r.csvs.map((c) => c.csv_name).join(", ") || "–"}</Table.Td>
+                {r.iops != null ? (
+                  <>
+                    <Table.Td ta="right" fw={600}>
+                      {formatIops(r.iops)}
+                    </Table.Td>
+                    <Table.Td ta="right" c={color} fw={color ? 600 : undefined}>
+                      {formatLatency(r.latency_ms)}
+                    </Table.Td>
+                    <Table.Td ta="right">{formatThroughput(r.bandwidth)}</Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed">
+                        {r.sampled_at ? new Date(r.sampled_at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "–"}
+                      </Text>
+                    </Table.Td>
+                  </>
+                ) : (
+                  <Table.Td colSpan={4}>
+                    <Text size="xs" c="dimmed">
+                      {r.note ?? "Keine Messwerte"}
+                    </Text>
+                  </Table.Td>
+                )}
+              </Table.Tr>
+            );
+          })}
+          {rows.length === 0 && (
+            <Table.Tr>
+              <Table.Td colSpan={7}>
+                <Text size="sm" c="dimmed" ta="center" py="md">
+                  Keine VMs.
+                </Text>
+              </Table.Td>
+            </Table.Tr>
+          )}
+        </Table.Tbody>
+      </Table>
+    </Box>
+  );
+}
+
+/** Top-VMs einer CSV aus der letzten Messung (Stufe 2) -- unter dem CSV-Verlauf. */
+function TopVmsOnCsv({ data, csvName, clusterName }: { data?: VmPerfOverview; csvName: string; clusterName?: string | null }) {
+  if (!data) return null;
+  const items = data.rows
+    .flatMap((r) =>
+      r.csvs.filter((c) => c.csv_name === csvName && (!clusterName || r.cluster_name === clusterName)).map((c) => ({ vm: r.vm_name, ...c })),
+    )
+    .sort((a, b) => b.iops - a.iops)
+    .slice(0, 10);
+  return (
+    <Box mt="sm">
+      <Text size="xs" fw={600} c="dimmed" mb={4}>
+        Top-VMs auf dieser CSV (letzte Messung, Storage QoS)
+      </Text>
+      {items.length === 0 ? (
+        <Text size="xs" c="dimmed">
+          {data.interval_minutes ? "Keine laufende VM mit Messwerten auf dieser CSV." : "VM-Performance-Sammlung ist ausgeschaltet."}
+        </Text>
+      ) : (
+        <Table withTableBorder={false} verticalSpacing={2}>
+          <Table.Tbody>
+            {items.map((i) => (
+              <Table.Tr key={i.vm}>
+                <Table.Td>{i.vm}</Table.Td>
+                <Table.Td ta="right" fw={600}>
+                  {formatIops(i.iops)} IOPS
+                </Table.Td>
+                <Table.Td ta="right">{formatLatency(i.latency_ms)}</Table.Td>
+                <Table.Td ta="right">{formatThroughput(i.bandwidth)}</Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      )}
+    </Box>
+  );
+}
+
 export function PerformancePage() {
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") ?? "hyperv";
@@ -139,6 +268,16 @@ export function PerformancePage() {
   const [sortKey, setSortKey] = useState<SortKey>("iops");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<PerfRow | null>(null);
+  const [selectedVm, setSelectedVm] = useState<VmPerfRow | null>(null);
+  const { data: vmData, error: vmError } = useVmPerformance();
+  const vmRows = useMemo(
+    () =>
+      sortVms(
+        (vmData?.rows ?? []).filter((r) => matchesAllColumns({ name: r.vm_name, host: r.host, cluster: r.cluster_name }, search)),
+        sortKey,
+      ),
+    [vmData, sortKey, search],
+  );
 
   const hyperv = useMemo(() => sortRows((data?.rows ?? []).filter((r) => r.kind !== "volume"), sortKey), [data, sortKey]);
   const volumes = useMemo(
@@ -175,7 +314,7 @@ export function PerformancePage() {
         </Alert>
       ))}
 
-      {selected && (
+      {selected && tab !== "vms" && (
         <Paper withBorder p="sm">
           <Group justify="space-between" mb="xs">
             <Text fw={600}>
@@ -192,17 +331,31 @@ export function PerformancePage() {
             </ActionIcon>
           </Group>
           <PerformancePanel netappClusterId={selected.netapp_cluster_id} objectType={selected.object_type} uuid={selected.object_uuid} />
+          {selected.kind === "csv" && <TopVmsOnCsv data={vmData} csvName={selected.name} clusterName={selected.hyperv_cluster_name} />}
+        </Paper>
+      )}
+
+      {selectedVm && tab === "vms" && (
+        <Paper withBorder p="sm">
+          <Group justify="space-between" mb="xs">
+            <Text fw={600}>Verlauf: VM {selectedVm.vm_name}</Text>
+            <ActionIcon variant="subtle" size="sm" onClick={() => setSelectedVm(null)} aria-label="Schließen">
+              <IconX size={14} />
+            </ActionIcon>
+          </Group>
+          <VmPerformancePanel clusterId={selectedVm.cluster_id} vmUuid={selectedVm.vm_uuid} />
         </Paper>
       )}
 
       <Tabs value={tab} onChange={(v) => setParams({ tab: v ?? "hyperv" })}>
         <Tabs.List>
           <Tabs.Tab value="hyperv">Hyper-V-Storage ({hyperv.length})</Tabs.Tab>
+          <Tabs.Tab value="vms">VMs ({vmData?.rows.length ?? 0})</Tabs.Tab>
           <Tabs.Tab value="volumes">Alle Volumes ({data?.rows.filter((r) => r.kind === "volume").length ?? 0})</Tabs.Tab>
         </Tabs.List>
         <Group justify="space-between" mt="sm" mb="xs">
           <Group>
-            {tab === "volumes" && <SearchInput value={search} onChange={setSearch} />}
+            {tab !== "hyperv" && <SearchInput value={search} onChange={setSearch} />}
             <SegmentedControl
               size="xs"
               value={sortKey}
@@ -216,7 +369,10 @@ export function PerformancePage() {
             />
           </Group>
           <Text size="xs" c="dimmed">
-            Werte: Mittel der letzten 15 s laut ONTAP. Latenz orange ab 10 ms, rot ab 20 ms (erst ab 10 IOPS bewertet). Zeile anklicken für den Verlauf.
+            {tab === "vms"
+              ? `VM-Werte: Storage QoS des Clusters, von der App alle ${vmData?.interval_minutes || "–"} Minuten gemessen (Momentaufnahme, IOPS auf 8 KB normalisiert). `
+              : "Werte: Mittel der letzten 15 s laut ONTAP. "}
+            Latenz orange ab 10 ms, rot ab 20 ms (erst ab 10 IOPS bewertet). Zeile anklicken für den Verlauf.
           </Text>
         </Group>
         <Tabs.Panel value="hyperv">
@@ -227,6 +383,26 @@ export function PerformancePage() {
           ) : (
             <PerfTable rows={hyperv} selected={selectedKey} onSelect={setSelected} showHyperV />
           )}
+        </Tabs.Panel>
+        <Tabs.Panel value="vms">
+          {vmError && <Alert color="red">{apiErrorMessage(vmError, "VM-Performance konnte nicht geladen werden.")}</Alert>}
+          {vmData && vmData.interval_minutes === 0 && (
+            <Alert color="gray" variant="light" mb="xs">
+              Die VM-Performance-Sammlung ist ausgeschaltet (Settings &gt; Hintergrundjobs).
+            </Alert>
+          )}
+          {vmData?.collectors
+            .filter((c) => c.error)
+            .map((c) => (
+              <Alert key={c.cluster_id} color="orange" variant="light" mb="xs">
+                {c.cluster_name}: {c.error}
+              </Alert>
+            ))}
+          <VmTable
+            rows={vmRows}
+            selected={selectedVm ? `${selectedVm.cluster_id}|${selectedVm.vm_uuid ?? selectedVm.vm_name}` : null}
+            onSelect={setSelectedVm}
+          />
         </Tabs.Panel>
         <Tabs.Panel value="volumes">
           <PerfTable rows={volumes} selected={selectedKey} onSelect={setSelected} showHyperV={false} />
