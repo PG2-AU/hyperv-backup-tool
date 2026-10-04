@@ -27,6 +27,7 @@ import {
   IconCertificate,
   IconCamera,
   IconChartLine,
+  IconGauge,
   IconEdit,
   IconLink,
   IconPlus,
@@ -65,6 +66,7 @@ import {
   useVolumes,
 } from "@/api/hooks";
 import { CapacityHistoryPanel } from "@/components/CapacityHistoryPanel";
+import { PerformancePanel } from "@/components/PerformancePanel";
 import { ClusterPeerFormModal } from "@/components/ClusterPeerFormModal";
 import { DiscoveryModal } from "@/components/DiscoveryModal";
 import { IgroupFormModal } from "@/components/IgroupFormModal";
@@ -350,6 +352,32 @@ function CapacityDetailHeader({
         </ActionIcon>
       </Group>
       <CapacityHistoryPanel objectType={objectType} clusterId={clusterId} name={name} uuid={uuid} />
+    </Paper>
+  );
+}
+
+function PerformanceDetailHeader({
+  title,
+  objectType,
+  clusterId,
+  uuid,
+  onClose,
+}: {
+  title: string;
+  objectType: "lun" | "volume";
+  clusterId: string;
+  uuid?: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <Paper withBorder p="sm" mb="sm">
+      <Group justify="space-between" mb="xs">
+        <Text fw={600}>Performance: {title}</Text>
+        <ActionIcon variant="subtle" size="sm" onClick={onClose}>
+          <IconX size={14} />
+        </ActionIcon>
+      </Group>
+      <PerformancePanel netappClusterId={clusterId} objectType={objectType} uuid={uuid} />
     </Paper>
   );
 }
@@ -751,6 +779,9 @@ export function StoragePage() {
   const [historyVolume, setHistoryVolume] = useState<NetAppVolume | null>(null);
   const [snapshotsVolume, setSnapshotsVolume] = useState<NetAppVolume | null>(null);
   const [historyLun, setHistoryLun] = useState<NetAppLun | null>(null);
+  // Performance-Verlauf (Backlog #80): eigenes Objekt neben dem Kapazitaetsverlauf
+  const [perfVolume, setPerfVolume] = useState<NetAppVolume | null>(null);
+  const [perfLun, setPerfLun] = useState<NetAppLun | null>(null);
   const [historyAggregate, setHistoryAggregate] = useState<NetAppAggregate | null>(null);
   const [lunEditOpen, setLunEditOpen] = useState(false);
   const [volumeEditOpen, setVolumeEditOpen] = useState(false);
@@ -1092,6 +1123,15 @@ export function StoragePage() {
               onClose={() => setHistoryVolume(null)}
             />
           )}
+          {perfVolume && (
+            <PerformanceDetailHeader
+              title={perfVolume.name}
+              objectType="volume"
+              clusterId={perfVolume.cluster_id}
+              uuid={perfVolume.uuid}
+              onClose={() => setPerfVolume(null)}
+            />
+          )}
           <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
@@ -1171,6 +1211,11 @@ export function StoragePage() {
                           <IconChartLine size={16} />
                         </ActionIcon>
                       </Tooltip>
+                      <Tooltip label="Performance">
+                        <ActionIcon variant="light" disabled={!vol.uuid} onClick={() => setPerfVolume(vol)}>
+                          <IconGauge size={16} />
+                        </ActionIcon>
+                      </Tooltip>
                       <Tooltip label="Snapshots anzeigen">
                         <ActionIcon variant="light" disabled={!vol.uuid} onClick={() => setSnapshotsVolume(vol)}>
                           <IconCamera size={16} />
@@ -1240,6 +1285,15 @@ export function StoragePage() {
               name={historyLun.name}
               uuid={historyLun.uuid}
               onClose={() => setHistoryLun(null)}
+            />
+          )}
+          {perfLun && (
+            <PerformanceDetailHeader
+              title={lunShortName(perfLun.name)}
+              objectType="lun"
+              clusterId={perfLun.cluster_id}
+              uuid={perfLun.uuid}
+              onClose={() => setPerfLun(null)}
             />
           )}
           <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
@@ -1314,6 +1368,11 @@ export function StoragePage() {
                       <Tooltip label="Kapazitätsverlauf">
                         <ActionIcon variant="light" onClick={() => setHistoryLun(lun)}>
                           <IconChartLine size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Performance">
+                        <ActionIcon variant="light" disabled={!lun.uuid} onClick={() => setPerfLun(lun)}>
+                          <IconGauge size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Bearbeiten">

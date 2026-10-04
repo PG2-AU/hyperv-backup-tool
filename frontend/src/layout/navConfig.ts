@@ -44,6 +44,7 @@ export const NAV_ITEMS: NavItem[] = [
     children: [
       { label: "Alarms", path: "/alerts", searchContext: "alerts" },
       { label: "System Log", path: "/logs", searchContext: "logs" },
+      { label: "Performance", path: "/performance", requiredPermission: "storage:view" },
     ],
   },
   {

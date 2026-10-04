@@ -9,6 +9,7 @@ import {
   IconArrowAutofitWidth,
   IconBolt,
   IconChartLine,
+  IconGauge,
   IconChevronsRight,
   IconCpu,
   IconDatabase,
@@ -46,6 +47,7 @@ import {
 import { useSites } from "@/api/hooks.sites";
 import { BackupsModal } from "@/components/BackupsModal";
 import { CapacityHistoryPanel } from "@/components/CapacityHistoryPanel";
+import { HyperVPerformancePanel } from "@/components/PerformancePanel";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
 import { RestoreWizardModal } from "@/components/RestoreWizardModal";
 import { SearchInput } from "@/components/SearchInput";
@@ -395,6 +397,8 @@ function CsvChainHeader({
 }) {
   const vmsOnThisCsv = vmsOnCsv(csv, vms);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [perfOpen, setPerfOpen] = useState(false);
+  const canViewStorage = useAuthStore((s) => s.hasPermission)("storage:view");
 
   return (
     <Paper withBorder p="md">
@@ -408,6 +412,13 @@ function CsvChainHeader({
               <IconChartLine size={14} />
             </ActionIcon>
           </Tooltip>
+          {canViewStorage && (
+            <Tooltip label="Performance (IOPS, Latenz, Durchsatz)">
+              <ActionIcon variant={perfOpen ? "light" : "subtle"} size="sm" onClick={() => setPerfOpen((v) => !v)}>
+                <IconGauge size={14} />
+              </ActionIcon>
+            </Tooltip>
+          )}
           <ActionIcon variant="subtle" size="sm" onClick={onClose}>
             <IconX size={14} />
           </ActionIcon>
@@ -417,6 +428,11 @@ function CsvChainHeader({
       {historyOpen && (
         <Box mb="sm">
           <CapacityHistoryPanel objectType="csv" clusterId={csv.cluster_id} name={csv.name} />
+        </Box>
+      )}
+      {perfOpen && (
+        <Box mb="sm">
+          <HyperVPerformancePanel kind="csv" name={csv.name} hypervClusterName={csv.hyperv_cluster_name} />
         </Box>
       )}
 
@@ -497,6 +513,8 @@ function SmbShareChainHeader({
 }) {
   const vmsOnThisShare = vmsOnSmbShare(share, vms);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [perfOpen, setPerfOpen] = useState(false);
+  const canViewStorage = useAuthStore((s) => s.hasPermission)("storage:view");
   const uncPath = `\\\\${share.server}\\${share.share}`;
 
   return (
@@ -511,6 +529,13 @@ function SmbShareChainHeader({
               <IconChartLine size={14} />
             </ActionIcon>
           </Tooltip>
+          {canViewStorage && (
+            <Tooltip label="Performance (IOPS, Latenz, Durchsatz)">
+              <ActionIcon variant={perfOpen ? "light" : "subtle"} size="sm" onClick={() => setPerfOpen((v) => !v)}>
+                <IconGauge size={14} />
+              </ActionIcon>
+            </Tooltip>
+          )}
           <ActionIcon variant="subtle" size="sm" onClick={onClose}>
             <IconX size={14} />
           </ActionIcon>
@@ -520,6 +545,11 @@ function SmbShareChainHeader({
       {historyOpen && (
         <Box mb="sm">
           <CapacityHistoryPanel objectType="smb_share" clusterId={share.cluster_id} name={uncPath} />
+        </Box>
+      )}
+      {perfOpen && (
+        <Box mb="sm">
+          <HyperVPerformancePanel kind="smb_share" name={uncPath} hypervClusterName={share.hyperv_cluster_name} />
         </Box>
       )}
 

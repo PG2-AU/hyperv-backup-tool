@@ -9,6 +9,7 @@ from app.api.routes import (
     ad_config as ad_config_routes,
     activities,
     reports,
+    performance,
     alerts,
     auth,
     capacity_history,
@@ -105,6 +106,7 @@ app.include_router(auth.router)
 app.include_router(vms.router)
 app.include_router(activities.router)
 app.include_router(reports.router)
+app.include_router(performance.router)
 app.include_router(storage.router)
 app.include_router(netapp_clusters.router)
 app.include_router(hyperv_clusters.router)

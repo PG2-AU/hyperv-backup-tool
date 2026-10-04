@@ -1232,6 +1232,46 @@ class NetAppOntapService:
                 "available_bytes": _get_nested(agg, "space.block_storage.available"),
             }
 
+    # --- Performance (Backlog #80 Stufe 1, siehe app.api.routes.performance) ---
+    # Direkt per REST statt ueber die netapp_ontap-Ressourcen: die Metrik-
+    # Felder kommen so unveraendert als dict an. ONTAP liefert Latenz in
+    # Mikrosekunden, Durchsatz in Bytes/s; "metric" ist der Mittelwert der
+    # letzten 15 s, /metrics der von ONTAP selbst vorgehaltene Verlauf
+    # (1h: 15 s, 1d: 5 min, 1w: 30 min, 1m: 2 h, 1y: 1 Tag je Punkt).
+
+    def _rest_get(self, path: str, params: dict) -> dict:
+        try:
+            with self._connection() as conn:
+                response = conn.session.get(f"{conn.origin}{path}", params=params, verify=self._verify_ssl, timeout=30)
+        except Exception as exc:  # noqa: BLE001 -- Netzwerk/TLS
+            raise NetAppConnectionError(f"{self._host} nicht erreichbar: {exc}") from exc
+        if response.status_code >= 400:
+            try:
+                message = response.json().get("error", {}).get("message")
+            except ValueError:
+                message = None
+            raise NetAppConnectionError(f"ONTAP {path}: HTTP {response.status_code} {message or ''}".strip())
+        return response.json()
+
+    def current_metrics(self) -> dict[str, dict[str, dict]]:
+        """Aktuelle Performance aller Volumes und LUNs: {"volume": {uuid: {...}}, "lun": {uuid: {...}}}
+        mit name, svm_name und metric (ONTAP-Rohform)."""
+        result: dict[str, dict[str, dict]] = {"volume": {}, "lun": {}}
+        for kind, path in (("volume", "/api/storage/volumes"), ("lun", "/api/storage/luns")):
+            data = self._rest_get(path, {"fields": "uuid,name,svm.name,metric", "max_records": 10000})
+            for record in data.get("records", []):
+                if record.get("uuid") and record.get("metric"):
+                    result[kind][record["uuid"]] = {
+                        "name": record.get("name"), "svm_name": (record.get("svm") or {}).get("name"), "metric": record["metric"],
+                    }
+        return result
+
+    def metrics_history(self, object_type: str, uuid: str, interval: str) -> list[dict]:
+        """Verlauf eines Volumes oder einer LUN (ONTAP-Rohform, aelteste zuerst)."""
+        path = f"/api/storage/{'luns' if object_type == 'lun' else 'volumes'}/{uuid}/metrics"
+        data = self._rest_get(path, {"interval": interval, "fields": "timestamp,status,iops,latency,throughput", "max_records": 10000})
+        return sorted(data.get("records", []), key=lambda r: r.get("timestamp") or "")
+
     # --- Neue CSV per Assistent (Backlog #68, siehe app.api.routes.csv_create) ---
 
     def csv_create_aggregates(self) -> list[dict]:

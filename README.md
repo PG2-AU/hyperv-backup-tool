@@ -113,6 +113,13 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   optional nur bei Auffaelligkeiten und mit CSV-Anhang; verpasste Termine werden nachgeholt.
   Rechte `report:view` (Erstellen/Ansehen, alle Rollen) und `report:manage` (Vorlagen,
   Versand, Loeschen; Administrator + Operator). API unter /api/reports.
+- **Performance** (Stufe 1, Storage-Seite) -- Monitoring > Performance: IOPS, Latenz und
+  Durchsatz (je Lesen/Schreiben) je CSV (ueber ihre LUN), SMB3-Freigabe (ueber ihr Volume)
+  und aller Volumes, live von ONTAP (15-s-Mittel, alle 30 s neu, Backend puffert 20 s);
+  Latenz orange ab 10 ms, rot ab 20 ms (ab 10 IOPS). Verlauf (1 Std. bis 1 Jahr) aus ONTAPs
+  eigener Statistik, die App sammelt nichts selbst -- auch in Inventory (CSV/SMB3-Details)
+  und Storage (Volumes/LUNs) per Tacho-Symbol. GET /api/performance/overview und /history,
+  Recht storage:view.
 - **Aenderungsprotokoll** -- jede aendernde API-Anfrage (POST/PUT/PATCH/DELETE) eines
   angemeldeten Benutzers wird zentral protokolliert (Tabelle `audit_events`: wer, wann,
   Bereich, Aktion, Objekt, HTTP-Ergebnis, Adresse; app/core/audit.py). Der Anfrage-Body
