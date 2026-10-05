@@ -201,11 +201,18 @@ function parseSmbShare(path: string): { server: string; share: string } | null {
 
 // Detailansicht ueber der Tabelle (Speicherkette + Kapazitaets-/Performance-
 // Diagramme) wird schnell hoeher als das Fenster und drueckte die Tabelle
-// darunter auf null Hoehe (Nutzer-Meldung 2026-10-05). Deshalb: Detail auf
-// gut die halbe Fensterhoehe begrenzt mit eigenem Scrollbalken, Tabelle mit
-// Mindesthoehe -- beide bleiben bedienbar.
-const DETAIL_BOX_STYLE: React.CSSProperties = { maxHeight: "55vh", overflowY: "auto", flexShrink: 0 };
-const TABLE_PAPER_STYLE: React.CSSProperties = { flex: 1, minHeight: 280, display: "flex", flexDirection: "column" };
+// darunter weg (Nutzer-Meldungen 2026-10-05). Beide teilen sich jetzt den
+// tatsaechlich verfuegbaren Platz (die Seite ist auf Fensterhoehe minus
+// Kopf- und Aktivitaeten-Fusszeile begrenzt, auch bei aufgeklappter
+// Fusszeile): die Detailansicht schrumpft und scrollt, die Tabelle behaelt
+// mindestens ca. die Haelfte -- nichts laeuft mehr unter die Fusszeile.
+const DETAIL_BOX_STYLE: React.CSSProperties = { flex: "0 1 auto", minHeight: 0, maxHeight: "60%", overflowY: "auto" };
+const TABLE_PAPER_STYLE: React.CSSProperties = {
+  flex: "1 1 0",
+  minHeight: "min(320px, 45%)",
+  display: "flex",
+  flexDirection: "column",
+};
 
 function VmChainHeader({
   vm,
