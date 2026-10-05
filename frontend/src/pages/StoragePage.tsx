@@ -356,6 +356,8 @@ function CapacityDetailHeader({
   );
 }
 
+// Kapazitaets-/Performance-Diagramm stehen ueber der Such-/Aktionszeile der
+// jeweiligen Tabelle (Nutzer-Vorgabe 2026-10-05), direkt unter den Kennzahlen.
 function PerformanceDetailHeader({
   title,
   objectType,
@@ -1110,6 +1112,25 @@ export function StoragePage() {
             />
             <DistributionCard label="Security Style" items={volumeStats.securityStyles} />
           </StatRibbon>
+          {historyVolume && (
+            <CapacityDetailHeader
+              title={historyVolume.name}
+              objectType="volume"
+              clusterId={historyVolume.cluster_id}
+              name={historyVolume.name}
+              uuid={historyVolume.uuid}
+              onClose={() => setHistoryVolume(null)}
+            />
+          )}
+          {perfVolume && (
+            <PerformanceDetailHeader
+              title={perfVolume.name}
+              objectType="volume"
+              clusterId={perfVolume.cluster_id}
+              uuid={perfVolume.uuid}
+              onClose={() => setPerfVolume(null)}
+            />
+          )}
           <Group justify="space-between" mb="xs">
             <SearchInput value={volumeSearch} onChange={setVolumeSearch} />
             <Group gap="sm">
@@ -1131,25 +1152,6 @@ export function StoragePage() {
               </Button>
             </Group>
           </Group>
-          {historyVolume && (
-            <CapacityDetailHeader
-              title={historyVolume.name}
-              objectType="volume"
-              clusterId={historyVolume.cluster_id}
-              name={historyVolume.name}
-              uuid={historyVolume.uuid}
-              onClose={() => setHistoryVolume(null)}
-            />
-          )}
-          {perfVolume && (
-            <PerformanceDetailHeader
-              title={perfVolume.name}
-              objectType="volume"
-              clusterId={perfVolume.cluster_id}
-              uuid={perfVolume.uuid}
-              onClose={() => setPerfVolume(null)}
-            />
-          )}
           <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
@@ -1289,12 +1291,6 @@ export function StoragePage() {
             <StatCard label="Provisioniert" value={formatBytes(lunStats.totalSize)} />
             <DistributionCard label="OS-Type" items={lunStats.osTypes} />
           </StatRibbon>
-          <Group justify="space-between" mb="xs">
-            <SearchInput value={lunSearch} onChange={setLunSearch} />
-            <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setLunFormOpen(true)}>
-              LUN anlegen
-            </Button>
-          </Group>
           {historyLun && (
             <CapacityDetailHeader
               title={lunShortName(historyLun.name)}
@@ -1314,6 +1310,12 @@ export function StoragePage() {
               onClose={() => setPerfLun(null)}
             />
           )}
+          <Group justify="space-between" mb="xs">
+            <SearchInput value={lunSearch} onChange={setLunSearch} />
+            <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setLunFormOpen(true)}>
+              LUN anlegen
+            </Button>
+          </Group>
           <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover horizontalSpacing="sm" stickyHeader>
             <Table.Thead>
@@ -1865,9 +1867,6 @@ export function StoragePage() {
               value={aggregateStats.avgEfficiency != null ? `${aggregateStats.avgEfficiency.toFixed(2)} : 1` : "-"}
             />
           </StatRibbon>
-          <Group justify="flex-start" mb="xs">
-            <SearchInput value={aggregateSearch} onChange={setAggregateSearch} />
-          </Group>
           {historyAggregate && (
             <CapacityDetailHeader
               title={historyAggregate.name}
@@ -1878,6 +1877,9 @@ export function StoragePage() {
               onClose={() => setHistoryAggregate(null)}
             />
           )}
+          <Group justify="flex-start" mb="xs">
+            <SearchInput value={aggregateSearch} onChange={setAggregateSearch} />
+          </Group>
           <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Table striped highlightOnHover stickyHeader>
             <Table.Thead>
