@@ -256,17 +256,6 @@ function VmChainHeader({
         </Group>
       </Group>
 
-      {historyOpen && (
-        <Box mb="sm">
-          <CapacityHistoryPanel objectType="vhd" clusterId={vm.cluster_id} vmUuid={vm.id} />
-        </Box>
-      )}
-      {perfOpen && (
-        <Box mb="sm">
-          <InventoryVmPerformancePanel inventoryId={vm.id} />
-        </Box>
-      )}
-
       <Group gap="lg" mb="sm">
         <Group gap={4}>
           <IconCpu size={14} />
@@ -380,6 +369,16 @@ function VmChainHeader({
           );
         })}
       </Stack>
+      {historyOpen && (
+        <Box mt="md">
+          <CapacityHistoryPanel objectType="vhd" clusterId={vm.cluster_id} vmUuid={vm.id} />
+        </Box>
+      )}
+      {perfOpen && (
+        <Box mt="md">
+          <InventoryVmPerformancePanel inventoryId={vm.id} />
+        </Box>
+      )}
     </Paper>
   );
 }
@@ -447,17 +446,6 @@ function CsvChainHeader({
         </Group>
       </Group>
 
-      {historyOpen && (
-        <Box mb="sm">
-          <CapacityHistoryPanel objectType="csv" clusterId={csv.cluster_id} name={csv.name} />
-        </Box>
-      )}
-      {perfOpen && (
-        <Box mb="sm">
-          <HyperVPerformancePanel kind="csv" name={csv.name} hypervClusterName={csv.hyperv_cluster_name} />
-        </Box>
-      )}
-
       <Stack gap="sm">
         <Group gap={6} wrap="nowrap">
           <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
@@ -515,6 +503,16 @@ function CsvChainHeader({
           </Group>
         </Box>
       </Stack>
+      {historyOpen && (
+        <Box mt="md">
+          <CapacityHistoryPanel objectType="csv" clusterId={csv.cluster_id} name={csv.name} />
+        </Box>
+      )}
+      {perfOpen && (
+        <Box mt="md">
+          <HyperVPerformancePanel kind="csv" name={csv.name} hypervClusterName={csv.hyperv_cluster_name} />
+        </Box>
+      )}
     </Paper>
   );
 }
@@ -564,17 +562,6 @@ function SmbShareChainHeader({
         </Group>
       </Group>
 
-      {historyOpen && (
-        <Box mb="sm">
-          <CapacityHistoryPanel objectType="smb_share" clusterId={share.cluster_id} name={uncPath} />
-        </Box>
-      )}
-      {perfOpen && (
-        <Box mb="sm">
-          <HyperVPerformancePanel kind="smb_share" name={uncPath} hypervClusterName={share.hyperv_cluster_name} />
-        </Box>
-      )}
-
       <Stack gap="sm">
         <Group gap={6} wrap="nowrap">
           <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
@@ -617,6 +604,16 @@ function SmbShareChainHeader({
           </Group>
         </Box>
       </Stack>
+      {historyOpen && (
+        <Box mt="md">
+          <CapacityHistoryPanel objectType="smb_share" clusterId={share.cluster_id} name={uncPath} />
+        </Box>
+      )}
+      {perfOpen && (
+        <Box mt="md">
+          <HyperVPerformancePanel kind="smb_share" name={uncPath} hypervClusterName={share.hyperv_cluster_name} />
+        </Box>
+      )}
     </Paper>
   );
 }
