@@ -1112,24 +1112,24 @@ export function StoragePage() {
           </StatRibbon>
           <Group justify="space-between" mb="xs">
             <SearchInput value={volumeSearch} onChange={setVolumeSearch} />
-            <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setVolumeFormOpen(true)}>
-              Volume anlegen
-            </Button>
-          </Group>
-          <Group justify="flex-end" mb="xs">
-            <MultiSelect
-              placeholder="Weitere Attribute anzeigen..."
-              data={[
-                { value: "autodelete", label: "Snapshot Autodelete" },
-                { value: "autogrow", label: "Autogrow" },
-                { value: "snapshot_policy", label: "Snapshot Policy" },
-                { value: "encryption", label: "Verschlüsselung" },
-              ]}
-              value={extraVolCols}
-              onChange={setExtraVolCols}
-              clearable
-              w={360}
-            />
+            <Group gap="sm">
+              <MultiSelect
+                placeholder="Weitere Attribute anzeigen..."
+                data={[
+                  { value: "autodelete", label: "Snapshot Autodelete" },
+                  { value: "autogrow", label: "Autogrow" },
+                  { value: "snapshot_policy", label: "Snapshot Policy" },
+                  { value: "encryption", label: "Verschlüsselung" },
+                ]}
+                value={extraVolCols}
+                onChange={setExtraVolCols}
+                clearable
+                w={360}
+              />
+              <Button leftSection={<IconPlus size={16} />} disabled={locked || !canManageStorage} onClick={() => setVolumeFormOpen(true)}>
+                Volume anlegen
+              </Button>
+            </Group>
           </Group>
           {historyVolume && (
             <CapacityDetailHeader
