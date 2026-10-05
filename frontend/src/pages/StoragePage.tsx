@@ -779,9 +779,27 @@ export function StoragePage() {
   const [historyVolume, setHistoryVolume] = useState<NetAppVolume | null>(null);
   const [snapshotsVolume, setSnapshotsVolume] = useState<NetAppVolume | null>(null);
   const [historyLun, setHistoryLun] = useState<NetAppLun | null>(null);
-  // Performance-Verlauf (Backlog #80): eigenes Objekt neben dem Kapazitaetsverlauf
+  // Performance-Verlauf (Backlog #80). Nutzer-Vorgabe 2026-10-05: je Tabelle
+  // entweder Kapazitaets- ODER Performance-Diagramm, nie beide (auch nicht von
+  // verschiedenen Objekten) -- das Oeffnen des einen schliesst das andere.
   const [perfVolume, setPerfVolume] = useState<NetAppVolume | null>(null);
   const [perfLun, setPerfLun] = useState<NetAppLun | null>(null);
+  const openHistoryVolume = (vol: NetAppVolume) => {
+    setPerfVolume(null);
+    setHistoryVolume(vol);
+  };
+  const openPerfVolume = (vol: NetAppVolume) => {
+    setHistoryVolume(null);
+    setPerfVolume(vol);
+  };
+  const openHistoryLun = (lun: NetAppLun) => {
+    setPerfLun(null);
+    setHistoryLun(lun);
+  };
+  const openPerfLun = (lun: NetAppLun) => {
+    setHistoryLun(null);
+    setPerfLun(lun);
+  };
   const [historyAggregate, setHistoryAggregate] = useState<NetAppAggregate | null>(null);
   const [lunEditOpen, setLunEditOpen] = useState(false);
   const [volumeEditOpen, setVolumeEditOpen] = useState(false);
@@ -1207,12 +1225,12 @@ export function StoragePage() {
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
                       <Tooltip label="Kapazitätsverlauf">
-                        <ActionIcon variant="light" onClick={() => setHistoryVolume(vol)}>
+                        <ActionIcon variant="light" onClick={() => openHistoryVolume(vol)}>
                           <IconChartLine size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Performance">
-                        <ActionIcon variant="light" disabled={!vol.uuid} onClick={() => setPerfVolume(vol)}>
+                        <ActionIcon variant="light" disabled={!vol.uuid} onClick={() => openPerfVolume(vol)}>
                           <IconGauge size={16} />
                         </ActionIcon>
                       </Tooltip>
@@ -1366,12 +1384,12 @@ export function StoragePage() {
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
                       <Tooltip label="Kapazitätsverlauf">
-                        <ActionIcon variant="light" onClick={() => setHistoryLun(lun)}>
+                        <ActionIcon variant="light" onClick={() => openHistoryLun(lun)}>
                           <IconChartLine size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Performance">
-                        <ActionIcon variant="light" disabled={!lun.uuid} onClick={() => setPerfLun(lun)}>
+                        <ActionIcon variant="light" disabled={!lun.uuid} onClick={() => openPerfLun(lun)}>
                           <IconGauge size={16} />
                         </ActionIcon>
                       </Tooltip>
