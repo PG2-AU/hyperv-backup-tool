@@ -199,6 +199,14 @@ function parseSmbShare(path: string): { server: string; share: string } | null {
   return match ? { server: match[1], share: match[2] } : null;
 }
 
+// Detailansicht ueber der Tabelle (Speicherkette + Kapazitaets-/Performance-
+// Diagramme) wird schnell hoeher als das Fenster und drueckte die Tabelle
+// darunter auf null Hoehe (Nutzer-Meldung 2026-10-05). Deshalb: Detail auf
+// gut die halbe Fensterhoehe begrenzt mit eigenem Scrollbalken, Tabelle mit
+// Mindesthoehe -- beide bleiben bedienbar.
+const DETAIL_BOX_STYLE: React.CSSProperties = { maxHeight: "55vh", overflowY: "auto", flexShrink: 0 };
+const TABLE_PAPER_STYLE: React.CSSProperties = { flex: 1, minHeight: 280, display: "flex", flexDirection: "column" };
+
 function VmChainHeader({
   vm,
   csvs,
@@ -995,11 +1003,11 @@ export function VmsPage() {
 
         <Tabs.Panel value="vms" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           {selectedVm && (
-            <Box mb="md">
+            <Box mb="md" style={DETAIL_BOX_STYLE}>
               <VmChainHeader vm={selectedVm} csvs={csvs} smbShares={smbShares} onClose={() => setSelectedVm(null)} />
             </Box>
           )}
-          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={TABLE_PAPER_STYLE}>
             <Title order={5} mb="sm">Virtuelle Maschinen</Title>
             <Group justify="flex-start" mb="sm">
               <SearchInput value={vmSearch} onChange={setVmSearch} placeholder="VM-Name suchen…" />
@@ -1315,7 +1323,7 @@ export function VmsPage() {
 
         <Tabs.Panel value="csv" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           {selectedCsv && (
-            <Box mb="md">
+            <Box mb="md" style={DETAIL_BOX_STYLE}>
               <CsvChainHeader
                 csv={selectedCsv}
                 vms={vms}
@@ -1327,7 +1335,7 @@ export function VmsPage() {
               />
             </Box>
           )}
-          <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <Paper p="md" style={TABLE_PAPER_STYLE}>
             <Title order={5} mb="sm">
               Cluster Shared Volumes
             </Title>
@@ -1498,7 +1506,7 @@ export function VmsPage() {
 
         <Tabs.Panel value="smb" pt="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             {selectedSmbShare && (
-              <Box mb="md">
+              <Box mb="md" style={DETAIL_BOX_STYLE}>
                 <SmbShareChainHeader
                   share={selectedSmbShare}
                   vms={vms}
@@ -1510,7 +1518,7 @@ export function VmsPage() {
                 />
               </Box>
             )}
-            <Paper p="md" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <Paper p="md" style={TABLE_PAPER_STYLE}>
               <Title order={5} mb="sm">
                 SMB3-Freigaben
               </Title>

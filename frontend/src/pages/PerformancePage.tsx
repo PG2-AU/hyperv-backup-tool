@@ -370,7 +370,7 @@ export function PerformancePage() {
           </Group>
           <Text size="xs" c="dimmed">
             {tab === "vms"
-              ? `VM-Werte: Storage QoS des Clusters, von der App alle ${vmData?.interval_minutes || "–"} Minuten gemessen (Momentaufnahme, IOPS auf 8 KB normalisiert). `
+              ? `VM-Werte: Storage QoS des Clusters, von der App alle ${vmData?.interval_minutes || "–"} Minuten abgefragt (gleitendes 5-Minuten-Mittel laut Storage QoS, IOPS auf 8 KB normalisiert). `
               : "Werte: Mittel der letzten 15 s laut ONTAP. "}
             Latenz orange ab 10 ms, rot ab 20 ms (erst ab 10 IOPS bewertet). Zeile anklicken für den Verlauf.
           </Text>

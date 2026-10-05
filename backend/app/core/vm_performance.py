@@ -4,10 +4,14 @@ Werte je VM und CSV zusammengefasst als VmPerfSample abgelegt. Laeuft als
 Hintergrundjob im Abstand aus Settings > Hintergrundjobs (Standard 5 Minuten,
 0 = aus).
 
-Storage QoS liefert je Flow (VM-Disk) einen gleitenden Mittelwert der letzten
-Sekunden -- ein Messpunkt ist also eine Momentaufnahme, kein Mittel ueber das
-ganze Sammelintervall. Fuer Trends und "wer macht die Last" reicht das; fuer
-lueckenlose Spitzen-Erkennung muesste man oefter messen.
+Storage QoS liefert je Flow (VM-Disk) einen GLEITENDEN 5-MINUTEN-MITTELWERT
+(Feld Interval = 300 s; live geprueft 2026-10-05: alle 10 s abgefragt, der
+Zeitstempel ist immer "jetzt", die Werte klingen nach Lastende ueber Minuten
+langsam ab statt zu springen). Bei 5-Minuten-Abfragen deckt jeder Messpunkt
+also die vorangegangenen 5 Minuten ab -- lueckenlos fuer Trends/Volumen,
+kurze Spitzen werden aber auf 5 min geglaettet. Haeufigeres Abfragen bringt
+deshalb kaum mehr Genauigkeit, nur mehr Punkte. IOPS liefert Storage QoS
+ganzzahlig (bei sehr wenig Last nur 0/1), Latenz ohne IO ist 0.
 
 Aufbewahrung: Rohpunkte 7 Tage, danach Stundenmittel (90 Tage)."""
 

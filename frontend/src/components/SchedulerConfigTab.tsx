@@ -109,7 +109,8 @@ export function SchedulerConfigTab() {
             label="VM-Performance messen alle"
             description={
               "Storage-QoS-Werte je VM (IOPS, Latenz, Durchsatz) für Monitoring > Performance -- ein lesender WinRM-Aufruf je " +
-              "Hyper-V-Cluster und Messung. Rohwerte 7 Tage, danach Stundenmittel 90 Tage. 0 = aus."
+              "Hyper-V-Cluster und Messung. Jeder Wert ist ein gleitendes 5-Minuten-Mittel, 5 min deckt also alles ab. " +
+              "Rohwerte 7 Tage, danach Stundenmittel 90 Tage. 0 = aus."
             }
             min={0}
             max={60}
