@@ -58,9 +58,9 @@ const COLORS = [
 
 // Nur ein Vorschlag -- Namen und Werte sind danach frei aenderbar.
 const SUGGESTED: ProtectionClassWrite[] = [
-  { name: "Gold", rank: 1, color: "yellow", max_backup_age_hours: 4, min_retention_days: 30, require_secondary: true, require_app_consistent: true },
-  { name: "Silber", rank: 2, color: "gray", max_backup_age_hours: 26, min_retention_days: 14, require_secondary: true, require_app_consistent: true },
-  { name: "Bronze", rank: 3, color: "orange", max_backup_age_hours: 168, min_retention_days: 7, require_secondary: false, require_app_consistent: false },
+  { name: "Gold", rank: 1, color: "yellow", max_backup_age_hours: 4, min_retention_days: 14, secondary_retention_days: 60, require_app_consistent: true },
+  { name: "Silber", rank: 2, color: "gray", max_backup_age_hours: 26, min_retention_days: 7, secondary_retention_days: 30, require_app_consistent: true },
+  { name: "Bronze", rank: 3, color: "orange", max_backup_age_hours: 168, min_retention_days: 7, secondary_retention_days: 0, require_app_consistent: false },
 ];
 
 const TYPE_LABEL: Record<ProtectionObjectType, string> = { vm: "VMs", csv: "CSVs", smb_share: "SMB3-Freigaben" };
@@ -120,20 +120,24 @@ function ClassModal({ initial, editId, nextRank, onClose }: { initial: Protectio
             onChange={(v) => set("max_backup_age_hours", typeof v === "number" ? v : 26)}
           />
           <NumberInput
-            label="Aufbewahrung mindestens"
-            description="so weit muss man zurück wiederherstellen können"
+            label="Aufbewahrung primär"
+            description="so weit zurück muss lokal wiederherstellbar sein"
             inputWrapperOrder={["label", "input", "description", "error"]}
             min={0}
             suffix=" Tage"
             value={form.min_retention_days}
             onChange={(v) => set("min_retention_days", typeof v === "number" ? v : 7)}
           />
+          <NumberInput
+            label="Aufbewahrung sekundär"
+            description="auf dem SnapMirror-Ziel; 0 = nicht verlangt"
+            inputWrapperOrder={["label", "input", "description", "error"]}
+            min={0}
+            suffix=" Tage"
+            value={form.secondary_retention_days}
+            onChange={(v) => set("secondary_retention_days", typeof v === "number" ? v : 0)}
+          />
         </Group>
-        <Switch
-          label="Kopie auf dem SnapMirror-Ziel ist Pflicht"
-          checked={form.require_secondary}
-          onChange={(e) => set("require_secondary", e.currentTarget.checked)}
-        />
         <Switch
           label="Applikationskonsistente Sicherung ist Pflicht"
           checked={form.require_app_consistent}
@@ -177,7 +181,7 @@ function ClassesTable({ classes, canManage }: { classes: ProtectionClass[]; canM
             leftSection={<IconPlus size={16} />}
             onClick={() =>
               setModal({
-                initial: { name: "", rank: nextRank, color: "blue", max_backup_age_hours: 26, min_retention_days: 7, require_secondary: false, require_app_consistent: false },
+                initial: { name: "", rank: nextRank, color: "blue", max_backup_age_hours: 26, min_retention_days: 7, secondary_retention_days: 0, require_app_consistent: false },
               })
             }
           >
@@ -207,8 +211,8 @@ function ClassesTable({ classes, canManage }: { classes: ProtectionClass[]; canM
               <Table.Th w={60}>Rang</Table.Th>
               <Table.Th>Klasse</Table.Th>
               <Table.Th>Backup höchstens alt</Table.Th>
-              <Table.Th>Aufbewahrung mind.</Table.Th>
-              <Table.Th>Sekundäre Kopie</Table.Th>
+              <Table.Th>Aufbewahrung primär</Table.Th>
+              <Table.Th>Aufbewahrung sekundär</Table.Th>
               <Table.Th>Applikationskonsistent</Table.Th>
               <Table.Th>Zugewiesen</Table.Th>
               <Table.Th w={90} />
@@ -230,7 +234,7 @@ function ClassesTable({ classes, canManage }: { classes: ProtectionClass[]; canM
                 </Table.Td>
                 <Table.Td>{ageText(c.max_backup_age_hours)}</Table.Td>
                 <Table.Td>{c.min_retention_days} Tage</Table.Td>
-                <Table.Td>{c.require_secondary ? "Pflicht" : "–"}</Table.Td>
+                <Table.Td>{c.secondary_retention_days ? `${c.secondary_retention_days} Tage` : "–"}</Table.Td>
                 <Table.Td>{c.require_app_consistent ? "Pflicht" : "–"}</Table.Td>
                 <Table.Td>{c.assigned_count}</Table.Td>
                 <Table.Td>
@@ -271,7 +275,7 @@ function ClassesTable({ classes, canManage }: { classes: ProtectionClass[]; canM
             description: modal.initial.description ?? null,
             max_backup_age_hours: modal.initial.max_backup_age_hours,
             min_retention_days: modal.initial.min_retention_days,
-            require_secondary: modal.initial.require_secondary,
+            secondary_retention_days: modal.initial.secondary_retention_days,
             require_app_consistent: modal.initial.require_app_consistent,
           }}
           editId={modal.editId}

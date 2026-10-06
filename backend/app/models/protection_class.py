@@ -1,7 +1,7 @@
 """Schutzklassen (Backlog #86, Nutzer-Vorgabe 2026-10-06): frei definierbare
 Klassen (z.B. Gold/Silber/Bronze) als Soll-Vorgabe fuer die Sicherung --
-maximales Backup-Alter, Mindest-Aufbewahrung, sekundaere Kopie und
-Applikationskonsistenz. Jede VM und jede CSV/SMB3-Freigabe bekommt ihre
+maximales Backup-Alter, Aufbewahrung primaer und sekundaer (SnapMirror-Ziel)
+in Tagen und Applikationskonsistenz. Jede VM und jede CSV/SMB3-Freigabe bekommt ihre
 Klasse von Hand zugewiesen; geprueft wird, ob das Objekt seiner Klasse
 entsprechend gesichert wird und ob eine VM auf Speicher mindestens ihrer
 Klasse liegt (rank: 1 = hoechste). Pruefung in app.core.protection_class."""
@@ -34,7 +34,13 @@ class ProtectionClass(Base):
     color: Mapped[str] = mapped_column(String(20), default="blue")
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     max_backup_age_hours: Mapped[int] = mapped_column(Integer, default=26)
+    # Aufbewahrung PRIMAER in Tagen (Spaltenname aus der ersten Fassung).
     min_retention_days: Mapped[int] = mapped_column(Integer, default=7)
+    # Aufbewahrung SEKUNDAER in Tagen, 0/None = keine sekundaere Kopie verlangt
+    # (Nutzer-Vorgabe 2026-10-06, ersetzt den Ja/Nein-Schalter require_secondary).
+    secondary_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    # Altlast (durch secondary_retention_days ersetzt, in init_db ueberfuehrt);
+    # bleibt, weil SQLite NOT-NULL-Spalten nicht entfernen kann.
     require_secondary: Mapped[bool] = mapped_column(Boolean, default=False)
     require_app_consistent: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

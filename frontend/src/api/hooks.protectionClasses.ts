@@ -12,8 +12,9 @@ export interface ProtectionClassWrite {
   color: string;
   description?: string | null;
   max_backup_age_hours: number;
+  // Aufbewahrung primaer / sekundaer in Tagen (sekundaer 0 = nicht verlangt)
   min_retention_days: number;
-  require_secondary: boolean;
+  secondary_retention_days: number;
   require_app_consistent: boolean;
 }
 

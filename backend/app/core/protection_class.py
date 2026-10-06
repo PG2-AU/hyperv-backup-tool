@@ -6,9 +6,12 @@ Je VM, CSV und SMB3-Freigabe mit zugewiesener Klasse drei Pruefungen:
    Objekt gesichert wird, die Klasse? Sicherungsabstand = groesste Luecke
    zwischen zwei geplanten Laeufen (bei mehreren Uhrzeiten am Tag inkl. der
    ueber Mitternacht); pausierte Gruppen/Zeitplaene und deaktivierte Policies
-   zaehlen nicht. Aufbewahrung in Tagen (Anzahl-Retention = Anzahl x
-   mittlerer Abstand). So faellt eine "Gold"-VM mit nur taeglichem Backup
-   auf, auch wenn jeder Lauf erfolgreich ist.
+   zaehlen nicht. Aufbewahrung PRIMAER in Tagen = laengste Aufbewahrung einer
+   Policy (Anzahl-Retention = Anzahl x mittlerer Abstand). Aufbewahrung
+   SEKUNDAER in Tagen = was das SnapMirror-Ziel laut seiner Policy fuer das
+   Label der sichernden Policy behaelt (Regel-Anzahl x Abstand der Stufe),
+   je Volume des Objekts; alle Volumes muessen reichen. So faellt eine
+   "Gold"-VM mit nur taeglichem Backup auf, auch wenn jeder Lauf klappt.
 2. Ist: Ist das letzte erfolgreiche Backup jung genug (10 % bzw. mindestens
    30 min Toleranz fuer die Laufzeit), und gibt es bei Pflicht eine sekundaere
    Kopie, die nicht aelter als max(Klassen-Alter, 26 h) ist?
@@ -28,6 +31,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.backup_policy import ConsistencyType, RetentionType
 from app.models.backup_run import BackupRunSnapshot, BackupRunVmConfig
 from app.models.hyperv_discovery import HyperVVm
+from app.models.netapp_discovery import NetAppSnapMirrorPolicy, NetAppSnapMirrorRelationship
 from app.models.protection_class import ProtectionClass, ProtectionClassAssignment
 from app.models.resource_group import ResourceGroup
 from app.models.schedule import ScheduleType
@@ -80,6 +84,9 @@ class _Link:
     retention_days: float
     secondary: bool
     app_consistent: bool
+    # mittlerer Abstand in Tagen und SnapMirror-Label -- fuer die sekundaere Aufbewahrung
+    interval_days: float = 1.0
+    label: str | None = None
 
 
 def _effective_links(groups: list[ResourceGroup]) -> dict[str, list[_Link]]:
@@ -100,6 +107,7 @@ def _effective_links(groups: list[ResourceGroup]) -> dict[str, list[_Link]]:
                 links.append(_Link(
                     policy_name=policy.name, gap_hours=gap, retention_days=retention, secondary=bool(policy.snapmirror_update),
                     app_consistent=policy.consistency == ConsistencyType.APPLICATION_CONSISTENT,
+                    interval_days=mean / 24, label=policy.snapmirror_label.name if policy.snapmirror_label else None,
                 ))
         result[group.name] = links
     return result
@@ -111,12 +119,64 @@ def _fmt_hours(hours: float) -> str:
     return f"{round(hours / 24):g} Tage"
 
 
+class _SnapMirror:
+    """SnapMirror-Beziehungen und die Aufbewahrungsregeln ihrer Policies aus
+    der letzten NetApp-Discovery: Volume 'svm:volume' -> [{label: Anzahl}]."""
+
+    def __init__(self, db: Session):
+        import json
+
+        policies: dict[str, dict[str, int]] = {}
+        for policy in db.query(NetAppSnapMirrorPolicy).all():
+            rules: dict[str, int] = {}
+            try:
+                for rule in json.loads(policy.rules_json or "[]"):
+                    rules[str(rule.get("label"))] = int(rule.get("count") or 0)
+            except (ValueError, TypeError, AttributeError):
+                pass
+            policies.setdefault(policy.name, rules)
+        self.by_volume: dict[str, list[tuple[str, dict[str, int]]]] = {}
+        for rel in db.query(NetAppSnapMirrorRelationship).all():
+            if rel.source_path:
+                self.by_volume.setdefault(rel.source_path.lower(), []).append((rel.policy_name or "?", policies.get(rel.policy_name or "", {})))
+
+    def check(self, volumes: list[str], links: list[_Link], required_days: int) -> list[str]:
+        """Verstoesse gegen die verlangte sekundaere Aufbewahrung."""
+        secondary = [l for l in links if l.secondary]
+        if not secondary:
+            return ["keine Policy mit SnapMirror-Update (sekundäre Aufbewahrung verlangt)"]
+        if not volumes:
+            return []
+        violations = []
+        for volume in volumes:
+            relationships = self.by_volume.get(volume.lower())
+            if not relationships:
+                violations.append(f"keine SnapMirror-Beziehung für Volume {volume}")
+                continue
+            best, reason = 0.0, ""
+            for policy_name, rules in relationships:
+                for link in secondary:
+                    if not link.label:
+                        reason = reason or f"Policy {link.policy_name} hat kein SnapMirror-Label"
+                    elif link.label not in rules:
+                        reason = reason or f"SnapMirror-Policy {policy_name} bewahrt Label {link.label} nicht auf"
+                    else:
+                        best = max(best, rules[link.label] * link.interval_days)
+            if best + 0.01 < required_days:
+                if best:
+                    violations.append(f"sekundäre Aufbewahrung ca. {best:.0f} Tage ({volume}), Klasse verlangt {required_days}")
+                else:
+                    violations.append(f"sekundäre Aufbewahrung nicht gegeben ({volume}): {reason or 'keine passende Regel'}")
+        return violations
+
+
 def _check_backup(
     cls: ProtectionClass, links: list[_Link], protected: bool, last_primary: datetime | None, last_secondary: datetime | None,
-    now: datetime,
+    now: datetime, snapmirror: "_SnapMirror | None" = None, volumes: list[str] | None = None,
 ) -> list[str]:
     violations: list[str] = []
     max_age = cls.max_backup_age_hours
+    secondary_days = cls.secondary_retention_days or 0
     if not protected:
         return ["in keiner Protection Group"]
     # --- Soll
@@ -128,9 +188,9 @@ def _check_backup(
             violations.append(f"Sicherungsabstand {_fmt_hours(best_gap)}, Klasse verlangt höchstens {_fmt_hours(max_age)}")
         best_retention = max(l.retention_days for l in links)
         if best_retention + 0.01 < cls.min_retention_days:
-            violations.append(f"Aufbewahrung ca. {best_retention:.0f} Tage, Klasse verlangt mindestens {cls.min_retention_days}")
-        if cls.require_secondary and not any(l.secondary for l in links):
-            violations.append("keine Policy mit SnapMirror-Update (sekundäre Kopie verlangt)")
+            violations.append(f"primäre Aufbewahrung ca. {best_retention:.0f} Tage, Klasse verlangt {cls.min_retention_days}")
+        if secondary_days and snapmirror is not None:
+            violations.extend(snapmirror.check(volumes or [], links, secondary_days))
         if cls.require_app_consistent:
             consistent = [l.gap_hours for l in links if l.app_consistent]
             if not consistent:
@@ -146,7 +206,7 @@ def _check_backup(
         violations.append("noch kein erfolgreiches Backup")
     elif now - newest > timedelta(hours=max_age) + tolerance:
         violations.append(f"letztes Backup vor {_fmt_hours(round((now - newest).total_seconds() / 3600))}, erlaubt {_fmt_hours(max_age)}")
-    if cls.require_secondary:
+    if secondary_days:
         limit = timedelta(hours=max(max_age, SECONDARY_MIN_AGE_HOURS)) + tolerance
         if last_secondary is None:
             violations.append("keine sekundäre Kopie vorhanden")
@@ -201,7 +261,9 @@ def evaluate(db: Session, now: datetime | None = None) -> list[ObjectStatus]:
         assignment = assignment or by_name.get((object_type, cluster_id, name))
         return classes.get(assignment.class_id) if assignment else None
 
-    def base(object_type, cluster_id, cluster_name, name, display, groups, policies, cls, backup_key) -> ObjectStatus:
+    snapmirror = _SnapMirror(db)
+
+    def base(object_type, cluster_id, cluster_name, name, display, groups, policies, cls, backup_key, volumes) -> ObjectStatus:
         status = ObjectStatus(
             object_type=object_type, cluster_id=cluster_id, cluster_name=cluster_name, name=name, display_name=display,
             resource_group_names=list(groups), policy_names=list(policies),
@@ -210,27 +272,37 @@ def evaluate(db: Session, now: datetime | None = None) -> list[ObjectStatus]:
         if cls is not None:
             status.class_id, status.class_name, status.class_color = cls.id, cls.name, cls.color
             object_links = [l for g in groups for l in links.get(g, [])]
-            status.violations = _check_backup(cls, object_links, bool(groups), primary.get(backup_key), secondary.get(backup_key), now)
+            status.violations = _check_backup(
+                cls, object_links, bool(groups), primary.get(backup_key), secondary.get(backup_key), now, snapmirror, volumes,
+            )
         return status
 
     result: list[ObjectStatus] = []
     storage_class: dict[tuple[str, str | None, str], ProtectionClass | None] = {}
+    storage_volume: dict[tuple[str, str | None, str], str | None] = {}
     for csv in list_csvs(db, None):
         cls = class_of("csv", csv.cluster_id, csv.name)
         storage_class[("csv", csv.cluster_id, csv.name)] = cls
+        volume = f"{csv.svm_name}:{csv.volume_name}" if csv.svm_name and csv.volume_name else None
+        storage_volume[("csv", csv.cluster_id, csv.name)] = volume
         result.append(base("csv", csv.cluster_id, csv.hyperv_cluster_name, csv.name, csv.name, csv.resource_group_names, csv.policy_names,
-                           cls, f"csv:{csv.name}"))
+                           cls, f"csv:{csv.name}", [volume] if volume else []))
     for share in list_smb_shares(db, None):
         key = f"{share.server}|{share.share}"
         cls = class_of("smb_share", share.cluster_id, key)
         storage_class[("smb_share", share.cluster_id, key)] = cls
+        volume = f"{share.svm_name}:{share.volume_name}" if share.svm_name and share.volume_name else None
+        storage_volume[("smb_share", share.cluster_id, key)] = volume
         result.append(base("smb_share", share.cluster_id, share.hyperv_cluster_name, key, f"\\\\{share.server}\\{share.share}",
-                           share.resource_group_names, share.policy_names, cls, f"vol:{share.svm_name}:{share.volume_name}"))
+                           share.resource_group_names, share.policy_names, cls, f"vol:{share.svm_name}:{share.volume_name}",
+                           [volume] if volume else []))
     for vm in list_vms(db, None):
         cls = class_of("vm", vm.cluster_id, vm.name)
-        status = base("vm", vm.cluster_id, vm.cluster, vm.name, vm.name, vm.resource_group_names, vm.policy_names, cls, f"vm:{vm.name}")
         locations = [("csv", n, n) for n in sorted(_csv_names_for_vm(vm))]
         locations += [("smb_share", k, "\\\\" + k.replace("|", "\\")) for k in sorted(_smb_share_keys_for_vm(vm))]
+        volumes = sorted({v for kind, key, _ in locations if (v := storage_volume.get((kind, vm.cluster_id, key)))})
+        status = base("vm", vm.cluster_id, vm.cluster, vm.name, vm.name, vm.resource_group_names, vm.policy_names, cls, f"vm:{vm.name}",
+                      volumes)
         for kind, key, display in locations:
             store = storage_class.get((kind, vm.cluster_id, key))
             status.storage.append({"name": display, "class_name": store.name if store else None, "class_color": store.color if store else None})

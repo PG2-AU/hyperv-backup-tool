@@ -136,8 +136,9 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   wird im Browser. Ein Treffer springt auf die passende Seite und waehlt das Objekt aus bzw.
   oeffnet bei Snapshots den Snapshots-Dialog des Volumes.
 - **Schutzklassen** -- Backup > Schutzklassen: frei definierbare Klassen (z.B. Gold/Silber/
-  Bronze, als Vorschlag per Knopf) mit Rang, maximalem Backup-Alter, Mindest-Aufbewahrung,
-  Pflicht zur sekundaeren Kopie und zur applikationskonsistenten Sicherung. Jede VM, CSV und
+  Bronze, als Vorschlag per Knopf) mit Rang, maximalem Backup-Alter, Aufbewahrung primaer
+  und sekundaer in Tagen (sekundaer 0 = nicht verlangt; Ist-Wert aus den Regeln der
+  SnapMirror-Policy am Ziel abgeleitet) und Pflicht zur applikationskonsistenten Sicherung. Jede VM, CSV und
   SMB3-Freigabe bekommt ihre Klasse von Hand (Spalte in Inventory oder Sammelzuweisung).
   Geprueft wird (a) Soll: passen Policies/Zeitplaene zur Klasse (groesste Luecke zwischen
   zwei Laeufen, Aufbewahrung), (b) Ist: letztes Backup und sekundaere Kopie jung genug,

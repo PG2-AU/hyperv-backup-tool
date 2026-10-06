@@ -30,8 +30,9 @@ class ClassWrite(BaseModel):
     color: str = Field(default="blue", max_length=20)
     description: str | None = Field(default=None, max_length=500)
     max_backup_age_hours: int = Field(ge=1, le=24 * 366)
+    # Aufbewahrung primaer / sekundaer in Tagen; sekundaer 0 = nicht verlangt
     min_retention_days: int = Field(ge=0, le=3660)
-    require_secondary: bool = False
+    secondary_retention_days: int = Field(default=0, ge=0, le=3660)
     require_app_consistent: bool = False
 
 
@@ -89,7 +90,8 @@ def _read(db: Session, cls: ProtectionClass) -> ClassRead:
     return ClassRead(
         id=cls.id, name=cls.name, rank=cls.rank, color=cls.color, description=cls.description,
         max_backup_age_hours=cls.max_backup_age_hours, min_retention_days=cls.min_retention_days,
-        require_secondary=cls.require_secondary, require_app_consistent=cls.require_app_consistent, assigned_count=count,
+        secondary_retention_days=cls.secondary_retention_days or 0, require_app_consistent=cls.require_app_consistent,
+        assigned_count=count,
     )
 
 

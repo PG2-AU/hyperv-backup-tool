@@ -454,6 +454,15 @@ def init_db(db: Session) -> None:
         )
         conn.execute(text("UPDATE scheduler_config SET vm_perf_interval_minutes = 5 WHERE vm_perf_interval_minutes IS NULL"))
         conn.commit()
+    # Schutzklassen (Backlog #86): "sekundaere Kopie ja/nein" -> Aufbewahrung sekundaer in Tagen.
+    _add_missing_columns(engine, "protection_classes", {"secondary_retention_days": "INTEGER"})
+    with engine.connect() as conn:
+        if list(conn.execute(text("PRAGMA table_info(protection_classes)"))):
+            conn.execute(text(
+                "UPDATE protection_classes SET secondary_retention_days = "
+                "CASE WHEN require_secondary THEN min_retention_days ELSE 0 END WHERE secondary_retention_days IS NULL"
+            ))
+            conn.commit()
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     _add_missing_columns(engine, "netapp_aggregates", {"efficiency_ratio_wo_snapshots_flexclones": "FLOAT"})
     _add_missing_columns(engine, "netapp_clusters", {"system_type": "VARCHAR(20)"})
