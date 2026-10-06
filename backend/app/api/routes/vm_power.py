@@ -82,6 +82,12 @@ def _busy_reason(db: Session, cluster_id: str, vm_name: str) -> str | None:
         VmMoveRun.hyperv_cluster_id == cluster_id, VmMoveRun.vm_name == vm_name, VmMoveRun.status == RestoreStatus.RUNNING,
     ).first():
         return "Diese VM wird gerade verschoben."
+    from app.models.vm_settings_run import VmSettingsRun
+
+    if db.query(VmSettingsRun).filter(
+        VmSettingsRun.hyperv_cluster_id == cluster_id, VmSettingsRun.vm_name == vm_name, VmSettingsRun.status == RestoreStatus.RUNNING,
+    ).first():
+        return "Für diese VM werden gerade Einstellungen geändert."
     return None
 
 

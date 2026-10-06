@@ -135,6 +135,14 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   Objekte mit Leserecht) wird einmal geladen und alle 5 Minuten aufgefrischt, gefiltert
   wird im Browser. Ein Treffer springt auf die passende Seite und waehlt das Objekt aus bzw.
   oeffnet bei Snapshots den Snapshots-Dialog des Volumes.
+- **VM-Einstellungen aendern** -- Eintrag im Power-Menue der VM: vCPU und Arbeitsspeicher
+  (statisch/dynamisch; nur bei ausgeschalteter VM), Netzwerkadapter (Switch/VLAN umstecken
+  oder trennen jederzeit; hinzufuegen/entfernen bei Generation 1 nur ausgeschaltet),
+  Festplatten vergroessern (nie verkleinern; nicht mit Checkpoints/Differenz-Disk; Partition
+  im Gast bleibt Sache des Gasts) und neue VHDX am SCSI-Controller anlegen. Der Dialog fragt
+  den Live-Stand ab, ausgefuehrt werden nur echte Abweichungen; danach Cluster-Konfiguration
+  und Inventory aktualisiert. Kein Zurueckrollen. Gesperrt waehrend Backup, Restore,
+  Verschiebung, Loeschung oder Power-Aktion. API /api/vm-settings, Recht hyperv:manage.
 - **VM loeschen** -- Eintrag im Power-Menue der VM: Cluster-Rolle und VM entfernen, aus allen
   Protection Groups austragen, Festplatten-Dateien inkl. Checkpoint-Ketten loeschen (Opt-out)
   und danach nur leer gewordene Ordner des eigenen VM-Ordners entfernen. Laufende VM nur mit

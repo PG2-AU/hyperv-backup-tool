@@ -2509,3 +2509,140 @@ class HyperVService:
             return []
         data = json.loads(text)
         return data if isinstance(data, list) else [data]
+
+    # --- VM-Einstellungen aendern (Backlog #81, siehe app.api.routes.vm_settings) ---
+
+    def vm_settings_info(self, node_session: winrm.Session, vm_name: str) -> dict:
+        """Aktuelle Hardware einer VM: CPU, RAM, Netzwerkadapter (mit stabiler
+        Adapter-Id) und Festplatten (Controller, virtuelle Groesse, Typ,
+        Eltern-Datei bei Checkpoint/Differenz-Disk), dazu die Zahl der
+        logischen Prozessoren des Knotens. Rein lesend."""
+        vm = vm_name.replace("'", "''")
+        script = (
+            "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; "
+            f"$v = Get-VM -Name '{vm}'; $m = Get-VMMemory -VM $v; "
+            "$adapters = @(Get-VMNetworkAdapter -VM $v | ForEach-Object { "
+            "$vl = Get-VMNetworkAdapterVlan -VMNetworkAdapter $_; "
+            "[PSCustomObject]@{ Id = $_.Id; Name = $_.Name; Switch = $_.SwitchName; Mac = $_.MacAddress; "
+            "Connected = [bool]$_.SwitchName; VlanMode = [string]$vl.OperationMode; VlanId = [int]$vl.AccessVlanId } }); "
+            "$disks = @(Get-VMHardDiskDrive -VM $v | Where-Object { $_.Path } | ForEach-Object { "
+            "$h = $null; try { $h = Get-VHD -Path $_.Path } catch {}; "
+            "[PSCustomObject]@{ Path = $_.Path; ControllerType = [string]$_.ControllerType; ControllerNumber = $_.ControllerNumber; "
+            "ControllerLocation = $_.ControllerLocation; Size = $(if ($h) { $h.Size } else { $null }); "
+            "FileSize = $(if ($h) { $h.FileSize } else { $null }); VhdType = $(if ($h) { [string]$h.VhdType } else { $null }); "
+            "ParentPath = $(if ($h) { $h.ParentPath } else { $null }) } }); "
+            "[PSCustomObject]@{ Id = [string]$v.Id; State = [string]$v.State; Generation = $v.Generation; "
+            "IsClustered = [bool]$v.IsClustered; Cpu = (Get-VMProcessor -VM $v).Count; "
+            "MemoryStartup = $m.Startup; MemoryDynamic = [bool]$m.DynamicMemoryEnabled; MemoryMinimum = $m.Minimum; "
+            "MemoryMaximum = $m.Maximum; "
+            "CheckpointCount = @(Get-VMSnapshot -VM $v -ErrorAction SilentlyContinue).Count; "
+            "HostLogicalCpus = (Get-VMHost).LogicalProcessorCount; Adapters = $adapters; Disks = $disks } "
+            "| ConvertTo-Json -Depth 4 -Compress"
+        )
+        result = self._run_ps(node_session, script)
+        if not result.success:
+            raise RuntimeError(f"VM '{vm_name}' konnte nicht gelesen werden: {result.error}")
+        data = json.loads(result.output)
+
+        def _as_list(value) -> list:
+            return value if isinstance(value, list) else ([value] if value else [])
+
+        return {
+            "vm_id": data.get("Id") or "", "state": data.get("State") or "", "generation": int(data.get("Generation") or 0),
+            "is_clustered": bool(data.get("IsClustered")), "cpu_count": int(data.get("Cpu") or 0),
+            "memory_startup_bytes": int(data.get("MemoryStartup") or 0), "dynamic_memory_enabled": bool(data.get("MemoryDynamic")),
+            "memory_minimum_bytes": int(data.get("MemoryMinimum") or 0), "memory_maximum_bytes": int(data.get("MemoryMaximum") or 0),
+            "checkpoint_count": int(data.get("CheckpointCount") or 0), "host_logical_cpus": int(data.get("HostLogicalCpus") or 0),
+            "adapters": [
+                {
+                    "id": a["Id"], "name": a.get("Name") or "", "switch_name": a.get("Switch") or None,
+                    "mac_address": a.get("Mac") or None,
+                    "vlan_id": int(a["VlanId"]) if a.get("VlanMode") == "Access" and a.get("VlanId") else None,
+                    "vlan_mode": a.get("VlanMode") or "Untagged",
+                }
+                for a in _as_list(data.get("Adapters")) if a and a.get("Id")
+            ],
+            "disks": [
+                {
+                    "path": d["Path"], "controller_type": d.get("ControllerType") or "", "controller_number": d.get("ControllerNumber"),
+                    "controller_location": d.get("ControllerLocation"),
+                    "size_bytes": int(d["Size"]) if d.get("Size") is not None else None,
+                    "file_size_bytes": int(d["FileSize"]) if d.get("FileSize") is not None else None,
+                    "vhd_type": d.get("VhdType") or None, "parent_path": d.get("ParentPath") or None,
+                }
+                for d in _as_list(data.get("Disks")) if d and d.get("Path")
+            ],
+        }
+
+    def set_network_adapter(self, node_session: winrm.Session, vm_name: str, adapter_id: str, switch_name: str | None, vlan_id: int | None) -> None:
+        """Einen vorhandenen Adapter (ueber seine Id) mit einem Switch
+        verbinden bzw. trennen (switch_name None) und das VLAN setzen
+        (vlan_id None = ungetaggt). Im laufenden Betrieb moeglich."""
+        vm = vm_name.replace("'", "''")
+        aid = adapter_id.replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"$a = Get-VMNetworkAdapter -VMName '{vm}' | Where-Object {{ $_.Id -eq '{aid}' }}; "
+            "if (-not $a) { throw 'Netzwerkadapter nicht mehr vorhanden' }; "
+        )
+        if switch_name:
+            switch = switch_name.replace("'", "''")
+            script += f"Connect-VMNetworkAdapter -VMNetworkAdapter $a -SwitchName '{switch}'; "
+        else:
+            script += "Disconnect-VMNetworkAdapter -VMNetworkAdapter $a; "
+        if vlan_id:
+            script += f"Set-VMNetworkAdapterVlan -VMNetworkAdapter $a -Access -VlanId {int(vlan_id)}"
+        else:
+            script += "Set-VMNetworkAdapterVlan -VMNetworkAdapter $a -Untagged"
+        result = self._run_ps(node_session, script)
+        if not result.success:
+            raise RuntimeError(f"Netzwerkadapter von '{vm_name}' konnte nicht geaendert werden: {result.error}")
+
+    def remove_network_adapter(self, node_session: winrm.Session, vm_name: str, adapter_id: str) -> None:
+        vm = vm_name.replace("'", "''")
+        aid = adapter_id.replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"$a = Get-VMNetworkAdapter -VMName '{vm}' | Where-Object {{ $_.Id -eq '{aid}' }}; "
+            "if (-not $a) { throw 'Netzwerkadapter nicht mehr vorhanden' }; "
+            "Remove-VMNetworkAdapter -VMNetworkAdapter $a"
+        )
+        result = self._run_ps(node_session, script)
+        if not result.success:
+            raise RuntimeError(f"Netzwerkadapter von '{vm_name}' konnte nicht entfernt werden: {result.error}")
+
+    def resize_vhd(self, node_session: winrm.Session, vhd_path: str, size_bytes: int) -> int:
+        """Virtuelle Disk vergroessern (nie verkleinern). Liefert die neue
+        Groesse. Der Gast sieht danach nur mehr unzugeordneten Platz -- die
+        Partition im Gast wird hier NICHT erweitert."""
+        path = vhd_path.replace("'", "''")
+        script = (
+            "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; "
+            f"$h = Get-VHD -Path '{path}'; "
+            f"if ({int(size_bytes)} -le $h.Size) {{ throw \"Neue Groesse muss groesser sein als die aktuelle ($($h.Size) Bytes)\" }}; "
+            f"Resize-VHD -Path '{path}' -SizeBytes {int(size_bytes)}; (Get-VHD -Path '{path}').Size"
+        )
+        result = self._run_ps(node_session, script)
+        if not result.success:
+            raise RuntimeError(f"Festplatte {vhd_path} konnte nicht vergroessert werden: {result.error}")
+        return int(result.output.strip().splitlines()[-1])
+
+    def add_vm_disk(self, node_session: winrm.Session, vm_name: str, vhd_path: str, size_bytes: int, dynamic: bool) -> None:
+        """Neue VHDX anlegen und am SCSI-Controller anhaengen (im laufenden
+        Betrieb moeglich). Fehlt ein SCSI-Controller (Generation 1), wird er
+        angelegt -- das geht nur bei ausgeschalteter VM. Schlaegt das
+        Anhaengen fehl, wird die gerade angelegte Datei wieder entfernt."""
+        vm = vm_name.replace("'", "''")
+        path = vhd_path.replace("'", "''")
+        script = (
+            "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; "
+            f"if (Test-Path -LiteralPath '{path}') {{ throw \"Datei {path} existiert bereits\" }}; "
+            f"if (-not (Get-VMScsiController -VMName '{vm}')) {{ Add-VMScsiController -VMName '{vm}' }}; "
+            f"New-Item -ItemType Directory -Force -Path (Split-Path -Parent '{path}') | Out-Null; "
+            f"New-VHD -Path '{path}' -SizeBytes {int(size_bytes)} {'-Dynamic' if dynamic else '-Fixed'} | Out-Null; "
+            f"try {{ Add-VMHardDiskDrive -VMName '{vm}' -ControllerType SCSI -Path '{path}' }} "
+            f"catch {{ Remove-Item -LiteralPath '{path}' -Force -ErrorAction SilentlyContinue; throw }}"
+        )
+        result = self._run_ps(node_session, script)
+        if not result.success:
+            raise RuntimeError(f"Festplatte {vhd_path} konnte nicht angelegt werden: {result.error}")

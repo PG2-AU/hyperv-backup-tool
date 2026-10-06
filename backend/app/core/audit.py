@@ -157,6 +157,7 @@ ROUTES: dict[tuple[str, str], tuple[str, str]] = {
     ("POST", "/api/vm-create/runs/{run_id}/keep"): ("VM", "Teilergebnis behalten"),
     ("POST", "/api/vm-create/runs/{run_id}/rollback"): ("VM", "Anlage zurückgerollt"),
     ("POST", "/api/vm-delete"): ("VM", "Löschen gestartet"),
+    ("POST", "/api/vm-settings"): ("VM", "Einstellungen geändert"),
     ("POST", "/api/vm-moves"): ("VM", "Live-Migration gestartet"),
     ("POST", "/api/vm-moves/{run_id}/cancel"): ("VM", "Verschieben abgebrochen"),
     ("POST", "/api/vm-moves/storage"): ("VM", "Storage-Verschiebung gestartet"),

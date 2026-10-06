@@ -4,6 +4,7 @@ import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  IconAdjustments,
   IconAlertTriangle,
   IconArrowsRightLeft,
   IconArrowAutofitWidth,
@@ -55,6 +56,7 @@ import { SiteBadgeView } from "@/components/SiteBadge";
 import { VmConsoleModal } from "@/components/VmConsoleModal";
 import { VmCreateModal } from "@/components/VmCreateModal";
 import { VmDeleteModal } from "@/components/VmDeleteModal";
+import { VmSettingsModal } from "@/components/VmSettingsModal";
 import { VmMoveModal } from "@/components/VmMoveModal";
 import { useVmPower, useVmPowerActions, VM_POWER_LABEL, type VmPowerActionName } from "@/api/hooks.vmPower";
 import { CsvCreateModal } from "@/components/CsvCreateModal";
@@ -668,6 +670,7 @@ export function VmsPage() {
   // Neue VM per Assistent (Backlog #74).
   const [createVmOpen, setCreateVmOpen] = useState(false);
   const [deleteVm, setDeleteVm] = useState<Vm | null>(null);
+  const [settingsVm, setSettingsVm] = useState<Vm | null>(null);
   // Stufe 3: Dialog im "Standort-Abweichung beheben"-Modus geoeffnet.
   const [moveFixSite, setMoveFixSite] = useState(false);
   // Standort-Filter (Settings > Standorte) -- nur sichtbar, sobald
@@ -1223,7 +1226,7 @@ export function VmsPage() {
                             variant="light"
                             disabled={!canManageHyperv || !vm.cluster_id}
                             loading={!!power}
-                            title={power ? `${VM_POWER_LABEL[power.action]} läuft…` : "Starten / Herunterfahren / Löschen"}
+                            title={power ? `${VM_POWER_LABEL[power.action]} läuft…` : "Starten / Herunterfahren / Einstellungen / Löschen"}
                           >
                             <IconPower size={16} />
                           </ActionIcon>
@@ -1253,6 +1256,9 @@ export function VmsPage() {
                             Ausschalten (hart)
                           </Menu.Item>
                           <Menu.Divider />
+                          <Menu.Item leftSection={<IconAdjustments size={14} />} onClick={() => setSettingsVm(vm)}>
+                            Einstellungen ändern…
+                          </Menu.Item>
                           <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={() => setDeleteVm(vm)}>
                             VM löschen…
                           </Menu.Item>
@@ -1682,6 +1688,7 @@ export function VmsPage() {
       <VmConsoleModal vm={consoleVm} onClose={() => setConsoleVm(null)} />
       <VmCreateModal opened={createVmOpen} onClose={() => setCreateVmOpen(false)} />
       <VmDeleteModal vm={deleteVm} onClose={() => setDeleteVm(null)} />
+      <VmSettingsModal vm={settingsVm} onClose={() => setSettingsVm(null)} />
       <VmMoveModal opened={moveVm !== null} onClose={() => setMoveVm(null)} vm={moveVm} fixSiteMismatch={moveFixSite} />
       <BackupsModal
         opened={!!backupsTarget}

@@ -43,6 +43,7 @@ from app.api.routes import (
     vm_console,
     vm_create,
     vm_delete,
+    vm_settings,
     vm_moves,
     vm_power,
     vms,
@@ -135,6 +136,7 @@ app.include_router(vm_power.router)
 app.include_router(vm_console.router)
 app.include_router(vm_create.router)
 app.include_router(vm_delete.router)
+app.include_router(vm_settings.router)
 app.include_router(config_transfer.router)
 app.include_router(db_backup.router)
 app.include_router(csv_resize.router)

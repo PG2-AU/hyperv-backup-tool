@@ -44,6 +44,7 @@ from app.models.csv_delete_run import CsvDeleteRun
 from app.models.smb_share_run import SmbCreateRun, SmbDeleteRun
 from app.models.vm_create_run import VmCreateRun
 from app.models.vm_delete_run import VmDeleteRun
+from app.models.vm_settings_run import VmSettingsRun
 from app.models.csv_resize_run import CsvResizeRun
 from app.models.db_backup import DbBackupConfig
 from app.models.file_restore_run import FileRestoreRun
@@ -382,6 +383,7 @@ def running_jobs(db: Session) -> list[str]:
         (RestoreRun, "Restore"), (VmRecreateRun, "VM-Neuerstellung"), (FileRestoreRun, "offene Datei-Restore-Sitzung"),
         (VmMoveRun, "VM-Verschiebung"), (CsvResizeRun, "CSV-Vergrößerung"), (CsvCreateRun, "CSV-Anlage"), (CsvDeleteRun, "CSV-Löschung"),
         (SmbCreateRun, "SMB3-Freigaben-Anlage"), (SmbDeleteRun, "SMB3-Freigaben-Löschung"), (VmCreateRun, "VM-Anlage"), (VmDeleteRun, "VM-Löschung"),
+        (VmSettingsRun, "Änderung von VM-Einstellungen"),
     ):
         count = db.query(model).filter(model.status == RestoreStatus.RUNNING).count()
         if count:

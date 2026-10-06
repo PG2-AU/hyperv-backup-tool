@@ -29,6 +29,7 @@ from app.models.report import ReportDefinition, ReportRun  # noqa: F401  (nur fu
 from app.models.audit import AuditEvent  # noqa: F401  (nur fuer create_all)
 from app.models.vm_performance import VmPerfSample  # noqa: F401  (nur fuer create_all)
 from app.models.vm_delete_run import VmDeleteRun, VmDeleteRunStep  # noqa: F401  (nur fuer create_all)
+from app.models.vm_settings_run import VmSettingsRun, VmSettingsRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.smb_share_run import SmbCreateRun, SmbCreateRunStep, SmbDeleteRun, SmbDeleteRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.db_backup import DbBackupConfig  # noqa: F401  (nur fuer create_all)
 from app.models.vm_move_run import VmMoveRun, VmMoveRunStep  # noqa: F401  (nur fuer create_all)
@@ -199,7 +200,10 @@ def _reap_orphaned_in_progress_runs(engine) -> None:
         # RestoreRun/VmRecreateRun/FileRestoreRun nutzen (anders als
         # BackupRun) eine String-Spalte statt SQLAlchemy Enum(...) -- dort
         # steht der rohe .value-String ('running'), nicht der Enum-NAME.
-        for table in ("restore_runs", "vm_recreate_runs", "file_restore_runs", "vm_move_runs", "csv_resize_runs", "csv_create_runs", "csv_delete_runs", "smb_create_runs", "smb_delete_runs", "vm_create_runs", "vm_delete_runs"):
+        existing_tables = {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
+        for table in ("restore_runs", "vm_recreate_runs", "file_restore_runs", "vm_move_runs", "csv_resize_runs", "csv_create_runs", "csv_delete_runs", "smb_create_runs", "smb_delete_runs", "vm_create_runs", "vm_delete_runs", "vm_settings_runs"):
+            if table not in existing_tables:
+                continue  # Tabelle kommt erst mit diesem Start dazu
             conn.execute(
                 text(f"UPDATE {table} SET status = 'failed', error_message = :msg, finished_at = CURRENT_TIMESTAMP WHERE status = 'running'"),
                 {"msg": message},
@@ -207,11 +211,10 @@ def _reap_orphaned_in_progress_runs(engine) -> None:
         # Schritte, die beim Neustart noch liefen, gehoeren per Definition zu
         # einem gerade abgebrochenen Lauf -- sonst drehen sie sich im
         # Protokoll ewig weiter (Nutzer-Meldung 2026-10-03).
-        existing_tables = {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
         for table in (
             "backup_run_steps", "restore_run_steps", "vm_recreate_run_steps", "file_restore_run_steps", "vm_move_run_steps",
             "csv_resize_run_steps", "csv_create_run_steps", "csv_delete_run_steps", "smb_create_run_steps",
-            "smb_delete_run_steps", "vm_create_run_steps", "vm_delete_run_steps",
+            "smb_delete_run_steps", "vm_create_run_steps", "vm_delete_run_steps", "vm_settings_run_steps",
         ):
             if table not in existing_tables:
                 continue

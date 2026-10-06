@@ -31,6 +31,7 @@ from app.models.restore_run import RestoreRun, RestoreRunStep
 from app.models.smb_share_run import SmbCreateRun, SmbCreateRunStep, SmbDeleteRun, SmbDeleteRunStep
 from app.models.vm_create_run import VmCreateRun, VmCreateRunStep
 from app.models.vm_delete_run import VmDeleteRun, VmDeleteRunStep
+from app.models.vm_settings_run import VmSettingsRun, VmSettingsRunStep
 from app.models.vm_move_run import VmMoveRun, VmMoveRunStep
 from app.models.vm_recreate_run import VmRecreateRun, VmRecreateRunStep
 
@@ -121,6 +122,7 @@ KINDS: dict[str, _Kind] = {
     "smb_delete": _Kind(SmbDeleteRun, SmbDeleteRunStep, lambda r: "SMB3-Freigabe löschen", lambda r: f"\\\\{r.server}\\{r.share}"),
     "vm_create": _Kind(VmCreateRun, VmCreateRunStep, lambda r: "VM anlegen", lambda r: r.vm_name, "/vm-create/runs/"),
     "vm_delete": _Kind(VmDeleteRun, VmDeleteRunStep, lambda r: "VM löschen", lambda r: r.vm_name),
+    "vm_settings": _Kind(VmSettingsRun, VmSettingsRunStep, lambda r: "VM-Einstellungen ändern", lambda r: r.vm_name),
 }
 
 

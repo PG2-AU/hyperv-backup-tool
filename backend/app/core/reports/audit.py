@@ -24,7 +24,7 @@ from app.models.system_log import SystemLogEvent
 _RUN_STATUS = {"succeeded": ("Erfolgreich", "ok"), "warning": ("Mit Warnungen", "warn"), "failed": ("Fehlgeschlagen", "bad"),
                "cleaned_up": ("Fehlgeschlagen", "bad"), "cancelled": ("Abgebrochen", "warn"), "running": ("Läuft", "neutral")}
 _LOG_SOURCE = {"storage": "Storage", "sites": "Standort", "users": "Benutzer", "vm-console": "Remote-Sitzung", "vm-power": "VM",
-               "vm-move": "VM", "vm-create": "VM", "vm-delete": "VM", "config-transfer": "Konfiguration", "reports": "Report"}
+               "vm-move": "VM", "vm-create": "VM", "vm-delete": "VM", "vm-settings": "VM", "config-transfer": "Konfiguration", "reports": "Report"}
 
 
 def _result(code: int) -> tuple[str, str]:
