@@ -464,11 +464,18 @@ function AssignmentTable({ classes, canManage }: { classes: ProtectionClass[]; c
                       <Text size="xs">erfüllt</Text>
                     </Group>
                   ) : (
-                    r.violations.map((v) => (
-                      <Text size="xs" c="red" key={v}>
-                        • {v}
-                      </Text>
-                    ))
+                    <>
+                      {r.violations.map((v) => (
+                        <Text size="xs" c="red" key={v}>
+                          • {v}
+                        </Text>
+                      ))}
+                      {r.suggested_groups.length > 0 && (
+                        <Text size="xs" c="dimmed">
+                          Passende Protection Group: {r.suggested_groups.join(", ")}
+                        </Text>
+                      )}
+                    </>
                   )}
                 </Table.Td>
               </Table.Tr>

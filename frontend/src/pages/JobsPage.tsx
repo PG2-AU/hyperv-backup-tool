@@ -35,6 +35,7 @@ import {
 } from "@/api/hooks";
 import { BackupCalendarTab } from "@/components/BackupCalendarTab";
 import { ProtectionClassesTab } from "@/components/ProtectionClassesTab";
+import { GroupClassFitCell } from "@/components/ProtectionClassCell";
 import { LogViewer } from "@/components/LogViewer";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
@@ -486,6 +487,7 @@ export function JobsPage() {
                   <Table.Th>Anzahl</Table.Th>
                   <Table.Th>Objekte</Table.Th>
                   <Table.Th>Verknüpfte Policies (Zeitplan)</Table.Th>
+                  <Table.Th>Erfüllt Schutzklassen</Table.Th>
                   <Table.Th>Aktionen</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -531,6 +533,9 @@ export function JobsPage() {
                           keine
                         </Text>
                       )}
+                    </Table.Td>
+                    <Table.Td>
+                      <GroupClassFitCell groupId={group.id} />
                     </Table.Td>
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">

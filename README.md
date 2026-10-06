@@ -144,6 +144,9 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   zwei Laeufen, Aufbewahrung), (b) Ist: letztes Backup und sekundaere Kopie jung genug,
   (c) Speicher: VM liegt auf CSV/Freigabe mindestens ihrer Klasse. Ergebnis als Badge mit
   Gruenden, Alarm "Schutzklasse nicht erfuellt" und Spalte im Schutzstatus-Report.
+  Protection Groups werden NICHT von Hand zugeordnet: die App berechnet je Gruppe, welche
+  Klassen ihre Policies/Zeitplaene erfuellen (Spalte "Erfuellt Schutzklassen"), und nennt
+  bei einem Verstoss die Gruppen, die zur Klasse des Objekts passen wuerden.
   API /api/protection-classes, Lesen backup:view, Aendern backup:create.
 - **VM-Einstellungen aendern** -- Eintrag im Power-Menue der VM: vCPU und Arbeitsspeicher
   (statisch/dynamisch; nur bei ausgeschalteter VM), Netzwerkadapter (Switch/VLAN umstecken

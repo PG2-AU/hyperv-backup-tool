@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.core.protection_class import evaluate
+from app.core.protection_class import evaluate, group_fit
 from app.core.rbac import Permission
 from app.db.session import get_db
 from app.models.hyperv_discovery import HyperVVm
@@ -62,6 +62,24 @@ class ObjectStatusRead(BaseModel):
     resource_group_names: list[str] = []
     policy_names: list[str] = []
     last_backup_at: datetime | None = None
+    suggested_groups: list[str] = []
+
+
+class GroupClassFit(BaseModel):
+    class_id: str
+    class_name: str
+    class_color: str | None = None
+    fits: bool
+    reasons: list[str] = []
+
+
+class GroupFitRead(BaseModel):
+    group_id: str
+    group_name: str
+    scope: str
+    paused: bool
+    member_count: int
+    classes: list[GroupClassFit]
 
 
 class AssignmentItem(BaseModel):
@@ -120,6 +138,12 @@ def create_class(payload: ClassWrite, db: Session = Depends(get_db), user=Depend
 @router.get("/status", response_model=list[ObjectStatusRead])
 def get_status(db: Session = Depends(get_db), user=Depends(_view)) -> list[ObjectStatusRead]:
     return [ObjectStatusRead(**s.__dict__) for s in evaluate(db)]
+
+
+@router.get("/group-fit", response_model=list[GroupFitRead])
+def get_group_fit(db: Session = Depends(get_db), user=Depends(_view)) -> list[GroupFitRead]:
+    """Je Protection Group: welche Schutzklassen ihre Sicherung erfuellt."""
+    return [GroupFitRead(**g.__dict__) for g in group_fit(db)]
 
 
 @router.put("/assignments", status_code=status.HTTP_204_NO_CONTENT)

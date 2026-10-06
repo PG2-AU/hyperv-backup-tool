@@ -39,6 +39,25 @@ export interface ProtectionObjectStatus {
   resource_group_names: string[];
   policy_names: string[];
   last_backup_at?: string | null;
+  // bei Verstoss: Protection Groups, deren Sicherung die Klasse erfuellen wuerde
+  suggested_groups: string[];
+}
+
+export interface GroupClassFit {
+  class_id: string;
+  class_name: string;
+  class_color?: string | null;
+  fits: boolean;
+  reasons: string[];
+}
+
+export interface GroupFit {
+  group_id: string;
+  group_name: string;
+  scope: string;
+  paused: boolean;
+  member_count: number;
+  classes: GroupClassFit[];
 }
 
 export function useProtectionClasses() {
@@ -60,10 +79,20 @@ export function useProtectionStatus(enabled = true) {
   });
 }
 
+/** Je Protection Group: welche Schutzklassen ihre Sicherung erfuellt (berechnet). */
+export function useGroupFit(enabled = true) {
+  return useQuery({
+    queryKey: ["protection-group-fit"],
+    queryFn: async () => (await apiClient.get<GroupFit[]>("/protection-classes/group-fit")).data,
+    staleTime: 10_000,
+    enabled,
+  });
+}
+
 function useInvalidate() {
   const queryClient = useQueryClient();
   return () => {
-    for (const key of ["protection-classes", "protection-class-status", "alerts"]) queryClient.invalidateQueries({ queryKey: [key] });
+    for (const key of ["protection-classes", "protection-class-status", "protection-group-fit", "alerts"]) queryClient.invalidateQueries({ queryKey: [key] });
   };
 }
 

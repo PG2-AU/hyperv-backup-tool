@@ -834,7 +834,8 @@ def _check_protection_classes(db, now, active_by_key, seen_keys, trigger) -> Non
             continue
         key = f"{item.object_type}:{item.cluster_id}:{item.name}"[:255]
         seen_keys.add((AlertType.PROTECTION_CLASS_VIOLATION, key))
-        message = (f"Schutzklasse {item.class_name} nicht erfüllt: " + "; ".join(item.violations))[:500]
+        hint = f" -- passende Protection Group: {', '.join(item.suggested_groups)}" if item.suggested_groups else ""
+        message = (f"Schutzklasse {item.class_name} nicht erfüllt: " + "; ".join(item.violations))[: 500 - len(hint)] + hint
         existing = active_by_key.get((AlertType.PROTECTION_CLASS_VIOLATION, key))
         if existing is None:
             trigger(

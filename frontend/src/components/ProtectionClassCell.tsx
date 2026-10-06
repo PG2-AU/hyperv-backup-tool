@@ -2,7 +2,7 @@ import { Badge, Menu, Text, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconAlertTriangle, IconCheck, IconX } from "@tabler/icons-react";
 
-import { useAssignProtectionClass, useProtectionClasses, useProtectionStatus } from "@/api/hooks.protectionClasses";
+import { useAssignProtectionClass, useGroupFit, useProtectionClasses, useProtectionStatus } from "@/api/hooks.protectionClasses";
 import type { ProtectionObjectStatus, ProtectionObjectType } from "@/api/hooks.protectionClasses";
 import { useAuthStore } from "@/store/authStore";
 import { apiErrorMessage } from "@/utils/errors";
@@ -47,6 +47,11 @@ export function ProtectionClassBadge({ status }: { status?: ProtectionObjectStat
               • {v}
             </Text>
           ))}
+          {status.suggested_groups.length > 0 && (
+            <Text size="xs" mt={4}>
+              Passende Protection Group: {status.suggested_groups.join(", ")}
+            </Text>
+          )}
         </>
       }
     >
@@ -113,6 +118,56 @@ export function ProtectionClassCell({
           )}
         </Menu.Dropdown>
       </Menu>
+    </span>
+  );
+}
+
+/** Welche Schutzklassen eine Protection Group mit ihren Policies und
+ *  Zeitplaenen erfuellt -- berechnet (Backup > Protection Groups). Erfuellte
+ *  Klassen farbig, nicht erfuellte blass mit den Gruenden im Tooltip. */
+export function GroupClassFitCell({ groupId }: { groupId: string }) {
+  const { data } = useGroupFit();
+  const fit = data?.find((g) => g.group_id === groupId);
+  if (!fit || fit.classes.length === 0) {
+    return (
+      <Text size="sm" c="dimmed">
+        –
+      </Text>
+    );
+  }
+  return (
+    <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
+      {fit.classes.map((c) =>
+        c.fits ? (
+          <Tooltip key={c.class_id} label={`erfüllt ${c.class_name}`}>
+            <Badge size="sm" variant="light" color={c.class_color ?? "blue"} leftSection={<IconCheck size={12} />}>
+              {c.class_name}
+            </Badge>
+          </Tooltip>
+        ) : (
+          <Tooltip
+            key={c.class_id}
+            multiline
+            maw={460}
+            label={
+              <>
+                <Text size="xs" fw={600}>
+                  {c.class_name} nicht erfüllt:
+                </Text>
+                {c.reasons.map((r) => (
+                  <Text size="xs" key={r}>
+                    • {r}
+                  </Text>
+                ))}
+              </>
+            }
+          >
+            <Badge size="sm" variant="outline" color="gray" style={{ opacity: 0.6 }}>
+              {c.class_name}
+            </Badge>
+          </Tooltip>
+        ),
+      )}
     </span>
   );
 }

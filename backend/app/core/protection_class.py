@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.backup_policy import ConsistencyType, RetentionType
+from app.models.backup_policy import BackupScope, ConsistencyType, RetentionType
 from app.models.backup_run import BackupRunSnapshot, BackupRunVmConfig
 from app.models.hyperv_discovery import HyperVVm
 from app.models.netapp_discovery import NetAppSnapMirrorPolicy, NetAppSnapMirrorRelationship
@@ -57,6 +57,11 @@ class ObjectStatus:
     resource_group_names: list[str] = field(default_factory=list)
     policy_names: list[str] = field(default_factory=list)
     last_backup_at: datetime | None = None
+    # NetApp-Volumes des Objekts ('svm:volume') -- fuer die sekundaere Aufbewahrung
+    volumes: list[str] = field(default_factory=list)
+    # Bei Verstoss: Protection Groups (passender Art, aktiv), deren Sicherung
+    # die Klasse fuer dieses Objekt erfuellen wuerde und in denen es noch nicht ist.
+    suggested_groups: list[str] = field(default_factory=list)
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -170,6 +175,36 @@ class _SnapMirror:
         return violations
 
 
+def check_config(
+    cls: ProtectionClass, links: list[_Link], snapmirror: "_SnapMirror | None" = None, volumes: list[str] | None = None,
+) -> list[str]:
+    """Soll-Pruefung: erfuellen diese Policy-Verknuepfungen (fuer diese Volumes)
+    die Klasse? Leere Liste = ja. Auch Grundlage fuer "welche Klassen erfuellt
+    eine Protection Group" und fuer den Vorschlag passender Gruppen."""
+    violations: list[str] = []
+    max_age = cls.max_backup_age_hours
+    secondary_days = cls.secondary_retention_days or 0
+    if not links:
+        return ["kein aktiver Zeitplan (Gruppe, Policy oder Zeitplan pausiert bzw. ohne Zeitplan)"]
+    best_gap = min(l.gap_hours for l in links)
+    if best_gap > max_age:
+        violations.append(f"Sicherungsabstand {_fmt_hours(best_gap)}, Klasse verlangt höchstens {_fmt_hours(max_age)}")
+    best_retention = max(l.retention_days for l in links)
+    if best_retention + 0.01 < cls.min_retention_days:
+        violations.append(f"primäre Aufbewahrung ca. {best_retention:.0f} Tage, Klasse verlangt {cls.min_retention_days}")
+    if secondary_days and snapmirror is not None:
+        violations.extend(snapmirror.check(volumes or [], links, secondary_days))
+    if cls.require_app_consistent:
+        consistent = [l.gap_hours for l in links if l.app_consistent]
+        if not consistent:
+            violations.append("keine applikationskonsistente Policy")
+        elif min(consistent) > max_age and best_gap <= max_age:
+            violations.append(
+                f"applikationskonsistent nur alle {_fmt_hours(min(consistent))}, Klasse verlangt höchstens {_fmt_hours(max_age)}"
+            )
+    return violations
+
+
 def _check_backup(
     cls: ProtectionClass, links: list[_Link], protected: bool, last_primary: datetime | None, last_secondary: datetime | None,
     now: datetime, snapmirror: "_SnapMirror | None" = None, volumes: list[str] | None = None,
@@ -179,26 +214,7 @@ def _check_backup(
     secondary_days = cls.secondary_retention_days or 0
     if not protected:
         return ["in keiner Protection Group"]
-    # --- Soll
-    if not links:
-        violations.append("kein aktiver Zeitplan (Gruppe, Policy oder Zeitplan pausiert bzw. ohne Zeitplan)")
-    else:
-        best_gap = min(l.gap_hours for l in links)
-        if best_gap > max_age:
-            violations.append(f"Sicherungsabstand {_fmt_hours(best_gap)}, Klasse verlangt höchstens {_fmt_hours(max_age)}")
-        best_retention = max(l.retention_days for l in links)
-        if best_retention + 0.01 < cls.min_retention_days:
-            violations.append(f"primäre Aufbewahrung ca. {best_retention:.0f} Tage, Klasse verlangt {cls.min_retention_days}")
-        if secondary_days and snapmirror is not None:
-            violations.extend(snapmirror.check(volumes or [], links, secondary_days))
-        if cls.require_app_consistent:
-            consistent = [l.gap_hours for l in links if l.app_consistent]
-            if not consistent:
-                violations.append("keine applikationskonsistente Policy")
-            elif min(consistent) > max_age and best_gap <= max_age:
-                violations.append(
-                    f"applikationskonsistent nur alle {_fmt_hours(min(consistent))}, Klasse verlangt höchstens {_fmt_hours(max_age)}"
-                )
+    violations.extend(check_config(cls, links, snapmirror, volumes))
     # --- Ist
     tolerance = timedelta(hours=max(0.5, max_age * 0.1))
     newest = max((t for t in (last_primary, last_secondary) if t is not None), default=None)
@@ -251,7 +267,8 @@ def evaluate(db: Session, now: datetime | None = None) -> list[ObjectStatus]:
     by_name = {(a.object_type, a.cluster_id, a.object_name): a for a in assignments}
     by_uuid = {(a.cluster_id, a.vm_uuid.lower()): a for a in assignments if a.object_type == "vm" and a.vm_uuid}
     vm_uuids = {(v.cluster_id, v.name): (v.vm_uuid or "").lower() for v in db.query(HyperVVm).all()}
-    links = _effective_links(db.query(ResourceGroup).all())
+    all_groups = db.query(ResourceGroup).all()
+    links = _effective_links(all_groups)
     primary, secondary = last_backups(db)
 
     def class_of(object_type: str, cluster_id: str | None, name: str) -> ProtectionClass | None:
@@ -266,7 +283,7 @@ def evaluate(db: Session, now: datetime | None = None) -> list[ObjectStatus]:
     def base(object_type, cluster_id, cluster_name, name, display, groups, policies, cls, backup_key, volumes) -> ObjectStatus:
         status = ObjectStatus(
             object_type=object_type, cluster_id=cluster_id, cluster_name=cluster_name, name=name, display_name=display,
-            resource_group_names=list(groups), policy_names=list(policies),
+            resource_group_names=list(groups), policy_names=list(policies), volumes=list(volumes),
             last_backup_at=max((t for t in (primary.get(backup_key), secondary.get(backup_key)) if t), default=None),
         )
         if cls is not None:
@@ -313,7 +330,53 @@ def evaluate(db: Session, now: datetime | None = None) -> list[ObjectStatus]:
             elif store.rank > cls.rank:
                 status.violations.append(f"liegt auf {display} (Klasse {store.name}), verlangt mindestens {cls.name}")
         result.append(status)
+    scope_of = {"vm": BackupScope.VM, "csv": BackupScope.CSV, "smb_share": BackupScope.SMB_SHARE}
     for status in result:
-        if status.class_id:
-            status.status = "violation" if status.violations else "ok"
+        if not status.class_id:
+            continue
+        status.status = "violation" if status.violations else "ok"
+        if status.violations:
+            cls = classes[status.class_id]
+            status.suggested_groups = sorted(
+                g.name for g in all_groups
+                if g.scope == scope_of[status.object_type] and g.name not in status.resource_group_names
+                and not check_config(cls, links.get(g.name, []), snapmirror, status.volumes)
+            )
+    return result
+
+
+@dataclass
+class GroupFit:
+    group_id: str
+    group_name: str
+    scope: str
+    paused: bool
+    member_count: int
+    # je Klasse: erfuellt? sonst die Gruende
+    classes: list[dict] = field(default_factory=list)
+
+
+def group_fit(db: Session) -> list[GroupFit]:
+    """Welche Schutzklassen erfuellt jede Protection Group mit ihren Policies
+    und Zeitplaenen -- berechnet, nicht von Hand zugeordnet (Nutzer-Freigabe
+    2026-10-06). Die sekundaere Aufbewahrung wird gegen die Volumes der
+    aktuellen Mitglieder geprueft; ohne Mitglieder nur die Konfiguration."""
+    classes = db.query(ProtectionClass).order_by(ProtectionClass.rank, ProtectionClass.name).all()
+    groups = db.query(ResourceGroup).order_by(ResourceGroup.name).all()
+    links = _effective_links(groups)
+    snapmirror = _SnapMirror(db)
+    volumes: dict[str, set[str]] = {}
+    for status in evaluate(db):
+        for name in status.resource_group_names:
+            volumes.setdefault(name, set()).update(status.volumes)
+    result = []
+    for group in groups:
+        fit = GroupFit(
+            group_id=group.id, group_name=group.name, scope=str(getattr(group.scope, "value", group.scope)), paused=bool(group.paused),
+            member_count=len(group.members or []),
+        )
+        for cls in classes:
+            reasons = check_config(cls, links.get(group.name, []), snapmirror, sorted(volumes.get(group.name, set())))
+            fit.classes.append({"class_id": cls.id, "class_name": cls.name, "class_color": cls.color, "fits": not reasons, "reasons": reasons})
+        result.append(fit)
     return result
