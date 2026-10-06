@@ -135,6 +135,15 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   Objekte mit Leserecht) wird einmal geladen und alle 5 Minuten aufgefrischt, gefiltert
   wird im Browser. Ein Treffer springt auf die passende Seite und waehlt das Objekt aus bzw.
   oeffnet bei Snapshots den Snapshots-Dialog des Volumes.
+- **Schutzklassen** -- Backup > Schutzklassen: frei definierbare Klassen (z.B. Gold/Silber/
+  Bronze, als Vorschlag per Knopf) mit Rang, maximalem Backup-Alter, Mindest-Aufbewahrung,
+  Pflicht zur sekundaeren Kopie und zur applikationskonsistenten Sicherung. Jede VM, CSV und
+  SMB3-Freigabe bekommt ihre Klasse von Hand (Spalte in Inventory oder Sammelzuweisung).
+  Geprueft wird (a) Soll: passen Policies/Zeitplaene zur Klasse (groesste Luecke zwischen
+  zwei Laeufen, Aufbewahrung), (b) Ist: letztes Backup und sekundaere Kopie jung genug,
+  (c) Speicher: VM liegt auf CSV/Freigabe mindestens ihrer Klasse. Ergebnis als Badge mit
+  Gruenden, Alarm "Schutzklasse nicht erfuellt" und Spalte im Schutzstatus-Report.
+  API /api/protection-classes, Lesen backup:view, Aendern backup:create.
 - **VM-Einstellungen aendern** -- Eintrag im Power-Menue der VM: vCPU und Arbeitsspeicher
   (statisch/dynamisch; nur bei ausgeschalteter VM), Netzwerkadapter (Switch/VLAN umstecken
   oder trennen jederzeit; hinzufuegen/entfernen bei Generation 1 nur ausgeschaltet),

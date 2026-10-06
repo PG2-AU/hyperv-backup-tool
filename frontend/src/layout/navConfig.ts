@@ -64,6 +64,7 @@ export const NAV_ITEMS: NavItem[] = [
     children: [
       { label: "Policies", path: "/jobs?tab=policies" },
       { label: "Protection Groups", path: "/jobs?tab=protection-groups", searchContext: "resource-groups" },
+      { label: "Schutzklassen", path: "/jobs?tab=protection-classes" },
       { label: "Zeitpläne", path: "/jobs?tab=schedules" },
       { label: "Kalender", path: "/jobs?tab=calendar" },
       { label: "Job-Verlauf", path: "/jobs?tab=runs" },

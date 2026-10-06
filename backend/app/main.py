@@ -10,6 +10,7 @@ from app.api.routes import (
     activities,
     reports,
     performance,
+    protection_classes,
     alerts,
     auth,
     capacity_history,
@@ -108,6 +109,7 @@ app.include_router(vms.router)
 app.include_router(activities.router)
 app.include_router(reports.router)
 app.include_router(performance.router)
+app.include_router(protection_classes.router)
 app.include_router(storage.router)
 app.include_router(netapp_clusters.router)
 app.include_router(hyperv_clusters.router)

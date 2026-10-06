@@ -57,6 +57,7 @@ import { VmConsoleModal } from "@/components/VmConsoleModal";
 import { VmCreateModal } from "@/components/VmCreateModal";
 import { VmDeleteModal } from "@/components/VmDeleteModal";
 import { VmSettingsModal } from "@/components/VmSettingsModal";
+import { ProtectionClassCell } from "@/components/ProtectionClassCell";
 import { VmMoveModal } from "@/components/VmMoveModal";
 import { useVmPower, useVmPowerActions, VM_POWER_LABEL, type VmPowerActionName } from "@/api/hooks.vmPower";
 import { CsvCreateModal } from "@/components/CsvCreateModal";
@@ -1063,6 +1064,7 @@ export function VmsPage() {
                 <Table.Th>Belegung</Table.Th>
                 <Table.Th>Protection Group</Table.Th>
                 <Table.Th>Protected</Table.Th>
+                <Table.Th>Schutzklasse</Table.Th>
                 <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -1219,6 +1221,9 @@ export function VmsPage() {
                     <ProtectedBadge protected={vm.protected} />
                   </Table.Td>
                   <Table.Td>
+                    <ProtectionClassCell objectType="vm" clusterId={vm.cluster_id} name={vm.name} />
+                  </Table.Td>
+                  <Table.Td>
                     <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
                       <Menu position="bottom-start" withinPortal>
                         <Menu.Target>
@@ -1373,6 +1378,7 @@ export function VmsPage() {
                 <Table.Th>Anzahl VMs</Table.Th>
                 <Table.Th>Protection Group</Table.Th>
                 <Table.Th>Protected</Table.Th>
+                <Table.Th>Schutzklasse</Table.Th>
                 <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -1453,6 +1459,9 @@ export function VmsPage() {
                     </Table.Td>
                     <Table.Td>
                       <ProtectedBadge protected={csv.protected} />
+                    </Table.Td>
+                    <Table.Td>
+                      <ProtectionClassCell objectType="csv" clusterId={csv.cluster_id} name={csv.name} />
                     </Table.Td>
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
@@ -1553,6 +1562,7 @@ export function VmsPage() {
                   <Table.Th>Anzahl VMs</Table.Th>
                   <Table.Th>Protection Group</Table.Th>
                   <Table.Th>Protected</Table.Th>
+                <Table.Th>Schutzklasse</Table.Th>
                   <Table.Th>Aktionen</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -1602,6 +1612,9 @@ export function VmsPage() {
                       </Table.Td>
                       <Table.Td>
                         <ProtectedBadge protected={share.protected} />
+                      </Table.Td>
+                      <Table.Td>
+                        <ProtectionClassCell objectType="smb_share" clusterId={share.cluster_id} name={`${share.server}|${share.share}`} />
                       </Table.Td>
                       <Table.Td>
                         <Group gap="xs" wrap="nowrap" onClick={(e) => e.stopPropagation()}>

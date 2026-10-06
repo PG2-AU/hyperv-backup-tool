@@ -821,6 +821,30 @@ def _check_db_backup(db, now, active_by_key, seen_keys, trigger) -> None:
             existing.message = message
 
 
+def _check_protection_classes(db, now, active_by_key, seen_keys, trigger) -> None:
+    """Schutzklassen (Backlog #86): je VM/CSV/SMB3-Freigabe mit Klasse ein
+    Alarm, solange sie verletzt ist (Sicherung passt nicht zur Klasse oder
+    Speicher zu niedrig eingestuft). Text wird bei jedem Check aktualisiert,
+    loest sich von selbst auf. Objekte ohne Klasse erzeugen keinen Alarm."""
+    from app.core.protection_class import evaluate
+
+    labels = {"vm": "VM", "csv": "CSV", "smb_share": "SMB3-Freigabe"}
+    for item in evaluate(db, now):
+        if item.status != "violation":
+            continue
+        key = f"{item.object_type}:{item.cluster_id}:{item.name}"[:255]
+        seen_keys.add((AlertType.PROTECTION_CLASS_VIOLATION, key))
+        message = (f"Schutzklasse {item.class_name} nicht erfüllt: " + "; ".join(item.violations))[:500]
+        existing = active_by_key.get((AlertType.PROTECTION_CLASS_VIOLATION, key))
+        if existing is None:
+            trigger(
+                AlertType.PROTECTION_CLASS_VIOLATION, key, object_name=f"{labels[item.object_type]} {item.display_name}"[:255],
+                hyperv_cluster_id=item.cluster_id, vm_name=item.name if item.object_type == "vm" else None, message=message,
+            )
+        elif existing.message != message:
+            existing.message = message
+
+
 def run_scheduled_db_backup() -> None:
     """Taeglicher Job 'db-backup' (Uhrzeit aus DbBackupConfig.hour_utc)."""
     from app.core.db_backup import DbBackupError, run_db_backup
@@ -1367,6 +1391,7 @@ def run_alert_check() -> None:
 
         _check_site_mismatches(db, config, now, active_by_key, seen_keys, _trigger)
         _check_db_backup(db, now, active_by_key, seen_keys, _trigger)
+        _check_protection_classes(db, now, active_by_key, seen_keys, _trigger)
 
         for (alert_type, key), alert in active_by_key.items():
             if alert_type == AlertType.BACKUP_MISSED:

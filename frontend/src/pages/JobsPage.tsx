@@ -34,6 +34,7 @@ import {
   useTriggerJobRun,
 } from "@/api/hooks";
 import { BackupCalendarTab } from "@/components/BackupCalendarTab";
+import { ProtectionClassesTab } from "@/components/ProtectionClassesTab";
 import { LogViewer } from "@/components/LogViewer";
 import { PolicyFormModal } from "@/components/PolicyFormModal";
 import { PolicyPickerModal } from "@/components/PolicyPickerModal";
@@ -78,7 +79,7 @@ export function JobsPage() {
   const [params, setParams] = useSearchParams();
   const tabParam = params.get("tab");
   const activeTab =
-    tabParam === "runs" || tabParam === "protection-groups" || tabParam === "schedules" || tabParam === "calendar"
+    tabParam === "runs" || tabParam === "protection-groups" || tabParam === "protection-classes" || tabParam === "schedules" || tabParam === "calendar"
       ? tabParam
       : "policies";
 
@@ -351,6 +352,7 @@ export function JobsPage() {
         <Tabs.List>
           <Tabs.Tab value="policies">Policies</Tabs.Tab>
           <Tabs.Tab value="protection-groups">Protection Groups</Tabs.Tab>
+          <Tabs.Tab value="protection-classes">Schutzklassen</Tabs.Tab>
           <Tabs.Tab value="schedules">Zeitpläne</Tabs.Tab>
           <Tabs.Tab value="calendar">Kalender</Tabs.Tab>
           <Tabs.Tab value="runs">Job-Verlauf</Tabs.Tab>
@@ -660,6 +662,10 @@ export function JobsPage() {
 
         <Tabs.Panel value="calendar" pt="md">
           <BackupCalendarTab />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="protection-classes" pt="md">
+          {activeTab === "protection-classes" && <ProtectionClassesTab />}
         </Tabs.Panel>
 
         <Tabs.Panel value="runs" pt="md">

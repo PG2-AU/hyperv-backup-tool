@@ -41,6 +41,7 @@ const TYPE_LABEL: Record<AlertType, string> = {
   hyperv_vm_site_mismatch: "Standort-Abweichung",
   db_backup_failed: "DB-Sicherung fehlgeschlagen",
   db_backup_overdue: "DB-Sicherung überfällig",
+  protection_class_violation: "Schutzklasse nicht erfüllt",
   backup_failed: "Backup fehlgeschlagen",
 };
 
@@ -63,6 +64,7 @@ const TYPE_COLOR: Record<AlertType, string> = {
   hyperv_vm_site_mismatch: "orange",
   db_backup_failed: "red",
   db_backup_overdue: "orange",
+  protection_class_violation: "yellow",
   backup_failed: "red",
 };
 
@@ -184,6 +186,15 @@ function AlertAction({ alert }: { alert: Alert }) {
     return (
       <Tooltip label="Zu Settings > DB-Sicherung">
         <ActionIcon component={Link} to="/settings?tab=db-backup" variant="subtle">
+          <IconExternalLink size={16} />
+        </ActionIcon>
+      </Tooltip>
+    );
+  }
+  if (alert.alert_type === "protection_class_violation") {
+    return (
+      <Tooltip label="Zu Backup > Schutzklassen">
+        <ActionIcon component={Link} to="/jobs?tab=protection-classes" variant="subtle">
           <IconExternalLink size={16} />
         </ActionIcon>
       </Tooltip>

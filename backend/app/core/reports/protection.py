@@ -68,14 +68,31 @@ def build(db: Session, params: dict, now: datetime) -> ReportContent:
             return False
         return not group_names or bool(group_names & set(groups))
 
+    # Schutzklassen (Backlog #86): Spalte nur, wenn ueberhaupt Klassen zugewiesen sind
+    from app.core.protection_class import evaluate
+
+    class_status = {(s.object_type, s.cluster_id, s.name): s for s in evaluate(db, now)}
+    with_classes = any(s.class_id for s in class_status.values())
+    class_violations = 0
+
     sections: list[Section] = []
     counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     csv_rows: list[list[str]] = []
 
-    def _add_section(kind: str, title: str, objects: list[tuple[str, list[str], list[str], str]]) -> None:
+    def _add_section(kind: str, title: str, objects: list[tuple[str, list[str], list[str], str, tuple]]) -> None:
+        nonlocal class_violations
         rows, levels = [], []
-        for name, groups, policies, key in objects:
+        for name, groups, policies, key, lookup in objects:
             status, level = _status(bool(groups), key)
+            cls = class_status.get(lookup)
+            class_text = "–"
+            if cls is not None and cls.class_id:
+                class_text = cls.class_name
+                if cls.status == "violation":
+                    class_violations += 1
+                    class_text += ": " + "; ".join(cls.violations)
+                    if level == "ok":
+                        status, level = "Klasse nicht erfüllt", "warn"
             counts[kind]["total"] += 1
             counts[kind][level] += 1
             if only_findings and level == "ok":
@@ -83,7 +100,7 @@ def build(db: Session, params: dict, now: datetime) -> ReportContent:
             primary, secondary = last_primary.get(key), last_secondary.get(key)
             row = [
                 name, ", ".join(groups) or "–", ", ".join(policies) or "–", fmt_dt(primary), fmt_age(primary, now),
-                fmt_dt(secondary), status,
+                fmt_dt(secondary), *([class_text[:300]] if with_classes else []), status,
             ]
             rows.append(row)
             levels.append(level)
@@ -92,8 +109,10 @@ def build(db: Session, params: dict, now: datetime) -> ReportContent:
         paired = sorted(zip(rows, levels), key=lambda p: (order[p[1]], p[0][0].lower()))
         sections.append(Section(
             title=title,
-            columns=["Name", "Protection Group", "Policies", "Letztes Backup (primär)", "Alter", "Letztes Backup (sekundär)", "Status"],
-            rows=[p[0] for p in paired], row_levels=[p[1] for p in paired], widths=[2.2, 1.6, 1.8, 1.4, 0.7, 1.4, 1.1],
+            columns=["Name", "Protection Group", "Policies", "Letztes Backup (primär)", "Alter", "Letztes Backup (sekundär)",
+                     *(["Schutzklasse"] if with_classes else []), "Status"],
+            rows=[p[0] for p in paired], row_levels=[p[1] for p in paired],
+            widths=[2.0, 1.4, 1.6, 1.3, 0.6, 1.3, 2.4, 1.1] if with_classes else [2.2, 1.6, 1.8, 1.4, 0.7, 1.4, 1.1],
             empty_text="Keine Auffälligkeiten." if only_findings else "Keine Objekte in der Auswahl.",
         ))
 
@@ -102,17 +121,19 @@ def build(db: Session, params: dict, now: datetime) -> ReportContent:
         if _in_scope(v.cluster_id, v.host_site.id if v.host_site else None, v.resource_group_names)
     ]
     _add_section("vm", "Virtuelle Maschinen", [
-        (f"{v.name} ({v.cluster})" if v.cluster else v.name, v.resource_group_names, v.policy_names, f"vm:{v.name}") for v in vms
+        (f"{v.name} ({v.cluster})" if v.cluster else v.name, v.resource_group_names, v.policy_names, f"vm:{v.name}",
+         ("vm", v.cluster_id, v.name)) for v in vms
     ])
     if params.get("include_csv", True):
         csvs = [c for c in list_csvs(db, None) if _in_scope(c.cluster_id, c.site.id if c.site else None, c.resource_group_names)]
         _add_section("csv", "Cluster Shared Volumes", [
-            (c.name, c.resource_group_names, c.policy_names, f"csv:{c.name}") for c in csvs
+            (c.name, c.resource_group_names, c.policy_names, f"csv:{c.name}", ("csv", c.cluster_id, c.name)) for c in csvs
         ])
     if params.get("include_smb", True):
         shares = [s for s in list_smb_shares(db, None) if _in_scope(s.cluster_id, None, s.resource_group_names)]
         _add_section("smb", "SMB3-Freigaben", [
-            (f"\\\\{s.server}\\{s.share}", s.resource_group_names, s.policy_names, f"vol:{s.svm_name}:{s.volume_name}")
+            (f"\\\\{s.server}\\{s.share}", s.resource_group_names, s.policy_names, f"vol:{s.svm_name}:{s.volume_name}",
+             ("smb_share", s.cluster_id, f"{s.server}|{s.share}"))
             for s in shares
         ])
 
@@ -128,6 +149,9 @@ def build(db: Session, params: dict, now: datetime) -> ReportContent:
         if counts[kind]["total"]:
             c = counts[kind]
             kpis.append(Kpi(f"{label} mit Auffälligkeit", f"{c['bad'] + c['warn']} von {c['total']}", "bad" if c["bad"] else ("warn" if c["warn"] else "ok")))
+
+    if with_classes:
+        kpis.append(Kpi("Schutzklasse nicht erfüllt", str(class_violations), "warn" if class_violations else "ok"))
 
     scope = []
     if cluster_ids:
@@ -146,6 +170,7 @@ def build(db: Session, params: dict, now: datetime) -> ReportContent:
     return ReportContent(
         title="Schutzstatus", subtitle=subtitle, kpis=kpis, findings=findings, findings_text=findings_text,
         sections=sections,
-        csv_columns=["Bereich", "Name", "Protection Group", "Policies", "Letztes Backup (primär)", "Alter", "Letztes Backup (sekundär)", "Status"],
+        csv_columns=["Bereich", "Name", "Protection Group", "Policies", "Letztes Backup (primär)", "Alter", "Letztes Backup (sekundär)",
+                     *(["Schutzklasse"] if with_classes else []), "Status"],
         csv_rows=csv_rows,
     )

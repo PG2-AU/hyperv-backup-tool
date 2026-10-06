@@ -42,6 +42,9 @@ class AlertType(str, enum.Enum):
     CAPACITY_FORECAST_VOLUME = "capacity_forecast_volume"
     CAPACITY_FORECAST_LUN = "capacity_forecast_lun"
     CAPACITY_FORECAST_AGGREGATE = "capacity_forecast_aggregate"
+    # Schutzklasse (Backlog #86): Objekt wird nicht seiner Klasse entsprechend
+    # gesichert oder liegt auf Speicher einer zu niedrigen Klasse.
+    PROTECTION_CLASS_VIOLATION = "protection_class_violation"
 
 
 class AlertScope(str, enum.Enum):

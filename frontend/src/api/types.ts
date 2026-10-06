@@ -603,6 +603,7 @@ export type AlertType =
   | "hyperv_vm_site_mismatch"
   | "db_backup_failed"
   | "db_backup_overdue"
+  | "protection_class_violation"
   | "backup_failed";
 
 export interface Alert {

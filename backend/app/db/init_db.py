@@ -28,6 +28,7 @@ from app.models.vm_create_run import VmCreateRun, VmCreateRunStep  # noqa: F401 
 from app.models.report import ReportDefinition, ReportRun  # noqa: F401  (nur fuer create_all)
 from app.models.audit import AuditEvent  # noqa: F401  (nur fuer create_all)
 from app.models.vm_performance import VmPerfSample  # noqa: F401  (nur fuer create_all)
+from app.models.protection_class import ProtectionClass, ProtectionClassAssignment  # noqa: F401  (nur fuer create_all)
 from app.models.vm_delete_run import VmDeleteRun, VmDeleteRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.vm_settings_run import VmSettingsRun, VmSettingsRunStep  # noqa: F401  (nur fuer create_all)
 from app.models.smb_share_run import SmbCreateRun, SmbCreateRunStep, SmbDeleteRun, SmbDeleteRunStep  # noqa: F401  (nur fuer create_all)

@@ -108,6 +108,10 @@ ROUTES: dict[tuple[str, str], tuple[str, str]] = {
     ("DELETE", "/api/netapp/clusters/{cluster_id}/volumes/{volume_uuid}"): ("Volume", "gelöscht"),
     ("PATCH", "/api/netapp/clusters/{cluster_id}/volumes/{volume_uuid}"): ("Volume", "geändert"),
     ("DELETE", "/api/netapp/clusters/{cluster_id}/volumes/{volume_uuid}/snapshots/{snapshot_uuid}"): ("Snapshot", "gelöscht"),
+    ("POST", "/api/protection-classes"): ("Schutzklasse", "angelegt"),
+    ("PUT", "/api/protection-classes/assignments"): ("Schutzklasse", "Zuordnung geändert"),
+    ("PUT", "/api/protection-classes/{class_id}"): ("Schutzklasse", "geändert"),
+    ("DELETE", "/api/protection-classes/{class_id}"): ("Schutzklasse", "gelöscht"),
     ("POST", "/api/reports/definitions"): ("Report-Vorlage", "angelegt"),
     ("DELETE", "/api/reports/definitions/{definition_id}"): ("Report-Vorlage", "gelöscht"),
     ("PUT", "/api/reports/definitions/{definition_id}"): ("Report-Vorlage", "geändert"),
@@ -217,6 +221,7 @@ def _resolve_target(db, template: str, params: dict) -> str | None:
     from app.models.hyperv_cluster import HyperVCluster
     from app.models.netapp_cluster import NetAppCluster
     from app.models.netapp_discovery import NetAppLun, NetAppSnapMirrorPolicy, NetAppSnapMirrorRelationship, NetAppVolume
+    from app.models.protection_class import ProtectionClass
     from app.models.report import ReportDefinition, ReportRun
     from app.models.resource_group import ResourceGroup
     from app.models.schedule import Schedule
@@ -248,6 +253,8 @@ def _resolve_target(db, template: str, params: dict) -> str | None:
             name = by_id(Site, "name", value)
         elif key == "label_id":
             name = by_id(SnapMirrorLabel, "name", value)
+        elif key == "class_id":
+            name = by_id(ProtectionClass, "name", value)
         elif key == "definition_id":
             name = by_id(ReportDefinition, "name", value)
         elif key == "user_id":
