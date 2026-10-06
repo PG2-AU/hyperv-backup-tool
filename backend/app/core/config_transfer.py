@@ -74,6 +74,10 @@ CONFIG_TABLES: tuple[_TableSpec, ...] = (
     _TableSpec("resource_groups", "Protection Groups"),
     _TableSpec("resource_group_policies", "Protection-Group-Verknüpfungen"),
     _TableSpec("allowed_schedule_collisions", "Erlaubte Zeitplan-Kollisionen"),
+    # Schutzklassen (Backlog #86) samt Zuordnung an VMs/CSVs/Freigaben -- die
+    # Zuordnung haengt an hyperv_clusters.id, die der Export beibehaelt.
+    _TableSpec("protection_classes", "Schutzklassen"),
+    _TableSpec("protection_class_assignments", "Schutzklassen-Zuordnungen"),
     _TableSpec("sites", "Standorte"),
     _TableSpec("hyperv_node_sites", "Standort-Zuordnungen Hyper-V-Knoten"),
     _TableSpec("csv_site_overrides", "Standort-Zuordnungen CSVs"),

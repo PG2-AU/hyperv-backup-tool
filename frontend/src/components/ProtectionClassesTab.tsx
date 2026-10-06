@@ -94,6 +94,7 @@ function ClassModal({ initial, editId, nextRank, onClose }: { initial: Protectio
           <NumberInput
             label="Rang"
             description="1 = höchste Klasse. Speicher muss mindestens die Klasse der VM haben."
+            inputWrapperOrder={["label", "input", "description", "error"]}
             min={1}
             max={99}
             value={form.rank}
@@ -112,6 +113,7 @@ function ClassModal({ initial, editId, nextRank, onClose }: { initial: Protectio
           <NumberInput
             label="Letztes Backup höchstens alt"
             description="in Stunden (26 = täglich mit Puffer, 168 = 7 Tage)"
+            inputWrapperOrder={["label", "input", "description", "error"]}
             min={1}
             suffix=" h"
             value={form.max_backup_age_hours}
@@ -120,6 +122,7 @@ function ClassModal({ initial, editId, nextRank, onClose }: { initial: Protectio
           <NumberInput
             label="Aufbewahrung mindestens"
             description="so weit muss man zurück wiederherstellen können"
+            inputWrapperOrder={["label", "input", "description", "error"]}
             min={0}
             suffix=" Tage"
             value={form.min_retention_days}
