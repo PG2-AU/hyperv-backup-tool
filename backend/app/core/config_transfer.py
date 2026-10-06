@@ -78,6 +78,9 @@ CONFIG_TABLES: tuple[_TableSpec, ...] = (
     # Zuordnung haengt an hyperv_clusters.id, die der Export beibehaelt.
     _TableSpec("protection_classes", "Schutzklassen"),
     _TableSpec("protection_class_assignments", "Schutzklassen-Zuordnungen"),
+    # Report-Vorlagen (Backlog #84) mit Zeitplan und Empfaengern; die erzeugten
+    # Reports (Historie, PDF-Dateien) gehoeren zum alten Server und bleiben dort.
+    _TableSpec("report_definitions", "Report-Vorlagen"),
     _TableSpec("sites", "Standorte"),
     _TableSpec("hyperv_node_sites", "Standort-Zuordnungen Hyper-V-Knoten"),
     _TableSpec("csv_site_overrides", "Standort-Zuordnungen CSVs"),
@@ -375,6 +378,10 @@ def apply_import(db: Session, plan: ImportPlan) -> ImportResult:
                     # Keine Backups ohne Zugangsdaten -- siehe manual_steps.
                     row = {**row, "paused": 1, "paused_since": now}
                     result.paused_groups.append(str(row.get("name")))
+                if spec.name == "report_definitions":
+                    # Zeitplan beginnt mit dem naechsten Termin -- sonst wuerde der
+                    # zuletzt verpasste Termin direkt nach dem Import nachgeholt.
+                    row = {**row, "last_scheduled_for": now}
                 _insert(db, spec.name, row, columns)
             result.imported[spec.name] = len(rows)
 
