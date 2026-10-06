@@ -33,9 +33,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.api.routes import vm_delete
-from app.api.routes.csv_create import _Cluster
+from app.api.routes.csv_create import _Cluster, _hyperv_service
 from app.api.routes.hyperv_clusters import _apply_vm_discovery_refresh, _get_vm_settled
-from app.api.routes.restore import _StepCtx
+from app.api.routes.restore import _restore_settings, _StepCtx
 from app.api.routes.vm_create import _node_session
 from app.core.crypto import decrypt_secret
 from app.core.rbac import Permission
@@ -232,6 +232,21 @@ class _Live:
                 self.cluster, self.cno.password, self.cno, self.node_ips, self.owner, credssp=True, timeout=timeout,
             )
             self.raw = self.disk_node.vm_settings_info(self.disk_session, vm_name)
+
+
+    def open_write_sessions(self, timeout: int = 900) -> None:
+        """Sitzungen fuer die AENDERNDEN Schritte. Jede Konfigurationsaenderung
+        an einer geclusterten VM loest intern Update-ClusterVirtualMachine-
+        Configuration aus -- ein zweiter Hop zum Cluster-Dienst, der ueber
+        Kerberos scheitert (Cmdlet meldet Fehler, obwohl die Aenderung
+        durchgefuehrt ist; live 2026-10-06 beim Anhaengen einer Disk an VM02).
+        Deshalb wie beim Restore (_restore_settings) Kerberos -> NTLM; auf
+        SMB3 fuer die Disk-Schritte weiterhin CredSSP."""
+        service = _hyperv_service(self.cluster, self.node_ips.get(self.owner.lower(), self.owner), self.owner, settings=_restore_settings())
+        self.node = service
+        self.session = service.connect(self.cluster.username, self.cno.password, read_timeout_sec=timeout + 60, operation_timeout_sec=timeout)
+        if not self.on_smb:
+            self.disk_node, self.disk_session = self.node, self.session
 
 
 def _to_info(db: Session, cluster_id: str, vm_name: str, live: _Live, own_run_id: str | None = None) -> VmSettingsInfo:
@@ -502,6 +517,7 @@ def _execute_change(run_id: str) -> None:  # noqa: C901
                     raise RuntimeError(" ".join(errors))
                 if not changes:
                     raise RuntimeError("Keine Änderung mehr gegenüber dem aktuellen Stand")
+                live.open_write_sessions()
                 run.node_name = info.node
                 run.changes = changes
                 ctx.row.message = f"{info.node}, Status {info.state}, {len(changes)} Änderung(en)" + (" (SMB3: CredSSP)" if live.on_smb else "")
@@ -540,18 +556,21 @@ def _execute_change(run_id: str) -> None:  # noqa: C901
             if plan["expand"] or plan["add_disks"]:
                 with _StepCtx(db, run.id, "disks", "Festplatten", step_model=VmSettingsRunStep) as ctx:
                     touched = True
+                    notes: list[str] = []
+
+                    def _add_disk(d: dict) -> None:
+                        note = live.disk_node.add_vm_disk(live.disk_session, name, d["path"], d["size_bytes"], d["dynamic"])
+                        if note:
+                            notes.append(f"{win_basename(d['path'])} ist angehängt, Hyper-V meldete dabei: {note}")
+
                     parts = [
                         _each(
                             plan["expand"], lambda d: live.disk_node.resize_vhd(live.disk_session, d["path"], d["size_bytes"]),
                             lambda d: f"{win_basename(d['path'])} auf {_gb(d['size_bytes'])}",
                         ),
-                        _each(
-                            plan["add_disks"],
-                            lambda d: live.disk_node.add_vm_disk(live.disk_session, name, d["path"], d["size_bytes"], d["dynamic"]),
-                            lambda d: f"neu {win_basename(d['path'])} ({_gb(d['size_bytes'])})",
-                        ),
+                        _each(plan["add_disks"], _add_disk, lambda d: f"neu {win_basename(d['path'])} ({_gb(d['size_bytes'])})"),
                     ]
-                    ctx.row.message = "; ".join(p for p in parts if p)
+                    ctx.row.message = "; ".join(p for p in [*parts, *notes] if p)
                     if plan["expand"]:
                         ctx.row.message += " -- die Partition im Gast bitte dort erweitern"
 

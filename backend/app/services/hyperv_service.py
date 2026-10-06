@@ -2627,11 +2627,20 @@ class HyperVService:
             raise RuntimeError(f"Festplatte {vhd_path} konnte nicht vergroessert werden: {result.error}")
         return int(result.output.strip().splitlines()[-1])
 
-    def add_vm_disk(self, node_session: winrm.Session, vm_name: str, vhd_path: str, size_bytes: int, dynamic: bool) -> None:
+    def add_vm_disk(self, node_session: winrm.Session, vm_name: str, vhd_path: str, size_bytes: int, dynamic: bool) -> str | None:
         """Neue VHDX anlegen und am SCSI-Controller anhaengen (im laufenden
         Betrieb moeglich). Fehlt ein SCSI-Controller (Generation 1), wird er
-        angelegt -- das geht nur bei ausgeschalteter VM. Schlaegt das
-        Anhaengen fehl, wird die gerade angelegte Datei wieder entfernt."""
+        angelegt -- das geht nur bei ausgeschalteter VM.
+
+        Meldet Add-VMHardDiskDrive einen Fehler, wird geprueft, ob die Disk
+        trotzdem an der VM haengt: bei einer geclusterten VM kann nur der
+        interne Abgleich der Cluster-Konfiguration scheitern (Double-Hop,
+        live gesehen 2026-10-06 an VM02 ueber Kerberos -- Disk angehaengt,
+        Cmdlet meldet trotzdem "Update-ClusterVirtualMachineConfiguration
+        could not be completed"). Dann bleibt die Disk und die Meldung kommt
+        als Hinweis zurueck. Nur wenn die Disk NICHT angehaengt ist, wird die
+        gerade angelegte Datei wieder entfernt und der Fehler geworfen --
+        niemals eine angehaengte Disk loeschen."""
         vm = vm_name.replace("'", "''")
         path = vhd_path.replace("'", "''")
         script = (
@@ -2641,8 +2650,15 @@ class HyperVService:
             f"New-Item -ItemType Directory -Force -Path (Split-Path -Parent '{path}') | Out-Null; "
             f"New-VHD -Path '{path}' -SizeBytes {int(size_bytes)} {'-Dynamic' if dynamic else '-Fixed'} | Out-Null; "
             f"try {{ Add-VMHardDiskDrive -VMName '{vm}' -ControllerType SCSI -Path '{path}' }} "
-            f"catch {{ Remove-Item -LiteralPath '{path}' -Force -ErrorAction SilentlyContinue; throw }}"
+            "catch { $msg = $_.Exception.Message; "
+            f"$attached = @(Get-VMHardDiskDrive -VMName '{vm}' -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -eq '{path}' }}).Count; "
+            "if ($attached) { 'ATTACHED_WITH_ERROR: ' + $msg } else { "
+            f"Remove-Item -LiteralPath '{path}' -Force -ErrorAction SilentlyContinue; throw }} }}"
         )
         result = self._run_ps(node_session, script)
         if not result.success:
             raise RuntimeError(f"Festplatte {vhd_path} konnte nicht angelegt werden: {result.error}")
+        marker = "ATTACHED_WITH_ERROR: "
+        if marker in (result.output or ""):
+            return result.output.split(marker, 1)[1].strip()[:300]
+        return None
