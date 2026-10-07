@@ -302,27 +302,37 @@ def _check_backup(
 
 def _reach_notes(
     cls: ProtectionClass, links: list[_Link], oldest_primary: dict[str, datetime], oldest_secondary: dict[str, datetime],
-    now: datetime,
+    now: datetime, snapmirror: "_SnapMirror | None" = None, volumes: list[str] | None = None,
 ) -> list[str]:
-    """Hinweise, wenn die aelteste vorhandene Sicherung einer Stufe noch nicht
-    so weit zurueckreicht, wie die Klasse verlangt (oldest_*: Policy-Name ->
-    aelteste vorhandene Sicherung des Objekts)."""
+    """Hinweise, wenn die vorhandenen Sicherungen einer Stufe noch nicht so
+    weit zurueckreichen, wie die Klasse verlangt (oldest_*: Policy-Name ->
+    aelteste vorhandene Sicherung des Objekts). Eine Zeile je Seite (primaer/
+    sekundaer). Stufen, deren Konfiguration die Vorgabe ohnehin nicht
+    erreicht, stehen schon als Verstoss da und bekommen keinen Hinweis --
+    "im Aufbau" hiesse dort faelschlich, es werde von selbst gut."""
     requirements = tier_requirements(cls)
     if not requirements:
         return ["Aufbewahrung nicht definiert (Stufen in der Schutzklasse eintragen)"]
     notes = []
-    for tier, primary_days, secondary_days in requirements:
-        policies = {l.policy_name for l in links if l.tier <= tier.index}
-        for label, store, required in (("primär", oldest_primary, primary_days), ("sekundär", oldest_secondary, secondary_days)):
-            oldest = min((store[p] for p in policies if p in store), default=None)
+    for side, store in (("primär", oldest_primary), ("sekundär", oldest_secondary)):
+        parts: list[str] = []
+        first: datetime | None = None
+        for tier, primary_days, secondary_days in requirements:
+            required = primary_days if side == "primär" else secondary_days
+            candidates = [l for l in links if l.tier <= tier.index]
+            oldest = min((store[l.policy_name] for l in candidates if l.policy_name in store), default=None)
             if not required or oldest is None:
                 continue
+            if side == "primär":
+                reachable = max((l.retention_days for l in candidates), default=0.0) + 0.01 >= required
+            else:
+                reachable = snapmirror is None or not snapmirror.check(volumes or [], candidates, required, tier)
             age = (now - oldest).total_seconds() / 86400
-            if age + tier.reach_tolerance_days < required:
-                notes.append(
-                    f"{label} im Aufbau ({tier.adjective} Sicherungen): reichen erst bis {oldest.astimezone().strftime('%d.%m.%Y')} "
-                    f"zurück ({_fmt_span(age, tier)}), Klasse verlangt {_fmt_span(required, tier)}"
-                )
+            if reachable and age + tier.reach_tolerance_days < required:
+                parts.append(f"{tier.adjective[:-1]} {_fmt_span(age, tier).split(' ')[0]} von {_fmt_span(required, tier)}")
+                first = oldest if first is None or oldest < first else first
+        if parts:
+            notes.append(f"{side} im Aufbau: {', '.join(parts)} (älteste Sicherung {first.astimezone().strftime('%d.%m.%Y')})")
     return notes
 
 
@@ -400,7 +410,9 @@ def evaluate(db: Session, now: datetime | None = None) -> list[ObjectStatus]:
             status.violations = _check_backup(
                 cls, object_links, bool(groups), primary.get(backup_key), secondary.get(backup_key), now, snapmirror, volumes,
             )
-            status.notes = _reach_notes(cls, object_links, oldest_primary.get(backup_key, {}), oldest_secondary.get(backup_key, {}), now)
+            status.notes = _reach_notes(
+                cls, object_links, oldest_primary.get(backup_key, {}), oldest_secondary.get(backup_key, {}), now, snapmirror, volumes,
+            )
         return status
 
     result: list[ObjectStatus] = []
