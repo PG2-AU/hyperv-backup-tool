@@ -24,15 +24,27 @@ _view = require_permission(Permission.BACKUP_VIEW)
 _manage = require_permission(Permission.BACKUP_CREATE)
 
 
+class TierRetention(BaseModel):
+    primary: int | None = Field(default=None, ge=0, le=3660)
+    secondary: int | None = Field(default=None, ge=0, le=3660)
+
+
+class RetentionTiers(BaseModel):
+    # hourly/daily in Tagen, weekly in Wochen, monthly in Monaten
+    hourly: TierRetention = Field(default_factory=TierRetention)
+    daily: TierRetention = Field(default_factory=TierRetention)
+    weekly: TierRetention = Field(default_factory=TierRetention)
+    monthly: TierRetention = Field(default_factory=TierRetention)
+
+
 class ClassWrite(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     rank: int = Field(ge=1, le=99)
     color: str = Field(default="blue", max_length=20)
     description: str | None = Field(default=None, max_length=500)
     max_backup_age_hours: int = Field(ge=1, le=24 * 366)
-    # Aufbewahrung primaer / sekundaer in Tagen; sekundaer 0 = nicht verlangt
-    min_retention_days: int = Field(ge=0, le=3660)
-    secondary_retention_days: int = Field(default=0, ge=0, le=3660)
+    # Aufbewahrung je Stufe, primaer und sekundaer; leer = nicht verlangt
+    retention_tiers: RetentionTiers = Field(default_factory=lambda: RetentionTiers())
     require_app_consistent: bool = False
 
 
@@ -108,8 +120,9 @@ def _read(db: Session, cls: ProtectionClass) -> ClassRead:
     count = db.query(ProtectionClassAssignment).filter(ProtectionClassAssignment.class_id == cls.id).count()
     return ClassRead(
         id=cls.id, name=cls.name, rank=cls.rank, color=cls.color, description=cls.description,
-        max_backup_age_hours=cls.max_backup_age_hours, min_retention_days=cls.min_retention_days,
-        secondary_retention_days=cls.secondary_retention_days or 0, require_app_consistent=cls.require_app_consistent,
+        max_backup_age_hours=cls.max_backup_age_hours,
+        retention_tiers=RetentionTiers.model_validate(cls.retention_tiers if isinstance(cls.retention_tiers, dict) else {}),
+        require_app_consistent=cls.require_app_consistent,
         assigned_count=count,
     )
 

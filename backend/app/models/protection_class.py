@@ -9,7 +9,7 @@ Klasse liegt (rank: 1 = hoechste). Pruefung in app.core.protection_class."""
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String
+from sqlalchemy import JSON, Boolean, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -34,13 +34,17 @@ class ProtectionClass(Base):
     color: Mapped[str] = mapped_column(String(20), default="blue")
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     max_backup_age_hours: Mapped[int] = mapped_column(Integer, default=26)
-    # Aufbewahrung PRIMAER in Tagen (Spaltenname aus der ersten Fassung).
+    # Aufbewahrung je Stufe (Nutzer-Vorgabe 2026-10-07):
+    # {"hourly"|"daily"|"weekly"|"monthly": {"primary": n, "secondary": n}},
+    # hourly/daily in Tagen, weekly in Wochen, monthly in Monaten; fehlend/0/None
+    # = nicht verlangt. Pruefung je Stufe in app.core.protection_class.
+    retention_tiers: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Altlasten (eine Gesamt-Aufbewahrung primaer/sekundaer in Tagen bzw. der
+    # Ja/Nein-Schalter davor) -- nicht mehr ausgewertet und bewusst NICHT in
+    # die Stufen ueberfuehrt (Nutzer-Entscheidung 2026-10-07); bleiben, weil
+    # SQLite NOT-NULL-Spalten nicht entfernen kann.
     min_retention_days: Mapped[int] = mapped_column(Integer, default=7)
-    # Aufbewahrung SEKUNDAER in Tagen, 0/None = keine sekundaere Kopie verlangt
-    # (Nutzer-Vorgabe 2026-10-06, ersetzt den Ja/Nein-Schalter require_secondary).
     secondary_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
-    # Altlast (durch secondary_retention_days ersetzt, in init_db ueberfuehrt);
-    # bleibt, weil SQLite NOT-NULL-Spalten nicht entfernen kann.
     require_secondary: Mapped[bool] = mapped_column(Boolean, default=False)
     require_app_consistent: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

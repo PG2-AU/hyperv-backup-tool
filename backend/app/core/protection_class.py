@@ -6,18 +6,21 @@ Je VM, CSV und SMB3-Freigabe mit zugewiesener Klasse drei Pruefungen:
    Objekt gesichert wird, die Klasse? Sicherungsabstand = groesste Luecke
    zwischen zwei geplanten Laeufen (bei mehreren Uhrzeiten am Tag inkl. der
    ueber Mitternacht); pausierte Gruppen/Zeitplaene und deaktivierte Policies
-   zaehlen nicht. Aufbewahrung PRIMAER in Tagen = laengste Aufbewahrung einer
-   Policy (Anzahl-Retention = Anzahl x mittlerer Abstand). Aufbewahrung
-   SEKUNDAER in Tagen = was das SnapMirror-Ziel laut seiner Policy fuer das
-   Label der sichernden Policy behaelt (Regel-Anzahl x Abstand der Stufe),
-   je Volume des Objekts; alle Volumes muessen reichen. So faellt eine
-   "Gold"-VM mit nur taeglichem Backup auf, auch wenn jeder Lauf klappt.
+   zaehlen nicht. Aufbewahrung JE STUFE (stuendlich/taeglich/woechentlich/
+   monatlich, Nutzer-Vorgabe 2026-10-07 -- eine Monatsstufe darf eine zu
+   kurze Tagesstufe nicht verdecken), jeweils primaer und sekundaer als
+   Zeitraum. Die Stufe einer Policy ergibt sich aus ihrem Zeitplan; eine
+   feinere Stufe zaehlt fuer eine groebere mit (stuendlich 14 Tage erfuellt
+   "taeglich 14 Tage"). PRIMAER = Aufbewahrung der Policy (Anzahl-Retention
+   = Anzahl x mittlerer Abstand). SEKUNDAER = was das SnapMirror-Ziel laut
+   seiner Policy fuer das Label der sichernden Policy behaelt (Regel-Anzahl
+   x Abstand), je Volume des Objekts; alle Volumes muessen reichen.
 2. Ist: Ist das letzte erfolgreiche Backup jung genug (10 % bzw. mindestens
    30 min Toleranz fuer die Laufzeit), und gibt es bei Pflicht eine sekundaere
    Kopie, die nicht aelter als max(Klassen-Alter, 26 h) ist?
    Zusaetzlich als HINWEIS (kein Verstoss, kein Alarm): Reicht die aelteste
-   vorhandene Sicherung primaer/sekundaer schon so weit zurueck, wie die
-   Klasse verlangt? Die Soll-Pruefung sagt nur, was die Policies behalten
+   vorhandene Sicherung je Stufe primaer/sekundaer schon so weit zurueck,
+   wie die Klasse verlangt? Die Soll-Pruefung sagt nur, was die Policies behalten
    WERDEN -- nach Einrichtung oder Policy-Aenderung ist die Historie erst
    im Aufbau (Nutzer-Meldung 2026-10-07: "erfuellt" trotz nur 27 Tagen).
 3. Speicher (nur VMs): Jede CSV/Freigabe, auf der die VM liegt, muss eine
@@ -42,9 +45,44 @@ from app.models.resource_group import ResourceGroup
 from app.models.schedule import ScheduleType
 
 SECONDARY_MIN_AGE_HOURS = 26
-# Toleranz fuer den Hinweis "Aufbewahrung im Aufbau": 30 taegliche Sicherungen
-# reichen zu jedem Zeitpunkt nur 29,x Tage zurueck.
-RETENTION_REACH_TOLERANCE_DAYS = 1.0
+
+
+@dataclass(frozen=True)
+class _Tier:
+    index: int  # 0 = feinste Stufe
+    key: str
+    adjective: str
+    # Einheit der Eingabe in der Klasse und ihr Wert in Tagen
+    unit: str
+    unit_days: int
+    # Toleranz fuer den Hinweis "Aufbewahrung im Aufbau": N Sicherungen im
+    # Abstand X reichen zu jedem Zeitpunkt nur zwischen (N-1)*X und N*X zurueck.
+    reach_tolerance_days: float
+
+
+TIERS = (
+    _Tier(0, "hourly", "stündliche", "Tage", 1, 1.0),
+    _Tier(1, "daily", "tägliche", "Tage", 1, 1.0),
+    _Tier(2, "weekly", "wöchentliche", "Wochen", 7, 7.0),
+    _Tier(3, "monthly", "monatliche", "Monate", 30, 31.0),
+)
+
+
+def tier_requirements(cls: ProtectionClass) -> list[tuple[_Tier, int, int]]:
+    """Je Stufe mit Vorgabe: (Stufe, primaer in Tagen, sekundaer in Tagen); 0 = nicht verlangt."""
+    result = []
+    tiers = cls.retention_tiers if isinstance(cls.retention_tiers, dict) else {}
+    for tier in TIERS:
+        entry = tiers.get(tier.key) or {}
+        primary = int(entry.get("primary") or 0) * tier.unit_days
+        secondary = int(entry.get("secondary") or 0) * tier.unit_days
+        if primary or secondary:
+            result.append((tier, primary, secondary))
+    return result
+
+
+def _fmt_span(days: float, tier: _Tier) -> str:
+    return f"{round(days / tier.unit_days, 1):g} {tier.unit}".replace(".", ",")
 
 
 @dataclass
@@ -102,6 +140,8 @@ class _Link:
     # mittlerer Abstand in Tagen und SnapMirror-Label -- fuer die sekundaere Aufbewahrung
     interval_days: float = 1.0
     label: str | None = None
+    # Stufe laut Zeitplan: Index in TIERS
+    tier: int = 1
 
 
 def _effective_links(groups: list[ResourceGroup]) -> dict[str, list[_Link]]:
@@ -123,6 +163,7 @@ def _effective_links(groups: list[ResourceGroup]) -> dict[str, list[_Link]]:
                     policy_name=policy.name, gap_hours=gap, retention_days=retention, secondary=bool(policy.snapmirror_update),
                     app_consistent=policy.consistency == ConsistencyType.APPLICATION_CONSISTENT,
                     interval_days=mean / 24, label=policy.snapmirror_label.name if policy.snapmirror_label else None,
+                    tier=0 if mean < 24 else 1 if mean == 24 else 2 if mean <= 168 else 3,
                 ))
         result[group.name] = links
     return result
@@ -155,11 +196,13 @@ class _SnapMirror:
             if rel.source_path:
                 self.by_volume.setdefault(rel.source_path.lower(), []).append((rel.policy_name or "?", policies.get(rel.policy_name or "", {})))
 
-    def check(self, volumes: list[str], links: list[_Link], required_days: int) -> list[str]:
-        """Verstoesse gegen die verlangte sekundaere Aufbewahrung."""
+    def check(self, volumes: list[str], links: list[_Link], required_days: int, tier: _Tier) -> list[str]:
+        """Verstoesse gegen die verlangte sekundaere Aufbewahrung einer Stufe
+        (links = Policies dieser oder einer feineren Stufe)."""
+        want = _fmt_span(required_days, tier)
         secondary = [l for l in links if l.secondary]
         if not secondary:
-            return ["keine Policy mit SnapMirror-Update (sekundäre Aufbewahrung verlangt)"]
+            return [f"sekundär: keine {tier.adjective} Policy mit SnapMirror-Update (Klasse verlangt {want})"]
         if not volumes:
             return []
         violations = []
@@ -179,9 +222,13 @@ class _SnapMirror:
                         best = max(best, rules[link.label] * link.interval_days)
             if best + 0.01 < required_days:
                 if best:
-                    violations.append(f"sekundäre Aufbewahrung ca. {best:.0f} Tage ({volume}), Klasse verlangt {required_days}")
+                    violations.append(
+                        f"sekundär: {tier.adjective} Sicherungen ca. {_fmt_span(best, tier)} aufbewahrt ({volume}), Klasse verlangt {want}"
+                    )
                 else:
-                    violations.append(f"sekundäre Aufbewahrung nicht gegeben ({volume}): {reason or 'keine passende Regel'}")
+                    violations.append(
+                        f"sekundär: {tier.adjective} Sicherungen nicht aufbewahrt ({volume}): {reason or 'keine passende Regel'}"
+                    )
         return violations
 
 
@@ -193,17 +240,29 @@ def check_config(
     eine Protection Group" und fuer den Vorschlag passender Gruppen."""
     violations: list[str] = []
     max_age = cls.max_backup_age_hours
-    secondary_days = cls.secondary_retention_days or 0
     if not links:
         return ["kein aktiver Zeitplan (Gruppe, Policy oder Zeitplan pausiert bzw. ohne Zeitplan)"]
     best_gap = min(l.gap_hours for l in links)
     if best_gap > max_age:
         violations.append(f"Sicherungsabstand {_fmt_hours(best_gap)}, Klasse verlangt höchstens {_fmt_hours(max_age)}")
-    best_retention = max(l.retention_days for l in links)
-    if best_retention + 0.01 < cls.min_retention_days:
-        violations.append(f"primäre Aufbewahrung ca. {best_retention:.0f} Tage, Klasse verlangt {cls.min_retention_days}")
-    if secondary_days and snapmirror is not None:
-        violations.extend(snapmirror.check(volumes or [], links, secondary_days))
+    seen: set[str] = set()
+    for tier, primary_days, secondary_days in tier_requirements(cls):
+        candidates = [l for l in links if l.tier <= tier.index]
+        found: list[str] = []
+        if primary_days:
+            best_retention = max((l.retention_days for l in candidates), default=0.0)
+            if not candidates:
+                found.append(f"primär: keine {tier.adjective} Policy (Klasse verlangt {_fmt_span(primary_days, tier)})")
+            elif best_retention + 0.01 < primary_days:
+                found.append(
+                    f"primär: {tier.adjective} Sicherungen ca. {_fmt_span(best_retention, tier)} aufbewahrt, "
+                    f"Klasse verlangt {_fmt_span(primary_days, tier)}"
+                )
+        if secondary_days and snapmirror is not None:
+            found.extend(snapmirror.check(volumes or [], candidates, secondary_days, tier))
+        # 'keine SnapMirror-Beziehung fuer Volume X' kaeme sonst je Stufe einmal
+        violations.extend(v for v in found if v not in seen)
+        seen.update(found)
     if cls.require_app_consistent:
         consistent = [l.gap_hours for l in links if l.app_consistent]
         if not consistent:
@@ -221,7 +280,7 @@ def _check_backup(
 ) -> list[str]:
     violations: list[str] = []
     max_age = cls.max_backup_age_hours
-    secondary_days = cls.secondary_retention_days or 0
+    secondary_required = any(secondary for _, _, secondary in tier_requirements(cls))
     if not protected:
         return ["in keiner Protection Group"]
     violations.extend(check_config(cls, links, snapmirror, volumes))
@@ -232,7 +291,7 @@ def _check_backup(
         violations.append("noch kein erfolgreiches Backup")
     elif now - newest > timedelta(hours=max_age) + tolerance:
         violations.append(f"letztes Backup vor {_fmt_hours(round((now - newest).total_seconds() / 3600))}, erlaubt {_fmt_hours(max_age)}")
-    if secondary_days:
+    if secondary_required:
         limit = timedelta(hours=max(max_age, SECONDARY_MIN_AGE_HOURS)) + tolerance
         if last_secondary is None:
             violations.append("keine sekundäre Kopie vorhanden")
@@ -242,43 +301,50 @@ def _check_backup(
 
 
 def _reach_notes(
-    cls: ProtectionClass, oldest_primary: datetime | None, oldest_secondary: datetime | None, now: datetime,
+    cls: ProtectionClass, links: list[_Link], oldest_primary: dict[str, datetime], oldest_secondary: dict[str, datetime],
+    now: datetime,
 ) -> list[str]:
-    """Hinweise, wenn die aelteste vorhandene Sicherung noch nicht so weit
-    zurueckreicht, wie die Klasse an Aufbewahrung verlangt."""
+    """Hinweise, wenn die aelteste vorhandene Sicherung einer Stufe noch nicht
+    so weit zurueckreicht, wie die Klasse verlangt (oldest_*: Policy-Name ->
+    aelteste vorhandene Sicherung des Objekts)."""
+    requirements = tier_requirements(cls)
+    if not requirements:
+        return ["Aufbewahrung nicht definiert (Stufen in der Schutzklasse eintragen)"]
     notes = []
-    for label, oldest, required in (
-        ("primäre", oldest_primary, cls.min_retention_days or 0),
-        ("sekundäre", oldest_secondary, cls.secondary_retention_days or 0),
-    ):
-        if not required or oldest is None:
-            continue
-        age = (now - oldest).total_seconds() / 86400
-        if age + RETENTION_REACH_TOLERANCE_DAYS < required:
-            notes.append(
-                f"{label} Aufbewahrung im Aufbau: älteste vorhandene Sicherung vom {oldest.astimezone().strftime('%d.%m.%Y')} "
-                f"({age:.0f} Tage), Klasse verlangt {required}"
-            )
+    for tier, primary_days, secondary_days in requirements:
+        policies = {l.policy_name for l in links if l.tier <= tier.index}
+        for label, store, required in (("primär", oldest_primary, primary_days), ("sekundär", oldest_secondary, secondary_days)):
+            oldest = min((store[p] for p in policies if p in store), default=None)
+            if not required or oldest is None:
+                continue
+            age = (now - oldest).total_seconds() / 86400
+            if age + tier.reach_tolerance_days < required:
+                notes.append(
+                    f"{label} im Aufbau ({tier.adjective} Sicherungen): reichen erst bis {oldest.astimezone().strftime('%d.%m.%Y')} "
+                    f"zurück ({_fmt_span(age, tier)}), Klasse verlangt {_fmt_span(required, tier)}"
+                )
     return notes
 
 
-def backup_times(db: Session) -> tuple[dict[str, datetime], dict[str, datetime], dict[str, datetime], dict[str, datetime]]:
-    """Letztes und aeltestes vorhandenes Backup je 'vm:<Name>', 'csv:<Name>',
-    'vol:<SVM>:<Volume>' -- (letztes primaer, letztes sekundaer, aeltestes
-    primaer, aeltestes sekundaer); gleiche Logik wie der Schutzstatus-Report."""
+def backup_times(db: Session) -> tuple[dict[str, datetime], dict[str, datetime], dict[str, dict], dict[str, dict]]:
+    """Vorhandene Backups je 'vm:<Name>', 'csv:<Name>', 'vol:<SVM>:<Volume>':
+    (letztes primaer, letztes sekundaer, aeltestes primaer je Policy-Name,
+    aeltestes sekundaer je Policy-Name); gleiche Logik wie der Schutzstatus-Report."""
     not_captured = {(c.run_id, c.vm_name) for c in db.query(BackupRunVmConfig).filter(BackupRunVmConfig.not_captured.is_(True))}
     primary: dict[str, datetime] = {}
     secondary: dict[str, datetime] = {}
-    oldest_primary: dict[str, datetime] = {}
-    oldest_secondary: dict[str, datetime] = {}
+    oldest_primary: dict[str, dict[str, datetime]] = {}
+    oldest_secondary: dict[str, dict[str, datetime]] = {}
 
-    def note(store: dict, oldest: dict, key: str, when: datetime) -> None:
+    def note(store: dict, oldest: dict, key: str, policy: str, when: datetime) -> None:
         if key not in store or when > store[key]:
             store[key] = when
-        if key not in oldest or when < oldest[key]:
-            oldest[key] = when
+        per_policy = oldest.setdefault(key, {})
+        if policy not in per_policy or when < per_policy[policy]:
+            per_policy[policy] = when
 
-    for row in db.query(BackupRunSnapshot).options(selectinload(BackupRunSnapshot.destinations)).all():
+    rows = db.query(BackupRunSnapshot).options(selectinload(BackupRunSnapshot.destinations), selectinload(BackupRunSnapshot.run)).all()
+    for row in rows:
         has_secondary = any(d.present for d in row.destinations)
         if not (row.success or has_secondary):
             continue
@@ -286,11 +352,12 @@ def backup_times(db: Session) -> tuple[dict[str, datetime], dict[str, datetime],
         keys += [f"csv:{c}" for c in (row.csv_names or [])]
         keys.append(f"vol:{row.svm_name}:{row.volume_name}")
         when = _aware(row.created_at)
+        policy = row.run.policy_name if row.run is not None else ""
         for key in keys:
             if row.success:
-                note(primary, oldest_primary, key, when)
+                note(primary, oldest_primary, key, policy, when)
             if has_secondary:
-                note(secondary, oldest_secondary, key, when)
+                note(secondary, oldest_secondary, key, policy, when)
     return primary, secondary, oldest_primary, oldest_secondary
 
 
@@ -333,7 +400,7 @@ def evaluate(db: Session, now: datetime | None = None) -> list[ObjectStatus]:
             status.violations = _check_backup(
                 cls, object_links, bool(groups), primary.get(backup_key), secondary.get(backup_key), now, snapmirror, volumes,
             )
-            status.notes = _reach_notes(cls, oldest_primary.get(backup_key), oldest_secondary.get(backup_key), now)
+            status.notes = _reach_notes(cls, object_links, oldest_primary.get(backup_key, {}), oldest_secondary.get(backup_key, {}), now)
         return status
 
     result: list[ObjectStatus] = []

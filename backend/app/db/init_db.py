@@ -463,6 +463,8 @@ def init_db(db: Session) -> None:
                 "CASE WHEN require_secondary THEN min_retention_days ELSE 0 END WHERE secondary_retention_days IS NULL"
             ))
             conn.commit()
+    # Schutzklassen: Aufbewahrung je Stufe (alte Tageswerte werden nicht ueberfuehrt).
+    _add_missing_columns(engine, "protection_classes", {"retention_tiers": "JSON"})
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})
     _add_missing_columns(engine, "netapp_aggregates", {"efficiency_ratio_wo_snapshots_flexclones": "FLOAT"})
     _add_missing_columns(engine, "netapp_clusters", {"system_type": "VARCHAR(20)"})

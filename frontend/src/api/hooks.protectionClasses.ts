@@ -6,15 +6,25 @@ import { apiClient } from "@/api/client";
 
 export type ProtectionObjectType = "vm" | "csv" | "smb_share";
 
+// Stufe einer Sicherung laut Zeitplan; Einheit der Aufbewahrung: hourly/daily
+// in Tagen, weekly in Wochen, monthly in Monaten.
+export type RetentionTierKey = "hourly" | "daily" | "weekly" | "monthly";
+
+export interface TierRetention {
+  primary?: number | null;
+  secondary?: number | null;
+}
+
+export type RetentionTiers = Record<RetentionTierKey, TierRetention>;
+
 export interface ProtectionClassWrite {
   name: string;
   rank: number;
   color: string;
   description?: string | null;
   max_backup_age_hours: number;
-  // Aufbewahrung primaer / sekundaer in Tagen (sekundaer 0 = nicht verlangt)
-  min_retention_days: number;
-  secondary_retention_days: number;
+  // Aufbewahrung je Stufe, primaer und sekundaer (leer = nicht verlangt)
+  retention_tiers: RetentionTiers;
   require_app_consistent: boolean;
 }
 

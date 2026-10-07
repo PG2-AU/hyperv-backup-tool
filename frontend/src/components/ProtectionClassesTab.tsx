@@ -32,7 +32,14 @@ import {
   useProtectionStatus,
   useSaveProtectionClass,
 } from "@/api/hooks.protectionClasses";
-import type { ProtectionClass, ProtectionClassWrite, ProtectionObjectStatus, ProtectionObjectType } from "@/api/hooks.protectionClasses";
+import type {
+  ProtectionClass,
+  ProtectionClassWrite,
+  ProtectionObjectStatus,
+  ProtectionObjectType,
+  RetentionTierKey,
+  RetentionTiers,
+} from "@/api/hooks.protectionClasses";
 import { ProtectionClassCell } from "@/components/ProtectionClassCell";
 import { SearchInput } from "@/components/SearchInput";
 import { useAuthStore } from "@/store/authStore";
@@ -56,11 +63,39 @@ const COLORS = [
   { value: "teal", label: "Türkis" },
 ];
 
+// Aufbewahrung je Stufe (Nutzer-Vorgabe 2026-10-07): die Stufe einer Policy
+// ergibt sich aus ihrem Zeitplan, eine feinere Stufe zaehlt fuer eine groebere mit.
+const TIERS: { key: RetentionTierKey; label: string; short: string; unit: string; unitShort: string }[] = [
+  { key: "hourly", label: "Stündlich", short: "stdl.", unit: "Tage", unitShort: "T" },
+  { key: "daily", label: "Täglich", short: "tägl.", unit: "Tage", unitShort: "T" },
+  { key: "weekly", label: "Wöchentlich", short: "wöch.", unit: "Wochen", unitShort: "W" },
+  { key: "monthly", label: "Monatlich", short: "mon.", unit: "Monate", unitShort: "M" },
+];
+
+function tiers(values: Partial<Record<RetentionTierKey, [number | null, number | null]>> = {}): RetentionTiers {
+  const entry = (key: RetentionTierKey) => ({ primary: values[key]?.[0] ?? null, secondary: values[key]?.[1] ?? null });
+  return { hourly: entry("hourly"), daily: entry("daily"), weekly: entry("weekly"), monthly: entry("monthly") };
+}
+
+function tierSummary(value: RetentionTiers | undefined, side: "primary" | "secondary"): string {
+  const parts = TIERS.filter((t) => value?.[t.key]?.[side]).map((t) => `${t.short} ${value?.[t.key]?.[side]} ${t.unitShort}`);
+  return parts.join(" · ");
+}
+
 // Nur ein Vorschlag -- Namen und Werte sind danach frei aenderbar.
 const SUGGESTED: ProtectionClassWrite[] = [
-  { name: "Gold", rank: 1, color: "yellow", max_backup_age_hours: 4, min_retention_days: 14, secondary_retention_days: 60, require_app_consistent: true },
-  { name: "Silber", rank: 2, color: "gray", max_backup_age_hours: 26, min_retention_days: 7, secondary_retention_days: 30, require_app_consistent: true },
-  { name: "Bronze", rank: 3, color: "orange", max_backup_age_hours: 168, min_retention_days: 7, secondary_retention_days: 0, require_app_consistent: false },
+  {
+    name: "Gold", rank: 1, color: "yellow", max_backup_age_hours: 4, require_app_consistent: true,
+    retention_tiers: tiers({ hourly: [2, null], daily: [14, 30], weekly: [5, 8], monthly: [null, 6] }),
+  },
+  {
+    name: "Silber", rank: 2, color: "gray", max_backup_age_hours: 26, require_app_consistent: true,
+    retention_tiers: tiers({ daily: [14, 30], weekly: [4, 8], monthly: [null, 3] }),
+  },
+  {
+    name: "Bronze", rank: 3, color: "orange", max_backup_age_hours: 168, require_app_consistent: false,
+    retention_tiers: tiers({ weekly: [4, null] }),
+  },
 ];
 
 const TYPE_LABEL: Record<ProtectionObjectType, string> = { vm: "VMs", csv: "CSVs", smb_share: "SMB3-Freigaben" };
@@ -119,25 +154,51 @@ function ClassModal({ initial, editId, nextRank, onClose }: { initial: Protectio
             value={form.max_backup_age_hours}
             onChange={(v) => set("max_backup_age_hours", typeof v === "number" ? v : 26)}
           />
-          <NumberInput
-            label="Aufbewahrung primär"
-            description="so weit zurück muss lokal wiederherstellbar sein"
-            inputWrapperOrder={["label", "input", "description", "error"]}
-            min={0}
-            suffix=" Tage"
-            value={form.min_retention_days}
-            onChange={(v) => set("min_retention_days", typeof v === "number" ? v : 7)}
-          />
-          <NumberInput
-            label="Aufbewahrung sekundär"
-            description="auf dem SnapMirror-Ziel; 0 = nicht verlangt"
-            inputWrapperOrder={["label", "input", "description", "error"]}
-            min={0}
-            suffix=" Tage"
-            value={form.secondary_retention_days}
-            onChange={(v) => set("secondary_retention_days", typeof v === "number" ? v : 0)}
-          />
         </Group>
+        <Box>
+          <Text size="sm" fw={500}>
+            Aufbewahrung je Stufe
+          </Text>
+          <Text size="xs" c="dimmed" mb={4}>
+            So weit zurück müssen Sicherungen dieser Stufe wiederherstellbar sein – primär lokal, sekundär auf dem SnapMirror-Ziel. Leer =
+            nicht verlangt. Die Stufe einer Policy ergibt sich aus ihrem Zeitplan; eine feinere Stufe zählt für eine gröbere mit.
+          </Text>
+          <Table withRowBorders={false} verticalSpacing={4}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th w={130}>Stufe</Table.Th>
+                <Table.Th>Primär</Table.Th>
+                <Table.Th>Sekundär</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {TIERS.map((t) => (
+                <Table.Tr key={t.key}>
+                  <Table.Td>{t.label}</Table.Td>
+                  {(["primary", "secondary"] as const).map((side) => (
+                    <Table.Td key={side}>
+                      <NumberInput
+                        aria-label={`${t.label} ${side === "primary" ? "primär" : "sekundär"}`}
+                        size="xs"
+                        min={0}
+                        allowDecimal={false}
+                        placeholder="nicht verlangt"
+                        suffix={` ${t.unit}`}
+                        value={form.retention_tiers[t.key]?.[side] ?? ""}
+                        onChange={(v) =>
+                          set("retention_tiers", {
+                            ...form.retention_tiers,
+                            [t.key]: { ...form.retention_tiers[t.key], [side]: typeof v === "number" && v > 0 ? v : null },
+                          })
+                        }
+                      />
+                    </Table.Td>
+                  ))}
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Box>
         <Switch
           label="Applikationskonsistente Sicherung ist Pflicht"
           checked={form.require_app_consistent}
@@ -181,7 +242,7 @@ function ClassesTable({ classes, canManage }: { classes: ProtectionClass[]; canM
             leftSection={<IconPlus size={16} />}
             onClick={() =>
               setModal({
-                initial: { name: "", rank: nextRank, color: "blue", max_backup_age_hours: 26, min_retention_days: 7, secondary_retention_days: 0, require_app_consistent: false },
+                initial: { name: "", rank: nextRank, color: "blue", max_backup_age_hours: 26, retention_tiers: tiers(), require_app_consistent: false },
               })
             }
           >
@@ -233,8 +294,17 @@ function ClassesTable({ classes, canManage }: { classes: ProtectionClass[]; canM
                   )}
                 </Table.Td>
                 <Table.Td>{ageText(c.max_backup_age_hours)}</Table.Td>
-                <Table.Td>{c.min_retention_days} Tage</Table.Td>
-                <Table.Td>{c.secondary_retention_days ? `${c.secondary_retention_days} Tage` : "–"}</Table.Td>
+                <Table.Td>
+                  {tierSummary(c.retention_tiers, "primary") ||
+                    (tierSummary(c.retention_tiers, "secondary") ? (
+                      "–"
+                    ) : (
+                      <Text size="sm" c="yellow.8">
+                        nicht definiert
+                      </Text>
+                    ))}
+                </Table.Td>
+                <Table.Td>{tierSummary(c.retention_tiers, "secondary") || "–"}</Table.Td>
                 <Table.Td>{c.require_app_consistent ? "Pflicht" : "–"}</Table.Td>
                 <Table.Td>{c.assigned_count}</Table.Td>
                 <Table.Td>
@@ -274,8 +344,7 @@ function ClassesTable({ classes, canManage }: { classes: ProtectionClass[]; canM
             color: modal.initial.color,
             description: modal.initial.description ?? null,
             max_backup_age_hours: modal.initial.max_backup_age_hours,
-            min_retention_days: modal.initial.min_retention_days,
-            secondary_retention_days: modal.initial.secondary_retention_days,
+            retention_tiers: { ...tiers(), ...modal.initial.retention_tiers },
             require_app_consistent: modal.initial.require_app_consistent,
           }}
           editId={modal.editId}

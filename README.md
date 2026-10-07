@@ -136,14 +136,17 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   wird im Browser. Ein Treffer springt auf die passende Seite und waehlt das Objekt aus bzw.
   oeffnet bei Snapshots den Snapshots-Dialog des Volumes.
 - **Schutzklassen** -- Backup > Schutzklassen: frei definierbare Klassen (z.B. Gold/Silber/
-  Bronze, als Vorschlag per Knopf) mit Rang, maximalem Backup-Alter, Aufbewahrung primaer
-  und sekundaer in Tagen (sekundaer 0 = nicht verlangt; Ist-Wert aus den Regeln der
-  SnapMirror-Policy am Ziel abgeleitet) und Pflicht zur applikationskonsistenten Sicherung. Jede VM, CSV und
-  SMB3-Freigabe bekommt ihre Klasse von Hand (Spalte in Inventory oder Sammelzuweisung).
-  Geprueft wird (a) Soll: passen Policies/Zeitplaene zur Klasse (groesste Luecke zwischen
-  zwei Laeufen, Aufbewahrung), (b) Ist: letztes Backup und sekundaere Kopie jung genug,
-  dazu als Hinweis ohne Alarm "Aufbewahrung im Aufbau", solange die aelteste vorhandene
-  Sicherung primaer/sekundaer noch nicht so weit zurueckreicht, wie die Klasse verlangt,
+  Bronze, als Vorschlag per Knopf) mit Rang, maximalem Backup-Alter, Aufbewahrung je Stufe
+  (stuendlich/taeglich in Tagen, woechentlich in Wochen, monatlich in Monaten -- jeweils
+  primaer und sekundaer, leer = nicht verlangt) und Pflicht zur applikationskonsistenten
+  Sicherung. Jede VM, CSV und SMB3-Freigabe bekommt ihre Klasse von Hand (Spalte in Inventory
+  oder Sammelzuweisung). Geprueft wird (a) Soll: passen Policies/Zeitplaene zur Klasse
+  (groesste Luecke zwischen zwei Laeufen; Aufbewahrung je Stufe einzeln -- die Stufe einer
+  Policy ergibt sich aus ihrem Zeitplan, eine feinere Stufe zaehlt fuer eine groebere mit;
+  sekundaer aus den Regeln der SnapMirror-Policy am Ziel), (b) Ist: letztes Backup und
+  sekundaere Kopie jung genug, dazu als Hinweis ohne Alarm "im Aufbau", solange die
+  vorhandenen Sicherungen einer Stufe noch nicht so weit zurueckreichen, wie die Klasse
+  verlangt,
   (c) Speicher: VM liegt auf CSV/Freigabe mindestens ihrer Klasse. Ergebnis als Badge mit
   Gruenden, Alarm "Schutzklasse nicht erfuellt" und Spalte im Schutzstatus-Report.
   Protection Groups werden NICHT von Hand zugeordnet: die App berechnet je Gruppe, welche
