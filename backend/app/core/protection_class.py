@@ -15,6 +15,11 @@ Je VM, CSV und SMB3-Freigabe mit zugewiesener Klasse drei Pruefungen:
 2. Ist: Ist das letzte erfolgreiche Backup jung genug (10 % bzw. mindestens
    30 min Toleranz fuer die Laufzeit), und gibt es bei Pflicht eine sekundaere
    Kopie, die nicht aelter als max(Klassen-Alter, 26 h) ist?
+   Zusaetzlich als HINWEIS (kein Verstoss, kein Alarm): Reicht die aelteste
+   vorhandene Sicherung primaer/sekundaer schon so weit zurueck, wie die
+   Klasse verlangt? Die Soll-Pruefung sagt nur, was die Policies behalten
+   WERDEN -- nach Einrichtung oder Policy-Aenderung ist die Historie erst
+   im Aufbau (Nutzer-Meldung 2026-10-07: "erfuellt" trotz nur 27 Tagen).
 3. Speicher (nur VMs): Jede CSV/Freigabe, auf der die VM liegt, muss eine
    Klasse haben, die mindestens so hoch ist wie die der VM (rank kleiner =
    hoeher).
@@ -37,6 +42,9 @@ from app.models.resource_group import ResourceGroup
 from app.models.schedule import ScheduleType
 
 SECONDARY_MIN_AGE_HOURS = 26
+# Toleranz fuer den Hinweis "Aufbewahrung im Aufbau": 30 taegliche Sicherungen
+# reichen zu jedem Zeitpunkt nur 29,x Tage zurueck.
+RETENTION_REACH_TOLERANCE_DAYS = 1.0
 
 
 @dataclass
@@ -52,6 +60,8 @@ class ObjectStatus:
     # ok | violation | unassigned
     status: str = "unassigned"
     violations: list[str] = field(default_factory=list)
+    # Hinweise ohne Verstoss (z.B. Aufbewahrung noch im Aufbau)
+    notes: list[str] = field(default_factory=list)
     # nur VMs: Speicherorte mit deren Klasse
     storage: list[dict] = field(default_factory=list)
     resource_group_names: list[str] = field(default_factory=list)
@@ -231,16 +241,42 @@ def _check_backup(
     return violations
 
 
-def last_backups(db: Session) -> tuple[dict[str, datetime], dict[str, datetime]]:
-    """Letztes erfolgreiches Backup je 'vm:<Name>', 'csv:<Name>', 'vol:<SVM>:<Volume>' --
-    primaer und sekundaer (gleiche Logik wie der Schutzstatus-Report)."""
+def _reach_notes(
+    cls: ProtectionClass, oldest_primary: datetime | None, oldest_secondary: datetime | None, now: datetime,
+) -> list[str]:
+    """Hinweise, wenn die aelteste vorhandene Sicherung noch nicht so weit
+    zurueckreicht, wie die Klasse an Aufbewahrung verlangt."""
+    notes = []
+    for label, oldest, required in (
+        ("primäre", oldest_primary, cls.min_retention_days or 0),
+        ("sekundäre", oldest_secondary, cls.secondary_retention_days or 0),
+    ):
+        if not required or oldest is None:
+            continue
+        age = (now - oldest).total_seconds() / 86400
+        if age + RETENTION_REACH_TOLERANCE_DAYS < required:
+            notes.append(
+                f"{label} Aufbewahrung im Aufbau: älteste vorhandene Sicherung vom {oldest.astimezone().strftime('%d.%m.%Y')} "
+                f"({age:.0f} Tage), Klasse verlangt {required}"
+            )
+    return notes
+
+
+def backup_times(db: Session) -> tuple[dict[str, datetime], dict[str, datetime], dict[str, datetime], dict[str, datetime]]:
+    """Letztes und aeltestes vorhandenes Backup je 'vm:<Name>', 'csv:<Name>',
+    'vol:<SVM>:<Volume>' -- (letztes primaer, letztes sekundaer, aeltestes
+    primaer, aeltestes sekundaer); gleiche Logik wie der Schutzstatus-Report."""
     not_captured = {(c.run_id, c.vm_name) for c in db.query(BackupRunVmConfig).filter(BackupRunVmConfig.not_captured.is_(True))}
     primary: dict[str, datetime] = {}
     secondary: dict[str, datetime] = {}
+    oldest_primary: dict[str, datetime] = {}
+    oldest_secondary: dict[str, datetime] = {}
 
-    def note(store: dict, key: str, when: datetime) -> None:
+    def note(store: dict, oldest: dict, key: str, when: datetime) -> None:
         if key not in store or when > store[key]:
             store[key] = when
+        if key not in oldest or when < oldest[key]:
+            oldest[key] = when
 
     for row in db.query(BackupRunSnapshot).options(selectinload(BackupRunSnapshot.destinations)).all():
         has_secondary = any(d.present for d in row.destinations)
@@ -252,10 +288,15 @@ def last_backups(db: Session) -> tuple[dict[str, datetime], dict[str, datetime]]
         when = _aware(row.created_at)
         for key in keys:
             if row.success:
-                note(primary, key, when)
+                note(primary, oldest_primary, key, when)
             if has_secondary:
-                note(secondary, key, when)
-    return primary, secondary
+                note(secondary, oldest_secondary, key, when)
+    return primary, secondary, oldest_primary, oldest_secondary
+
+
+def last_backups(db: Session) -> tuple[dict[str, datetime], dict[str, datetime]]:
+    """Letztes erfolgreiches Backup je Schluessel, primaer und sekundaer."""
+    return backup_times(db)[:2]
 
 
 def evaluate(db: Session, now: datetime | None = None) -> list[ObjectStatus]:
@@ -269,7 +310,7 @@ def evaluate(db: Session, now: datetime | None = None) -> list[ObjectStatus]:
     vm_uuids = {(v.cluster_id, v.name): (v.vm_uuid or "").lower() for v in db.query(HyperVVm).all()}
     all_groups = db.query(ResourceGroup).all()
     links = _effective_links(all_groups)
-    primary, secondary = last_backups(db)
+    primary, secondary, oldest_primary, oldest_secondary = backup_times(db)
 
     def class_of(object_type: str, cluster_id: str | None, name: str) -> ProtectionClass | None:
         assignment = None
@@ -292,6 +333,7 @@ def evaluate(db: Session, now: datetime | None = None) -> list[ObjectStatus]:
             status.violations = _check_backup(
                 cls, object_links, bool(groups), primary.get(backup_key), secondary.get(backup_key), now, snapmirror, volumes,
             )
+            status.notes = _reach_notes(cls, oldest_primary.get(backup_key), oldest_secondary.get(backup_key), now)
         return status
 
     result: list[ObjectStatus] = []

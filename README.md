@@ -142,6 +142,8 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   SMB3-Freigabe bekommt ihre Klasse von Hand (Spalte in Inventory oder Sammelzuweisung).
   Geprueft wird (a) Soll: passen Policies/Zeitplaene zur Klasse (groesste Luecke zwischen
   zwei Laeufen, Aufbewahrung), (b) Ist: letztes Backup und sekundaere Kopie jung genug,
+  dazu als Hinweis ohne Alarm "Aufbewahrung im Aufbau", solange die aelteste vorhandene
+  Sicherung primaer/sekundaer noch nicht so weit zurueckreicht, wie die Klasse verlangt,
   (c) Speicher: VM liegt auf CSV/Freigabe mindestens ihrer Klasse. Ergebnis als Badge mit
   Gruenden, Alarm "Schutzklasse nicht erfuellt" und Spalte im Schutzstatus-Report.
   Protection Groups werden NICHT von Hand zugeordnet: die App berechnet je Gruppe, welche

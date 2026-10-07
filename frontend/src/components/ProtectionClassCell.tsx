@@ -32,7 +32,30 @@ export function ProtectionClassBadge({ status }: { status?: ProtectionObjectStat
       {status.class_name}
     </Badge>
   );
-  if (!violated) return <Tooltip label="Schutzklasse erfüllt">{badge}</Tooltip>;
+  const notes = status.notes ?? [];
+  if (!violated) {
+    if (notes.length === 0) return <Tooltip label="Schutzklasse erfüllt">{badge}</Tooltip>;
+    return (
+      <Tooltip
+        multiline
+        maw={460}
+        label={
+          <>
+            <Text size="xs" fw={600}>
+              Schutzklasse {status.class_name} laut Konfiguration erfüllt
+            </Text>
+            {notes.map((n) => (
+              <Text size="xs" key={n}>
+                • {n}
+              </Text>
+            ))}
+          </>
+        }
+      >
+        {badge}
+      </Tooltip>
+    );
+  }
   return (
     <Tooltip
       multiline
@@ -45,6 +68,11 @@ export function ProtectionClassBadge({ status }: { status?: ProtectionObjectStat
           {status.violations.map((v) => (
             <Text size="xs" key={v}>
               • {v}
+            </Text>
+          ))}
+          {notes.map((n) => (
+            <Text size="xs" key={n}>
+              • {n}
             </Text>
           ))}
           {status.suggested_groups.length > 0 && (

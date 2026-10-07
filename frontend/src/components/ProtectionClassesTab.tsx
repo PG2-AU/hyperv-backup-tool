@@ -459,15 +459,27 @@ function AssignmentTable({ classes, canManage }: { classes: ProtectionClass[]; c
                       keine Klasse zugewiesen
                     </Text>
                   ) : r.status === "ok" ? (
-                    <Group gap={4} wrap="nowrap">
-                      <IconCheck size={14} color="var(--mantine-color-green-6)" />
-                      <Text size="xs">erfüllt</Text>
-                    </Group>
+                    <>
+                      <Group gap={4} wrap="nowrap">
+                        <IconCheck size={14} color="var(--mantine-color-green-6)" />
+                        <Text size="xs">{(r.notes ?? []).length > 0 ? "erfüllt (Konfiguration)" : "erfüllt"}</Text>
+                      </Group>
+                      {(r.notes ?? []).map((n) => (
+                        <Text size="xs" c="yellow.8" key={n}>
+                          • {n}
+                        </Text>
+                      ))}
+                    </>
                   ) : (
                     <>
                       {r.violations.map((v) => (
                         <Text size="xs" c="red" key={v}>
                           • {v}
+                        </Text>
+                      ))}
+                      {(r.notes ?? []).map((n) => (
+                        <Text size="xs" c="yellow.8" key={n}>
+                          • {n}
                         </Text>
                       ))}
                       {r.suggested_groups.length > 0 && (

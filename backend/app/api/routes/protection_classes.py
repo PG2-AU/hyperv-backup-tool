@@ -58,6 +58,7 @@ class ObjectStatusRead(BaseModel):
     class_color: str | None = None
     status: Literal["ok", "violation", "unassigned"]
     violations: list[str] = []
+    notes: list[str] = []
     storage: list[StorageRead] = []
     resource_group_names: list[str] = []
     policy_names: list[str] = []

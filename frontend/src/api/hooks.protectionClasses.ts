@@ -35,6 +35,8 @@ export interface ProtectionObjectStatus {
   class_color?: string | null;
   status: "ok" | "violation" | "unassigned";
   violations: string[];
+  // Hinweise ohne Verstoss (z.B. Aufbewahrung noch im Aufbau)
+  notes: string[];
   storage: { name: string; class_name?: string | null; class_color?: string | null }[];
   resource_group_names: string[];
   policy_names: string[];
