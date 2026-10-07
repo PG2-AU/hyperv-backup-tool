@@ -365,7 +365,7 @@ Hyper-V</strong> (vormals &quot;Hyper-V NetApp Backup&quot;; technische Bezeichn
 <code>HVNB_*</code>-Variablen, Container <code>hvnb-backup</code> und Volumes <code>hvnb-data</code>/<code>hvnb-certs</code>
 behalten das Kürzel HVNB). Sie basiert auf einer
 real gegen eine solche Umgebung verifizierten Ersteinrichtung (siehe
-<code>INSTALL.md</code> für das dazugehörige Feldprotokoll mit allen dabei
+<code>INSTALL.md</code> für das dazugehörige, historische Feldprotokoll mit allen dabei
 gefundenen Stolpersteinen) und fasst diese Erkenntnisse zu einer
 allgemeingültigen, wiederholbaren Anleitung zusammen.</p>
 
@@ -424,8 +424,17 @@ soll (LDAP/LDAPS — TCP 389 bzw. 636)</li>
 <li>dem Git-Server/-Repository, aus dem der Anwendungscode bezogen wird
 (siehe Abschnitt 4 zu den zwei möglichen Modellen, falls kein direkter
 Netzwerkpfad besteht)</li>
+<li>dem Domain Controller (KDC) auf TCP/UDP 88, falls Kerberos als
+WinRM-Transport genutzt werden soll (siehe Abschnitt 10)</li>
+<li>dem Fileserver mit der Freigabe für die DB-Sicherung (SMB — TCP 445),
+falls die automatische DB-Sicherung eingerichtet wird (Abschnitt 13)</li>
+<li>dem Mailserver (SMTP, Port laut Settings &gt; E-Mail), falls Alarme oder
+Reports per Mail verschickt werden sollen</li>
 </ul>
 </li>
+<li><input disabled="" type="checkbox"> Für die Remote-Sitzung auf eine VM (Inventory &gt; VMs): Zugriff <strong>vom PC
+des Benutzers</strong> auf die Hyper-V-Knoten (TCP 2179, Konsole) bzw. auf
+die VM selbst (TCP 3389, RDP) — nicht vom HVNB-Server aus</li>
 <li><input disabled="" type="checkbox"> Eingehender Netzwerkzugriff auf den gewählten HTTPS-Port (Beispiel in
 dieser Anleitung: 8443) von den Rechnern/Netzen, aus denen die Web-GUI
 erreichbar sein soll</li>
@@ -748,8 +757,10 @@ per <code>.env</code> konfiguriert, sondern vollständig über die Web-GUI nach 
 ersten Login (Settings, Storage, Restore &gt; Setup, Backup) — dort auch
 verschlüsselt in der Datenbank statt im Klartext einer <code>.env</code>-Datei
 gespeichert.</p>
-<p>Die vollständige Liste aller unterstützten Variablen mit Erläuterung steht
-in <code>.env.example</code> im Projektwurzelverzeichnis.</p>
+<p>Die Liste der unterstützten Variablen mit Erläuterung steht in
+<code>backend/.env.example</code>. Die dort genannten Intervalle für Health-Check,
+Discovery und Snapshot-Abgleich sind nur Startwerte einer frischen
+Installation; danach gilt Settings &gt; Hintergrundjobs.</p>
 </section>
 <section id="s6">
 <h2><span class="step-num">6</span>Container bauen und starten</h2>
@@ -1641,6 +1652,11 @@ für &quot;Neue VM&quot; <code>New-VM</code>, <code>New-VHD</code>, <code>Set-VM
 <code>Set-VMKeyProtector</code>/<code>Enable-VMTPM</code> (bei SMB3-Ablage per CredSSP),
 für &quot;Remote-Sitzung&quot; <code>Get-VMNetworkAdapter</code> (die Konsole selbst öffnet der PC des Benutzers direkt
 zum Knoten auf TCP 2179 -- dieser Port muss vom Benutzer-PC aus erreichbar sein, nicht von der App),
+für &quot;VM-Einstellungen ändern&quot; <code>Set-VMProcessor</code>, <code>Set-VMMemory</code>, <code>Add/Remove/Connect/Disconnect-VMNetworkAdapter</code>,
+<code>Set-VMNetworkAdapterVlan</code>, <code>Resize-VHD</code>, <code>New-VHD</code> und <code>Update-ClusterVirtualMachineConfiguration</code>,
+für &quot;VM starten/herunterfahren&quot; <code>Start-VM</code>/<code>Resume-VM</code>/<code>Stop-VM</code>,
+für &quot;VM löschen&quot; <code>Remove-ClusterGroup</code> und <code>Remove-VM</code> sowie das Löschen der Festplatten-Dateien,
+für die VM-Performance lesend die WMI-Klasse <code>MSFT_StorageQoSFlow</code> (Storage QoS des Clusters),
 für die RAM-Anzeige beim Host-Move <code>Get-CimInstance Win32_OperatingSystem</code>
 direkt auf jedem Knoten). Für die Disk-/iSCSI-Verwaltung gibt es unter
 Windows <strong>keine</strong> eigene, schmalere eingebaute Gruppe (anders als bei
@@ -1993,7 +2009,10 @@ auf jedem betroffenen Knoten abgeschlossen)</li>
 <li><strong>Restore &gt; Setup</strong> — Restore-Proxy-Host + iSCSI-Infrastruktur einrichten
 (Voraussetzung für jeden Restore-Vorgang)</li>
 <li><strong>Backup &gt; Policies / Protection Groups / Zeitpläne</strong> — Backup-Regeln
-definieren</li>
+definieren. Optional <strong>Backup &gt; Schutzklassen</strong> — Klassen (z. B.
+Gold/Silber/Bronze) mit maximalem Backup-Alter und Aufbewahrung je Stufe
+anlegen und VMs, CSVs und SMB3-Freigaben zuweisen; die App prüft danach,
+ob jedes Objekt seiner Klasse entsprechend gesichert wird</li>
 <li><strong>Settings &gt; Active Directory</strong> (falls gewünscht) — Server, Domäne,
 Base DN und ein Lese-Service-Konto für die AD-Benutzersuche werden
 direkt in der GUI konfiguriert (kein <code>.env</code>/Neustart nötig). Danach
@@ -2010,9 +2029,19 @@ inkl. Alarm nach einer Karenzzeit (Settings &gt; Alarms, Standard 120 min;
 während eines MetroCluster-Switchovers ausgesetzt) und &quot;Beheben&quot;-Aktion.
 Damit die Knotenliste vollständig ist, einmal den Health-Check laufen
 lassen (Verify-Button beim Cluster).</li>
+<li><strong>Settings &gt; DB-Sicherung</strong> (empfohlen) — tägliche Sicherung der
+App-Datenbank auf eine CIFS-Freigabe einrichten (siehe Abschnitt 13);
+ohne sie geht bei einem Verlust des Servers auch der Backup-Katalog
+verloren</li>
+<li><strong>Reports</strong> (optional) — Reports auf Knopfdruck erzeugen oder als
+Vorlage mit Zeitplan und Mailversand speichern (braucht Settings &gt;
+E-Mail)</li>
+<li><strong>Settings &gt; Hintergrundjobs</strong> — Intervalle prüfen, u. a. den
+VM-Performance-Sammler (Standard alle 5 min, 0 = aus); die Storage-Seite
+unter Monitoring &gt; Performance braucht keine Einrichtung</li>
 </ol>
-<p>Eine funktionale Architekturübersicht ist direkt in der Applikation unter
-dem Dokumentations-Link in der Seitenleiste verlinkt.</p>
+<p>Eine funktionale Architekturübersicht ist direkt in der Applikation über
+den Link in der Fußzeile erreichbar.</p>
 </section>
 <section id="s13">
 <h2><span class="step-num">13</span>Betrieb</h2>
@@ -2025,8 +2054,8 @@ Abschnitt 4 für die beiden Code-Bezugsmodelle). Manuell erzwingen:</p>
 <p><strong>Konfiguration sichern / auf einen neuen Server übertragen:</strong> Settings →
 System → &quot;Konfiguration exportieren&quot; lädt die komplette Einrichtung als ZIP
 herunter (Cluster, NetApp-Systeme, Restore-Setup, Policies, Protection
-Groups, Zeitpläne, Standorte, alle Settings, WinRM-Zertifikate, Benutzer
-und Rollen), optional mit dem Backup-Katalog, damit ältere NetApp-Snapshots
+Groups, Zeitpläne, Schutzklassen samt Zuordnungen, Report-Vorlagen,
+Standorte, alle Settings, WinRM-Zertifikate, Benutzer und Rollen), optional mit dem Backup-Katalog, damit ältere NetApp-Snapshots
 auf dem neuen Server weiter als Wiederherstellungspunkte auswählbar sind.
 <strong>Kennwörter, NetApp-Client-Zertifikate und Kennwörter lokaler Benutzer
 sind nie enthalten</strong> — der Export ist dadurch unabhängig von
@@ -2149,17 +2178,13 @@ für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.</p>
 <td><code>localhost</code> löst zuerst zu IPv6 (<code>::1</code>) auf -- <code>podman port</code> mapped nur IPv4 (<code>0.0.0.0:8443</code>), auf <code>[::1]:8443</code> reagiert etwas anderes (oder eine pasta-Eigenheit). Kein Fehler im Container selbst, immer die IPv4-Adresse explizit testen</td>
 <td>—</td>
 </tr>
-<tr>
-<td>Container stürzt bei JEDEM Start sofort wieder ab (<code>supervisord</code>-Log zeigt <code>exited: uvicorn</code> im Sekundentakt), betrifft nur eine komplett frische Erstinstallation</td>
-<td>War ein echter Bug (<code>no such column: schedule_id</code> in <code>_migrate_resource_group_policy_link_schedules</code>, <code>backend/app/db/init_db.py</code>), behoben in Commit <code>1c1289f</code> -- betraf nur DBs, die <em>nie</em> die alte <code>backup_policies.schedule_id</code>-Spalte hatten. Aktuellen Code ziehen (<code>git pull</code>) behebt es</td>
-<td>4, 6</td>
-</tr>
 </tbody></table>
 </section>
 
     <footer>
-      Feldprotokoll der ursprünglichen Ersteinrichtung (inkl. umgebungsspezifischer Details wie konkreter IPs
-      und VLAN-Segmentierung): <code>docs/INSTALL.md</code> im Repository.
+      Stand 07.10.2026. Das historische Feldprotokoll der ursprünglichen Ersteinrichtung (inkl. umgebungsspezifischer
+      Details wie konkreter IPs und VLAN-Segmentierung) liegt als <code>docs/INSTALL.md</code> im Repository; es ist
+      keine Installationsanleitung.
     </footer>
   </main>
 </div>

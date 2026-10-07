@@ -1,44 +1,55 @@
 # AU Storage Manager for Hyper-V
 
-Backup, Restore und Storage-Verwaltung fuer Hyper-V (Windows Server 2022) auf Basis
+Backup, Restore und Storage-Verwaltung fuer Hyper-V (Windows Server 2022/2025) auf Basis
 von NetApp ONTAP Snapshots und SnapMirror (vormals "Hyper-V NetApp Backup"; intern
 weiterhin kurz HVNB, z.B. in Umgebungsvariablen, Container- und Snapshot-Namen). Laeuft als Container auf Rocky Linux, wird per
-Git-Push/Pull deployt und bietet eine Web-GUI mit RBAC, Active-Directory-
-Integration und MetroCluster-Unterstuetzung.
+Git-Push/Pull deployt und bietet eine Web-GUI mit drei festen Rollen, Active-Directory-
+Integration und MetroCluster-Unterstuetzung. In der GUI heissen die Sicherungsgruppen
+"Protection Groups"; im Code und in der Datenbank weiterhin `ResourceGroup`.
 
 ## Architektur
 
 ```
 frontend/   React + TypeScript + Mantine v7  -> Web-GUI (Sidebar-Layout, Kontextmenues,
             Log-Viewer, @mantine/charts fuer Kapazitaetsverlauf)
-  src/pages/       Eine Seite je Hauptmenuepunkt (Dashboard, Inventory/VMs, Storage,
-                    Jobs, Restore, Alarme, Settings, System-Log, Versionsverlauf, Docs)
-  src/components/  ~50 wiederverwendbare Komponenten (Formulare, Modals, Detail-
-                    Kopfzeilen, Prozess-/Discovery-Modals)
+  src/pages/       Eine Seite je Hauptmenuepunkt (Dashboard, Alarme, System-Log,
+                    Performance, Inventory/VMs, Backup/Jobs, Restore, Reports, Storage,
+                    Settings, Versionsverlauf, Docs)
+  src/components/  Wiederverwendbare Komponenten (Formulare, Assistenten, Modals, Detail-
+                    Kopfzeilen, Aktivitaeten-Fusszeile, globale Suche)
   src/api/         Typisierte API-Clients (hooks.ts, hooks.*.ts je Bereich, types.ts)
+  public/docs/     Statische Doku-Seiten der App (architecture.html, deployment.html --
+                    von Hand gepflegt, deployment.html inhaltsgleich zu docs/DEPLOYMENT.md)
 backend/    FastAPI (Python)                 -> REST-API, Auth/RBAC, Orchestrierung
-  app/core/        Config, Security (JWT), RBAC-Modell (Permissions/Scopes),
-                    Kerberos-Konfiguration, Kapazitaetsverlauf-Schluesselableitung,
+  app/core/        Config, Security (JWT), RBAC-Modell (Permissions, feste Rollen),
+                    Kerberos-Konfiguration, WinRM-Trust, Kapazitaetsverlauf und -prognose,
                     Standort-Auswertung (sites.py), Storage-Move-Pfadabbildung
-                    (storage_move.py), Konfigurations-Export/-Import
-                    (config_transfer.py), DB-Sicherung/-Wiederherstellung
-                    (db_backup.py), periodischer Scheduler (Discovery/Healthcheck/
-                    Alarme/Retention/Kapazitaets-Sammler/DB-Sicherung, siehe
-                    app/core/scheduler.py)
-  app/models/      SQLAlchemy-Modelle -- Auth/RBAC (User/Role/RoleAssignment),
-                    Hyper-V-/NetApp-Discovery (VMs/VHDs/CSVs/SVMs/Volumes/LUNs/
-                    Aggregate/SnapMirror), Backup-/Restore-/VM-Neuerstellungs-/Datei-
-                    Restore-Laeufe, VM-Verschiebungen, Resource Groups + Zeitplaene,
-                    Standorte, Alarme, Kapazitaetsverlauf, DB-Sicherung, WinRM-/
-                    Kerberos-/AD-Konfiguration, System-Log
-  app/services/    NetApp-ONTAP-Client (Snapshot/SnapMirror/MetroCluster), Hyper-V-
-                    Client (PowerShell/WinRM ueber NTLM/CredSSP/Kerberos), Active-
-                    Directory-Client (Login-Bind + Verzeichnis-Suche), E-Mail-Versand,
-                    SMB-Dateizugriff fuer die DB-Sicherung (smb_target.py)
-  app/api/routes/  REST-Endpunkte (VMs/Storage/Jobs/Restore/Datei-Restore/Resource
-                    Groups/Zeitplaene/Alarme/Benutzer & Rollen/Settings/AD/Kerberos/
-                    WinRM-Zertifikate/Kapazitaetsverlauf/Standorte/VM-Verschiebung/
-                    Konfigurations-Transfer/DB-Sicherung/System-Log/Suche)
+                    (storage_move.py), Schutzklassen-Pruefung (protection_class.py),
+                    Reports (reports/), VM-Performance-Sammler (vm_performance.py),
+                    Aenderungsprotokoll (audit.py), Schritt-Protokoll der Ablaeufe
+                    (run_steps.py), Konfigurations-Export/-Import (config_transfer.py),
+                    DB-Sicherung/-Wiederherstellung (db_backup.py), periodischer Scheduler
+                    (Discovery/Healthcheck/Alarme/Retention/Sammler/Reports/DB-Sicherung,
+                    siehe app/core/scheduler.py)
+  app/models/      SQLAlchemy-Modelle -- Auth/RBAC (User/Role), Hyper-V-/NetApp-Discovery
+                    (VMs/VHDs/CSVs/SVMs/Volumes/LUNs/Aggregate/SnapMirror), Backup-/
+                    Restore-/VM-Neuerstellungs-/Datei-Restore-Laeufe, Laeufe der
+                    Verwaltungsablaeufe (VM anlegen/aendern/verschieben/loeschen, CSV
+                    anlegen/vergroessern/loeschen, SMB3-Freigabe), Resource Groups +
+                    Zeitplaene, Schutzklassen, Standorte, Alarme, Kapazitaetsverlauf,
+                    VM-Performance, Reports, Aenderungsprotokoll, DB-Sicherung, WinRM-/
+                    Kerberos-/AD-/E-Mail-Konfiguration, System-Log
+  app/services/    NetApp-ONTAP-Client (Snapshot/SnapMirror/MetroCluster/Volumes/LUNs/
+                    CIFS), Hyper-V-Client (PowerShell/WinRM ueber NTLM/CredSSP/Kerberos),
+                    Active-Directory-Client (Login-Bind + Verzeichnis-Suche), E-Mail-
+                    Versand, SMB-Dateizugriff fuer die DB-Sicherung (smb_target.py)
+  app/api/routes/  REST-Endpunkte (VMs inkl. Anlegen/Einstellungen/Power/Konsole/
+                    Verschieben/Loeschen, CSV und SMB3 anlegen/vergroessern/loeschen,
+                    Storage, Jobs, Restore, Datei-Restore, Resource Groups, Zeitplaene,
+                    Schutzklassen, Alarme, Reports, Performance, Aktivitaeten, Suche,
+                    Benutzer & Rollen, Settings/AD/Kerberos/WinRM-Zertifikate/E-Mail,
+                    Kapazitaetsverlauf, Standorte, Konfigurations-Transfer, DB-Sicherung,
+                    System-Log)
 docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
             uvicorn (Backend), supervisord (Prozessverwaltung),
             Git-Pull-basiertes Deployment (entrypoint.sh / updater.sh)
@@ -46,12 +57,12 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
 
 ### Wesentliche Subsysteme (Stand dieser Iteration)
 
-- **RBAC + Active Directory** -- Rollen mit granularen Permissions und optional auf
-  VM-/CSV-/LUN-/Host-Ebene scopebaren Zuweisungen; Benutzer koennen lokal (Passwort-
-  Hash in der DB) oder ueber eine GUI-verwaltete AD-Integration (Settings > Active
-  Directory) angelegt werden -- Verzeichnis-Suche + proaktives Hinzufuegen mit Rolle,
-  lokale und AD-Benutzer funktionieren nebeneinander (kein Gruppe-zu-Rolle-Mapping,
-  bewusst nicht umgesetzt).
+- **Rollen + Active Directory** -- drei feste Rollen (Administrator, Operator, Viewer) mit
+  festgelegten Permissions; je Benutzer aenderbar. Benutzer koennen lokal (Passwort-Hash in
+  der DB) oder ueber eine GUI-verwaltete AD-Integration (Settings > Active Directory)
+  angelegt werden -- Verzeichnis-Suche + proaktives Hinzufuegen mit Rolle, lokale und
+  AD-Benutzer funktionieren nebeneinander. Nicht umgesetzt: Zuordnung von AD-Gruppen zu
+  Rollen und Einschraenkung auf einzelne VMs/CSVs/Hosts.
 - **WinRM-Transport** -- NTLM, CredSSP oder Kerberos konfigurierbar (Settings >
   Kerberos), inkl. selbst-signierter Zertifikatsverwaltung fuer HTTPS-WinRM-Listener
   (Settings > WinRM-Zertifikate). Einige Hyper-V-Cluster-Operationen (Disk-Attach/
@@ -59,19 +70,22 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
   technischen Gruenden weiterhin NTLM bzw. eine gezielt gescopte CredSSP-Sitzung,
   selbst wenn Kerberos als Standard-Transport aktiv ist.
 - **Backup/Restore** -- App-konsistente (VSS-Checkpoint) oder crash-konsistente
-  Backups auf Ebene VM/CSV/LUN, orchestriert ueber Resource Groups + Zeitplaene mit
-  Retention; Restore als Anhaengen oder Ersetzen inkl. automatischem AVHDX-Ketten-
+  Backups auf Ebene VM, CSV oder SMB3-Freigabe, orchestriert ueber Protection Groups
+  (je verknuepfter Policy ein eigener Zeitplan) mit Retention; ein Lauf ist nur dann
+  fehlgeschlagen, wenn ein Storage-Snapshot nicht erstellt werden konnte, sonst
+  "erfolgreich mit Fehlern"; Restore als Anhaengen oder Ersetzen inkl. automatischem AVHDX-Ketten-
   Merge, VM-Neuerstellung, sowie dateibasierter Restore einzelner Dateien aus einem
   gemounteten Snapshot-Klon.
 - **Hintergrund-Scheduler** -- periodische Jobs fuer Health-Checks, Discovery,
   Snapshot-/SnapMirror-Abgleich, geplante Backups, Retention-Cleanup, Alarm-
-  Auswertung, taeglichen E-Mail-Report und den taeglichen Kapazitaets-Sammler
-  (siehe unten) -- alle Intervalle GUI-konfigurierbar unter Settings > Hintergrund-
+  Auswertung, taeglichen E-Mail-Report, geplante Reports, DB-Sicherung, den taeglichen
+  Kapazitaets-Sammler und den VM-Performance-Sammler (siehe unten) -- alle Intervalle GUI-konfigurierbar unter Settings > Hintergrund-
   jobs.
-- **Alarme** -- Kapazitaets-Schwellwerte (Volume/LUN), SnapMirror-Lag, verpasste
-  Backups, Zeitplan-Kollisionen, verwaiste Checkpoints, AVHDX ohne Checkpoint,
-  VM auf mehreren CSVs, Standort-Abweichung, Knoten-Erreichbarkeit; optionaler
-  E-Mail-Versand pro Alarmtyp.
+- **Alarme** -- Kapazitaets-Schwellwerte (Volume/LUN) und Kapazitaetsprognose (Volume/LUN/
+  Aggregat), Zustand von Hyper-V- und NetApp-Cluster, SnapMirror-Zustand und -Lag, verpasste
+  Backups, Zeitplan-Kollisionen, verwaiste Checkpoints, AVHDX ohne Checkpoint, VM auf
+  mehreren CSVs, Standort-Abweichung, Knoten-Erreichbarkeit, Schutzklasse nicht erfuellt,
+  DB-Sicherung fehlgeschlagen/ueberfaellig; optionaler E-Mail-Versand pro Alarmtyp.
 - **Standorte** -- Kennzeichnung von Hyper-V-Knoten (manuell) und NetApp-Systemen
   (jede CSV erbt ueber die LUN-Seriennummer, einzeln ueberschreibbar) je
   Rechenzentrum (Settings > Standorte); Inventory, Dashboard und Alarm zeigen VMs,
@@ -231,7 +245,7 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
 
 1. Hyper-V-Checkpoint auf den betroffenen VMs erzeugen
    (`ApplicationConsistent` via Production Checkpoint/VSS oder
-   `CrashConsistent` via Standard Checkpoint) – Scope: VM, CSV oder LUN.
+   `CrashConsistent` via Standard Checkpoint) – Scope: VM, CSV oder SMB3-Freigabe.
 2. NetApp-Snapshot auf dem zugrunde liegenden Volume erzeugen.
 3. SnapMirror-Update zur Replikation des Snapshots ausloesen
    (MetroCluster-Status wird vorher geprueft).
@@ -264,13 +278,13 @@ Der Vite-Dev-Server proxyt `/api` auf `http://localhost:8000` (siehe
 `frontend/vite.config.ts`).
 
 Initialer lokaler Login: `admin` / Passwort aus
-`HVNB_INITIAL_ADMIN_PASSWORD` (Default `ChangeMe123!`, siehe `.env.example`)
+`HVNB_INITIAL_ADMIN_PASSWORD` (Default `ChangeMe123!`, siehe `backend/.env.example`)
 — unbedingt vor Produktivbetrieb aendern.
 
 ## Deployment (Container)
 
 ```bash
-cp .env.example .env  # HVNB_GIT_REPO_URL etc. setzen
+cp backend/.env.example .env  # HVNB_SECRET_KEY, HVNB_GIT_REPO_URL etc. setzen
 docker compose up -d --build
 ```
 
@@ -299,3 +313,6 @@ Assistenz-Sessions), nicht hier im README.
 Fuer eine vollstaendige Installation ausgehend von einem frischen Server
 siehe [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); dort auch die Rollout-
 Anleitungen fuer Kerberos, WinRM-Zertifikate und Active-Directory-Login.
+Dieselbe Anleitung und eine Architektur-Seite sind in der App ueber die Links
+in der Fusszeile erreichbar (`frontend/public/docs/`). `docs/INSTALL.md` ist das
+historische Feldprotokoll der ersten Einrichtung und keine Anleitung.

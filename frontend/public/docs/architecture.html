@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HVNB Architektur</title>
+<title>Architektur – AU Storage Manager for Hyper-V</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;600;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -425,7 +425,8 @@
     <p class="subtitle">
       Snapshot-basierte Datensicherung und Storage-Verwaltung für Hyper-V-Failover-Cluster auf
       NetApp-ONTAP-Storage, inklusive SnapMirror-Replikation, mehreren Wiederherstellungswegen,
-      Standort-Kennzeichnung über zwei Rechenzentren und VM-Verschiebung.
+      Schutzklassen, Standort-Kennzeichnung über zwei Rechenzentren, Verwaltung von VMs, CSVs und
+      SMB3-Freigaben, Reports sowie Kapazitäts- und Performance-Auswertung.
     </p>
     <div class="metaline">
       <span><b>Zielgruppe:</b> Infrastruktur-/Storage-Admins</span>
@@ -442,6 +443,7 @@
     <a href="#backup">Ablauf: Backup</a>
     <a href="#restore">Ablauf: Restore</a>
     <a href="#varianten">Restore-Varianten</a>
+    <a href="#verwaltung">Verwaltung &amp; Auswertung</a>
     <a href="#betrieb">Betrieb</a>
     <a href="#stack">Tech-Stack</a>
   </nav>
@@ -464,7 +466,7 @@
       <div class="req">
         <span class="mark">02</span>
         <div><strong>Zwei Schutz-Granularitäten</strong>
-          <span class="detail">Eine Schutzgruppe kann einzelne VMs, ganze Cluster Shared Volumes (CSV) oder SMB3-Freigaben auf NetApp-CIFS umfassen — je nachdem, ob VMs individuell oder blockweise gesichert werden sollen.</span>
+          <span class="detail">Eine Protection Group (Schutzgruppe) kann einzelne VMs, ganze Cluster Shared Volumes (CSV) oder SMB3-Freigaben auf NetApp-CIFS umfassen — je nachdem, ob VMs individuell oder blockweise gesichert werden sollen.</span>
         </div>
       </div>
       <div class="req">
@@ -482,7 +484,7 @@
       <div class="req">
         <span class="mark">05</span>
         <div><strong>Rollenbasierte Zugriffskontrolle</strong>
-          <span class="detail">Eigene Benutzerverwaltung mit Rechte-Rollen, optional angebunden an Active Directory — das Tool greift auf produktive Infrastruktur zu.</span>
+          <span class="detail">Eigene Benutzerverwaltung mit drei festen Rollen (Administrator, Operator, Viewer), optional angebunden an Active Directory — das Tool greift auf produktive Infrastruktur zu. Jede Änderung wird mit Benutzer und Zeitpunkt protokolliert.</span>
         </div>
       </div>
       <div class="req">
@@ -500,7 +502,25 @@
       <div class="req">
         <span class="mark">08</span>
         <div><strong>Das Tool schützt sich selbst</strong>
-          <span class="detail">Alarme für Kapazität, Cluster-/SnapMirror-Zustand, verpasste Backups, verwaiste Checkpoints u. a.; tägliche Sicherung der eigenen Datenbank auf eine CIFS-Freigabe mit Wiederherstellung per GUI; Konfigurations-Export/-Import für Umzug oder Wiederaufbau.</span>
+          <span class="detail">Alarme für Kapazität (Schwellwert und Prognose), Cluster-/SnapMirror-Zustand, verpasste Backups, verwaiste Checkpoints, nicht erfüllte Schutzklassen u. a.; tägliche Sicherung der eigenen Datenbank auf eine CIFS-Freigabe mit Wiederherstellung per GUI; Konfigurations-Export/-Import für Umzug oder Wiederaufbau.</span>
+        </div>
+      </div>
+      <div class="req">
+        <span class="mark">09</span>
+        <div><strong>Schutzklassen als Soll-Vorgabe</strong>
+          <span class="detail">Frei definierbare Klassen (z. B. Gold/Silber/Bronze) legen fest, wie ein Objekt mindestens gesichert sein muss: maximales Backup-Alter, Aufbewahrung je Stufe (stündlich, täglich, wöchentlich, monatlich — jeweils primär und sekundär) und Applikationskonsistenz. Die App prüft Konfiguration, tatsächlichen Stand und ob eine VM auf Speicher mindestens ihrer Klasse liegt.</span>
+        </div>
+      </div>
+      <div class="req">
+        <span class="mark">10</span>
+        <div><strong>VMs und Storage aus einer Oberfläche verwalten</strong>
+          <span class="detail">VMs anlegen, starten, herunterfahren, ändern, verschieben und löschen; CSVs und SMB3-Freigaben samt Volume und LUN auf der NetApp anlegen, vergrößern und löschen; Remote-Sitzung auf eine VM per .rdp-Datei. Mehrstufige Abläufe fragen bei einem Fehler nach: zurückrollen oder behalten.</span>
+        </div>
+      </div>
+      <div class="req">
+        <span class="mark">11</span>
+        <div><strong>Nachweis und Auswertung</strong>
+          <span class="detail">Acht Report-Typen als PDF und CSV (Schutzstatus, Backup-Erfolg, Wiederherstellungspunkte, Restore-Nachweis, Kapazität und Prognose, SnapMirror/DR, Inventar, Audit-Trail), auf Wunsch nach Zeitplan per Mail. Kapazitätsverlauf mit Prognose und Performance (IOPS, Latenz, Durchsatz) je VM, CSV, Freigabe und Volume.</span>
         </div>
       </div>
     </div>
@@ -512,7 +532,9 @@
       Eine Single-Page-Oberfläche spricht mit einem einzigen FastAPI-Backend, das seinerseits drei
       externe Welten orchestriert: die Hyper-V-Cluster (Compute), die NetApp-Cluster (Storage) und
       einen dedizierten Restore-Proxy-Host, der als neutraler Umschlagplatz für Wiederherstellungen dient.
-      Dazu kommt ein Fileserver, auf dem die App täglich ihre eigene Datenbank sichert.
+      Dazu kommen ein Fileserver, auf dem die App täglich ihre eigene Datenbank sichert, und ein
+      Mailserver für Alarme und Reports. Eine Remote-Sitzung auf eine VM baut der PC des Benutzers
+      selbst auf — die App liefert nur die .rdp-Datei.
     </p>
     <div class="panel">
       <pre class="mermaid">
@@ -525,7 +547,7 @@
 flowchart TB
   Browser["Browser<br/>React · TypeScript · Mantine"]
   API["FastAPI-Backend<br/>REST/JSON · SQLAlchemy · SQLite"]
-  Scheduler["APScheduler<br/>Discovery · Backups · Retention"]
+  Scheduler["APScheduler<br/>Discovery · Backups · Retention<br/>Alarme · Reports · Sammler"]
   subgraph Compute["Compute"]
     HV["Hyper-V-Failover-Cluster<br/>WinRM / PowerShell"]
   end
@@ -543,40 +565,43 @@ flowchart TB
   API -- "Mount, Kopie, Browse" --> Proxy
   FS["Fileserver (CIFS)<br/>tägliche DB-Sicherung"]
   API -. "SMB 2/3" .-> FS
+  Mail["Mailserver (SMTP)<br/>Alarme · Reports"]
+  API -. "SMTP" .-> Mail
+  Browser -. ".rdp: Konsole 2179 / RDP" .-> HV
   Proxy -- "iSCSI: LUN-/Volume-Klon" --> NA
   Proxy -- "iSCSI: LUN-/Volume-Klon" --> NA2
   Proxy -- "SMB-Kopie / VHDX anhängen" --> HV
       </pre>
     </div>
-    <p class="panel-caption">Datenfluss bei Discovery/Backup (durchgezogen) und Restore (über den Proxy-Host)</p>
+    <p class="panel-caption">Datenfluss bei Discovery, Backup und Verwaltung (durchgezogen) und Restore (über den Proxy-Host)</p>
   </section>
 
   <section id="schichten">
     <h2><span class="num">03</span> Die Schichten</h2>
-    <p class="section-intro">Vier Verantwortungsbereiche, sauber getrennt:</p>
+    <p class="section-intro">Fünf Verantwortungsbereiche, sauber getrennt:</p>
     <div class="layers">
       <div class="layer">
         <span class="chip core">Client</span>
         <h3>Oberfläche</h3>
-        <p class="desc">Dashboard, Inventar, Schutzgruppen, Job-Verlauf und die Restore-Wizards. Reine Anzeige- und Formularlogik, kein eigener Zustand über einen Request hinaus.</p>
+        <p class="desc">Dashboard, Monitoring (Alarme, System Log, Performance), Inventory, Backup (Policies, Protection Groups, Schutzklassen, Zeitpläne, Kalender, Job-Verlauf), Restore-Wizards, Reports, Storage und Settings. Dazu eine globale Suche in der Kopfzeile und eine Aktivitäten-Fußzeile mit allen laufenden und kürzlich beendeten Abläufen. Reine Anzeige- und Formularlogik, kein eigener Zustand über einen Request hinaus.</p>
         <p class="stack">React · TypeScript · Mantine UI · TanStack Query</p>
       </div>
       <div class="layer">
         <span class="chip core">Kern</span>
         <h3>API &amp; Domänenlogik</h3>
-        <p class="desc">Policies, Schutzgruppen, Zeitpläne, Backup-/Restore-Läufe als Datenbank-Modelle; jeder mehrstufige Vorgang schreibt seinen Fortschritt Schritt für Schritt mit, damit er live verfolgt und im Nachhinein geprüft werden kann.</p>
-        <p class="stack">FastAPI · Pydantic · SQLAlchemy 2.0 · SQLite</p>
+        <p class="desc">Policies, Protection Groups, Zeitpläne, Schutzklassen, Backup-/Restore-Läufe und alle Verwaltungsabläufe als Datenbank-Modelle; jeder mehrstufige Vorgang schreibt seinen Fortschritt Schritt für Schritt mit, damit er live verfolgt und im Nachhinein geprüft werden kann. Jede ändernde Anfrage landet zusätzlich im zentralen Änderungsprotokoll. Reports entstehen hier als PDF und CSV.</p>
+        <p class="stack">FastAPI · Pydantic · SQLAlchemy 2.0 · SQLite · ReportLab</p>
       </div>
       <div class="layer">
         <span class="chip compute">Integration</span>
         <h3>Hyper-V-Anbindung</h3>
-        <p class="desc">PowerShell-Remoting gegen den Cluster-Zugriffspunkt und einzelne Knoten: Inventar auslesen, Checkpoints setzen, VMs anlegen/konfigurieren, Cluster-Rollen registrieren, VMs per Live-Migration oder Storage-Move verschieben. Operationen mit zweitem Hop zum Cluster-Dienst weichen gezielt auf NTLM bzw. CredSSP aus.</p>
+        <p class="desc">PowerShell-Remoting gegen den Cluster-Zugriffspunkt und einzelne Knoten: Inventar auslesen, Checkpoints setzen, VMs anlegen, ändern, starten, herunterfahren und löschen, Cluster-Rollen registrieren, VMs per Live-Migration oder Storage-Move verschieben, Datenträger für neue oder vergrößerte CSVs einlesen, formatieren und erweitern, VM-Performance aus Storage QoS lesen. Operationen mit zweitem Hop zum Cluster-Dienst weichen gezielt auf NTLM bzw. CredSSP aus.</p>
         <p class="stack">pywinrm · NTLM / CredSSP / Kerberos</p>
       </div>
       <div class="layer">
         <span class="chip storage">Integration</span>
         <h3>NetApp-Anbindung</h3>
-        <p class="desc">ONTAP-REST-API für Snapshots, LUN-/Volume-Klone, SnapMirror-Beziehungen und -Policies. Ein DP-Volume (SnapMirror-Ziel) kann keine LUN direkt klonen — dafür wird das gesamte Volume per FlexClone gespiegelt.</p>
+        <p class="desc">ONTAP-REST-API für Snapshots, LUN-/Volume-Klone, SnapMirror-Beziehungen und -Policies, das Anlegen, Vergrößern und Löschen von Volumes, LUNs und CIFS-Freigaben sowie Kapazitäts- und Performance-Werte. Ein DP-Volume (SnapMirror-Ziel) kann keine LUN direkt klonen — dafür wird das gesamte Volume per FlexClone gespiegelt.</p>
         <p class="stack">netapp_ontap SDK</p>
       </div>
       <div class="layer">
@@ -592,19 +617,23 @@ flowchart TB
     <h2><span class="num">04</span> Kernkonzepte</h2>
     <p class="section-intro">Das Vokabular, mit dem sich der Rest der Anwendung erklärt:</p>
     <dl class="glossary">
-      <div class="term"><dt>Policy</dt><dd>Bündelt Konsistenz-Typ (crash/app), Zeitplan, Retention und optional eine SnapMirror-Regel. Wiederverwendbar über mehrere Schutzgruppen.</dd></div>
-      <div class="term"><dt>Schutzgruppe</dt><dd>Eine Menge von VMs oder CSVs, die gemeinsam nach derselben Policy gesichert werden.</dd></div>
-      <div class="term"><dt>Backup-Lauf</dt><dd>Eine Ausführung einer Policy: pro betroffenem NetApp-Volume ein Snapshot, pro Schritt (Checkpoint, Snapshot, SnapMirror-Update) ein protokollierter Eintrag.</dd></div>
+      <div class="term"><dt>Policy</dt><dd>Bündelt Konsistenz-Typ (crash/app), Retention und optional SnapMirror-Update mit Label. Wiederverwendbar über mehrere Protection Groups.</dd></div>
+      <div class="term"><dt>Protection Group</dt><dd>Schutzgruppe: eine Menge von VMs, CSVs oder SMB3-Freigaben, die gemeinsam gesichert werden. Je verknüpfter Policy wird ein eigener Zeitplan gewählt, z. B. täglich, wöchentlich und monatlich nebeneinander.</dd></div>
+      <div class="term"><dt>Zeitplan</dt><dd>Wiederverwendbarer Termin: mehrere Uhrzeiten am Tag, täglich, wöchentlich oder monatlich. Aus ihm ergibt sich die Stufe einer Sicherung.</dd></div>
+      <div class="term"><dt>Schutzklasse</dt><dd>Soll-Vorgabe für VMs, CSVs und SMB3-Freigaben, von Hand zugewiesen. Protection Groups werden nicht zugeordnet: die App berechnet, welche Klassen eine Gruppe mit ihren Policies und Zeitplänen erfüllt, und schlägt bei einem Verstoß passende Gruppen vor.</dd></div>
+      <div class="term"><dt>Backup-Lauf</dt><dd>Eine Ausführung einer Policy für eine Protection Group: pro betroffenem NetApp-Volume ein Snapshot, pro Schritt (Checkpoint, Snapshot, SnapMirror-Update) ein protokollierter Eintrag.</dd></div>
       <div class="term"><dt>Primär / Sekundär</dt><dd>Ein Snapshot gilt als „primär“, solange er auf dem Quellsystem existiert. Wird er dort entfernt, aber liegt noch auf einem SnapMirror-Ziel vor, gilt er als „sekundär“ — weiterhin restorebar, nur die Quelle wechselt automatisch.</dd></div>
       <div class="term"><dt>Restore-Infrastruktur</dt><dd>Pro Ziel-SVM hinterlegte iSCSI-/Igroup-Konfiguration, ohne die kein Restore für diese SVM technisch möglich ist.</dd></div>
       <div class="term"><dt>Standort</dt><dd>Rechenzentrum (z. B. DC1/DC2). Hyper-V-Knoten werden manuell zugeordnet, NetApp-Systeme ebenfalls; jede CSV erbt den Standort ihres NetApp-Systems über die LUN-Seriennummer und kann einzeln abweichen. Grundlage der Standort-Abweichung und der Zielvorschläge beim Verschieben.</dd></div>
       <div class="term"><dt>Backup-Katalog</dt><dd>Welche Backup-Läufe welche Snapshots und VM-Konfigurationen enthalten. Liegt in der App-Datenbank — ohne ihn sind die weiterhin vorhandenen NetApp-Snapshots nicht mehr über die App restorebar; deshalb DB-Sicherung und optionaler Katalog-Export.</dd></div>
+      <div class="term"><dt>Aktivität</dt><dd>Jeder laufende oder in den letzten 24 Stunden beendete Ablauf (Backup, Restore, Verschiebung, Anlegen/Löschen von VM, CSV oder Freigabe usw.) mit Initiator, Status und Schritt-Protokoll — sichtbar in der Fußzeile.</dd></div>
+      <div class="term"><dt>Änderungsprotokoll</dt><dd>Wer hat wann was geändert: jede ändernde API-Anfrage eines angemeldeten Benutzers, ohne Inhalte oder Kennwörter. Grundlage des Reports „Audit-Trail“.</dd></div>
     </dl>
   </section>
 
   <section id="backup">
     <h2><span class="num">05</span> Ablauf: Backup</h2>
-    <p class="section-intro">Ausgelöst manuell oder per Zeitplan, für eine ganze Schutzgruppe:</p>
+    <p class="section-intro">Ausgelöst manuell oder per Zeitplan, für eine ganze Protection Group:</p>
     <div class="steps">
       <div class="step"><p><strong>Checkpoint je VM.</strong> Hyper-V erstellt einen Produktions- (anwendungskonsistenten) oder Standard-Checkpoint, abhängig von der Policy.</p></div>
       <div class="step"><p><strong>Snapshot je Volume.</strong> NetApp erstellt für jedes betroffene Volume einen benannten Snapshot — der eigentliche, platzsparende Wiederherstellungspunkt.</p></div>
@@ -612,7 +641,7 @@ flowchart TB
       <div class="step"><p><strong>SnapMirror-Update (optional).</strong> Ist die Policy dafür konfiguriert, wird die Replikation zum Ziel-System angestoßen — asynchron, blockiert den Lauf nicht.</p></div>
       <div class="step"><p><strong>VM-Konfiguration sichern.</strong> CPU, RAM, Netzwerkadapter und die VHD-zu-LUN-Zuordnung werden zum Zeitpunkt der Sicherung mit gespeichert — Grundlage für eine spätere komplette Neuerstellung.</p></div>
     </div>
-    <div class="callout">Jeder dieser Schritte landet einzeln im Job-Verlauf — inklusive Klartext-Fehlermeldung, falls er fehlschlägt.</div>
+    <div class="callout">Jeder dieser Schritte landet einzeln im Job-Verlauf — inklusive Klartext-Fehlermeldung, falls er fehlschlägt. Ein Lauf gilt nur dann als fehlgeschlagen, wenn ein Storage-Snapshot nicht erstellt werden konnte; scheitert nur ein einzelner Checkpoint oder das SnapMirror-Update, endet er als „erfolgreich mit Fehlern“.</div>
   </section>
 
   <section id="restore">
@@ -666,20 +695,46 @@ flowchart LR
     </div>
   </section>
 
+  <section id="verwaltung">
+    <h2><span class="num">08</span> Verwaltung &amp; Auswertung</h2>
+    <p class="section-intro">
+      Neben Backup und Restore deckt die App die laufende Verwaltung und die Auswertung ab. Abläufe,
+      die etwas verändern, sind gesperrt, solange für dasselbe Objekt ein Backup, Restore oder eine
+      Verschiebung läuft.
+    </p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Bereich</th><th>Funktionen</th><th>Ort in der App</th></tr></thead>
+        <tbody>
+          <tr><td class="label">Virtuelle Maschinen</td><td>Neu anlegen per Assistent, starten, herunterfahren, ausschalten, CPU/RAM/Netzwerk/Disks ändern, Host- oder Storage-Move, löschen, Remote-Sitzung (Konsole über den Knoten oder RDP in den Gast).</td><td class="mono-cell">Inventory</td></tr>
+          <tr><td class="label">CSVs</td><td>Neu anlegen (Volume, LUN, Mapping, Formatierung, Cluster-Disk), im Betrieb vergrößern, löschen — optional samt LUN und Volume.</td><td class="mono-cell">Inventory</td></tr>
+          <tr><td class="label">SMB3-Freigaben</td><td>Volume und CIFS-Freigabe mit passenden Rechten für Knoten, Cluster und Restore-Proxy anlegen, vergrößern, löschen.</td><td class="mono-cell">Inventory</td></tr>
+          <tr><td class="label">NetApp-Objekte</td><td>Aggregate, SVMs, Volumes, LUNs, IGroups, Peerings, SnapMirror-Beziehungen, -Policies und Schedules ansehen und verwalten; MetroCluster-Status.</td><td class="mono-cell">Storage</td></tr>
+          <tr><td class="label">Schutzklassen</td><td>Klassen pflegen, Objekten zuweisen, Prüfergebnis je Objekt; Eignung jeder Protection Group.</td><td class="mono-cell">Backup</td></tr>
+          <tr><td class="label">Kapazität</td><td>Täglicher Messpunkt je VHD, CSV, LUN, Volume und Aggregat, Verlauf bis 12 Monate, Prognose vier Wochen voraus mit Alarm; Snapshot-Belegung je Volume.</td><td class="mono-cell">Inventory · Storage</td></tr>
+          <tr><td class="label">Performance</td><td>IOPS, Latenz und Durchsatz live und im Verlauf: Storage-Seite aus ONTAP, VM-Seite aus Storage QoS des Failover-Clusters (eigener Sammler).</td><td class="mono-cell">Monitoring</td></tr>
+          <tr><td class="label">Reports</td><td>Acht Typen als PDF und CSV, Vorlagen mit Zeitplan und Mailversand, Historie 12 Monate mit Prüfsumme.</td><td class="mono-cell">Reports</td></tr>
+          <tr><td class="label">Alarme</td><td>Kapazität, SnapMirror-Lag, verpasste oder fehlgeschlagene Backups, verwaiste Checkpoints, Standort-Abweichung, Schutzklasse, DB-Sicherung, Knoten-Erreichbarkeit; optional per Mail.</td><td class="mono-cell">Monitoring</td></tr>
+          <tr><td class="label">Suche</td><td>VMs, CSVs, Freigaben, Volumes, LUNs und Backup-Snapshots, Treffer beim Tippen.</td><td class="mono-cell">Kopfzeile</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <section id="betrieb">
-    <h2><span class="num">08</span> Betrieb &amp; Deployment</h2>
+    <h2><span class="num">09</span> Betrieb &amp; Deployment</h2>
     <p class="section-intro">Bewusst klein gehalten, passend zum Nutzerkreis:</p>
     <div class="steps">
       <div class="step"><p><strong>Ein Container.</strong> Backend, Frontend-Build und SQLite-Datenbank laufen zusammen in einem rootless Podman-Container.</p></div>
       <div class="step"><p><strong>Selbst-Update statt Pipeline.</strong> Ein Supervisor-Prozess zieht periodisch <code>git pull</code>, installiert Abhängigkeiten bei Bedarf nach und startet neu — kein separates CI/CD-System nötig.</p></div>
       <div class="step"><p><strong>Additive Schema-Migration.</strong> Neue Datenbankspalten werden beim Start automatisch ergänzt, ohne bestehende Daten anzufassen.</p></div>
-      <div class="step"><p><strong>Hintergrund-Jobs im selben Prozess.</strong> Discovery, geplante Backups, Retention, Alarm-Prüfung, DB-Sicherung und Aufräumarbeiten laufen als eingebettete Scheduler-Jobs — kein separater Worker.</p></div>
+      <div class="step"><p><strong>Hintergrund-Jobs im selben Prozess.</strong> Discovery, geplante Backups, Retention, Snapshot-Abgleich, Alarm-Prüfung, Kapazitäts- und Performance-Sammler, geplante Reports, DB-Sicherung und Aufräumarbeiten laufen als eingebettete Scheduler-Jobs — kein separater Worker.</p></div>
       <div class="step"><p><strong>Sicherung und Umzug des Tools selbst.</strong> Tägliche, im Betrieb konsistente Kopie der Datenbank auf eine CIFS-Freigabe (plus lokale Kopien), Wiederherstellung per GUI mit anschließendem Neustart. Für Umzug/Wiederaufbau zusätzlich ein Konfigurations-Export ohne Kennwörter. Die Kennwörter in der Datenbank sind mit <code>HVNB_SECRET_KEY</code> verschlüsselt, der getrennt verwahrt wird.</p></div>
     </div>
   </section>
 
   <section id="stack">
-    <h2><span class="num">09</span> Tech-Stack im Überblick</h2>
+    <h2><span class="num">10</span> Tech-Stack im Überblick</h2>
     <div class="tbl-wrap">
       <table>
         <thead><tr><th>Bereich</th><th>Technologie</th></tr></thead>
@@ -690,6 +745,8 @@ flowchart LR
           <tr><td class="label">Hintergrund-Jobs</td><td class="mono-cell">APScheduler (In-Process)</td></tr>
           <tr><td class="label">Hyper-V-Anbindung</td><td class="mono-cell">pywinrm (WinRM / PowerShell-Remoting · NTLM, CredSSP, Kerberos)</td></tr>
           <tr><td class="label">NetApp-Anbindung</td><td class="mono-cell">netapp_ontap (offizielles REST-SDK)</td></tr>
+          <tr><td class="label">Reports</td><td class="mono-cell">ReportLab (PDF, reines Python) · CSV</td></tr>
+          <tr><td class="label">Performance</td><td class="mono-cell">ONTAP-Statistik (Storage) · Storage QoS per WMI (VMs)</td></tr>
           <tr><td class="label">DB-Sicherung</td><td class="mono-cell">SQLite-Online-Backup-API · smbprotocol (SMB 2/3, ohne Mount)</td></tr>
           <tr><td class="label">Auth</td><td class="mono-cell">Drei feste Rollen (Administrator/Operator/Viewer), lokal oder Active Directory</td></tr>
           <tr><td class="label">Deployment</td><td class="mono-cell">Podman (rootless) · git-basiertes Selbst-Update</td></tr>
@@ -698,7 +755,7 @@ flowchart LR
     </div>
   </section>
 
-  <footer>AU Storage Manager for Hyper-V (intern HVNB) — Architekturdokument · Stand 28.09.2026 · zur internen Weitergabe</footer>
+  <footer>AU Storage Manager for Hyper-V (intern HVNB) — Architekturdokument · Stand 07.10.2026 · zur internen Weitergabe</footer>
 
 </div>
 

@@ -6,8 +6,8 @@ Hyper-V** (vormals "Hyper-V NetApp Backup"; technische Bezeichner wie
 `HVNB_*`-Variablen, Container `hvnb-backup` und Volumes `hvnb-data`/`hvnb-certs`
 behalten das Kürzel HVNB). Sie basiert auf einer
 real gegen eine solche Umgebung verifizierten Ersteinrichtung (siehe
-[INSTALL.md](INSTALL.md) für das dazugehörige Feldprotokoll mit allen dabei
-gefundenen Stolpersteinen) und fasst diese Erkenntnisse zu einer
+[INSTALL.md](INSTALL.md) für das dazugehörige, historische Feldprotokoll mit
+allen dabei gefundenen Stolpersteinen) und fasst diese Erkenntnisse zu einer
 allgemeingültigen, wiederholbaren Anleitung zusammen.
 
 ## Architekturüberblick
@@ -60,6 +60,15 @@ Host spricht — WSL2 bringt beides auf eine Maschine.
   - dem Git-Server/-Repository, aus dem der Anwendungscode bezogen wird
     (siehe Abschnitt 4 zu den zwei möglichen Modellen, falls kein direkter
     Netzwerkpfad besteht)
+  - dem Domain Controller (KDC) auf TCP/UDP 88, falls Kerberos als
+    WinRM-Transport genutzt werden soll (siehe Abschnitt 10)
+  - dem Fileserver mit der Freigabe für die DB-Sicherung (SMB — TCP 445),
+    falls die automatische DB-Sicherung eingerichtet wird (Abschnitt 13)
+  - dem Mailserver (SMTP, Port laut Settings > E-Mail), falls Alarme oder
+    Reports per Mail verschickt werden sollen
+- [ ] Für die Remote-Sitzung auf eine VM (Inventory > VMs): Zugriff **vom PC
+      des Benutzers** auf die Hyper-V-Knoten (TCP 2179, Konsole) bzw. auf
+      die VM selbst (TCP 3389, RDP) — nicht vom HVNB-Server aus
 - [ ] Eingehender Netzwerkzugriff auf den gewählten HTTPS-Port (Beispiel in
       dieser Anleitung: 8443) von den Rechnern/Netzen, aus denen die Web-GUI
       erreichbar sein soll
@@ -396,8 +405,10 @@ ersten Login (Settings, Storage, Restore > Setup, Backup) — dort auch
 verschlüsselt in der Datenbank statt im Klartext einer `.env`-Datei
 gespeichert.
 
-Die vollständige Liste aller unterstützten Variablen mit Erläuterung steht
-in `.env.example` im Projektwurzelverzeichnis.
+Die Liste der unterstützten Variablen mit Erläuterung steht in
+`backend/.env.example`. Die dort genannten Intervalle für Health-Check,
+Discovery und Snapshot-Abgleich sind nur Startwerte einer frischen
+Installation; danach gilt Settings > Hintergrundjobs.
 
 ## 6. Container bauen und starten
 
@@ -1375,6 +1386,11 @@ zu einem Sprungbrett für die gesamte Domäne bzw. den gesamten Forest.
 > `Set-VMKeyProtector`/`Enable-VMTPM` (bei SMB3-Ablage per CredSSP),
 > für "Remote-Sitzung" `Get-VMNetworkAdapter` (die Konsole selbst öffnet der PC des Benutzers direkt
 > zum Knoten auf TCP 2179 -- dieser Port muss vom Benutzer-PC aus erreichbar sein, nicht von der App),
+> für "VM-Einstellungen ändern" `Set-VMProcessor`, `Set-VMMemory`, `Add/Remove/Connect/Disconnect-VMNetworkAdapter`,
+> `Set-VMNetworkAdapterVlan`, `Resize-VHD`, `New-VHD` und `Update-ClusterVirtualMachineConfiguration`,
+> für "VM starten/herunterfahren" `Start-VM`/`Resume-VM`/`Stop-VM`,
+> für "VM löschen" `Remove-ClusterGroup` und `Remove-VM` sowie das Löschen der Festplatten-Dateien,
+> für die VM-Performance lesend die WMI-Klasse `MSFT_StorageQoSFlow` (Storage QoS des Clusters),
 > für die RAM-Anzeige beim Host-Move `Get-CimInstance Win32_OperatingSystem`
 > direkt auf jedem Knoten). Für die Disk-/iSCSI-Verwaltung gibt es unter
 > Windows **keine** eigene, schmalere eingebaute Gruppe (anders als bei
@@ -1754,7 +1770,10 @@ Reihenfolge sinnvoll):
 3. **Restore > Setup** — Restore-Proxy-Host + iSCSI-Infrastruktur einrichten
    (Voraussetzung für jeden Restore-Vorgang)
 4. **Backup > Policies / Protection Groups / Zeitpläne** — Backup-Regeln
-   definieren
+   definieren. Optional **Backup > Schutzklassen** — Klassen (z. B.
+   Gold/Silber/Bronze) mit maximalem Backup-Alter und Aufbewahrung je Stufe
+   anlegen und VMs, CSVs und SMB3-Freigaben zuweisen; die App prüft danach,
+   ob jedes Objekt seiner Klasse entsprechend gesichert wird
 5. **Settings > Active Directory** (falls gewünscht) — Server, Domäne,
    Base DN und ein Lese-Service-Konto für die AD-Benutzersuche werden
    direkt in der GUI konfiguriert (kein `.env`/Neustart nötig). Danach
@@ -1771,9 +1790,19 @@ Reihenfolge sinnvoll):
    während eines MetroCluster-Switchovers ausgesetzt) und "Beheben"-Aktion.
    Damit die Knotenliste vollständig ist, einmal den Health-Check laufen
    lassen (Verify-Button beim Cluster).
+7. **Settings > DB-Sicherung** (empfohlen) — tägliche Sicherung der
+   App-Datenbank auf eine CIFS-Freigabe einrichten (siehe Abschnitt 13);
+   ohne sie geht bei einem Verlust des Servers auch der Backup-Katalog
+   verloren
+8. **Reports** (optional) — Reports auf Knopfdruck erzeugen oder als
+   Vorlage mit Zeitplan und Mailversand speichern (braucht Settings >
+   E-Mail)
+9. **Settings > Hintergrundjobs** — Intervalle prüfen, u. a. den
+   VM-Performance-Sammler (Standard alle 5 min, 0 = aus); die Storage-Seite
+   unter Monitoring > Performance braucht keine Einrichtung
 
-Eine funktionale Architekturübersicht ist direkt in der Applikation unter
-dem Dokumentations-Link in der Seitenleiste verlinkt.
+Eine funktionale Architekturübersicht ist direkt in der Applikation über
+den Link in der Fußzeile erreichbar.
 
 ## 13. Betrieb
 
@@ -1787,8 +1816,8 @@ podman exec hvnb-backup supervisorctl restart uvicorn nginx
 **Konfiguration sichern / auf einen neuen Server übertragen:** Settings →
 System → "Konfiguration exportieren" lädt die komplette Einrichtung als ZIP
 herunter (Cluster, NetApp-Systeme, Restore-Setup, Policies, Protection
-Groups, Zeitpläne, Standorte, alle Settings, WinRM-Zertifikate, Benutzer
-und Rollen), optional mit dem Backup-Katalog, damit ältere NetApp-Snapshots
+Groups, Zeitpläne, Schutzklassen samt Zuordnungen, Report-Vorlagen,
+Standorte, alle Settings, WinRM-Zertifikate, Benutzer und Rollen), optional mit dem Backup-Katalog, damit ältere NetApp-Snapshots
 auf dem neuen Server weiter als Wiederherstellungspunkte auswählbar sind.
 **Kennwörter, NetApp-Client-Zertifikate und Kennwörter lokaler Benutzer
 sind nie enthalten** — der Export ist dadurch unabhängig von
@@ -1875,4 +1904,3 @@ für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.
 | `git`-Fehler beim Deploy trotz erreichbarem Server | Zugangsdaten/Deploy-Key für die Repository-URL fehlen | 4 |
 | Health-Check liefert `502 Bad Gateway` kurz nach Neustart | uvicorn/nginx starten noch, wenige Sekunden abwarten | — |
 | `curl https://localhost:8443/...` bricht mit `TLS connect error`/`SSL_ERROR_SYSCALL` ab, `https://127.0.0.1:8443/...` funktioniert dagegen einwandfrei | `localhost` löst zuerst zu IPv6 (`::1`) auf -- `podman port` mapped nur IPv4 (`0.0.0.0:8443`), auf `[::1]:8443` reagiert etwas anderes (oder eine pasta-Eigenheit). Kein Fehler im Container selbst, immer die IPv4-Adresse explizit testen | — |
-| Container stürzt bei JEDEM Start sofort wieder ab (`supervisord`-Log zeigt `exited: uvicorn` im Sekundentakt), betrifft nur eine komplett frische Erstinstallation | War ein echter Bug (`no such column: schedule_id` in `_migrate_resource_group_policy_link_schedules`, `backend/app/db/init_db.py`), behoben in Commit `1c1289f` -- betraf nur DBs, die *nie* die alte `backup_policies.schedule_id`-Spalte hatten. Aktuellen Code ziehen (`git pull`) behebt es | 4, 6 |

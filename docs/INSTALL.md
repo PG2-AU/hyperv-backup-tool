@@ -1,10 +1,13 @@
 # Installation: AU Storage Manager for Hyper-V auf dediziertem Windows Server
 
-> **Hinweis:** Für eine allgemeingültige, aufgeräumte Schritt-für-Schritt-
-> Anleitung siehe [DEPLOYMENT.md](DEPLOYMENT.md). Dieses Dokument hier ist
-> das dazugehörige Feldprotokoll der ursprünglichen Ersteinrichtung, inkl.
-> aller dabei aufgetretenen Umgebungs-Besonderheiten (konkrete IPs,
-> Netzwerksegmentierung dieser einen Instanz usw.).
+> **Historisches Dokument -- nicht danach installieren.** Dies ist das
+> Feldprotokoll der allerersten Einrichtung (Stand September 2026) mit den
+> damaligen Umgebungs-Besonderheiten (konkrete IPs, Netzwerksegmentierung
+> dieser einen Instanz, Entwickler-Kennwoerter, inzwischen entfallene
+> `.env`-Variablen wie `HVNB_AD_*` und `HVNB_ONTAP_*`). Es wird nicht mehr
+> gepflegt; die "offenen Schritte" am Ende sind laengst erledigt oder
+> ueberholt. Die gueltige Schritt-fuer-Schritt-Anleitung ist
+> [DEPLOYMENT.md](DEPLOYMENT.md).
 
 Diese Anleitung entsteht live beim Ersteinrichten einer produktiven Instanz auf
 einem dedizierten, domain-joined Windows Server (statt Entwickler-Workstation).
