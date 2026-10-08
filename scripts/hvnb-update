@@ -9,13 +9,15 @@
 #                                       vor dem letzten Update zurueckspielen)
 #
 # Optionen fuer das Einspielen:
-#   --allow-unsigned   Paket ohne gueltige Signatur zulassen (nur Pruefsumme)
+#   --allow-unsigned   nur mit hinterlegtem Signaturschluessel von Bedeutung:
+#                      ein Paket ohne Signaturdatei trotzdem zulassen
 #   --force            auch einspielen, wenn noch Backups/Restores laufen
 #
 # Ablauf beim Einspielen:
-#   1. Pruefsumme (<paket>.sha256) und Signatur (<paket>.sig) pruefen -- die
-#      Signatur gegen den oeffentlichen Schluessel dieses Servers
-#      (~/.config/hvnb/release-signing.pub bzw. HVNB_RELEASE_PUBKEY).
+#   1. Pruefsumme (<paket>.sha256) pruefen. Eine Signatur (<paket>.sig) wird
+#      nur geprueft, wenn auf diesem Server ein oeffentlicher Schluessel liegt
+#      (~/.config/hvnb/release-signing.pub bzw. HVNB_RELEASE_PUBKEY) -- ohne
+#      Schluessel gilt allein die Pruefsumme.
 #   2. Abbrechen, wenn in der App noch ein Backup oder Restore laeuft.
 #   3. Image laden, Datenbank im laufenden Betrieb konsistent sichern
 #      (/data/update-backups im Daten-Volume, die letzten 5 bleiben).
@@ -147,7 +149,7 @@ cmd_status() {
     log "DB-Sicherungen vor Updates (im Volume ${DATA_VOLUME:-?} unter /data/update-backups):"
     podman exec "${CONTAINER}" sh -c 'ls -1 /data/update-backups 2>/dev/null' | sed 's/^/[hvnb-update]   /' || true
   fi
-  if [ -f "${PUBKEY}" ]; then log "Signaturschluessel: ${PUBKEY}"; else log "Signaturschluessel: FEHLT (${PUBKEY})"; fi
+  if [ -f "${PUBKEY}" ]; then log "Signaturpruefung:  an (${PUBKEY})"; else log "Signaturpruefung:  aus (kein Schluessel hinterlegt, nur Pruefsumme)"; fi
 }
 
 verify_package() {
@@ -160,16 +162,19 @@ verify_package() {
   [ "${expected}" = "${actual}" ] || die "Pruefsumme stimmt nicht (Datei beschaedigt oder veraendert)."
   log "Pruefsumme in Ordnung."
 
-  if [ -f "${package}.sig" ] && [ -f "${PUBKEY}" ]; then
+  # Signatur ist optional (Nutzer-Entscheidung 2026-10-08: Betrieb ohne
+  # Schluessel). Erst wenn auf diesem Server ein oeffentlicher Schluessel
+  # hinterlegt ist, wird sie verlangt -- dann aber zwingend.
+  if [ ! -f "${PUBKEY}" ]; then
+    log "Keine Signaturpruefung (auf diesem Server ist kein Signaturschluessel hinterlegt)."
+  elif [ -f "${package}.sig" ]; then
     openssl dgst -sha256 -verify "${PUBKEY}" -signature "${package}.sig" "${package}" >/dev/null 2>&1 \
       || die "Signatur ist UNGUELTIG -- das Paket stammt nicht vom Inhaber des Signaturschluessels. Nicht einspielen."
     log "Signatur in Ordnung."
   elif [ "${allow_unsigned}" = "1" ]; then
     log "WARNUNG: Signatur nicht geprueft (--allow-unsigned)."
-  elif [ ! -f "${PUBKEY}" ]; then
-    die "Oeffentlicher Signaturschluessel fehlt (${PUBKEY}). Einmalig hinterlegen oder bewusst --allow-unsigned angeben."
   else
-    die "Signaturdatei ${package}.sig fehlt. Bewusst unsigniert einspielen nur mit --allow-unsigned."
+    die "Auf diesem Server ist ein Signaturschluessel hinterlegt, aber ${package}.sig fehlt. Bewusst unsigniert einspielen nur mit --allow-unsigned."
   fi
 }
 
