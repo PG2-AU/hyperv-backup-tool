@@ -2,8 +2,8 @@
 
 Backup, Restore und Storage-Verwaltung fuer Hyper-V (Windows Server 2022/2025) auf Basis
 von NetApp ONTAP Snapshots und SnapMirror (vormals "Hyper-V NetApp Backup"; intern
-weiterhin kurz HVNB, z.B. in Umgebungsvariablen, Container- und Snapshot-Namen). Laeuft als Container auf Rocky Linux, wird per
-Git-Push/Pull deployt und bietet eine Web-GUI mit drei festen Rollen, Active-Directory-
+weiterhin kurz HVNB, z.B. in Umgebungsvariablen, Container- und Snapshot-Namen). Laeuft als Container auf Rocky Linux, wird als
+versioniertes Release-Image ausgeliefert (Paketdatei oder Registry) und bietet eine Web-GUI mit drei festen Rollen, Active-Directory-
 Integration und MetroCluster-Unterstuetzung. In der GUI heissen die Sicherungsgruppen
 "Protection Groups"; im Code und in der Datenbank weiterhin `ResourceGroup`.
 
@@ -52,8 +52,16 @@ backend/    FastAPI (Python)                 -> REST-API, Auth/RBAC, Orchestrier
                     Kapazitaetsverlauf, Standorte, Konfigurations-Transfer, DB-Sicherung,
                     System-Log)
 docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
-            uvicorn (Backend), supervisord (Prozessverwaltung),
-            Git-Pull-basiertes Deployment (entrypoint.sh / updater.sh)
+            uvicorn (Backend), supervisord (Prozessverwaltung).
+            Dockerfile.release / entrypoint-release.sh / supervisord-release.conf =
+            Release-Image mit fertiger Anwendung (ohne git/pip/npm zur Laufzeit);
+            Dockerfile / entrypoint.sh / updater.sh = frueherer Git-Pull-Mechanismus,
+            nur noch fuer nicht umgestellte Installationen
+scripts/    build-release.sh (Image + Paketdatei bauen), update-lock.sh
+            (backend/requirements.lock neu erzeugen), hvnb-update (Paket/Registry-
+            Version auf dem Server einspielen, Rollback, Update-Dienst fuer die GUI),
+            hvnb-git-autoupdate (Auto-Update aus Git, nur Entwicklungsumgebungen)
+.github/    workflows/release.yml: baut bei einem Tag vX.Y.Z Image und Paket
 ```
 
 ### Wesentliche Subsysteme (Stand dieser Iteration)
@@ -285,21 +293,27 @@ Initialer lokaler Login: `admin` / Passwort aus
 ## Deployment (Container)
 
 ```bash
-cp backend/.env.example .env  # HVNB_SECRET_KEY, HVNB_GIT_REPO_URL etc. setzen
-docker compose up -d --build
+scripts/build-release.sh 1.2.0     # Image localhost/hvnb-backup:1.2.0 + dist/hvnb-1.2.0.tar.gz
 ```
+
+Auf dem Zielserver wird das Paket geladen und ueber eine Quadlet-Unit
+gestartet; Updates spielt `hvnb-update` ein (Paketdatei, Upload in der GUI
+unter Settings > Updates, Online-Update aus einer Registry oder -- nur fuer
+Entwicklungsumgebungen -- automatisch aus Git).
 
 Für eine vollständige Installationsanleitung ausgehend von einem frischen,
 domain-gejointen Windows Server (WSL2-Einrichtung, Netzwerk-/Zertifikats-
 /Persistenz-Konfiguration bis zur lauffähigen GUI) siehe
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-Der Container klont/pullt beim Start das in `HVNB_GIT_REPO_URL`
-konfigurierte Repository nach `/opt/app`, installiert Backend- und
-Frontend-Abhaengigkeiten, baut das Frontend und startet Backend + nginx
-(HTTPS, Port 443 im Container / 8443 im Compose-Beispiel). Mit
-`HVNB_AUTO_UPDATE_ENABLED=true` prueft ein Hintergrundprozess periodisch
-auf neue Commits im konfigurierten Branch und aktualisiert automatisch.
+Das Release-Image enthaelt Backend, gebautes Frontend und die in
+`backend/requirements.lock` festgeschriebenen Abhaengigkeiten; der Container
+laedt zur Laufzeit nichts nach und startet Backend + nginx (HTTPS, Port 443
+im Container / 8443 auf dem Host). Version und Versionsverlauf liest die App
+aus den beim Build erzeugten Dateien `VERSION.json`/`CHANGELOG.json`
+(`backend/app/core/release.py`). Der fruehere Mechanismus (Container holt
+den Code per `git pull`, `docker-compose.yml`) existiert nur noch fuer nicht
+umgestellte Installationen und wird danach entfernt.
 
 ## Stand dieser Iteration
 

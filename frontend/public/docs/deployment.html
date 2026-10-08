@@ -340,9 +340,9 @@
       <div class="group-label">Teil 1: HVNB-Server</div>
       <a href="#s2"><span class="num">2</span>WSL2 aktivieren und Linux-Distribution einrichten</a>
       <a href="#s3"><span class="num">3</span>Basis-Pakete installieren</a>
-      <a href="#s4"><span class="num">4</span>Anwendungscode beziehen</a>
+      <a href="#s4"><span class="num">4</span>Release-Paket beziehen</a>
       <a href="#s5"><span class="num">5</span>Konfiguration (.env)</a>
-      <a href="#s6"><span class="num">6</span>Container bauen und starten</a>
+      <a href="#s6"><span class="num">6</span>Container einrichten und starten</a>
       <a href="#s7"><span class="num">7</span>TLS-Zertifikat</a>
       <a href="#s8"><span class="num">8</span>Externe Erreichbarkeit von WSL2 aus</a>
       <a href="#s9"><span class="num">9</span>Container-Persistenz absichern (rootless Podman + WSL2)</a>
@@ -374,23 +374,32 @@ allgemeingültigen, wiederholbaren Anleitung zusammen.</p>
 <section id="overview">
 <h2>Architekturüberblick</h2>
 <p>Die Applikation läuft nicht nativ unter Windows, sondern als <strong>rootless
-Podman-Container innerhalb von WSL2</strong> auf dem Windows Server. Das
-Container-Image (Rocky Linux 9 Basis) enthält nur die Runtime (Python,
-Node.js, nginx, git, supervisord) — der eigentliche Anwendungscode wird beim
-Containerstart per <code>git pull</code> aus einem konfigurierten Repository geladen,
-Backend- und Frontend-Abhängigkeiten installiert und das Frontend gebaut
-(siehe <code>docker/entrypoint.sh</code>). <code>supervisord</code> betreibt darin drei Prozesse:</p>
+Podman-Container innerhalb von WSL2</strong> auf dem Windows Server. Ausgeliefert
+wird sie als <strong>Release-Image</strong>: ein fertiges, versioniertes Container-Image
+(Rocky Linux 9 Basis) mit Backend, gebautem Frontend und fest
+vorgegebenen Python-Abhängigkeiten. Der Container lädt zur Laufzeit
+<strong>nichts</strong> nach — kein Git, kein <code>pip</code>, kein <code>npm</code>, kein Compiler im Image.
+<code>supervisord</code> betreibt darin zwei Prozesse:</p>
 <ul>
 <li><strong>uvicorn</strong> — FastAPI-Backend, lauscht intern auf <code>127.0.0.1:8000</code></li>
-<li><strong>nginx</strong> — terminiert TLS, liefert das gebaute Frontend aus, reverse-proxyt
+<li><strong>nginx</strong> — terminiert TLS, liefert das Frontend aus, reverse-proxyt
 <code>/api/*</code> auf uvicorn</li>
-<li><strong>updater</strong> — optional, prüft periodisch auf neue Commits und deployt sie
-automatisch nach (<code>HVNB_AUTO_UPDATE_ENABLED=true</code>)</li>
 </ul>
+<p>Aktualisiert wird von außen: der Server tauscht das Image gegen eine neue
+Version aus (Skript <code>hvnb-update</code>). Die neue Version kommt als
+<strong>Paketdatei</strong> (ohne Internetzugang) oder aus einer <strong>Registry</strong>; für
+Entwicklungsumgebungen kann der Server sie auch selbst aus Git bauen. Alle
+Wege stehen in Abschnitt 13.</p>
 <p>Warum WSL2 statt einer nativen Windows-Installation: Podman/systemd/nginx
 sind Linux-Werkzeuge, die App selbst muss aber auf einem Windows-Host laufen
 können, der per WinRM mit den Hyper-V-Clusterknoten und dem Restore-Proxy-
 Host spricht — WSL2 bringt beides auf eine Maschine.</p>
+<div class="callout">
+<span class="callout-label">Bestehende Installationen mit dem früheren Git-Mechanismus</span>
+<p>(der
+Container holte den Code beim Start selbst per <code>git pull</code>) laufen weiter,
+bis sie umgestellt werden — siehe Abschnitt 4b.</p>
+</div>
 </section>
 <section id="s1">
 <h2><span class="step-num">1</span>Voraussetzungen</h2>
@@ -421,9 +430,11 @@ Restore-Proxy-Host (WinRM — TCP 5986 bei HTTPS/Default, TCP 5985 bei
 HTTP)</li>
 <li>dem Domain Controller, falls Active-Directory-Login aktiviert werden
 soll (LDAP/LDAPS — TCP 389 bzw. 636)</li>
-<li>dem Git-Server/-Repository, aus dem der Anwendungscode bezogen wird
-(siehe Abschnitt 4 zu den zwei möglichen Modellen, falls kein direkter
-Netzwerkpfad besteht)</li>
+<li><strong>keinem</strong> Git-Server und <strong>keiner</strong> Paketquelle: Installation und
+Updates per Paketdatei brauchen keinen Internetzugang. Nur bei Bedarf:
+der Registry <code>ghcr.io</code> (TCP 443) für Online-Updates, bzw. Git-Server,
+<code>quay.io</code>, npm und PyPI für das Auto-Update aus Git einer
+Entwicklungsumgebung (Abschnitt 13)</li>
 <li>dem Domain Controller (KDC) auf TCP/UDP 88, falls Kerberos als
 WinRM-Transport genutzt werden soll (siehe Abschnitt 10)</li>
 <li>dem Fileserver mit der Freigabe für die DB-Sicherung (SMB — TCP 445),
@@ -533,9 +544,8 @@ Your user has been created, is included in the wheel group, and can use sudo wit
 grundsätzlich ebenso, z.B. per <code>wsl --install -d Ubuntu-22.04</code> — betrifft
 nur den WSL2-<strong>Host</strong>, nicht das Container-Image selbst, das unabhängig
 davon immer auf <code>rockylinux:9</code> basiert. Bei Ubuntu/Debian dann aber <code>apt</code>
-statt <code>dnf</code> und <code>openssl</code>/<code>git</code>/<code>podman</code> über die dort üblichen
-Paketnamen verwenden, abweichend von den folgenden Befehlen dieser
-Anleitung.)</p>
+statt <code>dnf</code> und <code>openssl</code>/<code>podman</code> über die dort üblichen Paketnamen
+verwenden, abweichend von den folgenden Befehlen dieser Anleitung.)</p>
 <p><strong>Wichtige Voraussetzung für Abschnitt 9 (Container-Persistenz):</strong> systemd
 muss innerhalb der WSL2-Distribution aktiv sein. Prüfen bzw. aktivieren:</p>
 <div class="code-block">
@@ -559,180 +569,134 @@ damit die Änderung greift.</p>
 <p>In der WSL2-Distribution:</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code>sudo dnf install -y git podman
-sudo dnf install -y python3-pip || true
-sudo pip3 install podman-compose</code></pre>
+<pre><code>sudo dnf install -y podman</code></pre>
 </div>
-<p>Verifizieren:</p>
+<p>Verifizieren (<code>curl</code>, <code>openssl</code> und <code>sha256sum</code> bringt das Rocky-Basisimage
+bereits mit):</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code>git --version
-podman --version
-podman-compose --version</code></pre>
+<pre><code>podman --version
+curl --version | head -n1
+openssl version</code></pre>
 </div>
+<p><code>git</code> wird auf dem Server <strong>nicht</strong> gebraucht — nur, wenn eine
+Entwicklungsumgebung sich selbst aus Git aktualisieren soll (Abschnitt 13,
+dann zusätzlich <code>sudo dnf install -y git</code>).</p>
 </section>
 <section id="s4">
-<h2><span class="step-num">4</span>Anwendungscode beziehen</h2>
-<p>Zwei Ebenen sind hier zu unterscheiden, die leicht durcheinandergeraten:</p>
+<h2><span class="step-num">4</span>Release-Paket beziehen</h2>
+<p>Ein Release besteht aus diesen Dateien:</p>
+<table>
+<thead>
+<tr>
+<th>Datei</th>
+<th>Inhalt</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>hvnb-&lt;Version&gt;.tar.gz</code></td>
+<td>das Container-Image als Archiv (rund 170 MB)</td>
+</tr>
+<tr>
+<td><code>hvnb-&lt;Version&gt;.tar.gz.sha256</code></td>
+<td>SHA-256-Prüfsumme des Archivs</td>
+</tr>
+<tr>
+<td><code>hvnb-update</code></td>
+<td>Skript zum Einspielen, Zurückrollen und für den Update-Dienst</td>
+</tr>
+<tr>
+<td><code>hvnb-git-autoupdate</code></td>
+<td>Skript für das Auto-Update aus Git (nur Entwicklungsumgebungen)</td>
+</tr>
+</tbody></table>
+<p>Woher sie kommen:</p>
 <ul>
-<li><strong>Interaktive Git-Nutzung auf dem Server</strong> (manuell <code>git clone</code>/<code>git pull</code>
-ausführen, z. B. um nachzuschauen oder das Repo für den ersten
-<code>podman-compose</code>-Aufruf lokal zu haben) — läuft über deinen eigenen
-SSH-Zugang (Abschnitt 4a).</li>
-<li><strong>Der Container selbst</strong> klont/pullt den Anwendungscode unabhängig davon
-bei jedem Start und jedem Auto-Update (<code>entrypoint.sh</code>/<code>updater.sh</code>,
-gesteuert über <code>HVNB_GIT_REPO_URL</code>) — dafür empfiehlt sich bei einem
-privaten Repository <strong>HTTPS mit einem Personal Access Token</strong> (Abschnitt
-4b), da dafür kein SSH-Schlüsselmaterial in den Container gemountet werden
-muss.</li>
+<li><strong>Vom GitHub-Release</strong> der gewünschten Version (Repository &gt; Releases),
+sobald Versionen dort veröffentlicht werden (Abschnitt 13, „Ein Release
+erzeugen&quot;).</li>
+<li><strong>Selbst gebaut</strong> auf einem Rechner mit Internetzugang, siehe 4a.</li>
 </ul>
-<p><strong>4a und 4b sind kein Entweder-Oder, sondern werden im Normalfall
-(Netzwerkzugriff zum Git-Server vorhanden) beide durchgeführt</strong> — sie
-decken unterschiedliche Ebenen ab: 4a liefert den Checkout, der in
-Abschnitt 6 zum Bauen des Containers gebraucht wird, 4b konfiguriert, wovon
-der bereits laufende Container später selbst pullt (ohne 4b kein
-Auto-Update). <strong>4c</strong> ist nur bei abgeschottetem Netz relevant und ersetzt
-dann <strong>beide</strong> zusammen — der initiale Checkout kommt dort ebenfalls aus
-dem lokalen Bare-Repo, dessen <code>file://</code>-URL tritt an die Stelle der
-HTTPS/Token-URL aus 4b.</p>
-<h3>4a. SSH-Zugriff für interaktive Nutzung auf dem Server einrichten</h3>
-<p>Auf dem Windows-Server, in der WSL2-Distribution:</p>
+<p>Die Dateien auf den Server bringen — z. B. per RDP-Dateitransfer oder über
+den Windows-Explorer unter <code>\\wsl.localhost\rocky\home\&lt;Benutzer&gt;\</code> — und
+in einem eigenen Ordner ablegen:</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code>ssh-keygen -t ed25519 -C "&lt;servername&gt;-interactive" -f ~/.ssh/hyperv_backup_github -N ""
-
-cat &gt;&gt; ~/.ssh/config &lt;&lt; 'EOF'
-Host github-hvnb
-    HostName github.com
-    User git
-    IdentityFile ~/.ssh/hyperv_backup_github
-    IdentitiesOnly yes
-EOF
-chmod 600 ~/.ssh/config
-
-cat ~/.ssh/hyperv_backup_github.pub</code></pre>
+<pre><code>mkdir -p ~/hvnb/release
+# hvnb-&lt;Version&gt;.tar.gz, .sha256, hvnb-update, hvnb-git-autoupdate nach ~/hvnb/release kopieren
+cd ~/hvnb/release
+sha256sum -c hvnb-&lt;Version&gt;.tar.gz.sha256</code></pre>
 </div>
-<p>Den ausgegebenen öffentlichen Schlüssel bei GitHub hinterlegen — entweder
-unter dem eigenen Account (Settings &gt; SSH and GPG keys, falls der Server-
-Login einer Person zugeordnet ist) oder repo-gebunden als Deploy Key
-(Repository &gt; Settings &gt; Deploy keys &gt; Add deploy key, Lesezugriff reicht).</p>
-<p>Test und Erstklon:</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code>ssh -T git@github-hvnb
-git clone git@github-hvnb:PG2-AU/hyperv-backup-tool.git ~/hyperv-netapp-backup
-cd ~/hyperv-netapp-backup</code></pre>
+<p>Erwartet: <code>hvnb-&lt;Version&gt;.tar.gz: OK</code>. Bei jeder anderen Ausgabe die Datei
+erneut übertragen — nicht installieren.</p>
+<div class="callout">
+<p>Die Prüfsumme erkennt beschädigte oder vertauschte Dateien. Sie schützt
+<strong>nicht</strong> vor einem absichtlich ausgetauschten Paket (wer das Archiv
+ersetzt, kann auch die Prüfsummendatei ersetzen) — maßgeblich ist der
+Weg, auf dem das Paket zum Server kommt.</p>
 </div>
-<p>Dieser Checkout liefert die Compose-/Dockerfile-Dateien, um den Container
-in Abschnitt 6 überhaupt bauen und starten zu können — er ist <strong>nicht</strong>
-dieselbe Quelle, aus der der Container selbst später pullt (das regelt
-<code>HVNB_GIT_REPO_URL</code>, siehe 4b).</p>
-<h3>4b. HTTPS + Personal Access Token für den Container-eigenen Pull</h3>
-<p>Empfohlener Weg, damit die Instanz direkt von GitHub aktualisiert, ohne
-SSH-Schlüsselmaterial in den Container mounten zu müssen (Container läuft
-als eigener, vom Host-SSH-Setup unabhängiger Prozess).</p>
-<ol>
-<li>GitHub &gt; Settings &gt; Developer settings &gt; Fine-grained personal access
-tokens &gt; Generate new token.</li>
-<li><strong>Repository access:</strong> nur auf das eine Repository beschränken (nicht
-&quot;All repositories&quot;).</li>
-<li><strong>Permissions:</strong> unter &quot;Repository permissions&quot; nur <strong>Contents: Read-only</strong>
-setzen — mehr wird für einen reinen Pull nicht gebraucht.</li>
-<li>Token erzeugen und den Wert einmalig kopieren (wird danach nicht mehr
-angezeigt).</li>
-</ol>
-<p>In der <code>.env</code> (Abschnitt 5):</p>
+<h3>4a. Paket selbst bauen</h3>
+<p>Auf einem Rechner mit <code>git</code>, <code>podman</code>, <code>python3</code> und Internetzugang
+(<code>quay.io</code>, npm, PyPI) — <strong>nicht</strong> auf dem Produktivserver:</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code>HVNB_GIT_REPO_URL=https://&lt;GITHUB-BENUTZERNAME&gt;:&lt;TOKEN&gt;@github.com/PG2-AU/hyperv-backup-tool.git
-HVNB_GIT_BRANCH=master
-HVNB_AUTO_UPDATE_ENABLED=true</code></pre>
-</div>
-<p><code>entrypoint.sh</code>/<code>updater.sh</code> führen intern nur einen normalen <code>git clone</code>/
-<code>git fetch</code> gegen diese URL aus — Zugangsdaten in der URL eingebettet werden
-dabei von Git nativ unterstützt, es ist keine zusätzliche Konfiguration im
-Container nötig.</p>
-<p><strong>Wichtig bei einer nachträglichen Änderung von <code>HVNB_GIT_REPO_URL</code></strong>
-(z. B. Umstieg von Modell 4c, oder Token-Rotation): <code>entrypoint.sh</code> nutzt
-diese Variable nur für den <strong>erstmaligen</strong> Klon (<code>/opt/app/.git</code> existiert
-noch nicht) — ein bereits geklonter Checkout wird bei jedem weiteren Start
-per <code>git fetch origin</code> aktualisiert, unabhängig von einer geänderten
-Umgebungsvariable, da <code>origin</code> in der beim ersten Klon geschriebenen
-<code>.git/config</code> fest verdrahtet ist. <code>/opt/app</code> liegt NICHT in einem
-persistenten Volume (nur <code>/data</code> und <code>/etc/hvnb/certs</code>, siehe
-<code>docker-compose.yml</code>) — der Container muss also tatsächlich <strong>neu
-erstellt</strong> werden, damit <code>/opt/app</code> leer beginnt und <code>entrypoint.sh</code> den
-&quot;erstmaligen Klon&quot;-Pfad mit der neuen URL erneut durchläuft.</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code>systemctl --user restart hvnb-backup.service</code></pre>
-</div>
-<p>Ein reines <code>podman restart hvnb-backup</code> reicht dafür <strong>nicht</strong> aus (startet
-denselben, bereits geklonten Container neu, <code>/opt/app</code> bleibt unverändert)
-— <code>systemctl --user restart hvnb-backup.service</code> dagegen schon: die
-Container-Verwaltung läuft seit Abschnitt 6 über eine Quadlet-Unit, deren
-generiertes <code>ExecStart</code> den Container bei jedem Start bedingungslos per
-<code>--replace --rm</code> neu erstellt (kein <code>--force-recreate</code>-Sonderfall mehr
-nötig wie beim vorherigen <code>podman-compose up -d</code>, das eine reine
-<code>.env</code>-Änderung nicht zuverlässig erkannte). Mit <code>podman inspect hvnb-backup --format &#39;{{.Created}}&#39;</code> vor und nach dem Befehl lässt sich
-trotzdem prüfen, ob tatsächlich neu erstellt wurde.</p>
-<p>Die <code>.env</code>-Datei enthält damit ein Secret im Klartext und
-ist bereits über <code>.gitignore</code> von Commits ausgeschlossen — trotzdem
-zusätzlich die Dateiberechtigung einschränken:</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code>chmod 600 .env</code></pre>
-</div>
-<p><strong>Rotation/Widerruf:</strong> Token bei Bedarf jederzeit unter GitHub &gt; Settings &gt;
-Developer settings &gt; Fine-grained tokens widerrufen und durch ein neues
-ersetzen (<code>.env</code> aktualisieren, danach <code>systemctl --user restart hvnb-backup.service</code> um den Container mit der neuen URL neu zu erstellen).</p>
-<h3>4c. Kein Netzwerkpfad zum Git-Server (abgeschottetes Netz)</h3>
-<p>Wurde in der Referenzumgebung genau so benötigt: eine VLAN-Trennung
-verhinderte jede Verbindung vom Server zum eigentlichen Git-Server. Lösung:
-ein lokales Bare-Repository auf dem WSL2-Host, das per
-<code>docker-compose.dev.yml</code>-Override read-only in den Container gemountet wird
-— der Container braucht dann gar keinen externen Netzwerkzugriff für den
-Code:</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code># Einmalig: Bare-Repo aus einem erreichbaren Uebertragungsweg befuellen,
-# z.B. per 'git bundle' + Dateikopie (RDP, USB, ...), wenn auch kein
-# Zwischenschritt-Host existiert:
-git clone --bare &lt;PFAD-ODER-URL-MIT-ZUGRIFF&gt; ~/hyperv-repo.git
-git clone ~/hyperv-repo.git ~/hyperv-netapp-backup
+<pre><code>git clone &lt;Repository-Adresse&gt; ~/hyperv-netapp-backup
 cd ~/hyperv-netapp-backup
-
-podman-compose -f docker-compose.yml -f docker-compose.dev.yml build</code></pre>
+scripts/build-release.sh 1.2.0</code></pre>
 </div>
-<p>Danach wie in Abschnitt 6 beschrieben die Quadlet-Datei anlegen, <strong>inklusive</strong>
-der dort gezeigten drei zusätzlichen Zeilen für Modell 4c (Bare-Repo-Mount +
-<code>HVNB_GIT_REPO_URL</code>/<code>HVNB_GIT_BRANCH</code>/<code>HVNB_AUTO_UPDATE_ENABLED</code>) — diese
-stecken normalerweise in <code>docker-compose.dev.yml</code>, das aber nur noch beim
-Bauen gilt, nicht mehr für den laufenden Betrieb.</p>
-<p><code>HVNB_GIT_REPO_URL</code> zeigt dabei auf <code>file:///srv/git/hyperv-netapp-backup.git</code>
-— das lokale Bare-Repo wird dafür nach <code>/srv/git/...</code> in den Container
-gemountet.</p>
-<p><strong>Code-Updates in diesem Modell:</strong> das Bare-Repo muss erneut befüllt
-werden, z. B. per <code>git bundle create update.bundle --all</code> auf einem Host mit
-Zugriff, Transfer der Bundle-Datei, und auf dem Server:</p>
+<p>Die Versionsnummer hat die Form <code>X.Y.Z</code>. Gebaut wird der committete Stand;
+nicht committete Änderungen brechen den Build ab. Nach etwa fünf Minuten
+liegen die vier Dateien aus der Tabelle oben in <code>dist/</code>.</p>
+<p>Die Python-Abhängigkeiten sind in <code>backend/requirements.lock</code> mit
+Prüfsummen festgeschrieben — ein Build installiert immer exakt diese
+Versionen. Geändert wird die Datei nur bewusst mit
+<code>scripts/update-lock.sh</code> (bzw. <code>--upgrade</code> für neuere Versionen).</p>
+<h3>4b. Bestehende Git-Installation umstellen</h3>
+<p>Für Server, die noch mit dem früheren Mechanismus laufen (Image
+<code>localhost/hyperv-netapp-backup:local</code>, der Container holt den Code per
+<code>git pull</code>). Datenbank, Zertifikate und <code>.env</code> bleiben unverändert; die
+Abschnitte 5 und 6 entfallen.</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code>git -C ~/hyperv-repo.git fetch update.bundle 'refs/*:refs/*'</code></pre>
+<pre><code>cd ~/hvnb/release
+bash hvnb-update --status</code></pre>
 </div>
-<p>Der Updater-Prozess im Container erkennt die neuen Commits beim nächsten
-Intervall automatisch (<code>HVNB_AUTO_UPDATE_ENABLED=true</code>) bzw. sofort nach
-einem manuellen <code>systemctl --user restart hvnb-backup.service</code>.</p>
+<p>Erwartet: Image <code>localhost/hyperv-netapp-backup:local</code>, Version „ohne
+Versionsnummer (bisherige Auslieferung per git)&quot;.</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>bash hvnb-update hvnb-&lt;Version&gt;.tar.gz</code></pre>
+</div>
+<p>Das Skript prüft die Prüfsumme, bricht ab, solange Backups oder Restores
+laufen, sichert die Datenbank nach <code>/data/update-backups</code>, stellt in der
+Quadlet-Unit nur die <code>Image=</code>-Zeile um und wartet auf den Health-Check. Die
+GUI ist dabei etwa eine halbe Minute nicht erreichbar. Am Ende steht
+„Fertig. Laufende Version: <Version>&quot;.</p>
+<p>Danach:</p>
+<ul>
+<li>Update-Dienst einrichten wie am Ende von Abschnitt 6 beschrieben.</li>
+<li>Aus der <code>.env</code> die nicht mehr ausgewerteten Zeilen entfernen:
+<code>HVNB_GIT_REPO_URL</code> (enthält ggf. ein Zugriffstoken), <code>HVNB_GIT_BRANCH</code>,
+<code>HVNB_AUTO_UPDATE_ENABLED</code>, <code>HVNB_AUTO_UPDATE_INTERVAL_MINUTES</code>.</li>
+</ul>
+<p>Zurück auf den alten Stand geht mit <code>hvnb-update --rollback</code>. Das alte
+Image braucht für seinen Start mehrere Minuten (Git-Klon und
+Frontend-Build), länger als das Skript standardmäßig wartet — deshalb mit
+verlängerter Wartezeit:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>HVNB_HEALTH_TIMEOUT=900 hvnb-update --rollback</code></pre>
+</div>
 </section>
 <section id="s5">
 <h2><span class="step-num">5</span>Konfiguration (<code>.env</code>)</h2>
-<p><code>.env</code> ist eine <strong>Dotfile</strong> (Dateiname beginnt mit einem Punkt) und landet
-im Repository-Wurzelverzeichnis (<code>~/hyperv-netapp-backup/.env</code>, neben
-<code>docker-compose.yml</code>) -- ein normales <code>ls</code> zeigt sie <strong>nicht</strong> an, dafür
-<code>ls -la</code> verwenden. Das sorgt sonst leicht für den Eindruck, die Datei
-fehle, obwohl der folgende Befehl sie bereits erfolgreich angelegt hat.</p>
+<p>Die <code>.env</code> liegt neben dem Release-Ordner unter <code>~/hvnb/.env</code>. Sie ist eine
+<strong>Dotfile</strong> (Dateiname beginnt mit einem Punkt) — ein normales <code>ls</code> zeigt
+sie <strong>nicht</strong> an, dafür <code>ls -la</code> verwenden.</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code>cat &gt; .env &lt;&lt; 'EOF'
+<pre><code>mkdir -p ~/hvnb
+cat &gt; ~/hvnb/.env &lt;&lt; 'EOF'
 HVNB_ENVIRONMENT=production
 HVNB_SECRET_KEY=&lt;zufaelliger, langer String -- z.B. `openssl rand -hex 32`&gt;
 HVNB_INITIAL_ADMIN_PASSWORD=&lt;einmaliges Startpasswort, sofort nach dem ersten Login aendern&gt;
@@ -740,16 +704,8 @@ HVNB_INITIAL_ADMIN_PASSWORD=&lt;einmaliges Startpasswort, sofort nach dem ersten
 HVNB_WINRM_TRANSPORT=credssp
 HVNB_WINRM_USE_HTTPS=true
 HVNB_WINRM_PORT=5986
-
-# Git-basiertes Deployment (siehe Abschnitt 4) -- Beispiel fuer 4b
-# (HTTPS + Personal Access Token). Bei Modell 4c (Bare-Repo) wird dieser
-# Wert stattdessen automatisch von docker-compose.dev.yml gesetzt.
-HVNB_GIT_REPO_URL=https://&lt;GITHUB-BENUTZERNAME&gt;:&lt;TOKEN&gt;@github.com/PG2-AU/hyperv-backup-tool.git
-HVNB_GIT_BRANCH=master
-HVNB_AUTO_UPDATE_ENABLED=true
-HVNB_AUTO_UPDATE_INTERVAL_MINUTES=15
 EOF
-chmod 600 .env</code></pre>
+chmod 600 ~/hvnb/.env</code></pre>
 </div>
 <p><strong>Wichtig:</strong> NetApp-Cluster, Hyper-V-Hosts, der Restore-Proxy-Host,
 SnapMirror-Policies, Backup-Policies, E-Mail-Alerting usw. werden <strong>nicht</strong>
@@ -757,34 +713,34 @@ per <code>.env</code> konfiguriert, sondern vollständig über die Web-GUI nach 
 ersten Login (Settings, Storage, Restore &gt; Setup, Backup) — dort auch
 verschlüsselt in der Datenbank statt im Klartext einer <code>.env</code>-Datei
 gespeichert.</p>
+<div class="callout">
+<span class="callout-label"><code>HVNB_SECRET_KEY</code> getrennt verwahren.</span>
+<p>Mit diesem Schlüssel sind alle
+in der Datenbank gespeicherten Kennwörter verschlüsselt. Geht er verloren,
+sind sie unbrauchbar (siehe Abschnitt 13, DB-Sicherung).</p>
+</div>
 <p>Die Liste der unterstützten Variablen mit Erläuterung steht in
-<code>backend/.env.example</code>. Die dort genannten Intervalle für Health-Check,
-Discovery und Snapshot-Abgleich sind nur Startwerte einer frischen
-Installation; danach gilt Settings &gt; Hintergrundjobs.</p>
+<code>backend/.env.example</code> im Repository. Die dort genannten Intervalle für
+Health-Check, Discovery und Snapshot-Abgleich sind nur Startwerte einer
+frischen Installation; danach gilt Settings &gt; Hintergrundjobs.</p>
 </section>
 <section id="s6">
-<h2><span class="step-num">6</span>Container bauen und starten</h2>
-<p><code>docker-compose.yml</code> wird ab hier nur noch zum <strong>Bauen</strong> des Images
-verwendet — der laufende Betrieb wird über eine <strong>Quadlet</strong>-Unit von
-systemd verwaltet (Abschnitt 9 erklärt, warum: rootless Podman hat anders
-als Docker keinen Dauer-Daemon, der einen abgestürzten Container von
-selbst neu starten würde; <code>restart: unless-stopped</code> in der Compose-Datei
-greift dafür nicht zuverlässig).</p>
-<p><strong>Image bauen:</strong></p>
-<p>Modell 4b (HTTPS + Token, Regelfall):</p>
+<h2><span class="step-num">6</span>Container einrichten und starten</h2>
+<p>Der Container wird von systemd über eine <strong>Quadlet</strong>-Unit verwaltet
+(Abschnitt 9 erklärt, warum: rootless Podman hat anders als Docker keinen
+Dauer-Daemon, der einen abgestürzten Container von selbst neu starten
+würde).</p>
+<p><strong>Image laden:</strong></p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code>podman-compose -f docker-compose.yml build</code></pre>
+<pre><code>podman load -i ~/hvnb/release/hvnb-&lt;Version&gt;.tar.gz</code></pre>
 </div>
-<p>Modell 4c (lokales Bare-Repo):</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code>podman-compose -f docker-compose.yml -f docker-compose.dev.yml build</code></pre>
-</div>
-<p><strong>Quadlet-Unit anlegen</strong> (einmalig, unabhängig vom gewählten Modell) unter
-<code>~/.config/containers/systemd/hvnb-backup.container</code> — Werte (Image-Tag,
-Portmapping, Volume-Namen) exakt aus <code>docker-compose.yml</code> übernommen, da
-Quadlet die Compose-Datei selbst nicht einliest:</p>
+<p>Die letzte Zeile der Ausgabe nennt den Image-Namen, z. B.
+<code>Loaded image: localhost/hvnb-backup:1.2.0</code> (bei einem auf GitHub gebauten
+Paket <code>ghcr.io/&lt;konto&gt;/hvnb-backup:1.2.0</code>). Genau dieser Name gehört in die
+<code>Image=</code>-Zeile der folgenden Datei.</p>
+<p><strong>Quadlet-Unit anlegen</strong> (einmalig) unter
+<code>~/.config/containers/systemd/hvnb-backup.container</code>:</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
 <pre><code>mkdir -p ~/.config/containers/systemd
@@ -795,13 +751,13 @@ After=network-online.target
 Wants=network-online.target
 
 [Container]
-Image=localhost/hyperv-netapp-backup:local
+Image=localhost/hvnb-backup:&lt;Version&gt;
 ContainerName=hvnb-backup
 PublishPort=8443:443
-EnvironmentFile=%h/hyperv-netapp-backup/.env
+EnvironmentFile=%h/hvnb/.env
 Environment=HVNB_DATABASE_URL=sqlite:////data/app.db
-Volume=hyperv-netapp-backup_hvnb-data:/data
-Volume=hyperv-netapp-backup_hvnb-certs:/etc/hvnb/certs
+Volume=hvnb-data:/data
+Volume=hvnb-certs:/etc/hvnb/certs
 
 [Service]
 Restart=always
@@ -811,30 +767,13 @@ TimeoutStartSec=900
 WantedBy=default.target
 EOF</code></pre>
 </div>
-<p>Die beiden Volume-Namen sind <strong>projekt-präfigiert</strong> (podman-compose hängt
-den Projektnamen — den Namen des Projektverzeichnisses — vor den in
-<code>docker-compose.yml</code> angegebenen Namen). Falls das Projektverzeichnis
-nicht <code>hyperv-netapp-backup</code> heißt, oder bei einem bereits laufenden
-Compose-Container zur Kontrolle, die tatsächlichen Namen anzeigen:</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code>podman volume ls --filter name=hvnb</code></pre>
-</div>
-<p>Ein leeres Ergebnis ist bei einer frischen Installation völlig normal —
-<code>podman-compose build</code> erzeugt nur das Image, noch keine Volumes. Diese
-legt Podman automatisch unter genau den Namen an, die in der
-Quadlet-Datei stehen, sobald die Unit zum ersten Mal startet.</p>
-<p><strong>Nur bei Modell 4c relevant — bei Modell 4b diesen Block überspringen:</strong>
-zusätzlich den Bare-Repo-Mount und die drei Umgebungsvariablen aus
-<code>docker-compose.dev.yml</code> im <code>[Container]</code>-Block der bereits angelegten
-Quadlet-Datei ergänzen:</p>
-<div class="code-block">
-<span class="code-label">systemd Quadlet</span>
-<pre><code>Volume=%h/hyperv-repo.git:/srv/git/hyperv-netapp-backup.git:ro
-Environment=HVNB_GIT_REPO_URL=file:///srv/git/hyperv-netapp-backup.git
-Environment=HVNB_GIT_BRANCH=master
-Environment=HVNB_AUTO_UPDATE_ENABLED=true</code></pre>
-</div>
+<p>Die beiden Volumes (<code>hvnb-data</code> für Datenbank, Reports und Sicherungen,
+<code>hvnb-certs</code> für das TLS-Zertifikat) legt Podman beim ersten Start von
+selbst an. Bestehende Installationen aus der Zeit vor dem Release-Image
+behalten ihre bisherigen Namen und Pfade (Volumes
+<code>hyperv-netapp-backup_hvnb-data</code> und <code>hyperv-netapp-backup_hvnb-certs</code>,
+<code>EnvironmentFile=%h/hyperv-netapp-backup/.env</code>) — dort an der Unit nichts
+ändern, <code>hvnb-update</code> stellt nur die <code>Image=</code>-Zeile um.</p>
 <p><strong>Aktivieren und starten</strong> (Quadlet-Units werden NICHT per <code>systemctl enable</code> aktiviert, sondern automatisch anhand der <code>[Install]</code>-Zeile in
 <code>default.target</code> eingehängt, sobald die Datei existiert):</p>
 <div class="code-block">
@@ -848,11 +787,10 @@ systemctl --user start hvnb-backup.service</code></pre>
 <pre><code>systemctl --user status hvnb-backup.service
 podman logs --tail 50 hvnb-backup</code></pre>
 </div>
-<p>Erwartet: <code>uvicorn</code>, <code>nginx</code> (und bei aktiviertem Auto-Update <code>updater</code>)
-laufen ohne Fehlermeldungen. Der erste Start dauert spürbar länger (Klonen
-des Repos, <code>npm ci</code>, Frontend-Build).</p>
-<p>Abschließender Funktionscheck, sobald <code>podman logs</code> alle drei Prozesse als
-<code>RUNNING</code> zeigt:</p>
+<p>Erwartet: eine Zeile <code>[entrypoint] ... AU Storage Manager for Hyper-V, Release &lt;Version&gt;</code>, danach <code>uvicorn</code> und <code>nginx</code> im Zustand <code>RUNNING</code> ohne
+Fehlermeldungen. Der Start dauert nur wenige Sekunden; beim allerersten
+Start kommt das Anlegen der Datenbank hinzu.</p>
+<p>Abschließender Funktionscheck:</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
 <pre><code>curl -sk https://127.0.0.1:8443/api/health</code></pre>
@@ -862,23 +800,39 @@ des Repos, <code>npm ci</code>, Frontend-Build).</p>
 zuerst zu IPv6 (<code>::1</code>) auf, <code>podman port</code> mapped den Port aber nur auf
 IPv4 (<code>0.0.0.0:8443</code>), sodass der Verbindungsversuch über <code>localhost</code>
 scheitern kann, obwohl der Container einwandfrei läuft (siehe auch die
-Troubleshooting-Tabelle in Abschnitt 13).</p>
+Troubleshooting-Tabelle in Abschnitt 13). Unmittelbar nach dem Start kann
+kurz <code>502 Bad Gateway</code> kommen, bis uvicorn bereit ist.</p>
+<p><strong>Update-Werkzeuge einrichten</strong> (einmalig, empfohlen):</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>bash ~/hvnb/release/hvnb-update --install-agent
+hvnb-update --status</code></pre>
+</div>
+<p>Das kopiert <code>hvnb-update</code> und <code>hvnb-git-autoupdate</code> nach <code>~/.local/bin</code> und
+richtet den <strong>Update-Dienst</strong> ein: einen systemd-Timer des Benutzers
+(<code>hvnb-backup-update-agent.timer</code>), der alle 30 Sekunden nachsieht, ob aus
+der GUI ein Update-Auftrag vorliegt. Erst damit lassen sich Updates unter
+Settings &gt; Updates hochladen und einspielen (Abschnitt 13). Wer Updates
+ausschließlich per Befehl auf dem Server einspielen will, lässt
+<code>--install-agent</code> weg und kopiert nur das Skript:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>install -D -m 0755 ~/hvnb/release/hvnb-update ~/.local/bin/hvnb-update</code></pre>
+</div>
 <div class="callout">
 <span class="callout-label">Für jede spätere <code>.env</code>-Änderung (oder Änderung an der Quadlet-Datei
 selbst, z. B. Zertifikats-Volume in Abschnitt 7) gilt</span>
-<p>anders als beim
-vorherigen <code>podman-compose up -d</code> (das eine reine <code>.env</code>-Änderung nicht
-zuverlässig als Grund fürs Neuerstellen erkannte, live bestätigt) baut
-die Quadlet-Unit den Container bei JEDEM Start unbedingt neu auf
-(<code>--replace --rm</code> im generierten <code>ExecStart</code>, sichtbar per <code>systemctl --user cat hvnb-backup.service</code>) — ein einfaches</p>
+<p>die Quadlet-Unit
+baut den Container bei JEDEM Start neu auf (<code>--replace --rm</code> im
+generierten <code>ExecStart</code>, sichtbar per <code>systemctl --user cat hvnb-backup.service</code>) — ein einfaches</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
 <pre><code>systemctl --user daemon-reload   # nur noetig, wenn sich die .container-Datei selbst aenderte
 systemctl --user restart hvnb-backup.service</code></pre>
 </div>
-<p>reicht daher jetzt IMMER zuverlässig aus, ganz ohne <code>--force-recreate</code>-
-Sonderfall. Die beiden Volumes bleiben davon unberührt (<code>/data</code>,
-<code>/etc/hvnb/certs</code>), nur der Container selbst wird frisch erstellt.</p>
+<p>reicht daher immer aus. Die beiden Volumes bleiben davon unberührt
+(<code>/data</code>, <code>/etc/hvnb/certs</code>), nur der Container selbst wird frisch
+erstellt.</p>
 </div>
 </section>
 <section id="s7">
@@ -887,13 +841,12 @@ Sonderfall. Die beiden Volumes bleiben davon unberührt (<code>/data</code>,
 selbstsigniertes Zertifikat (<code>docker/gen-selfsigned-cert.sh</code>), damit die GUI
 sofort per HTTPS erreichbar ist. Für den Produktivbetrieb ein von der
 internen PKI ausgestelltes Zertifikat einbinden, statt das benannte Volume
-<code>hvnb-certs</code> zu nutzen — seit Abschnitt 6 nicht mehr in <code>docker-compose.yml</code>
-(wird nur noch fürs Bauen genutzt), sondern in der Quadlet-Datei
+<code>hvnb-certs</code> zu nutzen: in der Quadlet-Datei
 <code>~/.config/containers/systemd/hvnb-backup.container</code> die <code>Volume</code>-Zeile für
 die Zertifikate durch einen Bind-Mount ersetzen:</p>
 <div class="code-block">
 <span class="code-label">systemd Quadlet</span>
-<pre><code>Volume=%h/hyperv-netapp-backup/certs:/etc/hvnb/certs # server.crt + server.key ablegen</code></pre>
+<pre><code>Volume=%h/hvnb/certs:/etc/hvnb/certs # server.crt + server.key ablegen</code></pre>
 </div>
 <p>Danach den Container neu erstellen (siehe Kasten in Abschnitt 6):</p>
 <div class="code-block">
@@ -1107,9 +1060,10 @@ Container; die obige Systemaufgabe fängt den Neustart automatisch wieder
 auf.</p>
 <p><strong>Danach greifen erst die beiden folgenden, rein Linux-internen
 Absicherungen</strong> — sie setzen voraus, dass die WSL2-VM (wie oben
-sichergestellt) durchgehend läuft: <code>docker-compose.yml</code> setzt <code>restart: unless-stopped</code>, was
-bei <strong>rootless</strong> Podman (kein dauerhafter Root-Daemon wie bei Docker) nicht
-zuverlässig durchgesetzt wird. Zwei getrennte Probleme:</p>
+sichergestellt) durchgehend läuft. Eine reine Neustart-Richtlinie am
+Container (<code>restart: unless-stopped</code>) wird bei <strong>rootless</strong> Podman (kein
+dauerhafter Root-Daemon wie bei Docker) nicht zuverlässig durchgesetzt.
+Zwei getrennte Probleme:</p>
 <ol>
 <li>Ein Windows-Sleep/Ruhezustand oder <code>wsl --shutdown</code> kann die
 <code>systemd --user</code>-Instanz des Benutzers komplett beenden — ohne die
@@ -1119,8 +1073,8 @@ den Container automatisch mitzunehmen.</li>
 der einen laufenden Container fortlaufend überwacht — stürzt der
 Container-Hauptprozess ab oder wird er anderweitig beendet, während die
 <code>systemd --user</code>-Instanz selbst durchgehend weiterläuft, kommt er von
-selbst <strong>nicht</strong> wieder hoch. <code>restart: unless-stopped</code> in
-<code>docker-compose.yml</code> bzw. das früher hier dokumentierte
+selbst <strong>nicht</strong> wieder hoch. Eine Neustart-Richtlinie am Container
+bzw. das früher hier dokumentierte
 <code>podman-restart.service</code> decken nur Fall 1 ab (ein einmaliger Check beim
 (Neu-)Start der <code>systemd --user</code>-Instanz), nicht Fall 2.</li>
 </ol>
@@ -1150,10 +1104,9 @@ erst bei der naechsten Ab-/Anmeldung):</p>
 <p>Steht dort <code>Linger=no</code>, bleibt die <code>systemd --user</code>-Instanz (und damit der
 Container) nur so lange am Leben, wie eine aktive Anmeldesitzung dieses
 Benutzers besteht -- meldet er sich ab, wird die gesamte Instanz beendet,
-bei der naechsten Anmeldung startet der Container komplett neu (erkennbar
-an &quot;Kein bestehendes Repository gefunden, klone...&quot; im Log, obwohl <code>/opt/app</code>
-vorher schon lief -- ein kompletter Neu-Klon+Build ist NICHT normal fuer
-einen einfachen Neustart des laufenden Containers, siehe Troubleshooting-
+bei der naechsten Anmeldung startet der Container neu (erkennbar an einer
+frischen Zeile &quot;[entrypoint] ... Release <Version>&quot; im Log mit dem
+Zeitpunkt der Anmeldung statt des Server-Starts, siehe Troubleshooting-
 Tabelle unten). Das ist unabhaengig vom WSL-Keep-Alive-Task oben: selbst
 wenn die WSL2-VM selbst durchgehend laeuft, faengt das den fehlenden
 Linger-Schalter NICHT auf, da es ein rein Linux-internes systemd-/logind-
@@ -1208,10 +1161,10 @@ manuelles Eingreifen (kein <code>wsl -d rocky</code>, kein <code>systemctl --use
 <pre><code>podman logs --tail 30 hvnb-backup</code></pre>
 </div>
 <p>Erwartet: der <code>wsl.exe -d rocky -e sleep infinity</code>-Prozess läuft bereits
-(vom <code>AtStartup</code>-Trigger des Tasks), und die Container-Logs zeigen einen
-normalen Neustart des bereits geklonten Repos — <strong>kein</strong> erneutes „Kein
-bestehendes Repository gefunden, klone...&quot; (das wäre ein Hinweis, dass
-<code>enable-linger</code> doch nicht griff).</p>
+(vom <code>AtStartup</code>-Trigger des Tasks), und die Container-Logs zeigen genau
+<strong>eine</strong> Startmeldung <code>[entrypoint] ... Release &lt;Version&gt;</code> mit dem
+Zeitpunkt des Server-Starts — ein zweiter Start erst beim Anmelden wäre ein
+Hinweis, dass <code>enable-linger</code> doch nicht griff.</p>
 <hr>
 <p><strong>Teil 2: Auf jedem Hyper-V-Clusterknoten</strong></p>
 <div class="callout">
@@ -1562,7 +1515,7 @@ reiner Text im DNS-Feld.</p>
 <p>.pem-Datei(en) per RDP-Dateitransfer o.ae. auf den WSL2-Host übertragen.</p>
 <p><code>/etc/hvnb/certs</code> im Container ist bereits ein <strong>persistentes benanntes
 Volume</strong> (<code>hvnb-certs</code>, dort liegt auch schon das TLS-Zertifikat der GUI)
-— dafür ist also keine zusätzliche Zeile in <code>docker-compose.yml</code> nötig,
+— dafür ist also keine zusätzliche Zeile in der Quadlet-Datei nötig,
 die Datei kann direkt per <code>podman cp</code> in den laufenden Container gelegt
 werden:</p>
 <div class="code-block">
@@ -1573,8 +1526,8 @@ podman cp ~/winrm-ca.pem hvnb-backup:/etc/hvnb/certs/winrm-ca.pem</code></pre>
 </div>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code># .env, im Projektverzeichnis:
-echo "HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem" &gt;&gt; .env
+<pre><code># .env der Installation (Abschnitt 5; bei aelteren Installationen ~/hyperv-netapp-backup/.env):
+echo "HVNB_WINRM_CA_TRUST_PATH=/etc/hvnb/certs/winrm-ca.pem" &gt;&gt; ~/hvnb/.env
 systemctl --user restart hvnb-backup.service</code></pre>
 </div>
 <p>Der Container-Betrieb läuft seit Abschnitt 6 über eine Quadlet-Unit, die bei
@@ -1812,8 +1765,8 @@ den tatsächlichen Netzwerkpfad zu prüfen:</p>
 <p>Schlägt nur der zweite Test fehl (lokal auf dem Host aber funktioniert es):
 Firewall oder Netzwerksegmentierung (VLAN) zwischen WSL2-Host und
 Hyper-V-Cluster prüfen — genau dieses Muster (Server erreichbar,
-aber durch eine VLAN-Trennung vom App-Host aus nicht) trat bereits beim
-Code-Bezug in der Referenzumgebung auf, siehe Abschnitt 4c.</p>
+aber durch eine VLAN-Trennung vom App-Host aus nicht) trat in der
+Referenzumgebung bereits an anderer Stelle auf.</p>
 <h3>Alternative zu CredSSP/NTLM: Kerberos</h3>
 <p><code>HVNB_WINRM_TRANSPORT=kerberos</code> ist eine dritte Option neben <code>ntlm</code>
 (Standard) und <code>credssp</code> — im Gegensatz zu CredSSP ohne dessen
@@ -1843,36 +1796,11 @@ Proxy-Verbindung (und damit jeder Restore) unter Kerberos fehl, auch
 wenn der Verbindungstest gegen die Hyper-V-Cluster selbst erfolgreich
 war.</li>
 </ul>
-<p><strong>Docker-Image neu bauen.</strong> Kerberos braucht zusätzliche System-Pakete
-im Image (<code>krb5-devel</code>, <code>gcc</code>, <code>python3.12-devel</code>, <code>krb5-workstation</code>,
-<code>krb5-libs</code>) — der normale Git-Pull-Auto-Update-Mechanismus reicht dafür
-NICHT aus, er baut kein neues Image. Erst bauen, dann prüfen, erst dann
-den Container neu erstellen (der laufende Container läuft während des
-Bauens unverändert weiter):</p>
+<p><strong>Kein eigener Image-Build nötig.</strong> Das Release-Image enthält die für
+Kerberos nötigen Bibliotheken (<code>krb5-libs</code>, <code>gssapi</code>) bereits. Kontrolle:</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code>cd ~/hyperv-netapp-backup
-git pull
-podman-compose -f docker-compose.yml build
-podman run --rm --entrypoint bash localhost/hyperv-netapp-backup:local \
-  -c "rpm -q krb5-devel gcc python3.12-devel krb5-workstation krb5-libs"</code></pre>
-</div>
-<p>Erwartet: fünf Zeilen mit Paketnamen+Version, keine
-&quot;package ... is not installed&quot;-Meldung. Erst danach den Container neu
-erstellen (siehe Abschnitt 6/9 — Quadlet-Setup empfohlen):</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code>systemctl --user restart hvnb-backup.service</code></pre>
-</div>
-<p>Der erste Start danach dauert spürbar länger (Repo-Klon + <code>pip install</code>
-kompiliert <code>gssapi</code>/<code>pykerberos</code> aus Quellcode, keine fertigen Wheels
-für diese Plattform verfügbar, ca. 1,5–2 Minuten) — kein Fehler, kurz
-warten und dann verifizieren:</p>
-<div class="code-block">
-<span class="code-label">Bash</span>
-<pre><code>podman logs --tail 50 hvnb-backup
-podman exec hvnb-backup git -C /opt/app rev-parse HEAD
-curl -sk4 https://127.0.0.1:8443/api/health</code></pre>
+<pre><code>podman exec hvnb-backup python3 -c "import gssapi; print('Kerberos-Bibliothek vorhanden')"</code></pre>
 </div>
 <p><strong>Einrichtung in der GUI:</strong> Settings → Kerberos → Cluster auswählen →
 &quot;Automatisch erkennen&quot; (fragt Realm/KDC live über den aktuell
@@ -2045,12 +1973,159 @@ den Link in der Fußzeile erreichbar.</p>
 </section>
 <section id="s13">
 <h2><span class="step-num">13</span>Betrieb</h2>
-<p><strong>Updates:</strong> bei <code>HVNB_AUTO_UPDATE_ENABLED=true</code> vollautomatisch (siehe
-Abschnitt 4 für die beiden Code-Bezugsmodelle). Manuell erzwingen:</p>
+<h3>Updates</h3>
+<p>Die App lädt selbst nichts nach. Jedes Update tauscht das komplette Image
+gegen eine neue Version; das erledigt auf dem Server das Skript
+<code>hvnb-update</code>. Für alle Wege gilt:</p>
+<ul>
+<li>Vorher wird die Datenbank im laufenden Betrieb gesichert
+(<code>/data/update-backups</code> im Daten-Volume, die letzten fünf bleiben).</li>
+<li>Solange Backups oder Restores laufen, wird nicht aktualisiert.</li>
+<li>Antwortet die neue Version nach dem Start nicht, läuft automatisch wieder
+die vorherige.</li>
+<li>Die GUI ist etwa eine halbe bis eine Minute nicht erreichbar; alle
+Benutzer bleiben angemeldet.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Weg</th>
+<th>Wofür</th>
+<th>Internet am Server</th>
+<th>Auslöser</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Paketdatei auf dem Server</td>
+<td>immer möglich, auch als Rückfallweg</td>
+<td>nein</td>
+<td><code>hvnb-update &lt;Paket&gt;</code></td>
+</tr>
+<tr>
+<td>Paketdatei in der GUI hochladen</td>
+<td>Produktion ohne Internet, ohne Shell</td>
+<td>nein</td>
+<td>Settings &gt; Updates &gt; „Jetzt einspielen&quot;</td>
+</tr>
+<tr>
+<td>Online-Update aus der Registry</td>
+<td>Server mit Zugang zu <code>ghcr.io</code></td>
+<td>nur zur Registry</td>
+<td>Knopf in der GUI, auf Wunsch automatisch</td>
+</tr>
+<tr>
+<td>Automatisch aus Git</td>
+<td><strong>nur</strong> Entwicklungsumgebungen</td>
+<td>ja</td>
+<td>jeder Commit auf dem Branch</td>
+</tr>
+</tbody></table>
+<p>Die Kurzfassung dieser Wege steht auch in der App unter Settings &gt; Updates
+(„So wird diese Installation aktualisiert&quot;).</p>
+<p><strong>Stand ansehen:</strong></p>
 <div class="code-block">
 <span class="code-label">Bash</span>
-<pre><code>podman exec hvnb-backup supervisorctl restart uvicorn nginx</code></pre>
+<pre><code>hvnb-update --status</code></pre>
 </div>
+<p>Zeigt Image, laufende Version, vorheriges Image, vorhandene
+Datenbank-Sicherungen, den Zustand des Update-Dienstes und eine hinterlegte
+Registry.</p>
+<p><strong>Weg 1 — Paketdatei auf dem Server.</strong> Paket und Prüfsummendatei auf den
+Server kopieren (Abschnitt 4), dann:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>hvnb-update ~/hvnb/release/hvnb-&lt;Version&gt;.tar.gz</code></pre>
+</div>
+<p>Mit <code>--force</code> wird auch eingespielt, wenn noch Backups laufen (nicht
+empfohlen: ein unterbrochenes Backup hinterlässt Checkpoints).</p>
+<p><strong>Weg 2 — Paketdatei in der GUI hochladen.</strong> Voraussetzung ist der
+Update-Dienst (<code>hvnb-update --install-agent</code>, Abschnitt 6); unter
+Settings &gt; Updates steht er dann als „aktiv&quot;. Dort Paketdatei und
+Prüfsummendatei auswählen, „Hochladen und prüfen&quot;, die angezeigte Version
+kontrollieren und „Jetzt einspielen&quot;. Das Ergebnis samt Protokoll erscheint
+nach dem Neustart auf derselben Seite; jeder Upload und jedes Einspielen
+steht im System-Log und im Änderungsprotokoll. Nötiges Recht:
+Settings verwalten (Administrator).</p>
+<div class="callout">
+<span class="callout-label">Sicherheit</span>
+<p>Pakete sind nicht signiert. Wer ein Administrator-Konto
+der App übernimmt, kann über den Upload ein eigenes Image einspielen, das
+Zugriff auf alle hinterlegten Zugangsdaten hat. Wer das ausschließen
+will, richtet den Update-Dienst nicht ein (<code>hvnb-update --uninstall-agent</code>) und spielt Updates nur per Befehl auf dem Server ein.</p>
+</div>
+<p><strong>Weg 3 — Online-Update aus der Registry.</strong> Einmalig auf dem Server:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>podman login ghcr.io          # nur bei privaten Images; Token mit Leserecht auf Packages
+hvnb-update --set-registry ghcr.io/&lt;konto&gt;/hvnb-backup
+hvnb-update --check-registry</code></pre>
+</div>
+<p>Danach erscheint unter Settings &gt; Updates die Karte „Online-Update aus der
+Registry&quot; mit „Nach Update suchen&quot; und „Version X einspielen&quot; (braucht
+ebenfalls den Update-Dienst). Der Schalter „automatisch einspielen&quot; ist
+standardmäßig aus; eingeschaltet prüft der Server stündlich und spielt eine
+neuere Version von selbst ein. Auf dem Server direkt:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>hvnb-update --from-registry            # die neueste veroeffentlichte Version
+hvnb-update --from-registry 1.2.0      # eine bestimmte Version</code></pre>
+</div>
+<p>Die Registry-Anmeldung liegt nur auf dem Server; die App bekommt nie
+Zugangsdaten. Eingestellt wird immer ein fester Versions-Tag, nie <code>latest</code>.
+<code>hvnb-update --set-registry none</code> schaltet den Weg wieder ab.</p>
+<p><strong>Weg 4 — Automatisch aus Git (nur Entwicklungsumgebung).</strong> Der Server
+prüft einen Git-Branch, baut bei jedem neuen Commit selbst ein Image
+(Version <code>&lt;letzter Tag oder 0.0.0&gt;-dev.&lt;Anzahl Commits&gt;.&lt;Commit&gt;</code>) und
+spielt es ein. Voraussetzungen: <code>git</code> auf dem Server, Internetzugang
+(Git-Server, <code>quay.io</code>, npm, PyPI), der Update-Dienst.</p>
+<p>Einrichten in der GUI: Settings &gt; Updates &gt; „Automatische Updates aus Git
+einrichten&quot; — Git-Adresse, Branch und Prüfintervall eintragen. Bei einer
+SSH-Adresse (<code>git@github.com:konto/repo.git</code>) muss der Server-Benutzer das
+Repository per Schlüssel erreichen; alternativ eine HTTPS-Adresse mit
+Token (<code>https://benutzer:token@github.com/konto/repo.git</code>). Das Token wird
+in der GUI nicht wieder angezeigt und liegt auf dem Server in
+<code>~/.config/hvnb/hvnb-backup.git-autoupdate.conf</code> (nur für den Benutzer
+lesbar). Ändern, Entfernen und ein Ein/Aus-Schalter stehen auf derselben
+Seite. Auf dem Server direkt:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>hvnb-git-autoupdate --install --repo &lt;Git-Adresse&gt; --branch master --interval 5
+hvnb-git-autoupdate --status
+hvnb-git-autoupdate --uninstall</code></pre>
+</div>
+<p>Ein Commit, dessen Build oder Einspielen scheitert, wird nicht erneut
+versucht — erst der nächste Commit löst wieder aus. Arbeitsordner und
+Protokoll: <code>~/.local/share/hvnb/hvnb-backup-git-autoupdate/</code> (<code>last-run.log</code>).</p>
+<div class="callout">
+<span class="callout-label">Nicht für Produktion</span>
+<p>zwischen Commit und Installation gibt es keine
+Freigabe, und wer in der App das Recht „Settings verwalten&quot; hat, bestimmt
+damit, aus welchem Repository der Server Code baut. Fehlt <code>git</code> auf dem
+Server, bietet die GUI die Einrichtung gar nicht an.</p>
+</div>
+<p><strong>Zurück auf die vorherige Version:</strong></p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>hvnb-update --rollback             # nur das Image
+hvnb-update --rollback --with-db   # zusaetzlich die Datenbank von vor dem letzten Update</code></pre>
+</div>
+<p><code>--with-db</code> verwirft alles, was seit dem Update in der App passiert ist
+(Backup-Läufe, Einstellungen); der Stand unmittelbar vor dem Zurückspielen
+wird als <code>vor-rollback-…sqlite</code> daneben gesichert. Ist ein automatischer
+Weg eingeschaltet (Registry-Automatik oder Git), ihn <strong>vor</strong> dem Rollback
+ausschalten — sonst spielt der Server die neuere Version beim nächsten Lauf
+wieder ein.</p>
+<p><strong>Ein Release erzeugen</strong> (Entwicklungsrechner): entweder lokal mit
+<code>scripts/build-release.sh &lt;Version&gt;</code> (Abschnitt 4a) oder über GitHub — ein
+Versions-Tag startet dort den Build, legt das Image in die Registry
+(<code>ghcr.io/&lt;konto&gt;/hvnb-backup:&lt;Version&gt;</code>) und die vier Paketdateien am
+GitHub-Release ab:</p>
+<div class="code-block">
+<span class="code-label">Bash</span>
+<pre><code>git tag v1.2.0
+git push &lt;remote&gt; v1.2.0</code></pre>
+</div>
+<p>Ein Push auf <code>master</code> allein löst kein Release aus.</p>
 <p><strong>Konfiguration sichern / auf einen neuen Server übertragen:</strong> Settings →
 System → &quot;Konfiguration exportieren&quot; lädt die komplette Einrichtung als ZIP
 herunter (Cluster, NetApp-Systeme, Restore-Setup, Policies, Protection
@@ -2120,7 +2195,8 @@ fehlgeschlagen&quot; bei allen Clustern).</p>
 <span class="code-label">Bash</span>
 <pre><code>podman logs --tail 100 hvnb-backup           # supervisord-Gesamtausgabe
 podman exec hvnb-backup tail -f /var/log/hvnb/uvicorn.log
-podman exec hvnb-backup tail -f /var/log/hvnb/updater.log</code></pre>
+journalctl --user -u hvnb-backup-update-agent.service -n 50   # Update-Dienst
+cat ~/.local/share/hvnb/hvnb-backup-git-autoupdate/last-run.log   # Auto-Update aus Git, falls eingerichtet</code></pre>
 </div>
 <p>Innerhalb der Applikation zusätzlich das <strong>System Log</strong> (Menü &gt; Monitoring)
 für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.</p>
@@ -2139,7 +2215,7 @@ für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.</p>
 <td>9</td>
 </tr>
 <tr>
-<td>GUI nach Abmelden weg, OBWOHL der <code>HVNB-WSL-KeepAlive</code>-Task nachweislich laeuft (<code>wsl.exe ... -e sleep infinity</code>-Prozess vorhanden) -- Log zeigt nach der naechsten Anmeldung einen kompletten Neu-Klon (&quot;Kein bestehendes Repository gefunden&quot;) statt eines einfachen Neustarts</td>
+<td>GUI nach Abmelden weg, OBWOHL der <code>HVNB-WSL-KeepAlive</code>-Task nachweislich laeuft (<code>wsl.exe ... -e sleep infinity</code>-Prozess vorhanden) -- Log zeigt eine frische Startmeldung &quot;[entrypoint] ... Release <Version>&quot; mit dem Zeitpunkt der naechsten Anmeldung</td>
 <td><code>loginctl enable-linger &lt;benutzername&gt;</code> fehlt -- die <code>systemd --user</code>-Instanz (und damit der Container) endet trotz laufender WSL2-VM beim Abmelden, weil sie an die Login-Sitzung gebunden ist. Mit <code>loginctl show-user &lt;benutzername&gt; --property=Linger</code> pruefen (muss <code>Linger=yes</code> zeigen)</td>
 <td>9</td>
 </tr>
@@ -2160,13 +2236,38 @@ für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.</p>
 </tr>
 <tr>
 <td>Container stoppt/stürzt ab und kommt nicht von selbst wieder hoch</td>
-<td>Betrieb läuft noch über <code>podman-compose up -d</code> statt der Quadlet-Unit (kein Dauer-Daemon in rootless Podman)</td>
+<td>Der Container wurde von Hand gestartet (<code>podman run</code>/<code>podman-compose up -d</code>) statt über die Quadlet-Unit (kein Dauer-Daemon in rootless Podman)</td>
 <td>6, 9</td>
 </tr>
 <tr>
-<td><code>git</code>-Fehler beim Deploy trotz erreichbarem Server</td>
-<td>Zugangsdaten/Deploy-Key für die Repository-URL fehlen</td>
+<td><code>hvnb-update</code> meldet „Prüfsumme stimmt nicht&quot;</td>
+<td>Paket beim Übertragen beschädigt, oder Prüfsummendatei gehört zu einer anderen Version</td>
 <td>4</td>
+</tr>
+<tr>
+<td><code>hvnb-update</code> bricht mit „In der App laufen noch … Backup-/Restore-Vorgänge&quot; ab</td>
+<td>Gewollt: laufende Vorgänge abwarten und erneut starten (ein hochgeladenes Paket bleibt dafür liegen)</td>
+<td>13</td>
+</tr>
+<tr>
+<td>Settings &gt; Updates zeigt den Update-Dienst als „nicht aktiv&quot;</td>
+<td><code>hvnb-update --install-agent</code> wurde nie ausgeführt, oder der Timer läuft nicht: <code>systemctl --user status hvnb-backup-update-agent.timer</code></td>
+<td>6, 13</td>
+</tr>
+<tr>
+<td><code>hvnb-update --install-agent</code> meldet „Job for hvnb-backup-update-agent.service failed&quot;</td>
+<td>Ältere Skript-Fassung auf einem Daten-Volume, das vom früheren Image angelegt wurde (dessen Wurzel gehört einem Container-Benutzer). Aktuelles <code>hvnb-update</code> aus dem Release verwenden und <code>--install-agent</code> erneut ausführen</td>
+<td>6</td>
+</tr>
+<tr>
+<td>Auto-Update aus Git: Zustand „fehlgeschlagen&quot; in der GUI</td>
+<td>Build oder Einspielen des Commits gescheitert; Ursache in <code>~/.local/share/hvnb/hvnb-backup-git-autoupdate/last-run.log</code>. Erst der nächste Commit löst einen neuen Versuch aus</td>
+<td>13</td>
+</tr>
+<tr>
+<td>Online-Update: „Registry nicht lesbar&quot;</td>
+<td>Kein Netzwerkzugang zu <code>ghcr.io</code>, oder bei privatem Image fehlt <code>podman login ghcr.io</code> für den Benutzer des Containers</td>
+<td>13</td>
 </tr>
 <tr>
 <td>Health-Check liefert <code>502 Bad Gateway</code> kurz nach Neustart</td>

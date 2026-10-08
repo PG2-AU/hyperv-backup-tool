@@ -490,7 +490,7 @@
       <div class="req">
         <span class="mark">06</span>
         <div><strong>Geringer Betriebsaufwand</strong>
-          <span class="detail">Ein internes Werkzeug für ein kleines Team, kein Multi-Tenant-SaaS — entsprechend schlank gehalten: eine Instanz, ein Container, Selbst-Update statt CI/CD-Pipeline.</span>
+          <span class="detail">Ein internes Werkzeug für ein kleines Team, kein Multi-Tenant-SaaS — entsprechend schlank gehalten: eine Instanz, ein Container, Updates als fertiges Image statt einer Deployment-Pipeline.</span>
         </div>
       </div>
       <div class="req">
@@ -726,7 +726,7 @@ flowchart LR
     <p class="section-intro">Bewusst klein gehalten, passend zum Nutzerkreis:</p>
     <div class="steps">
       <div class="step"><p><strong>Ein Container.</strong> Backend, Frontend-Build und SQLite-Datenbank laufen zusammen in einem rootless Podman-Container.</p></div>
-      <div class="step"><p><strong>Selbst-Update statt Pipeline.</strong> Ein Supervisor-Prozess zieht periodisch <code>git pull</code>, installiert Abhängigkeiten bei Bedarf nach und startet neu — kein separates CI/CD-System nötig.</p></div>
+      <div class="step"><p><strong>Auslieferung als Release-Image.</strong> Jede Version ist ein fertiges Image mit Code, gebautem Frontend und festgeschriebenen Abhängigkeiten; der Container lädt zur Laufzeit nichts nach. Ein Update tauscht das Image aus — per Paketdatei (auch ohne Internet, auf dem Server oder per Upload unter Settings &gt; Updates), online aus einer Registry oder, nur in Entwicklungsumgebungen, automatisch aus Git. Vorher wird die Datenbank gesichert; startet die neue Version nicht, läuft die vorherige weiter.</p></div>
       <div class="step"><p><strong>Additive Schema-Migration.</strong> Neue Datenbankspalten werden beim Start automatisch ergänzt, ohne bestehende Daten anzufassen.</p></div>
       <div class="step"><p><strong>Hintergrund-Jobs im selben Prozess.</strong> Discovery, geplante Backups, Retention, Snapshot-Abgleich, Alarm-Prüfung, Kapazitäts- und Performance-Sammler, geplante Reports, DB-Sicherung und Aufräumarbeiten laufen als eingebettete Scheduler-Jobs — kein separater Worker.</p></div>
       <div class="step"><p><strong>Sicherung und Umzug des Tools selbst.</strong> Tägliche, im Betrieb konsistente Kopie der Datenbank auf eine CIFS-Freigabe (plus lokale Kopien), Wiederherstellung per GUI mit anschließendem Neustart. Für Umzug/Wiederaufbau zusätzlich ein Konfigurations-Export ohne Kennwörter. Die Kennwörter in der Datenbank sind mit <code>HVNB_SECRET_KEY</code> verschlüsselt, der getrennt verwahrt wird.</p></div>
@@ -749,13 +749,13 @@ flowchart LR
           <tr><td class="label">Performance</td><td class="mono-cell">ONTAP-Statistik (Storage) · Storage QoS per WMI (VMs)</td></tr>
           <tr><td class="label">DB-Sicherung</td><td class="mono-cell">SQLite-Online-Backup-API · smbprotocol (SMB 2/3, ohne Mount)</td></tr>
           <tr><td class="label">Auth</td><td class="mono-cell">Drei feste Rollen (Administrator/Operator/Viewer), lokal oder Active Directory</td></tr>
-          <tr><td class="label">Deployment</td><td class="mono-cell">Podman (rootless) · git-basiertes Selbst-Update</td></tr>
+          <tr><td class="label">Deployment</td><td class="mono-cell">Podman (rootless) · versioniertes Release-Image · Update per Paket, Registry oder (Dev) Git</td></tr>
         </tbody>
       </table>
     </div>
   </section>
 
-  <footer>AU Storage Manager for Hyper-V (intern HVNB) — Architekturdokument · Stand 07.10.2026 · zur internen Weitergabe</footer>
+  <footer>AU Storage Manager for Hyper-V (intern HVNB) — Architekturdokument · Stand 08.10.2026 · zur internen Weitergabe</footer>
 
 </div>
 
