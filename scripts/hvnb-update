@@ -7,6 +7,10 @@
 #   hvnb-update --rollback [--with-db]  zurueck auf die vorherige Version
 #                                       (--with-db: zusaetzlich die Datenbank von
 #                                       vor dem letzten Update zurueckspielen)
+#   hvnb-update --install-agent         Update-Dienst einrichten: danach kann ein
+#                                       Paket in der GUI (Settings > Updates)
+#                                       hochgeladen und eingespielt werden
+#   hvnb-update --uninstall-agent       Update-Dienst wieder entfernen
 #
 # Optionen fuer das Einspielen:
 #   --allow-unsigned   nur mit hinterlegtem Signaturschluessel von Bedeutung:
@@ -149,6 +153,11 @@ cmd_status() {
     log "DB-Sicherungen vor Updates (im Volume ${DATA_VOLUME:-?} unter /data/update-backups):"
     podman exec "${CONTAINER}" sh -c 'ls -1 /data/update-backups 2>/dev/null' | sed 's/^/[hvnb-update]   /' || true
   fi
+  if systemctl --user is-active "${UNIT}-update-agent.timer" >/dev/null 2>&1; then
+    log "Update-Dienst:     aktiv (Upload in der GUI moeglich)"
+  else
+    log "Update-Dienst:     nicht eingerichtet (hvnb-update --install-agent)"
+  fi
   if [ -f "${PUBKEY}" ]; then log "Signaturpruefung:  an (${PUBKEY})"; else log "Signaturpruefung:  aus (kein Schluessel hinterlegt, nur Pruefsumme)"; fi
 }
 
@@ -273,15 +282,141 @@ cmd_rollback() {
   log "Fertig. Laufende Version: $(app_version)"
 }
 
+# ---------- Update-Dienst (Auftraege aus der GUI) ----------
+#
+# Die App kann sich nicht selbst gegen ein neues Image austauschen. Sie legt
+# Paket und Auftrag in den Ordner update-inbox des Daten-Volumes (siehe
+# backend/app/core/app_update.py); ein systemd-Timer ruft alle ~30 s
+# "hvnb-update --agent-run" auf, das den Auftrag abholt und das Paket ganz
+# normal einspielt. Der Dienst fuehrt nichts anderes aus als dieses Skript.
+
+AGENT_NAME="${UNIT}-update-agent"
+AGENT_BIN="${HOME}/.local/bin/hvnb-update"
+SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
+
+inbox_dir() {
+  [ -n "${DATA_VOLUME}" ] || die "Daten-Volume nicht aus ${QUADLET} ermittelbar."
+  local mount
+  mount="$(podman volume inspect "${DATA_VOLUME}" --format '{{.Mountpoint}}' 2>/dev/null)" || return 1
+  echo "${mount}/update-inbox"
+}
+
+# Feld aus einer von der App geschriebenen JSON-Datei (ein Schluessel je Zeile).
+json_field() { sed -n "s/^\"$2\": \"\(.*\)\",\{0,1\}$/\1/p" "$1" | head -n1; }
+
+write_result() {
+  # $1 Ordner, $2 Status, $3 Paket, $4 Version, $5 Start, $6 Ende
+  printf '{\n"status": "%s",\n"package": "%s",\n"version": "%s",\n"started_at": "%s",\n"finished_at": %s\n}\n' \
+    "$2" "$3" "$4" "$5" "$( [ -n "$6" ] && printf '"%s"' "$6" || printf 'null' )" > "$1/.result.json.tmp"
+  mv "$1/.result.json.tmp" "$1/result.json"
+}
+
+cmd_agent_run() {
+  require_quadlet
+  local inbox
+  inbox="$(inbox_dir)" || exit 0   # Volume gibt es noch nicht (vor dem ersten Start)
+  [ -d "$(dirname "${inbox}")" ] || exit 0
+  mkdir -p "${inbox}"
+  printf '{\n"seen_at": "%s",\n"unit": "%s"\n}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${UNIT}" > "${inbox}/.agent.json.tmp"
+  mv "${inbox}/.agent.json.tmp" "${inbox}/agent.json"
+
+  if [ -f "${inbox}/request.processing" ]; then
+    # Ein frueherer Lauf wurde mittendrin beendet (z.B. Server-Neustart).
+    write_result "${inbox}" "failed" "$(json_field "${inbox}/request.processing" package)" \
+      "$(json_field "${inbox}/request.processing" version)" "" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "Das Einspielen wurde unterbrochen (Dienst oder Server neu gestartet). Stand pruefen: hvnb-update --status" > "${inbox}/result.log"
+    rm -f "${inbox}/request.processing"
+  fi
+  [ -f "${inbox}/request.json" ] || exit 0
+
+  mv "${inbox}/request.json" "${inbox}/request.processing"
+  local package sha version started rc=0
+  package="$(json_field "${inbox}/request.processing" package)"
+  sha="$(json_field "${inbox}/request.processing" sha256)"
+  version="$(json_field "${inbox}/request.processing" version)"
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  write_result "${inbox}" "running" "${package}" "${version}" "${started}" ""
+  : > "${inbox}/result.log"
+
+  if ! [[ "${package}" =~ ^hvnb-[0-9A-Za-z.-]+\.tar\.gz$ ]] || ! [[ "${sha}" =~ ^[0-9a-f]{64}$ ]] || [ ! -f "${inbox}/${package}" ]; then
+    echo "Ungueltiger Auftrag (Paketname, Pruefsumme oder Datei fehlt)." > "${inbox}/result.log"
+    rc=1
+  else
+    log "Auftrag aus der GUI: ${package}"
+    echo "${sha}  ${package}" > "${inbox}/${package}.sha256"
+    "$0" "${inbox}/${package}" > "${inbox}/result.log" 2>&1 || rc=$?
+  fi
+
+  write_result "${inbox}" "$( [ "${rc}" = "0" ] && echo succeeded || echo failed )" "${package}" "${version}" "${started}" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # Paket und Auftrag sind verbraucht -- das geladene Image liegt in podman.
+  if [[ "${package}" =~ ^hvnb-[0-9A-Za-z.-]+\.tar\.gz$ ]]; then
+    rm -f "${inbox}/${package}" "${inbox}/${package}.sha256"
+  fi
+  rm -f "${inbox}/request.processing" "${inbox}/staged.json"
+  log "Auftrag beendet (Exit ${rc})."
+}
+
+cmd_install_agent() {
+  require_quadlet
+  mkdir -p "$(dirname "${AGENT_BIN}")" "${SYSTEMD_USER_DIR}"
+  # Eigene Kopie: der Dienst soll nicht von einem Repository- oder Download-Ordner abhaengen.
+  if [ "$(readlink -f "$0")" != "$(readlink -f "${AGENT_BIN}")" ]; then
+    install -m 0755 "$0" "${AGENT_BIN}"
+  fi
+  cat > "${SYSTEMD_USER_DIR}/${AGENT_NAME}.service" <<UNIT_EOF
+[Unit]
+Description=AU Storage Manager - Update-Auftraege aus der GUI einspielen (${UNIT})
+
+[Service]
+Type=oneshot
+Environment=HVNB_UNIT=${UNIT}
+Environment=HVNB_QUADLET=${QUADLET}
+Environment=HVNB_RELEASE_PUBKEY=${PUBKEY}
+Environment=HVNB_STATE_DIR=${STATE_DIR}
+ExecStart=${AGENT_BIN} --agent-run
+TimeoutStartSec=3600
+# Der Timer laeuft alle 30 s -- Start/Ende nicht jedes Mal ins Journal schreiben.
+LogLevelMax=notice
+UNIT_EOF
+  cat > "${SYSTEMD_USER_DIR}/${AGENT_NAME}.timer" <<UNIT_EOF
+[Unit]
+Description=AU Storage Manager - Update-Auftraege pruefen (${UNIT})
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT_EOF
+  systemctl --user daemon-reload
+  systemctl --user enable --now "${AGENT_NAME}.timer" >/dev/null
+  systemctl --user start "${AGENT_NAME}.service" || true
+  log "Update-Dienst eingerichtet (${AGENT_NAME}.timer, Skript: ${AGENT_BIN})."
+  log "In der GUI unter Settings > Updates sollte der Dienst innerhalb einer Minute als aktiv erscheinen."
+}
+
+cmd_uninstall_agent() {
+  systemctl --user disable --now "${AGENT_NAME}.timer" >/dev/null 2>&1 || true
+  rm -f "${SYSTEMD_USER_DIR}/${AGENT_NAME}.timer" "${SYSTEMD_USER_DIR}/${AGENT_NAME}.service"
+  systemctl --user daemon-reload
+  log "Update-Dienst entfernt. Updates sind nur noch per 'hvnb-update <Paket>' auf dem Server moeglich."
+}
+
 PACKAGE="" ALLOW_UNSIGNED=0 FORCE=0 MODE="install" WITH_DB=0
 for arg in "$@"; do
   case "${arg}" in
     --status) MODE="status" ;;
     --rollback) MODE="rollback" ;;
+    --agent-run) MODE="agent-run" ;;
+    --install-agent) MODE="install-agent" ;;
+    --uninstall-agent) MODE="uninstall-agent" ;;
     --with-db) WITH_DB=1 ;;
     --allow-unsigned) ALLOW_UNSIGNED=1 ;;
     --force) FORCE=1 ;;
-    -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) die "Unbekannte Option ${arg} (siehe --help)." ;;
     *) PACKAGE="${arg}" ;;
   esac
@@ -294,8 +429,11 @@ done
 case "${MODE}" in
   status) cmd_status ;;
   rollback) cmd_rollback "${WITH_DB}" ;;
+  agent-run) cmd_agent_run ;;
+  install-agent) cmd_install_agent ;;
+  uninstall-agent) cmd_uninstall_agent ;;
   install)
-    [ -n "${PACKAGE}" ] || { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+    [ -n "${PACKAGE}" ] || { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
     cmd_install "${PACKAGE}" "${ALLOW_UNSIGNED}" "${FORCE}"
     ;;
 esac

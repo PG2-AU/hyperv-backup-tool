@@ -50,7 +50,6 @@ import {
   useCreateUser,
   useDeleteUser,
   usePublicSettings,
-  useVersion,
   useRoles,
   useSearchAdUsers,
   useUpdateUserPassword,
@@ -68,6 +67,7 @@ import { SchedulerConfigTab } from "@/components/SchedulerConfigTab";
 import { SitesTab } from "@/components/SitesTab";
 import { ConfigTransferTab } from "@/components/ConfigTransferTab";
 import { DbBackupTab } from "@/components/DbBackupTab";
+import { UpdatesTab } from "@/components/UpdatesTab";
 import { WinrmCertsTab } from "@/components/WinrmCertsTab";
 import { HyperVClusterFormModal } from "@/components/HyperVClusterFormModal";
 import { ProcessModal, type ProcessPlan } from "@/components/ProcessModal";
@@ -76,7 +76,7 @@ import type { HyperVCluster, SnapMirrorLabel } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { buildHyperVClusterCreationSteps, buildHyperVClusterUpdateSteps } from "@/utils/hypervSteps";
-import { HEALTH_COLOR as HYPERV_HEALTH_COLOR, formatDateTime } from "@/utils/format";
+import { HEALTH_COLOR as HYPERV_HEALTH_COLOR } from "@/utils/format";
 import { useAuthStore } from "@/store/authStore";
 import { LOG_FONT_SIZE_OPTIONS, useDisplayStore, type ContentFontSize } from "@/store/displayStore";
 
@@ -395,7 +395,6 @@ export function SettingsPage() {
   const { data: users } = useUsers();
   const { data: roles } = useRoles();
   const { data: settings } = usePublicSettings();
-  const { data: version } = useVersion();
   const deleteUser = useDeleteUser();
   const currentUserId = useAuthStore((s) => s.user?.id);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -949,28 +948,7 @@ export function SettingsPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="updates" pt="md">
-          <Paper p="md" maw={860}>
-            {version?.version ? (
-              // Release-Image: die App holt selbst nichts nach, aktualisiert wird auf dem Host.
-              <Stack gap="xs">
-                <ConfigRow label="Auslieferung" value="Release-Image" />
-                <ConfigRow label="Version" value={version.version} />
-                <ConfigRow label="Commit" value={version.commit_short ?? "-"} />
-                <ConfigRow label="Gebaut am" value={formatDateTime(version.last_deploy_at, "unbekannt")} />
-                <Text size="xs" c="dimmed">
-                  Diese Installation lädt keinen Code aus dem Internet nach. Ein Update wird auf dem Server eingespielt (neues Image aus
-                  der Registry oder als Paketdatei), siehe Installationsdokumentation.
-                </Text>
-              </Stack>
-            ) : (
-              <Stack gap="xs">
-                <ConfigRow label="Git-Repository" value={settings?.git_repo_url || "nicht konfiguriert"} />
-                <ConfigRow label="Branch" value={settings?.git_branch ?? "-"} />
-                <ConfigRow label="Auto-Update aktiv" value={settings?.auto_update_enabled ? "Ja" : "Nein"} />
-                <ConfigRow label="Intervall (Minuten)" value={settings?.auto_update_interval_minutes ?? "-"} />
-              </Stack>
-            )}
-          </Paper>
+          <UpdatesTab />
         </Tabs.Panel>
       </Tabs>
 

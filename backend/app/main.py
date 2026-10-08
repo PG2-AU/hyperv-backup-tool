@@ -37,6 +37,7 @@ from app.api.routes import (
     smb_create,
     smb_delete,
     smb_resize,
+    updates,
     snapmirror_labels,
     storage,
     storage_access,
@@ -147,6 +148,7 @@ app.include_router(csv_delete.router)
 app.include_router(smb_create.router)
 app.include_router(smb_delete.router)
 app.include_router(smb_resize.router)
+app.include_router(updates.router)
 
 
 @app.get("/api/health")

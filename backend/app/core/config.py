@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     netapp_cert_dir: str = "/data/netapp-certs"
     # Erzeugte Reports (PDF/CSV, Backlog #84), 12 Monate aufbewahrt.
     reports_dir: str = "/data/reports"
+    # Uebergabe-Ordner fuer Updates per hochgeladenem Paket (app.core.app_update);
+    # muss im Daten-Volume liegen, der Host-Dienst liest ihn von aussen.
+    update_inbox_dir: str = "/data/update-inbox"
 
     # --- Hyper-V / WinRM ---
     winrm_transport: Literal["ntlm", "kerberos", "credssp"] = "ntlm"
