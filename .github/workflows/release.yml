@@ -12,6 +12,9 @@ on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+  # Von Hand fuer einen bestehenden Tag wiederholen: Actions > Release > Run workflow,
+  # dort bei "Use workflow from" den Tag auswaehlen.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -43,6 +46,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            "dist/hvnb-$VERSION.tar.gz" "dist/hvnb-$VERSION.tar.gz.sha256" dist/hvnb-update dist/hvnb-git-autoupdate \
-            --title "Version $VERSION" --generate-notes
+          # Gibt es zu diesem Tag schon ein Release (z.B. in der GitHub-Oberflaeche
+          # angelegt), werden die Dateien dort angehaengt statt ein zweites anzulegen.
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --title "Version $VERSION" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            "dist/hvnb-$VERSION.tar.gz" "dist/hvnb-$VERSION.tar.gz.sha256" dist/hvnb-update dist/hvnb-git-autoupdate
