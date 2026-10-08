@@ -44,5 +44,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            "dist/hvnb-$VERSION.tar.gz" "dist/hvnb-$VERSION.tar.gz.sha256" dist/hvnb-update \
+            "dist/hvnb-$VERSION.tar.gz" "dist/hvnb-$VERSION.tar.gz.sha256" dist/hvnb-update dist/hvnb-git-autoupdate \
             --title "Version $VERSION" --generate-notes

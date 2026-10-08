@@ -30,7 +30,7 @@ WORK_DIR="${HVNB_AUTOUPDATE_WORK_DIR:-${HOME}/.local/share/hvnb/${UNIT}-git-auto
 SRC="${WORK_DIR}/src"
 STATE="${WORK_DIR}/state"
 LOG="${WORK_DIR}/last-run.log"
-BIN_DIR="${HOME}/.local/bin"
+BIN_DIR="${HVNB_BIN_DIR:-${HOME}/.local/bin}"
 SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
 TIMER="${UNIT}-git-autoupdate"
 ENGINE="${CONTAINER_ENGINE:-podman}"
@@ -264,6 +264,7 @@ Environment=HVNB_UNIT=${UNIT}
 Environment=HVNB_QUADLET=${QUADLET}
 Environment=HVNB_STATE_DIR=${CONFIG_DIR}
 Environment=HVNB_AUTOUPDATE_WORK_DIR=${WORK_DIR}
+Environment=HVNB_BIN_DIR=${BIN_DIR}
 ExecStart=${BIN_DIR}/hvnb-git-autoupdate --run
 TimeoutStartSec=3600
 LogLevelMax=notice

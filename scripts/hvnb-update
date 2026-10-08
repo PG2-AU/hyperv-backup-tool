@@ -395,7 +395,8 @@ cmd_rollback() {
 # normal einspielt. Der Dienst fuehrt nichts anderes aus als dieses Skript.
 
 AGENT_NAME="${UNIT}-update-agent"
-AGENT_BIN="${HOME}/.local/bin/hvnb-update"
+BIN_DIR_AGENT="${HVNB_BIN_DIR:-${HOME}/.local/bin}"
+AGENT_BIN="${BIN_DIR_AGENT}/hvnb-update"
 SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
 
 inbox_dir() {
@@ -433,7 +434,11 @@ cmd_agent_run() {
   inbox="$(inbox_dir)" || exit 0   # Volume gibt es noch nicht (vor dem ersten Start)
   [ -d "$(dirname "${inbox}")" ] || exit 0
   ensure_inbox "${inbox}"
-  printf '{\n"seen_at": "%s",\n"unit": "%s",\n"registry": "%s"\n}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${UNIT}" "$(registry_repo)" \
+  # git_autoupdate: kann der Server ein Auto-Update aus Git einrichten (Skript und git vorhanden)?
+  local git_ready="no"
+  if [ -x "${BIN_DIR_AGENT}/hvnb-git-autoupdate" ] && command -v git >/dev/null; then git_ready="yes"; fi
+  printf '{\n"seen_at": "%s",\n"unit": "%s",\n"registry": "%s",\n"git_autoupdate": "%s"\n}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${UNIT}" "$(registry_repo)" "${git_ready}" \
     > "${inbox}/.agent.json.tmp"
   mv "${inbox}/.agent.json.tmp" "${inbox}/agent.json"
 
@@ -458,6 +463,14 @@ cmd_agent_run() {
 
   if [ "${action}" = "registry-check" ]; then
     registry_check_report "${inbox}"
+    mv "${inbox}/request.processing" "${inbox}/request.done"
+    exit 0
+  fi
+
+  if [ "${action}" = "git-configure" ] || [ "${action}" = "git-remove" ]; then
+    git_autoupdate_request "${inbox}" "${action}"
+    # Der Auftrag kann eine Git-Adresse mit Token enthalten: leeren, nicht liegen lassen.
+    : > "${inbox}/request.processing"
     mv "${inbox}/request.processing" "${inbox}/request.done"
     exit 0
   fi
@@ -490,6 +503,36 @@ cmd_agent_run() {
   fi
   rm -f "${inbox:?}/request.processing"
   log "Auftrag beendet (Exit ${rc})."
+}
+
+# Auto-Update aus Git aus der GUI einrichten, aendern oder entfernen
+# (Settings > Updates). Ausgefuehrt wird das danebenliegende Skript
+# hvnb-git-autoupdate; das Ergebnis steht fuer die App in git-config.json.
+git_autoupdate_request() {
+  local inbox="$1" action="$2" tool="${BIN_DIR_AGENT}/hvnb-git-autoupdate" status="ok" output="" rc=0
+  local repo branch interval
+  repo="$(json_field "${inbox}/request.processing" repo)"
+  branch="$(json_field "${inbox}/request.processing" branch)"
+  interval="$(json_field "${inbox}/request.processing" interval_minutes)"
+  if [ ! -x "${tool}" ]; then
+    status="failed"
+    output="hvnb-git-autoupdate ist auf dem Server nicht installiert (hvnb-update --install-agent aus einem aktuellen Paket erneut ausfuehren)."
+  elif [ "${action}" = "git-remove" ]; then
+    output="$("${tool}" --uninstall 2>&1)" || rc=$?
+  elif ! [[ "${repo}" =~ ^[A-Za-z0-9@:/._~+%=-]+$ ]] || ! [[ "${branch}" =~ ^[A-Za-z0-9._/-]+$ ]] || ! [[ "${interval}" =~ ^[0-9]+$ ]]; then
+    status="failed"
+    output="Ungueltige Angaben (Git-Adresse, Branch oder Intervall)."
+  else
+    log "Auftrag aus der GUI: Auto-Update aus Git einrichten (${branch})"
+    output="$("${tool}" --install --repo "${repo}" --branch "${branch}" --interval "${interval}" 2>&1)" || rc=$?
+  fi
+  [ "${rc}" = "0" ] || status="failed"
+  # Letzte Zeile als Meldung; Zugangsdaten in der Adresse und Anfuehrungszeichen entfernen.
+  local message
+  message="$(printf '%s\n' "${output}" | tail -n1 | sed -E 's#(https?://)[^/@[:space:]]+@#\1***@#g; s/["\\]/ /g; s/^\[[a-z-]+\] //')"
+  printf '{\n"action": "%s",\n"status": "%s",\n"message": "%s",\n"at": "%s"\n}\n' \
+    "${action}" "${status}" "${message}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${inbox}/.git-config.json.tmp"
+  mv "${inbox}/.git-config.json.tmp" "${inbox}/git-config.json"
 }
 
 # Schreibt registry.json fuer die App: hinterlegte Registry, neueste Version, Zeitpunkt.
@@ -552,6 +595,13 @@ cmd_install_agent() {
   if [ "$(readlink -f "$0")" != "$(readlink -f "${AGENT_BIN}")" ]; then
     install -m 0755 "$0" "${AGENT_BIN}"
   fi
+  # hvnb-git-autoupdate liegt im Paket daneben: mitinstallieren, damit sich das
+  # Auto-Update aus Git spaeter in der GUI einrichten laesst.
+  local sibling
+  sibling="$(dirname "$(readlink -f "$0")")/hvnb-git-autoupdate"
+  if [ -f "${sibling}" ] && [ "$(readlink -f "${sibling}")" != "$(readlink -f "${BIN_DIR_AGENT}/hvnb-git-autoupdate")" ]; then
+    install -m 0755 "${sibling}" "${BIN_DIR_AGENT}/hvnb-git-autoupdate"
+  fi
   cat > "${SYSTEMD_USER_DIR}/${AGENT_NAME}.service" <<UNIT_EOF
 [Unit]
 Description=AU Storage Manager - Update-Auftraege aus der GUI einspielen (${UNIT})
@@ -562,6 +612,7 @@ Environment=HVNB_UNIT=${UNIT}
 Environment=HVNB_QUADLET=${QUADLET}
 Environment=HVNB_RELEASE_PUBKEY=${PUBKEY}
 Environment=HVNB_STATE_DIR=${STATE_DIR}
+Environment=HVNB_BIN_DIR=${BIN_DIR_AGENT}
 ExecStart=${AGENT_BIN} --agent-run
 TimeoutStartSec=3600
 # Der Timer laeuft alle 30 s -- Start/Ende nicht jedes Mal ins Journal schreiben.

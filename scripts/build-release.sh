@@ -84,5 +84,6 @@ fi
 # Das Einspiel-Skript gehoert zum Paket, damit es auch ohne Repository-Zugang
 # auf den Zielserver kommt.
 cp scripts/hvnb-update dist/hvnb-update
+cp scripts/hvnb-git-autoupdate dist/hvnb-git-autoupdate
 
 ls -lh "${PACKAGE}"* dist/hvnb-update

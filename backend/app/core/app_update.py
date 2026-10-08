@@ -16,6 +16,7 @@ Rueckfall). Dateien im Ordner:
   autoupdate.json         Zustand des Auto-Updates aus Git (hvnb-git-autoupdate)
   settings.json           Schalter "automatische Updates" (von der App)
   registry.json           neueste Version in der Online-Registry (vom Dienst)
+  git-config.json         Ergebnis des Einrichtens des Git-Auto-Updates (vom Dienst)
 
 Nur im Release-Image verfuegbar (app.core.release.release_info). Ohne
 Signatur (Nutzer-Entscheidung 2026-10-08): geprueft wird die SHA-256-
@@ -67,7 +68,20 @@ def agent_state() -> dict:
             active = -300 <= age <= AGENT_FRESH_SECONDS
     except ValueError:
         pass
-    return {"active": active, "last_seen_at": seen, "registry": str(data.get("registry") or "") or None}
+    return {
+        "active": active, "last_seen_at": seen, "registry": str(data.get("registry") or "") or None,
+        # Skript hvnb-git-autoupdate und git sind auf dem Server vorhanden
+        "git_autoupdate": data.get("git_autoupdate") == "yes",
+    }
+
+
+GIT_REPO_RE = re.compile(r"^[A-Za-z0-9@:/._~+%=-]+$")
+GIT_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+
+def git_config_result() -> dict | None:
+    """Ergebnis des letzten Einrichtens/Entfernens des Git-Auto-Updates aus der GUI."""
+    return _read_json("git-config.json")
 
 
 def settings() -> dict:
@@ -133,6 +147,15 @@ def pending() -> str | None:
         return "running"
     if (inbox() / "request.json").exists():
         return "requested"
+    return None
+
+
+def pending_action() -> str | None:
+    """Art des offenen Auftrags: package | registry-install | registry-check | git-configure | git-remove."""
+    for name in ("request.processing", "request.json"):
+        data = _read_json(name)
+        if data is not None:
+            return str(data.get("action") or "package")
     return None
 
 

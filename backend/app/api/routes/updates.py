@@ -3,11 +3,12 @@ und Dateien siehe app.core.app_update; eingespielt wird vom Host-Dienst
 (scripts/hvnb-update), nicht von der App. Recht settings:manage."""
 
 import hashlib
+import re
 from datetime import datetime, timezone
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
@@ -68,6 +69,22 @@ class RegistryState(BaseModel):
     auto_enabled: bool = False
 
 
+class GitConfigWrite(BaseModel):
+    """Auto-Update aus Git einrichten bzw. aendern. Die Adresse darf Zugangsdaten
+    enthalten (https://benutzer:token@...); sie wird nie zurueckgegeben."""
+
+    repo: str = Field(min_length=3, max_length=500)
+    branch: str = Field(default="master", min_length=1, max_length=200)
+    interval_minutes: int = Field(default=5, ge=1, le=1440)
+
+
+class GitConfigResult(BaseModel):
+    action: str | None = None
+    status: str | None = None  # ok | failed
+    message: str | None = None
+    at: str | None = None
+
+
 class RegistryInstall(BaseModel):
     version: str
 
@@ -85,11 +102,16 @@ class UpdateStatus(BaseModel):
     staged: StagedPackage | None = None
     # requested | running | None
     pending: str | None = None
+    # package | registry-install | registry-check | git-configure | git-remove
+    pending_action: str | None = None
     last_result: UpdateResult | None = None
     # None = auf dem Server nicht eingerichtet
     auto_update: AutoUpdate | None = None
     # None = keine Registry hinterlegt
     registry: RegistryState | None = None
+    # Der Server kann ein Auto-Update aus Git einrichten (Skript + git vorhanden)
+    git_available: bool = False
+    git_config_result: GitConfigResult | None = None
 
 
 def _user_name(user) -> str:
@@ -108,15 +130,19 @@ def _status() -> UpdateStatus:
     result = app_update.last_result()
     auto = app_update.auto_update_state()
     registry = app_update.registry_state()
+    git_result = app_update.git_config_result()
     return UpdateStatus(
         delivery="release" if release else "git",
         version=str(release.get("version")) if release and release.get("version") else None,
         agent_active=agent["active"], agent_last_seen_at=agent["last_seen_at"],
         staged=StagedPackage(**{k: staged.get(k) for k in StagedPackage.model_fields}) if staged else None,
         pending=app_update.pending(),
+        pending_action=app_update.pending_action() if app_update.pending() else None,
         last_result=UpdateResult(**{k: result.get(k) for k in UpdateResult.model_fields}) if result else None,
         auto_update=AutoUpdate(**{k: (auto.get(k) or None) if k != "enabled" else auto["enabled"] for k in AutoUpdate.model_fields}) if auto else None,
         registry=RegistryState(**registry) if registry else None,
+        git_available=agent["git_autoupdate"],
+        git_config_result=GitConfigResult(**{k: git_result.get(k) for k in GitConfigResult.model_fields}) if git_result else None,
     )
 
 
@@ -296,4 +322,52 @@ def set_registry_auto(payload: AutoUpdateWrite, db: Session = Depends(get_db), u
     _require_registry()
     app_update.update_settings(registry_auto_update="on" if payload.enabled else "off")
     _log(db, f"Automatische Online-Updates {'eingeschaltet' if payload.enabled else 'ausgeschaltet'} (durch {_user_name(user)})")
+    return _status()
+
+
+def _require_git_available() -> None:
+    if not app_update.agent_state()["git_autoupdate"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Auf dem Server fehlt hvnb-git-autoupdate oder git. Aus einem aktuellen Paket 'hvnb-update --install-agent' "
+                   "erneut ausführen und git installieren.",
+        )
+
+
+@router.put("/git-config", response_model=UpdateStatus)
+def set_git_config(payload: GitConfigWrite, db: Session = Depends(get_db), user=Depends(_manage)) -> UpdateStatus:
+    """Auto-Update aus Git einrichten oder aendern: der Update-Dienst des Servers
+    prueft die Adresse und richtet den Timer ein (Ergebnis in git_config_result).
+    Nur fuer Entwicklungsumgebungen -- jeder Commit auf dem Branch wird gebaut
+    und eingespielt."""
+    _require_release()
+    _require_idle()
+    _require_agent()
+    _require_git_available()
+    repo, branch = payload.repo.strip(), payload.branch.strip()
+    if not app_update.GIT_REPO_RE.match(repo):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Die Git-Adresse enthält unzulässige Zeichen.")
+    if not app_update.GIT_BRANCH_RE.match(branch):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Der Branch-Name enthält unzulässige Zeichen.")
+    app_update.write_json("request.json", {
+        "action": "git-configure", "repo": repo, "branch": branch, "interval_minutes": str(payload.interval_minutes),
+        "requested_by": _user_name(user), "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    })
+    app_update.update_settings(auto_update="on")
+    shown = re.sub(r"(https?://)[^/@\s]+@", r"\1***@", repo)
+    _log(db, f"Auto-Update aus Git eingerichtet: {shown} ({branch}), alle {payload.interval_minutes} min (durch {_user_name(user)})")
+    return _status()
+
+
+@router.delete("/git-config", response_model=UpdateStatus)
+def remove_git_config(db: Session = Depends(get_db), user=Depends(_manage)) -> UpdateStatus:
+    """Auto-Update aus Git auf dem Server wieder entfernen."""
+    _require_release()
+    _require_idle()
+    _require_agent()
+    app_update.write_json("request.json", {
+        "action": "git-remove", "requested_by": _user_name(user),
+        "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    })
+    _log(db, f"Auto-Update aus Git entfernt (durch {_user_name(user)})")
     return _status()

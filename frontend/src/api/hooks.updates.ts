@@ -54,11 +54,15 @@ export interface UpdateStatus {
   agent_last_seen_at?: string | null;
   staged?: StagedUpdatePackage | null;
   pending?: "requested" | "running" | null;
+  pending_action?: "package" | "registry-install" | "registry-check" | "git-configure" | "git-remove" | null;
   last_result?: UpdateResult | null;
   // fehlt, wenn auf dem Server nicht eingerichtet
   auto_update?: AutoUpdateState | null;
   // fehlt, wenn keine Registry hinterlegt ist
   registry?: RegistryState | null;
+  // der Server kann ein Auto-Update aus Git einrichten (Skript + git vorhanden)
+  git_available: boolean;
+  git_config_result?: { action?: string | null; status?: "ok" | "failed" | null; message?: string | null; at?: string | null } | null;
 }
 
 const KEY = ["update-status"];
@@ -132,6 +136,28 @@ export function useSetRegistryAuto() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (enabled: boolean) => (await apiClient.put<UpdateStatus>("/updates/registry/auto", { enabled })).data,
+    onSuccess: (data) => queryClient.setQueryData(KEY, data),
+  });
+}
+
+export interface GitConfigWrite {
+  repo: string;
+  branch: string;
+  interval_minutes: number;
+}
+
+export function useSetGitConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: GitConfigWrite) => (await apiClient.put<UpdateStatus>("/updates/git-config", payload)).data,
+    onSuccess: (data) => queryClient.setQueryData(KEY, data),
+  });
+}
+
+export function useRemoveGitConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await apiClient.delete<UpdateStatus>("/updates/git-config")).data,
     onSuccess: (data) => queryClient.setQueryData(KEY, data),
   });
 }
