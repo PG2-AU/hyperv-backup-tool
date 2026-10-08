@@ -107,6 +107,8 @@ cmd_run() {
   mkdir -p "${WORK_DIR}"
   exec 8>"${WORK_DIR}/lock"
   flock -n 8 || { log "Ein Durchlauf laeuft bereits."; exit 0; }
+  # Kein stiller Abbruch: ein unerwarteter Fehler soll in der GUI und im Protokoll stehen.
+  trap 'echo "Unerwarteter Abbruch in Zeile ${LINENO}" >> "${LOG}"; report "error" "Unerwarteter Abbruch des Update-Skripts (Zeile ${LINENO}). Protokoll: ${LOG}"' ERR
 
   if ! gui_enabled; then
     report "disabled" "Automatische Updates sind in der GUI ausgeschaltet."
@@ -157,7 +159,7 @@ cmd_run() {
     } >>"${LOG}" 2>&1 || { fail "${remote}" "git fetch/checkout fehlgeschlagen."; exit 0; }
 
     local base count
-    base="$(git -C "${SRC}" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null | sed 's/^v//')"
+    base="$(git -C "${SRC}" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null | sed 's/^v//' || true)"
     [[ "${base}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || base="0.0.0"
     count="$(git -C "${SRC}" rev-list --count HEAD)"
     version="${base}-dev.${count}.${remote:0:7}"
@@ -190,12 +192,14 @@ cmd_run() {
   previous_image="$(state_value CURRENT_IMAGE)"
   current_image="localhost/hvnb-backup:${version}"
   rm -f "${package}" "${package}.sha256" "${package}.sig"
-  "${ENGINE}" images --format '{{.Repository}}:{{.Tag}}' | grep -E '^localhost/hvnb-backup:.*-dev\.' | while read -r image; do
+  { "${ENGINE}" images --format '{{.Repository}}:{{.Tag}}' | grep -E '^localhost/hvnb-backup:.*-dev\.' || true; } | while read -r image; do
     if [ "${image}" != "${current_image}" ] && [ "${image}" != "${previous_image}" ]; then
       "${ENGINE}" rmi "${image}" >/dev/null 2>&1 || true
     fi
   done
-  "${ENGINE}" image prune -f >/dev/null 2>&1 || true
+  # Nur alte unbenannte Zwischenstaende entfernen -- die juengeren sind der Build-Cache
+  # (Frontend-/Python-Stufe) und machen den naechsten Build schnell.
+  "${ENGINE}" image prune -f --filter until=168h >/dev/null 2>&1 || true
 
   set_state INSTALLED_COMMIT "${remote}" CURRENT_IMAGE "${current_image}" LAST_UPDATE_AT "$(now)" \
     BUILT_PACKAGE "" FAILED_COMMIT "" FAILED_REASON ""
