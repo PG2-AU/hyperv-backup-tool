@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Badge, Button, Code, FileInput, Group, Paper, Progress, Stack, Switch, Text, Title } from "@mantine/core";
+import { Accordion, Alert, Badge, Button, Code, FileInput, Group, List, Paper, Progress, Stack, Switch, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconAlertTriangle, IconCheck, IconInfoCircle, IconUpload } from "@tabler/icons-react";
+import { IconAlertTriangle, IconCheck, IconCloudDownload, IconInfoCircle, IconRefresh, IconUpload } from "@tabler/icons-react";
 
 import { usePublicSettings, useVersion } from "@/api/hooks.settings";
 import {
+  useCheckRegistry,
   useDiscardUpdatePackage,
+  useInstallFromRegistry,
   useInstallUpdatePackage,
   useSetAutoUpdate,
+  useSetRegistryAuto,
   useUpdateStatus,
   useUploadUpdatePackage,
 } from "@/api/hooks.updates";
@@ -42,7 +45,8 @@ export function UpdatesTab() {
   const { data: settings } = usePublicSettings();
   const { data: version } = useVersion();
   const [installing, setInstalling] = useState(false);
-  const { data: status, isError } = useUpdateStatus(installing);
+  const [fastPoll, setFastPoll] = useState(false);
+  const { data: status, isError } = useUpdateStatus(installing || fastPoll);
   const [file, setFile] = useState<File | null>(null);
   const [checksumFile, setChecksumFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
@@ -50,6 +54,11 @@ export function UpdatesTab() {
   const discard = useDiscardUpdatePackage();
   const install = useInstallUpdatePackage();
   const setAutoUpdate = useSetAutoUpdate();
+  const checkRegistry = useCheckRegistry();
+  const installFromRegistry = useInstallFromRegistry();
+  const setRegistryAuto = useSetRegistryAuto();
+  // Zeitpunkt der letzten Pruefung, als "Suchen" gedrueckt wurde -- solange er sich nicht aendert, laeuft die Suche noch.
+  const [checkingSince, setCheckingSince] = useState<string | null | undefined>(undefined);
   const versionBefore = useRef<string | null>(null);
 
   const fail = (err: unknown, fallback: string) =>
@@ -71,6 +80,13 @@ export function UpdatesTab() {
     // Neue Version = neues Frontend-Bundle: einmal neu laden, damit Oberflaeche und Backend zusammenpassen.
     if (ok && status.version !== versionBefore.current) window.setTimeout(() => window.location.reload(), 2500);
   }, [installing, isError, status]);
+
+  const registryCheckedAt = status?.registry?.checked_at;
+  const checking = checkingSince !== undefined && checkingSince === (registryCheckedAt ?? null);
+  useEffect(() => {
+    if (checkingSince !== undefined && !checking) setCheckingSince(undefined);
+    setFastPoll(checking);
+  }, [checking, checkingSince]);
 
   if (version && !version.version) {
     return (
@@ -126,6 +142,26 @@ export function UpdatesTab() {
     });
   }
 
+  function startRegistryInstall(target: string) {
+    confirmAction({
+      title: "Online-Update einspielen",
+      message:
+        `Version ${target} aus der Registry holen und einspielen (aktuell ${status?.version ?? "?"})? Die Datenbank wird vorher gesichert. ` +
+        "Die Oberfläche ist währenddessen etwa eine Minute nicht erreichbar.",
+      confirmLabel: "Einspielen",
+      color: "blue",
+      onConfirm: () => {
+        versionBefore.current = status?.version ?? null;
+        installFromRegistry.mutate(target, {
+          onSuccess: () => setInstalling(true),
+          onError: (err) => fail(err, "Das Online-Update konnte nicht gestartet werden."),
+        });
+      },
+    });
+  }
+
+  const registry = status?.registry;
+  const newerAvailable = !!registry?.latest_version && registry.latest_version !== status?.version;
   const staged = status?.staged;
   const result = status?.last_result;
   const busy = installing || !!status?.pending;
@@ -206,6 +242,76 @@ export function UpdatesTab() {
             <Text size="xs" c="dimmed">
               Der Server baut bei jedem neuen Commit auf diesem Branch selbst ein Image und spielt es ein, sobald keine Backups oder
               Restores laufen. Einrichten und Entfernen nur auf dem Server (<Code>hvnb-git-autoupdate</Code>).
+            </Text>
+          </Stack>
+        </Paper>
+      )}
+
+      {registry && (
+        <Paper p="md">
+          <Group justify="space-between" mb="xs">
+            <Title order={5}>Online-Update aus der Registry</Title>
+            <Switch
+              label={registry.auto_enabled ? "automatisch einspielen" : "nur auf Knopfdruck"}
+              checked={registry.auto_enabled}
+              disabled={setRegistryAuto.isPending}
+              onChange={(e) => setRegistryAuto.mutate(e.currentTarget.checked, { onError: (err) => fail(err, "Umschalten fehlgeschlagen.") })}
+            />
+          </Group>
+          <Stack gap="xs">
+            <Row label="Registry" value={registry.repo} />
+            <Row
+              label="Neueste Version dort"
+              value={
+                registry.error ? (
+                  <Text size="sm" c="red">
+                    {registry.error}
+                  </Text>
+                ) : registry.latest_version ? (
+                  <Group gap="xs">
+                    <Text size="sm">{registry.latest_version}</Text>
+                    <Badge color={newerAvailable ? "blue" : "green"} variant="light">
+                      {newerAvailable ? "Update verfügbar" : "aktuell"}
+                    </Badge>
+                  </Group>
+                ) : (
+                  "noch nicht geprüft"
+                )
+              }
+            />
+            <Row label="Zuletzt geprüft" value={formatDateTime(registry.checked_at, "noch nie")} />
+            <Group mt="xs">
+              <Button
+                variant="default"
+                leftSection={<IconRefresh size={16} />}
+                loading={checkRegistry.isPending || checking}
+                disabled={busy || !status?.agent_active}
+                onClick={() => {
+                  const before = registryCheckedAt ?? null;
+                  checkRegistry.mutate(undefined, {
+                    onSuccess: () => setCheckingSince(before),
+                    onError: (err) => fail(err, "Die Suche konnte nicht gestartet werden."),
+                  });
+                }}
+              >
+                Nach Update suchen
+              </Button>
+              {newerAvailable && registry.latest_version && (
+                <Button
+                  leftSection={<IconCloudDownload size={16} />}
+                  loading={installFromRegistry.isPending}
+                  disabled={busy || !status?.agent_active}
+                  onClick={() => startRegistryInstall(registry.latest_version as string)}
+                >
+                  Version {registry.latest_version} einspielen
+                </Button>
+              )}
+            </Group>
+            <Text size="xs" c="dimmed">
+              Der Server holt das Image selbst aus der Registry; die App gibt nur den Anstoß und kennt keine Zugangsdaten.
+              {registry.auto_enabled
+                ? " Automatisch: der Server prüft stündlich und spielt eine neuere Version ein, sobald keine Backups oder Restores laufen."
+                : ""}
             </Text>
           </Stack>
         </Paper>
@@ -324,6 +430,74 @@ export function UpdatesTab() {
           </Stack>
         </Paper>
       )}
+      <Paper p="md">
+        <Title order={5} mb="xs">
+          So wird diese Installation aktualisiert
+        </Title>
+        <Text size="sm" c="dimmed" mb="xs">
+          Die App lädt selbst nichts nach. Jedes Update tauscht das komplette Image aus; vorher wird die Datenbank gesichert, und wenn die
+          neue Version nicht startet, läuft die vorherige weiter. Befehle gelten auf dem Server, als der Linux-Benutzer des Containers.
+        </Text>
+        <Accordion variant="separated" chevronPosition="left">
+          <Accordion.Item value="cli">
+            <Accordion.Control>Paketdatei auf dem Server einspielen (immer möglich, ohne Internet)</Accordion.Control>
+            <Accordion.Panel>
+              <List size="sm" type="ordered" spacing={4}>
+                <List.Item>
+                  Paket <Code>hvnb-&lt;Version&gt;.tar.gz</Code>, die Datei <Code>.sha256</Code> und <Code>hvnb-update</Code> auf den Server
+                  kopieren.
+                </List.Item>
+                <List.Item>
+                  <Code>hvnb-update hvnb-&lt;Version&gt;.tar.gz</Code>
+                </List.Item>
+                <List.Item>
+                  Zurück auf die vorherige Version: <Code>hvnb-update --rollback</Code> (mit <Code>--with-db</Code> samt Datenbank).
+                </List.Item>
+              </List>
+            </Accordion.Panel>
+          </Accordion.Item>
+          <Accordion.Item value="upload">
+            <Accordion.Control>Paketdatei hier hochladen (ohne Internet, ohne Shell)</Accordion.Control>
+            <Accordion.Panel>
+              <List size="sm" type="ordered" spacing={4}>
+                <List.Item>
+                  Einmalig auf dem Server: <Code>hvnb-update --install-agent</Code> – oben erscheint der Update-Dienst als „aktiv“.
+                </List.Item>
+                <List.Item>Paketdatei und Prüfsummendatei oben hochladen, dann „Jetzt einspielen“.</List.Item>
+              </List>
+            </Accordion.Panel>
+          </Accordion.Item>
+          <Accordion.Item value="registry">
+            <Accordion.Control>Online-Update aus der Registry (Server braucht Zugang zur Registry)</Accordion.Control>
+            <Accordion.Panel>
+              <List size="sm" type="ordered" spacing={4}>
+                <List.Item>
+                  Einmalig auf dem Server: bei privaten Images <Code>podman login ghcr.io</Code>, dann{" "}
+                  <Code>hvnb-update --set-registry ghcr.io/&lt;konto&gt;/hvnb-backup</Code> und <Code>hvnb-update --install-agent</Code>.
+                </List.Item>
+                <List.Item>Danach hier „Nach Update suchen“ und die angebotene Version einspielen – oder automatisch per Schalter.</List.Item>
+                <List.Item>
+                  Auf dem Server direkt: <Code>hvnb-update --check-registry</Code>, <Code>hvnb-update --from-registry</Code>.
+                </List.Item>
+              </List>
+            </Accordion.Panel>
+          </Accordion.Item>
+          <Accordion.Item value="git">
+            <Accordion.Control>Automatisch aus Git (nur Entwicklungsumgebung)</Accordion.Control>
+            <Accordion.Panel>
+              <List size="sm" type="ordered" spacing={4}>
+                <List.Item>
+                  Einmalig auf dem Server: <Code>hvnb-git-autoupdate --install --repo &lt;Git-Adresse&gt; --branch master</Code>
+                </List.Item>
+                <List.Item>
+                  Der Server baut bei jedem neuen Commit selbst ein Image und spielt es ein; ein/aus per Schalter oben. Stand:{" "}
+                  <Code>hvnb-git-autoupdate --status</Code>
+                </List.Item>
+              </List>
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
+      </Paper>
     </Stack>
   );
 }

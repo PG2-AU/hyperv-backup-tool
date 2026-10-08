@@ -207,6 +207,15 @@ cmd_run() {
   # (Frontend-/Python-Stufe) und machen den naechsten Build schnell.
   "${ENGINE}" image prune -f --filter until=168h >/dev/null 2>&1 || true
 
+  # Die Host-Skripte kommen aus demselben Repository: Kopien unter ~/.local/bin
+  # (Update-Dienst, dieser Timer) mitziehen, damit sie zum eingespielten Stand passen.
+  local script
+  for script in hvnb-update hvnb-git-autoupdate; do
+    if [ -f "${SRC}/scripts/${script}" ] && [ -f "${BIN_DIR}/${script}" ] && ! cmp -s "${SRC}/scripts/${script}" "${BIN_DIR}/${script}"; then
+      install -m 0755 "${SRC}/scripts/${script}" "${BIN_DIR}/${script}" && log "Host-Skript ${script} aktualisiert." | tee -a "${LOG}"
+    fi
+  done
+
   set_state INSTALLED_COMMIT "${remote}" CURRENT_IMAGE "${current_image}" LAST_UPDATE_AT "$(now)" \
     BUILT_PACKAGE "" FAILED_COMMIT "" FAILED_REASON ""
   log "Eingespielt: ${version}" | tee -a "${LOG}"

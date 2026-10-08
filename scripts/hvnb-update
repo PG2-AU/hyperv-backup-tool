@@ -7,6 +7,12 @@
 #   hvnb-update --rollback [--with-db]  zurueck auf die vorherige Version
 #                                       (--with-db: zusaetzlich die Datenbank von
 #                                       vor dem letzten Update zurueckspielen)
+#   hvnb-update --set-registry <pfad>   Online-Updates erlauben: Image-Pfad der
+#                                       Registry hinterlegen, z.B.
+#                                       ghcr.io/<konto>/hvnb-backup ("none" entfernt ihn)
+#   hvnb-update --check-registry        neueste dort veroeffentlichte Version anzeigen
+#   hvnb-update --from-registry [X.Y.Z] Version aus der Registry holen und
+#                                       einspielen (ohne Angabe: die neueste)
 #   hvnb-update --install-agent         Update-Dienst einrichten: danach kann ein
 #                                       Paket in der GUI (Settings > Updates)
 #                                       hochgeladen und eingespielt werden
@@ -167,6 +173,9 @@ cmd_status() {
   else
     log "Update-Dienst:     nicht eingerichtet (hvnb-update --install-agent)"
   fi
+  local registry
+  registry="$(registry_repo)"
+  log "Online-Registry:   ${registry:-keine (nur Paketdateien)}"
   if [ -f "${PUBKEY}" ]; then log "Signaturpruefung:  an (${PUBKEY})"; else log "Signaturpruefung:  aus (kein Schluessel hinterlegt, nur Pruefsumme)"; fi
 }
 
@@ -196,12 +205,8 @@ verify_package() {
   fi
 }
 
-cmd_install() {
-  local package="$1" allow_unsigned="$2" force="$3"
-  require_quadlet
-  take_lock
-  verify_package "${package}" "${allow_unsigned}"
-
+check_busy() {
+  local force="$1"
   if container_running; then
     local busy
     busy="$(busy_runs)"
@@ -212,6 +217,14 @@ cmd_install() {
   else
     log "Hinweis: Container laeuft nicht -- keine Pruefung auf laufende Vorgaenge, keine DB-Sicherung im Betrieb."
   fi
+}
+
+cmd_install() {
+  local package="$1" allow_unsigned="$2" force="$3"
+  require_quadlet
+  take_lock
+  verify_package "${package}" "${allow_unsigned}"
+  check_busy "${force}"
 
   log "Lade Image aus ${package} ..."
   local loaded new_image
@@ -219,6 +232,14 @@ cmd_install() {
   new_image="$(printf '%s\n' "${loaded}" | sed -n 's/^Loaded image[s]*: //p' | tail -n1)"
   [ -n "${new_image}" ] || die "Konnte den Namen des geladenen Images nicht ermitteln: ${loaded}"
   log "Geladen: ${new_image}"
+  activate_image "${new_image}"
+}
+
+# Stellt die Unit auf ein bereits lokal vorhandenes Image um: DB sichern,
+# umschalten, Health-Check, sonst zurueck. Gemeinsamer Teil von Paket- und
+# Registry-Update.
+activate_image() {
+  local new_image="$1"
   if [ "${new_image}" = "${CURRENT_IMAGE}" ]; then
     log "Dieses Image ist bereits eingestellt -- starte nur neu."
   fi
@@ -253,6 +274,78 @@ cmd_install() {
     die "Update fehlgeschlagen, vorherige Version laeuft wieder. Datenbank unveraendert gelassen; Stand vor dem Update: /data/update-backups/${db_backup}"
   fi
   die "Update fehlgeschlagen und auch die vorherige Version antwortet nicht. Pruefen: systemctl --user status ${UNIT}.service; podman logs ${CONTAINER}"
+}
+
+# ---------- Online-Update aus einer Registry ----------
+#
+# Optional je Server: "hvnb-update --set-registry ghcr.io/<konto>/hvnb-backup"
+# hinterlegt, woher Images geholt werden duerfen. Die Registry-Anmeldung
+# (podman login) ist Sache des Servers; die App bekommt nie Zugangsdaten.
+# Eingestellt wird immer ein fester Versions-Tag, nie "latest".
+
+REGISTRY_FILE="${STATE_DIR}/${UNIT}.registry"
+registry_repo() { if [ -f "${REGISTRY_FILE}" ]; then head -n1 "${REGISTRY_FILE}"; fi; }
+tls_flag() { if [ "${HVNB_REGISTRY_TLS_VERIFY:-true}" = "false" ]; then echo "--tls-verify=false"; fi; }
+
+running_version() {
+  container_running || return 0
+  podman exec "${CONTAINER}" python3 -c "import json;print(json.load(open('/opt/app/VERSION.json')).get('version',''))" 2>/dev/null || true
+}
+
+# Hoechste veroeffentlichte Version (Tags der Form X.Y.Z), ohne ein Image zu laden.
+registry_latest() {
+  local repo="$1" tags
+  # shellcheck disable=SC2046
+  tags="$(podman search $(tls_flag) --list-tags --limit 1000 --format '{{.Tag}}' "${repo}" 2>/dev/null)" || return 1
+  printf '%s\n' "${tags}" | { grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1
+}
+
+cmd_set_registry() {
+  mkdir -p "${STATE_DIR}"
+  if [ "$1" = "none" ]; then
+    : > "${REGISTRY_FILE}"
+    log "Registry entfernt -- Online-Updates sind abgeschaltet."
+    return 0
+  fi
+  [[ "$1" =~ ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$ ]] || die "Erwartet wird ein Image-Pfad wie ghcr.io/<konto>/hvnb-backup (klein geschrieben, ohne Tag)."
+  echo "$1" > "${REGISTRY_FILE}"
+  log "Registry hinterlegt: $1"
+  local latest=""
+  if latest="$(registry_latest "$1")" && [ -n "${latest}" ]; then
+    log "Erreichbar, neueste Version dort: ${latest}"
+  else
+    log "WARNUNG: Registry nicht lesbar oder noch keine Version veroeffentlicht. Bei privaten Images zuerst: podman login ${1%%/*}"
+  fi
+}
+
+cmd_check_registry() {
+  require_quadlet
+  local repo latest
+  repo="$(registry_repo)"
+  [ -n "${repo}" ] || die "Keine Registry hinterlegt (hvnb-update --set-registry <image-pfad>)."
+  latest="$(registry_latest "${repo}")" || die "Registry ${repo} nicht lesbar (Netz, Anmeldung per 'podman login')."
+  [ -n "${latest}" ] || die "In ${repo} ist noch keine Version (Tag X.Y.Z) veroeffentlicht."
+  log "Laeuft:   $(running_version)"
+  log "Neueste:  ${latest} (${repo})"
+}
+
+cmd_from_registry() {
+  local version="$1" force="$2"
+  require_quadlet
+  take_lock
+  local repo
+  repo="$(registry_repo)"
+  [ -n "${repo}" ] || die "Keine Registry hinterlegt (hvnb-update --set-registry <image-pfad>)."
+  if [ -z "${version}" ] || [ "${version}" = "latest" ]; then
+    version="$(registry_latest "${repo}")" || die "Registry ${repo} nicht lesbar (Netz, Anmeldung per 'podman login')."
+    [ -n "${version}" ] || die "In ${repo} ist noch keine Version (Tag X.Y.Z) veroeffentlicht."
+  fi
+  [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]] || die "Ungueltige Version ${version}."
+  check_busy "${force}"
+  log "Hole ${repo}:${version} ..."
+  # shellcheck disable=SC2046
+  podman pull -q $(tls_flag) "${repo}:${version}" >/dev/null || die "podman pull ${repo}:${version} fehlgeschlagen."
+  activate_image "${repo}:${version}"
 }
 
 cmd_rollback() {
@@ -340,7 +433,8 @@ cmd_agent_run() {
   inbox="$(inbox_dir)" || exit 0   # Volume gibt es noch nicht (vor dem ersten Start)
   [ -d "$(dirname "${inbox}")" ] || exit 0
   ensure_inbox "${inbox}"
-  printf '{\n"seen_at": "%s",\n"unit": "%s"\n}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${UNIT}" > "${inbox}/.agent.json.tmp"
+  printf '{\n"seen_at": "%s",\n"unit": "%s",\n"registry": "%s"\n}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${UNIT}" "$(registry_repo)" \
+    > "${inbox}/.agent.json.tmp"
   mv "${inbox}/.agent.json.tmp" "${inbox}/agent.json"
 
   if [ -f "${inbox}/request.processing" ]; then
@@ -350,18 +444,34 @@ cmd_agent_run() {
     echo "Das Einspielen wurde unterbrochen (Dienst oder Server neu gestartet). Stand pruefen: hvnb-update --status" > "${inbox}/result.log"
     rm -f "${inbox}/request.processing"
   fi
-  [ -f "${inbox}/request.json" ] || exit 0
+  if [ ! -f "${inbox}/request.json" ]; then
+    registry_auto "${inbox}"
+    exit 0
+  fi
 
   mv "${inbox}/request.json" "${inbox}/request.processing"
-  local package sha version started rc=0
+  local action package sha version started rc=0
+  action="$(json_field "${inbox}/request.processing" action)"
   package="$(json_field "${inbox}/request.processing" package)"
   sha="$(json_field "${inbox}/request.processing" sha256)"
   version="$(json_field "${inbox}/request.processing" version)"
+
+  if [ "${action}" = "registry-check" ]; then
+    registry_check_report "${inbox}"
+    mv "${inbox}/request.processing" "${inbox}/request.done"
+    exit 0
+  fi
+
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   write_result "${inbox}" "running" "${package}" "${version}" "${started}" ""
   : > "${inbox}/result.log"
 
-  if ! [[ "${package}" =~ ^hvnb-[0-9A-Za-z.-]+\.tar\.gz$ ]] || ! [[ "${sha}" =~ ^[0-9a-f]{64}$ ]] || [ ! -f "${inbox}/${package}" ]; then
+  if [ "${action}" = "registry-install" ]; then
+    package="$(registry_repo):${version}"
+    log "Auftrag aus der GUI: Version ${version} aus der Registry"
+    "$0" --from-registry "${version}" > "${inbox}/result.log" 2>&1 || rc=$?
+    if [ "${rc}" = "0" ]; then registry_check_report "${inbox}"; fi
+  elif ! [[ "${package}" =~ ^hvnb-[0-9A-Za-z.-]+\.tar\.gz$ ]] || ! [[ "${sha}" =~ ^[0-9a-f]{64}$ ]] || [ ! -f "${inbox}/${package}" ]; then
     echo "Ungueltiger Auftrag (Paketname, Pruefsumme oder Datei fehlt)." > "${inbox}/result.log"
     rc=1
   else
@@ -372,12 +482,67 @@ cmd_agent_run() {
 
   write_result "${inbox}" "$( [ "${rc}" = "0" ] && echo succeeded || echo failed )" "${package}" "${version}" "${started}" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  # Paket und Auftrag sind verbraucht -- das geladene Image liegt in podman.
-  if [[ "${package}" =~ ^hvnb-[0-9A-Za-z.-]+\.tar\.gz$ ]]; then
-    rm -f "${inbox}/${package}" "${inbox}/${package}.sha256"
+  # Paket und Auftrag sind verbraucht -- das geladene Image liegt in podman. Nur
+  # bei "spaeter erneut" (laufende Backups, Exit 3) bleibt ein hochgeladenes
+  # Paket zum erneuten Einspielen liegen.
+  if [ "${rc}" != "3" ] && [[ "${package}" =~ ^hvnb-[0-9A-Za-z.-]+\.tar\.gz$ ]]; then
+    rm -f "${inbox:?}/${package:?}" "${inbox:?}/${package:?}.sha256" "${inbox:?}/staged.json"
   fi
-  rm -f "${inbox}/request.processing" "${inbox}/staged.json"
+  rm -f "${inbox:?}/request.processing"
   log "Auftrag beendet (Exit ${rc})."
+}
+
+# Schreibt registry.json fuer die App: hinterlegte Registry, neueste Version, Zeitpunkt.
+registry_check_report() {
+  local inbox="$1" repo latest="" error=""
+  repo="$(registry_repo)"
+  if [ -z "${repo}" ]; then
+    printf '{\n"repo": ""\n}\n' > "${inbox}/registry.json"
+    return 0
+  fi
+  if ! latest="$(registry_latest "${repo}")"; then
+    latest=""
+    error="Registry nicht lesbar (Netz oder Anmeldung per podman login)."
+  elif [ -z "${latest}" ]; then
+    error="Noch keine Version veroeffentlicht."
+  fi
+  printf '{\n"repo": "%s",\n"latest_version": "%s",\n"checked_at": "%s",\n"error": "%s"\n}\n' \
+    "${repo}" "${latest}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${error}" > "${inbox}/.registry.json.tmp"
+  mv "${inbox}/.registry.json.tmp" "${inbox}/registry.json"
+}
+
+# Automatisches Online-Update (Schalter in der GUI, Standard aus): hoechstens
+# stuendlich pruefen und eine neuere Version einspielen.
+registry_auto() {
+  local inbox="$1" repo
+  repo="$(registry_repo)"
+  [ -n "${repo}" ] || return 0
+  [ -f "${inbox}/settings.json" ] || return 0
+  grep -q '^"registry_auto_update": "on"' "${inbox}/settings.json" || return 0
+  local stamp="${STATE_DIR}/${UNIT}.registry-auto-check"
+  if [ -f "${stamp}" ] && [ -n "$(find "${stamp}" -mmin -60 2>/dev/null)" ]; then return 0; fi
+  touch "${stamp}"
+  registry_check_report "${inbox}"
+  local latest current
+  latest="$(json_field "${inbox}/registry.json" latest_version)"
+  current="$(running_version)"
+  [ -n "${latest}" ] && [ -n "${current}" ] || return 0
+  [ "${latest}" != "${current}" ] || return 0
+  # Nur vorwaerts: die Registry-Version muss die hoehere von beiden sein.
+  [ "$(printf '%s\n%s\n' "${current%%-*}" "${latest}" | sort -V | tail -n1)" = "${latest}" ] || return 0
+  log "Automatisches Online-Update: ${current} -> ${latest}"
+  local started rc=0
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  write_result "${inbox}" "running" "${repo}:${latest}" "${latest}" "${started}" ""
+  "$0" --from-registry "${latest}" > "${inbox}/result.log" 2>&1 || rc=$?
+  if [ "${rc}" = "3" ]; then
+    # Backups laufen: beim naechsten Durchlauf erneut versuchen, nicht erst in einer Stunde.
+    touch -d '2 hours ago' "${stamp}"
+    write_result "${inbox}" "failed" "${repo}:${latest}" "${latest}" "${started}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    return 0
+  fi
+  write_result "${inbox}" "$( [ "${rc}" = "0" ] && echo succeeded || echo failed )" "${repo}:${latest}" "${latest}" "${started}" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 
 cmd_install_agent() {
@@ -428,21 +593,32 @@ cmd_uninstall_agent() {
   log "Update-Dienst entfernt. Updates sind nur noch per 'hvnb-update <Paket>' auf dem Server moeglich."
 }
 
-PACKAGE="" ALLOW_UNSIGNED=0 FORCE=0 MODE="install" WITH_DB=0
-for arg in "$@"; do
-  case "${arg}" in
+PACKAGE="" ALLOW_UNSIGNED=0 FORCE=0 MODE="install" WITH_DB=0 VALUE=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --status) MODE="status" ;;
     --rollback) MODE="rollback" ;;
     --agent-run) MODE="agent-run" ;;
     --install-agent) MODE="install-agent" ;;
     --uninstall-agent) MODE="uninstall-agent" ;;
+    --check-registry) MODE="check-registry" ;;
+    --set-registry)
+      MODE="set-registry"; VALUE="${2:-}"
+      [ -n "${VALUE}" ] || die "--set-registry braucht einen Image-Pfad oder 'none'."
+      shift
+      ;;
+    --from-registry)
+      MODE="from-registry"
+      if [ -n "${2:-}" ] && [[ "${2}" != --* ]]; then VALUE="$2"; shift; fi
+      ;;
     --with-db) WITH_DB=1 ;;
     --allow-unsigned) ALLOW_UNSIGNED=1 ;;
     --force) FORCE=1 ;;
-    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    -*) die "Unbekannte Option ${arg} (siehe --help)." ;;
-    *) PACKAGE="${arg}" ;;
+    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "Unbekannte Option $1 (siehe --help)." ;;
+    *) PACKAGE="$1" ;;
   esac
+  shift
 done
 
 for tool in podman systemctl curl openssl sha256sum flock; do
@@ -455,8 +631,11 @@ case "${MODE}" in
   agent-run) cmd_agent_run ;;
   install-agent) cmd_install_agent ;;
   uninstall-agent) cmd_uninstall_agent ;;
+  set-registry) cmd_set_registry "${VALUE}" ;;
+  check-registry) cmd_check_registry ;;
+  from-registry) cmd_from_registry "${VALUE}" "${FORCE}" ;;
   install)
-    [ -n "${PACKAGE}" ] || { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+    [ -n "${PACKAGE}" ] || { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
     cmd_install "${PACKAGE}" "${ALLOW_UNSIGNED}" "${FORCE}"
     ;;
 esac

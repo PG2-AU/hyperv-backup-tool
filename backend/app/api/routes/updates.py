@@ -57,6 +57,21 @@ class AutoUpdate(BaseModel):
     last_update_at: str | None = None
 
 
+class RegistryState(BaseModel):
+    """Online-Update aus einer Registry (auf dem Server hinterlegt)."""
+
+    repo: str
+    latest_version: str | None = None
+    checked_at: str | None = None
+    error: str | None = None
+    # automatisch einspielen, sobald eine neuere Version veroeffentlicht ist
+    auto_enabled: bool = False
+
+
+class RegistryInstall(BaseModel):
+    version: str
+
+
 class AutoUpdateWrite(BaseModel):
     enabled: bool
 
@@ -73,6 +88,8 @@ class UpdateStatus(BaseModel):
     last_result: UpdateResult | None = None
     # None = auf dem Server nicht eingerichtet
     auto_update: AutoUpdate | None = None
+    # None = keine Registry hinterlegt
+    registry: RegistryState | None = None
 
 
 def _user_name(user) -> str:
@@ -90,6 +107,7 @@ def _status() -> UpdateStatus:
     staged = app_update.staged()
     result = app_update.last_result()
     auto = app_update.auto_update_state()
+    registry = app_update.registry_state()
     return UpdateStatus(
         delivery="release" if release else "git",
         version=str(release.get("version")) if release and release.get("version") else None,
@@ -98,6 +116,7 @@ def _status() -> UpdateStatus:
         pending=app_update.pending(),
         last_result=UpdateResult(**{k: result.get(k) for k in UpdateResult.model_fields}) if result else None,
         auto_update=AutoUpdate(**{k: (auto.get(k) or None) if k != "enabled" else auto["enabled"] for k in AutoUpdate.model_fields}) if auto else None,
+        registry=RegistryState(**registry) if registry else None,
     )
 
 
@@ -107,6 +126,31 @@ def _require_release() -> None:
             status_code=status.HTTP_409_CONFLICT,
             detail="Diese Installation läuft noch nicht als Release-Image; ein Paket-Upload ist hier nicht möglich.",
         )
+
+
+def _require_agent() -> None:
+    if not app_update.agent_state()["active"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Der Update-Dienst auf dem Server meldet sich nicht. Einmalig einrichten mit 'hvnb-update --install-agent' "
+                   "(siehe Installationsdokumentation).",
+        )
+
+
+def _require_no_backups(db: Session) -> None:
+    busy = db.query(BackupRun).filter(BackupRun.status.in_([JobStatus.RUNNING, JobStatus.PENDING, JobStatus.CLEANING_UP])).count()
+    if busy:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Es laufen noch {busy} Backup(s). Bitte abwarten.")
+
+
+def _require_registry() -> dict:
+    registry = app_update.registry_state()
+    if registry is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Auf dem Server ist keine Registry hinterlegt (hvnb-update --set-registry <Image-Pfad>).",
+        )
+    return registry
 
 
 def _require_idle() -> None:
@@ -189,15 +233,8 @@ def install_package(db: Session = Depends(get_db), user=Depends(_manage)) -> Upd
     staged = app_update.staged()
     if staged is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Es ist kein Paket hochgeladen.")
-    if not app_update.agent_state()["active"]:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Der Update-Dienst auf dem Server meldet sich nicht. Einmalig einrichten mit 'hvnb-update --install-agent' "
-                   "(siehe Installationsdokumentation) oder das Paket dort direkt mit 'hvnb-update <Paket>' einspielen.",
-        )
-    busy = db.query(BackupRun).filter(BackupRun.status.in_([JobStatus.RUNNING, JobStatus.PENDING, JobStatus.CLEANING_UP])).count()
-    if busy:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Es laufen noch {busy} Backup(s). Bitte abwarten.")
+    _require_agent()
+    _require_no_backups(db)
     app_update.write_json("request.json", {
         "package": staged["package"], "sha256": staged["sha256"], "version": staged["version"],
         "requested_by": _user_name(user), "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -214,4 +251,49 @@ def set_auto_update(payload: AutoUpdateWrite, db: Session = Depends(get_db), use
     _require_release()
     app_update.set_auto_update(payload.enabled)
     _log(db, f"Automatische Updates aus Git {'eingeschaltet' if payload.enabled else 'ausgeschaltet'} (durch {_user_name(user)})")
+    return _status()
+
+
+@router.post("/registry/check", response_model=UpdateStatus)
+def check_registry(user=Depends(_manage)) -> UpdateStatus:
+    """Laesst den Server nachsehen, welche Version in der Registry die neueste
+    ist. Das Ergebnis erscheint kurz darauf im Status (registry.checked_at)."""
+    _require_release()
+    _require_idle()
+    _require_registry()
+    _require_agent()
+    app_update.write_json("request.json", {
+        "action": "registry-check", "requested_by": _user_name(user),
+        "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    })
+    return _status()
+
+
+@router.post("/registry/install", response_model=UpdateStatus)
+def install_from_registry(payload: RegistryInstall, db: Session = Depends(get_db), user=Depends(_manage)) -> UpdateStatus:
+    """Erteilt dem Server den Auftrag, eine Version aus der Registry zu holen und einzuspielen."""
+    _require_release()
+    _require_idle()
+    registry = _require_registry()
+    _require_agent()
+    version = payload.version.strip()
+    if not app_update.PACKAGE_RE.match(f"hvnb-{version}.tar.gz"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ungültige Versionsangabe.")
+    _require_no_backups(db)
+    app_update.write_json("request.json", {
+        "action": "registry-install", "version": version, "package": f"{registry['repo']}:{version}",
+        "requested_by": _user_name(user), "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    })
+    _log(db, f"Online-Update auf Version {version} angefordert ({registry['repo']}, durch {_user_name(user)})")
+    return _status()
+
+
+@router.put("/registry/auto", response_model=UpdateStatus)
+def set_registry_auto(payload: AutoUpdateWrite, db: Session = Depends(get_db), user=Depends(_manage)) -> UpdateStatus:
+    """Automatisches Online-Update ein/aus: eingeschaltet prueft der Server
+    stuendlich und spielt eine neuere Version von selbst ein."""
+    _require_release()
+    _require_registry()
+    app_update.update_settings(registry_auto_update="on" if payload.enabled else "off")
+    _log(db, f"Automatische Online-Updates {'eingeschaltet' if payload.enabled else 'ausgeschaltet'} (durch {_user_name(user)})")
     return _status()

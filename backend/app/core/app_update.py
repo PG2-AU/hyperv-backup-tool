@@ -15,6 +15,7 @@ Rueckfall). Dateien im Ordner:
   result.json/result.log  Ergebnis des letzten Einspielens (vom Dienst)
   autoupdate.json         Zustand des Auto-Updates aus Git (hvnb-git-autoupdate)
   settings.json           Schalter "automatische Updates" (von der App)
+  registry.json           neueste Version in der Online-Registry (vom Dienst)
 
 Nur im Release-Image verfuegbar (app.core.release.release_info). Ohne
 Signatur (Nutzer-Entscheidung 2026-10-08): geprueft wird die SHA-256-
@@ -66,7 +67,35 @@ def agent_state() -> dict:
             active = -300 <= age <= AGENT_FRESH_SECONDS
     except ValueError:
         pass
-    return {"active": active, "last_seen_at": seen}
+    return {"active": active, "last_seen_at": seen, "registry": str(data.get("registry") or "") or None}
+
+
+def settings() -> dict:
+    return _read_json("settings.json") or {}
+
+
+def update_settings(**values: str) -> None:
+    """Einzelne Schalter aendern, die uebrigen behalten."""
+    write_json("settings.json", {**settings(), **values})
+
+
+def registry_state() -> dict | None:
+    """Online-Update aus einer Registry -- None, wenn auf dem Server keine
+    hinterlegt ist (hvnb-update --set-registry). Zugangsdaten zur Registry hat
+    nur der Server."""
+    repo = agent_state()["registry"]
+    if not repo:
+        return None
+    check = _read_json("registry.json") or {}
+    if check.get("repo") != repo:
+        check = {}
+    return {
+        "repo": repo,
+        "latest_version": check.get("latest_version") or None,
+        "checked_at": check.get("checked_at") or None,
+        "error": check.get("error") or None,
+        "auto_enabled": settings().get("registry_auto_update") == "on",
+    }
 
 
 def auto_update_state() -> dict | None:
@@ -84,12 +113,11 @@ def auto_update_state() -> dict | None:
     # Waehrend eines Builds meldet sich der Dienst laenger nicht.
     if age > max(3 * interval, 30) * 60:
         return None
-    settings = _read_json("settings.json") or {}
-    return {**data, "enabled": settings.get("auto_update") != "off"}
+    return {**data, "enabled": settings().get("auto_update") != "off"}
 
 
 def set_auto_update(enabled: bool) -> None:
-    write_json("settings.json", {"auto_update": "on" if enabled else "off"})
+    update_settings(auto_update="on" if enabled else "off")
 
 
 def staged() -> dict | None:

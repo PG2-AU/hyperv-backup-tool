@@ -37,6 +37,15 @@ export interface AutoUpdateState {
   last_update_at?: string | null;
 }
 
+// Online-Update aus einer Registry (auf dem Server per hvnb-update --set-registry hinterlegt)
+export interface RegistryState {
+  repo: string;
+  latest_version?: string | null;
+  checked_at?: string | null;
+  error?: string | null;
+  auto_enabled: boolean;
+}
+
 export interface UpdateStatus {
   // release = Release-Image (Upload moeglich), git = bisherige Auslieferung
   delivery: "release" | "git";
@@ -48,6 +57,8 @@ export interface UpdateStatus {
   last_result?: UpdateResult | null;
   // fehlt, wenn auf dem Server nicht eingerichtet
   auto_update?: AutoUpdateState | null;
+  // fehlt, wenn keine Registry hinterlegt ist
+  registry?: RegistryState | null;
 }
 
 const KEY = ["update-status"];
@@ -97,6 +108,30 @@ export function useSetAutoUpdate() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (enabled: boolean) => (await apiClient.put<UpdateStatus>("/updates/auto-update", { enabled })).data,
+    onSuccess: (data) => queryClient.setQueryData(KEY, data),
+  });
+}
+
+export function useCheckRegistry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await apiClient.post<UpdateStatus>("/updates/registry/check")).data,
+    onSuccess: (data) => queryClient.setQueryData(KEY, data),
+  });
+}
+
+export function useInstallFromRegistry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (version: string) => (await apiClient.post<UpdateStatus>("/updates/registry/install", { version })).data,
+    onSuccess: (data) => queryClient.setQueryData(KEY, data),
+  });
+}
+
+export function useSetRegistryAuto() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (enabled: boolean) => (await apiClient.put<UpdateStatus>("/updates/registry/auto", { enabled })).data,
     onSuccess: (data) => queryClient.setQueryData(KEY, data),
   });
 }

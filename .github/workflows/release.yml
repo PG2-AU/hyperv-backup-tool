@@ -1,0 +1,48 @@
+# Baut bei einem Versions-Tag (vX.Y.Z) das Release-Image und veroeffentlicht es:
+#   - als Image in der GitHub-Registry: ghcr.io/<konto>/hvnb-backup:X.Y.Z
+#     (Online-Update: hvnb-update --from-registry bzw. Settings > Updates)
+#   - als Paketdatei am GitHub-Release: hvnb-X.Y.Z.tar.gz + .sha256 + hvnb-update
+#     (Offline-Update: hvnb-update <Paket> bzw. Upload in Settings > Updates)
+#
+# Ein Push auf master allein loest nichts aus -- ein Release ist immer ein
+# bewusst gesetzter Tag:   git tag v1.2.0 && git push github v1.2.0
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Versionsverlauf (CHANGELOG.json) und Commit-Zaehler brauchen die ganze Historie.
+          fetch-depth: 0
+
+      - name: Version und Image-Name bestimmen
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/hvnb-backup" >> "$GITHUB_ENV"
+
+      - name: Image und Paket bauen
+        run: HVNB_IMAGE_NAME="$IMAGE" CONTAINER_ENGINE=podman scripts/build-release.sh "$VERSION"
+
+      - name: Image in die Registry schieben
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          podman push "$IMAGE:$VERSION"
+
+      - name: Paketdateien am Release ablegen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/hvnb-$VERSION.tar.gz" "dist/hvnb-$VERSION.tar.gz.sha256" dist/hvnb-update \
+            --title "Version $VERSION" --generate-notes
