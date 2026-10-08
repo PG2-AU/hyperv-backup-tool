@@ -1,0 +1,296 @@
+#!/usr/bin/env bash
+# hvnb-update -- spielt ein Release-Paket des AU Storage Manager for Hyper-V
+# auf diesem Server ein (Offline-Update, kein Internetzugang noetig).
+#
+#   hvnb-update <hvnb-X.Y.Z.tar.gz>     Paket pruefen, laden, umschalten
+#   hvnb-update --status                laufende Version, vorherige Version, Sicherungen
+#   hvnb-update --rollback [--with-db]  zurueck auf die vorherige Version
+#                                       (--with-db: zusaetzlich die Datenbank von
+#                                       vor dem letzten Update zurueckspielen)
+#
+# Optionen fuer das Einspielen:
+#   --allow-unsigned   Paket ohne gueltige Signatur zulassen (nur Pruefsumme)
+#   --force            auch einspielen, wenn noch Backups/Restores laufen
+#
+# Ablauf beim Einspielen:
+#   1. Pruefsumme (<paket>.sha256) und Signatur (<paket>.sig) pruefen -- die
+#      Signatur gegen den oeffentlichen Schluessel dieses Servers
+#      (~/.config/hvnb/release-signing.pub bzw. HVNB_RELEASE_PUBKEY).
+#   2. Abbrechen, wenn in der App noch ein Backup oder Restore laeuft.
+#   3. Image laden, Datenbank im laufenden Betrieb konsistent sichern
+#      (/data/update-backups im Daten-Volume, die letzten 5 bleiben).
+#   4. Quadlet-Unit auf das neue Image umstellen und neu starten.
+#   5. Auf den Health-Check warten. Antwortet die App nicht, wird automatisch
+#      auf das vorherige Image zurueckgestellt (die Datenbank bleibt, wie sie
+#      ist -- Rueckspielen bei Bedarf mit --rollback --with-db).
+#
+# Laeuft als der Linux-Benutzer, dem der rootless-Podman-Container gehoert
+# (kein sudo). Die Daten-Volumes und die .env werden nie veraendert.
+set -euo pipefail
+
+UNIT="${HVNB_UNIT:-hvnb-backup}"
+QUADLET="${HVNB_QUADLET:-${HOME}/.config/containers/systemd/${UNIT}.container}"
+PUBKEY="${HVNB_RELEASE_PUBKEY:-${HOME}/.config/hvnb/release-signing.pub}"
+STATE_DIR="${HVNB_STATE_DIR:-${HOME}/.config/hvnb}"
+STATE_FILE="${STATE_DIR}/${UNIT}.update-state"
+HEALTH_TIMEOUT="${HVNB_HEALTH_TIMEOUT:-180}"
+KEEP_DB_BACKUPS=5
+
+log() { echo "[hvnb-update] $*"; }
+die() { echo "[hvnb-update] FEHLER: $*" >&2; exit 1; }
+
+quadlet_value() { sed -n "s/^$1=//p" "${QUADLET}" | head -n1; }
+
+require_quadlet() {
+  [ -f "${QUADLET}" ] || die "Quadlet-Unit ${QUADLET} nicht gefunden (siehe DEPLOYMENT.md Abschnitt 6)."
+  CONTAINER="$(quadlet_value ContainerName)"
+  [ -n "${CONTAINER}" ] || CONTAINER="systemd-${UNIT}"
+  CURRENT_IMAGE="$(quadlet_value Image)"
+  [ -n "${CURRENT_IMAGE}" ] || die "Keine Image=-Zeile in ${QUADLET}."
+  # PublishPort=8443:443 bzw. 127.0.0.1:8443:443 -> Host-Port fuer den Health-Check
+  HOST_PORT="$(quadlet_value PublishPort | awk -F: '{print $(NF-1)}')"
+  [ -n "${HOST_PORT}" ] || HOST_PORT=8443
+  DATA_VOLUME="$(sed -n 's/^Volume=\([^:]*\):\/data$/\1/p' "${QUADLET}" | head -n1)"
+}
+
+container_running() { podman container inspect -f '{{.State.Running}}' "${CONTAINER}" 2>/dev/null | grep -q true; }
+
+app_version() {
+  container_running || { echo "nicht gestartet"; return; }
+  podman exec "${CONTAINER}" python3 -c \
+    "import json;d=json.load(open('/opt/app/VERSION.json'));print(d.get('version','?'), '(Commit', d.get('commit','?')[:7]+')')" 2>/dev/null \
+    || echo "ohne Versionsnummer (bisherige Auslieferung per git)"
+}
+
+wait_healthy() {
+  local waited=0
+  while [ "${waited}" -lt "${HEALTH_TIMEOUT}" ]; do
+    if curl -sk --max-time 5 "https://127.0.0.1:${HOST_PORT}/api/health" 2>/dev/null | grep -q '"status":"ok"'; then
+      return 0
+    fi
+    sleep 3
+    waited=$((waited + 3))
+  done
+  return 1
+}
+
+set_image() {
+  # Nur die Image=-Zeile aendern, alles andere in der Unit bleibt unberuehrt.
+  sed -i "s|^Image=.*|Image=$1|" "${QUADLET}"
+  systemctl --user daemon-reload
+}
+
+restart_unit() { systemctl --user restart "${UNIT}.service"; }
+
+busy_runs() {
+  # Anzahl noch laufender Backups/Restores laut App-Datenbank; leer, wenn nicht ermittelbar.
+  podman exec -i "${CONTAINER}" python3 - <<'PY' 2>/dev/null || true
+import sqlite3
+con = sqlite3.connect("file:/data/app.db?mode=ro", uri=True, timeout=5)
+total = 0
+for table in ("backup_runs", "restore_runs"):
+    try:
+        total += con.execute(
+            f"SELECT count(*) FROM {table} WHERE lower(status) IN ('running', 'pending', 'cleaning_up')"
+        ).fetchone()[0]
+    except sqlite3.Error:
+        pass
+print(total)
+PY
+}
+
+backup_db() {
+  # Online-Backup-API von SQLite: konsistent, auch waehrend die App laeuft.
+  local name="vor-update-$(date +%Y%m%d-%H%M%S).sqlite"
+  podman exec -i -e "HVNB_BACKUP_NAME=${name}" -e "HVNB_KEEP=${KEEP_DB_BACKUPS}" "${CONTAINER}" python3 - <<'PY'
+import os, sqlite3
+folder = "/data/update-backups"
+os.makedirs(folder, exist_ok=True)
+target = os.path.join(folder, os.environ["HVNB_BACKUP_NAME"])
+src = sqlite3.connect("/data/app.db", timeout=30)
+dst = sqlite3.connect(target)
+with dst:
+    src.backup(dst)
+dst.close(); src.close()
+check = sqlite3.connect(target)
+assert check.execute("PRAGMA integrity_check").fetchone()[0] == "ok", "Sicherung ist nicht integer"
+check.close()
+files = sorted(f for f in os.listdir(folder) if f.startswith("vor-update-") and f.endswith(".sqlite"))
+for old in files[: -int(os.environ["HVNB_KEEP"])]:
+    os.remove(os.path.join(folder, old))
+PY
+  # Nicht auf den Exit-Code allein verlassen: die Datei muss wirklich da sein.
+  podman exec "${CONTAINER}" test -s "/data/update-backups/${name}"
+  echo "${name}"
+}
+
+write_state() {
+  mkdir -p "${STATE_DIR}"
+  {
+    echo "PREVIOUS_IMAGE=$1"
+    echo "CURRENT_IMAGE=$2"
+    echo "DB_BACKUP=$3"
+    echo "UPDATED_AT=$(date -Iseconds)"
+  } > "${STATE_FILE}"
+}
+
+state_value() { [ -f "${STATE_FILE}" ] && sed -n "s/^$1=//p" "${STATE_FILE}" | head -n1 || true; }
+
+cmd_status() {
+  require_quadlet
+  log "Unit:              ${UNIT}.service ($(systemctl --user is-active "${UNIT}.service" 2>/dev/null || true))"
+  log "Image:             ${CURRENT_IMAGE}"
+  log "Version:           $(app_version)"
+  log "Vorheriges Image:  $(state_value PREVIOUS_IMAGE || true)"
+  log "Letztes Update:    $(state_value UPDATED_AT || true)"
+  if container_running; then
+    log "DB-Sicherungen vor Updates (im Volume ${DATA_VOLUME:-?} unter /data/update-backups):"
+    podman exec "${CONTAINER}" sh -c 'ls -1 /data/update-backups 2>/dev/null' | sed 's/^/[hvnb-update]   /' || true
+  fi
+  if [ -f "${PUBKEY}" ]; then log "Signaturschluessel: ${PUBKEY}"; else log "Signaturschluessel: FEHLT (${PUBKEY})"; fi
+}
+
+verify_package() {
+  local package="$1" allow_unsigned="$2"
+  [ -f "${package}" ] || die "Paketdatei ${package} nicht gefunden."
+  [ -f "${package}.sha256" ] || die "Pruefsummendatei ${package}.sha256 fehlt -- sie gehoert zum Paket."
+  local expected actual
+  expected="$(awk '{print $1}' "${package}.sha256" | head -n1)"
+  actual="$(sha256sum "${package}" | awk '{print $1}')"
+  [ "${expected}" = "${actual}" ] || die "Pruefsumme stimmt nicht (Datei beschaedigt oder veraendert)."
+  log "Pruefsumme in Ordnung."
+
+  if [ -f "${package}.sig" ] && [ -f "${PUBKEY}" ]; then
+    openssl dgst -sha256 -verify "${PUBKEY}" -signature "${package}.sig" "${package}" >/dev/null 2>&1 \
+      || die "Signatur ist UNGUELTIG -- das Paket stammt nicht vom Inhaber des Signaturschluessels. Nicht einspielen."
+    log "Signatur in Ordnung."
+  elif [ "${allow_unsigned}" = "1" ]; then
+    log "WARNUNG: Signatur nicht geprueft (--allow-unsigned)."
+  elif [ ! -f "${PUBKEY}" ]; then
+    die "Oeffentlicher Signaturschluessel fehlt (${PUBKEY}). Einmalig hinterlegen oder bewusst --allow-unsigned angeben."
+  else
+    die "Signaturdatei ${package}.sig fehlt. Bewusst unsigniert einspielen nur mit --allow-unsigned."
+  fi
+}
+
+cmd_install() {
+  local package="$1" allow_unsigned="$2" force="$3"
+  require_quadlet
+  verify_package "${package}" "${allow_unsigned}"
+
+  if container_running; then
+    local busy
+    busy="$(busy_runs)"
+    if [ "${force}" != "1" ]; then
+      [[ "${busy}" =~ ^[0-9]+$ ]] || die "Konnte nicht pruefen, ob noch Backups/Restores laufen. In der App nachsehen und dann bewusst --force angeben."
+      [ "${busy}" = "0" ] || die "In der App laufen noch ${busy} Backup-/Restore-Vorgaenge. Abwarten oder bewusst --force angeben."
+    fi
+  else
+    log "Hinweis: Container laeuft nicht -- keine Pruefung auf laufende Vorgaenge, keine DB-Sicherung im Betrieb."
+  fi
+
+  log "Lade Image aus ${package} ..."
+  local loaded new_image
+  loaded="$(podman load -i "${package}" 2>&1)" || die "podman load fehlgeschlagen: ${loaded}"
+  new_image="$(printf '%s\n' "${loaded}" | sed -n 's/^Loaded image[s]*: //p' | tail -n1)"
+  [ -n "${new_image}" ] || die "Konnte den Namen des geladenen Images nicht ermitteln: ${loaded}"
+  log "Geladen: ${new_image}"
+  if [ "${new_image}" = "${CURRENT_IMAGE}" ]; then
+    log "Dieses Image ist bereits eingestellt -- starte nur neu."
+  fi
+
+  local db_backup=""
+  if container_running; then
+    db_backup="$(backup_db)" || die "Datenbank-Sicherung fehlgeschlagen -- Update nicht ausgefuehrt."
+    log "Datenbank gesichert: /data/update-backups/${db_backup}"
+  fi
+
+  local previous="${CURRENT_IMAGE}" old_state=""
+  [ "${new_image}" = "${previous}" ] && previous="$(state_value PREVIOUS_IMAGE)"
+  [ -f "${STATE_FILE}" ] && old_state="$(cat "${STATE_FILE}")"
+  write_state "${previous}" "${new_image}" "${db_backup}"
+
+  log "Stelle ${UNIT} auf ${new_image} um und starte neu ..."
+  set_image "${new_image}"
+  restart_unit || true
+
+  if wait_healthy; then
+    log "Fertig. Laufende Version: $(app_version)"
+    return 0
+  fi
+
+  log "Die App antwortet nach ${HEALTH_TIMEOUT}s nicht -- stelle zurueck auf ${CURRENT_IMAGE}."
+  journalctl --user -u "${UNIT}.service" -n 25 --no-pager 2>/dev/null | sed 's/^/[hvnb-update]   | /' || true
+  set_image "${CURRENT_IMAGE}"
+  # Das fehlgeschlagene Update soll --rollback/--status nicht verfaelschen.
+  if [ -n "${old_state}" ]; then printf '%s\n' "${old_state}" > "${STATE_FILE}"; else : > "${STATE_FILE}"; fi
+  restart_unit || true
+  if wait_healthy; then
+    die "Update fehlgeschlagen, vorherige Version laeuft wieder. Datenbank unveraendert gelassen; Stand vor dem Update: /data/update-backups/${db_backup}"
+  fi
+  die "Update fehlgeschlagen und auch die vorherige Version antwortet nicht. Pruefen: systemctl --user status ${UNIT}.service; podman logs ${CONTAINER}"
+}
+
+cmd_rollback() {
+  local with_db="$1"
+  require_quadlet
+  local previous db_backup
+  previous="$(state_value PREVIOUS_IMAGE)"
+  db_backup="$(state_value DB_BACKUP)"
+  [ -n "${previous}" ] || die "Keine vorherige Version bekannt (${STATE_FILE} fehlt oder ist leer)."
+  podman image exists "${previous}" || die "Das vorherige Image ${previous} ist auf diesem Server nicht mehr vorhanden."
+
+  if [ "${with_db}" = "1" ]; then
+    [ -n "${db_backup}" ] || die "Zum letzten Update gibt es keine Datenbank-Sicherung."
+    [ -n "${DATA_VOLUME}" ] || die "Daten-Volume nicht aus ${QUADLET} ermittelbar."
+    local mount
+    mount="$(podman volume inspect "${DATA_VOLUME}" --format '{{.Mountpoint}}')"
+    log "Halte ${UNIT} an und spiele die Datenbank von vor dem Update zurueck (${db_backup}) ..."
+    systemctl --user stop "${UNIT}.service"
+    podman unshare sh -c '
+      set -e
+      cd "$1"
+      test -f "update-backups/$2"
+      cp -p app.db "update-backups/vor-rollback-$(date +%Y%m%d-%H%M%S).sqlite"
+      cp "update-backups/$2" app.db.neu
+      mv app.db.neu app.db
+      for leftover in app.db-wal app.db-shm; do
+        if [ -e "$leftover" ]; then mv "$leftover" "update-backups/$leftover.verworfen"; fi
+      done
+    ' sh "${mount}" "${db_backup}" || die "Zurueckspielen der Datenbank fehlgeschlagen -- Unit ist angehalten, bitte pruefen."
+  fi
+
+  log "Stelle ${UNIT} zurueck auf ${previous} ..."
+  write_state "${CURRENT_IMAGE}" "${previous}" ""
+  set_image "${previous}"
+  restart_unit || true
+  wait_healthy || die "Die vorherige Version antwortet nach ${HEALTH_TIMEOUT}s nicht. Pruefen: podman logs ${CONTAINER}"
+  log "Fertig. Laufende Version: $(app_version)"
+}
+
+PACKAGE="" ALLOW_UNSIGNED=0 FORCE=0 MODE="install" WITH_DB=0
+for arg in "$@"; do
+  case "${arg}" in
+    --status) MODE="status" ;;
+    --rollback) MODE="rollback" ;;
+    --with-db) WITH_DB=1 ;;
+    --allow-unsigned) ALLOW_UNSIGNED=1 ;;
+    --force) FORCE=1 ;;
+    -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "Unbekannte Option ${arg} (siehe --help)." ;;
+    *) PACKAGE="${arg}" ;;
+  esac
+done
+
+for tool in podman systemctl curl openssl sha256sum; do
+  command -v "${tool}" >/dev/null || die "Benoetigtes Programm fehlt: ${tool}"
+done
+
+case "${MODE}" in
+  status) cmd_status ;;
+  rollback) cmd_rollback "${WITH_DB}" ;;
+  install)
+    [ -n "${PACKAGE}" ] || { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+    cmd_install "${PACKAGE}" "${ALLOW_UNSIGNED}" "${FORCE}"
+    ;;
+esac

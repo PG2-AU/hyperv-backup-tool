@@ -9,6 +9,7 @@
 #   hvnb-<version>.tar.gz.sha256   Pruefsumme
 #   hvnb-<version>.tar.gz.sig      Signatur, nur wenn HVNB_RELEASE_SIGNING_KEY gesetzt ist
 #                                  (Pfad zu einem privaten Schluessel im PEM-Format)
+#   hvnb-update                    Einspiel-Skript fuer den Zielserver (Kopie von scripts/)
 # sowie das Image lokal als localhost/hvnb-backup:<version>.
 #
 # Gebaut wird der committete Stand (HEAD). Nicht committete Aenderungen brechen
@@ -80,4 +81,8 @@ else
   echo "== Hinweis: nicht signiert (HVNB_RELEASE_SIGNING_KEY nicht gesetzt)"
 fi
 
-ls -lh "${PACKAGE}"*
+# Das Einspiel-Skript gehoert zum Paket, damit es auch ohne Repository-Zugang
+# auf den Zielserver kommt.
+cp scripts/hvnb-update dist/hvnb-update
+
+ls -lh "${PACKAGE}"* dist/hvnb-update
