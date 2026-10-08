@@ -60,7 +60,7 @@ docker/     Rocky-Linux-Container: nginx (TLS-Terminierung + Static Files),
 scripts/    build-release.sh (Image + Paketdatei bauen), update-lock.sh
             (backend/requirements.lock neu erzeugen), hvnb-update (Paket/Registry-
             Version auf dem Server einspielen, Rollback, Update-Dienst fuer die GUI),
-            hvnb-git-autoupdate (Auto-Update aus Git, nur Entwicklungsumgebungen)
+            hvnb-git-autoupdate (Update aus Git, nur Entwicklungsumgebungen)
 .github/    workflows/release.yml: baut bei einem Tag vX.Y.Z Image und Paket
 ```
 

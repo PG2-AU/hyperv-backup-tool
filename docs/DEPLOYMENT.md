@@ -68,7 +68,7 @@ Host spricht — WSL2 bringt beides auf eine Maschine.
   - **keinem** Git-Server und **keiner** Paketquelle: Installation und
     Updates per Paketdatei brauchen keinen Internetzugang. Nur bei Bedarf:
     der Registry `ghcr.io` (TCP 443) für Online-Updates, bzw. Git-Server,
-    `quay.io`, npm und PyPI für das Auto-Update aus Git einer
+    `quay.io`, npm und PyPI für das Update aus Git einer
     Entwicklungsumgebung (Abschnitt 13)
   - dem Domain Controller (KDC) auf TCP/UDP 88, falls Kerberos als
     WinRM-Transport genutzt werden soll (siehe Abschnitt 10)
@@ -218,7 +218,7 @@ Ein Release besteht aus diesen Dateien:
 | `hvnb-<Version>.tar.gz` | das Container-Image als Archiv (rund 170 MB) |
 | `hvnb-<Version>.tar.gz.sha256` | SHA-256-Prüfsumme des Archivs |
 | `hvnb-update` | Skript zum Einspielen, Zurückrollen und für den Update-Dienst |
-| `hvnb-git-autoupdate` | Skript für das Auto-Update aus Git (nur Entwicklungsumgebungen) |
+| `hvnb-git-autoupdate` | Skript für das Update aus Git (nur Entwicklungsumgebungen) |
 
 Woher sie kommen:
 
@@ -1721,7 +1721,7 @@ gegen eine neue Version; das erledigt auf dem Server das Skript
 | Paketdatei auf dem Server | immer möglich, auch als Rückfallweg | nein | `hvnb-update <Paket>` |
 | Paketdatei in der GUI hochladen | Produktion ohne Internet, ohne Shell | nein | Settings > Updates > „Jetzt einspielen" |
 | Online-Update aus der Registry | Server mit Zugang zu `ghcr.io` | nur zur Registry | Knopf in der GUI, auf Wunsch automatisch |
-| Automatisch aus Git | **nur** Entwicklungsumgebungen | ja | jeder Commit auf dem Branch |
+| Update aus Git | **nur** Entwicklungsumgebungen | ja | Knopf in der GUI, auf Wunsch automatisch bei jedem Commit |
 
 Die Kurzfassung dieser Wege steht auch in der App unter Settings > Updates
 („So wird diese Installation aktualisiert").
@@ -1784,34 +1784,41 @@ Die Registry-Anmeldung liegt nur auf dem Server; die App bekommt nie
 Zugangsdaten. Eingestellt wird immer ein fester Versions-Tag, nie `latest`.
 `hvnb-update --set-registry none` schaltet den Weg wieder ab.
 
-**Weg 4 — Automatisch aus Git (nur Entwicklungsumgebung).** Der Server
-prüft einen Git-Branch, baut bei jedem neuen Commit selbst ein Image
-(Version `<letzter Tag oder 0.0.0>-dev.<Anzahl Commits>.<Commit>`) und
-spielt es ein. Voraussetzungen: `git` auf dem Server, Internetzugang
+**Weg 4 — Update aus Git (nur Entwicklungsumgebung).** Der Server sieht in
+einem Git-Branch nach, baut den neuesten Commit selbst als Image (Version
+`<letzter Tag oder 0.0.0>-dev.<Anzahl Commits>.<Commit>`) und spielt es ein.
+Von selbst passiert dabei nichts: unter Settings > Updates gibt es „Nach
+Updates prüfen" und, sobald ein neuer Commit gefunden wurde, „Jetzt
+einspielen" (Build etwa fünf Minuten, die App läuft so lange weiter). Der
+Schalter „automatisch einspielen" ist standardmäßig aus; eingeschaltet
+prüft der Server im eingestellten Intervall und spielt jeden neuen Commit
+von selbst ein. Voraussetzungen: `git` auf dem Server, Internetzugang
 (Git-Server, `quay.io`, npm, PyPI), der Update-Dienst.
 
-Einrichten in der GUI: Settings > Updates > „Automatische Updates aus Git
-einrichten" — Git-Adresse, Branch und Prüfintervall eintragen. Bei einer
+Einrichten in der GUI: Settings > Updates > „Update aus Git einrichten" — Git-Adresse, Branch und Prüfintervall eintragen. Bei einer
 SSH-Adresse (`git@github.com:konto/repo.git`) muss der Server-Benutzer das
 Repository per Schlüssel erreichen; alternativ eine HTTPS-Adresse mit
 Token (`https://benutzer:token@github.com/konto/repo.git`). Das Token wird
 in der GUI nicht wieder angezeigt und liegt auf dem Server in
 `~/.config/hvnb/hvnb-backup.git-autoupdate.conf` (nur für den Benutzer
-lesbar). Ändern, Entfernen und ein Ein/Aus-Schalter stehen auf derselben
-Seite. Auf dem Server direkt:
+lesbar). Ändern und Entfernen stehen auf derselben Seite. Auf dem Server
+direkt:
 
 ```bash
 hvnb-git-autoupdate --install --repo <Git-Adresse> --branch master --interval 5
+hvnb-git-autoupdate --check        # nachsehen, ob es einen neuen Commit gibt
+hvnb-git-autoupdate --update-now   # den neuesten Commit bauen und einspielen
 hvnb-git-autoupdate --status
 hvnb-git-autoupdate --uninstall
 ```
 
-Ein Commit, dessen Build oder Einspielen scheitert, wird nicht erneut
-versucht — erst der nächste Commit löst wieder aus. Arbeitsordner und
+Im automatischen Betrieb wird ein Commit, dessen Build oder Einspielen
+scheitert, nicht von selbst erneut versucht — erst der nächste Commit oder
+ein „Jetzt einspielen" löst wieder aus. Arbeitsordner und
 Protokoll: `~/.local/share/hvnb/hvnb-backup-git-autoupdate/` (`last-run.log`).
 
-> **Nicht für Produktion:** zwischen Commit und Installation gibt es keine
-> Freigabe, und wer in der App das Recht „Settings verwalten" hat, bestimmt
+> **Nicht für Produktion:** gebaut wird ungeprüft der jeweils neueste
+> Commit, und wer in der App das Recht „Settings verwalten" hat, bestimmt
 > damit, aus welchem Repository der Server Code baut. Fehlt `git` auf dem
 > Server, bietet die GUI die Einrichtung gar nicht an.
 
@@ -1825,7 +1832,7 @@ hvnb-update --rollback --with-db   # zusaetzlich die Datenbank von vor dem letzt
 `--with-db` verwirft alles, was seit dem Update in der App passiert ist
 (Backup-Läufe, Einstellungen); der Stand unmittelbar vor dem Zurückspielen
 wird als `vor-rollback-…sqlite` daneben gesichert. Ist ein automatischer
-Weg eingeschaltet (Registry-Automatik oder Git), ihn **vor** dem Rollback
+Weg eingeschaltet (Schalter „automatisch einspielen" bei Registry oder Git), ihn **vor** dem Rollback
 ausschalten — sonst spielt der Server die neuere Version beim nächsten Lauf
 wieder ein.
 
@@ -1915,7 +1922,7 @@ fehlgeschlagen" bei allen Clustern).
 podman logs --tail 100 hvnb-backup           # supervisord-Gesamtausgabe
 podman exec hvnb-backup tail -f /var/log/hvnb/uvicorn.log
 journalctl --user -u hvnb-backup-update-agent.service -n 50   # Update-Dienst
-cat ~/.local/share/hvnb/hvnb-backup-git-autoupdate/last-run.log   # Auto-Update aus Git, falls eingerichtet
+cat ~/.local/share/hvnb/hvnb-backup-git-autoupdate/last-run.log   # Update aus Git, falls eingerichtet
 ```
 
 Innerhalb der Applikation zusätzlich das **System Log** (Menü > Monitoring)
@@ -1935,7 +1942,7 @@ für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.
 | `hvnb-update` bricht mit „In der App laufen noch … Backup-/Restore-Vorgänge" ab | Gewollt: laufende Vorgänge abwarten und erneut starten (ein hochgeladenes Paket bleibt dafür liegen) | 13 |
 | Settings > Updates zeigt den Update-Dienst als „nicht aktiv" | `hvnb-update --install-agent` wurde nie ausgeführt, oder der Timer läuft nicht: `systemctl --user status hvnb-backup-update-agent.timer` | 6, 13 |
 | `hvnb-update --install-agent` meldet „Job for hvnb-backup-update-agent.service failed" | Ältere Skript-Fassung auf einem Daten-Volume, das vom früheren Image angelegt wurde (dessen Wurzel gehört einem Container-Benutzer). Aktuelles `hvnb-update` aus dem Release verwenden und `--install-agent` erneut ausführen | 6 |
-| Auto-Update aus Git: Zustand „fehlgeschlagen" in der GUI | Build oder Einspielen des Commits gescheitert; Ursache in `~/.local/share/hvnb/hvnb-backup-git-autoupdate/last-run.log`. Erst der nächste Commit löst einen neuen Versuch aus | 13 |
+| Update aus Git: Zustand „fehlgeschlagen" in der GUI | Build oder Einspielen des Commits gescheitert; Ursache in `~/.local/share/hvnb/hvnb-backup-git-autoupdate/last-run.log`. Erneut versuchen mit „Jetzt einspielen" | 13 |
 | Online-Update: „Registry nicht lesbar" | Kein Netzwerkzugang zu `ghcr.io`, oder bei privatem Image fehlt `podman login ghcr.io` für den Benutzer des Containers | 13 |
 | Health-Check liefert `502 Bad Gateway` kurz nach Neustart | uvicorn/nginx starten noch, wenige Sekunden abwarten | — |
 | `curl https://localhost:8443/...` bricht mit `TLS connect error`/`SSL_ERROR_SYSCALL` ab, `https://127.0.0.1:8443/...` funktioniert dagegen einwandfrei | `localhost` löst zuerst zu IPv6 (`::1`) auf -- `podman port` mapped nur IPv4 (`0.0.0.0:8443`), auf `[::1]:8443` reagiert etwas anderes (oder eine pasta-Eigenheit). Kein Fehler im Container selbst, immer die IPv4-Adresse explizit testen | — |

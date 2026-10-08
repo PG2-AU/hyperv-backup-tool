@@ -433,7 +433,7 @@ soll (LDAP/LDAPS — TCP 389 bzw. 636)</li>
 <li><strong>keinem</strong> Git-Server und <strong>keiner</strong> Paketquelle: Installation und
 Updates per Paketdatei brauchen keinen Internetzugang. Nur bei Bedarf:
 der Registry <code>ghcr.io</code> (TCP 443) für Online-Updates, bzw. Git-Server,
-<code>quay.io</code>, npm und PyPI für das Auto-Update aus Git einer
+<code>quay.io</code>, npm und PyPI für das Update aus Git einer
 Entwicklungsumgebung (Abschnitt 13)</li>
 <li>dem Domain Controller (KDC) auf TCP/UDP 88, falls Kerberos als
 WinRM-Transport genutzt werden soll (siehe Abschnitt 10)</li>
@@ -607,7 +607,7 @@ dann zusätzlich <code>sudo dnf install -y git</code>).</p>
 </tr>
 <tr>
 <td><code>hvnb-git-autoupdate</code></td>
-<td>Skript für das Auto-Update aus Git (nur Entwicklungsumgebungen)</td>
+<td>Skript für das Update aus Git (nur Entwicklungsumgebungen)</td>
 </tr>
 </tbody></table>
 <p>Woher sie kommen:</p>
@@ -2014,10 +2014,10 @@ Benutzer bleiben angemeldet.</li>
 <td>Knopf in der GUI, auf Wunsch automatisch</td>
 </tr>
 <tr>
-<td>Automatisch aus Git</td>
+<td>Update aus Git</td>
 <td><strong>nur</strong> Entwicklungsumgebungen</td>
 <td>ja</td>
-<td>jeder Commit auf dem Branch</td>
+<td>Knopf in der GUI, auf Wunsch automatisch bei jedem Commit</td>
 </tr>
 </tbody></table>
 <p>Die Kurzfassung dieser Wege steht auch in der App unter Settings &gt; Updates
@@ -2073,33 +2073,40 @@ hvnb-update --from-registry 1.2.0      # eine bestimmte Version</code></pre>
 <p>Die Registry-Anmeldung liegt nur auf dem Server; die App bekommt nie
 Zugangsdaten. Eingestellt wird immer ein fester Versions-Tag, nie <code>latest</code>.
 <code>hvnb-update --set-registry none</code> schaltet den Weg wieder ab.</p>
-<p><strong>Weg 4 — Automatisch aus Git (nur Entwicklungsumgebung).</strong> Der Server
-prüft einen Git-Branch, baut bei jedem neuen Commit selbst ein Image
-(Version <code>&lt;letzter Tag oder 0.0.0&gt;-dev.&lt;Anzahl Commits&gt;.&lt;Commit&gt;</code>) und
-spielt es ein. Voraussetzungen: <code>git</code> auf dem Server, Internetzugang
+<p><strong>Weg 4 — Update aus Git (nur Entwicklungsumgebung).</strong> Der Server sieht in
+einem Git-Branch nach, baut den neuesten Commit selbst als Image (Version
+<code>&lt;letzter Tag oder 0.0.0&gt;-dev.&lt;Anzahl Commits&gt;.&lt;Commit&gt;</code>) und spielt es ein.
+Von selbst passiert dabei nichts: unter Settings &gt; Updates gibt es „Nach
+Updates prüfen&quot; und, sobald ein neuer Commit gefunden wurde, „Jetzt
+einspielen&quot; (Build etwa fünf Minuten, die App läuft so lange weiter). Der
+Schalter „automatisch einspielen&quot; ist standardmäßig aus; eingeschaltet
+prüft der Server im eingestellten Intervall und spielt jeden neuen Commit
+von selbst ein. Voraussetzungen: <code>git</code> auf dem Server, Internetzugang
 (Git-Server, <code>quay.io</code>, npm, PyPI), der Update-Dienst.</p>
-<p>Einrichten in der GUI: Settings &gt; Updates &gt; „Automatische Updates aus Git
-einrichten&quot; — Git-Adresse, Branch und Prüfintervall eintragen. Bei einer
+<p>Einrichten in der GUI: Settings &gt; Updates &gt; „Update aus Git einrichten&quot; — Git-Adresse, Branch und Prüfintervall eintragen. Bei einer
 SSH-Adresse (<code>git@github.com:konto/repo.git</code>) muss der Server-Benutzer das
 Repository per Schlüssel erreichen; alternativ eine HTTPS-Adresse mit
 Token (<code>https://benutzer:token@github.com/konto/repo.git</code>). Das Token wird
 in der GUI nicht wieder angezeigt und liegt auf dem Server in
 <code>~/.config/hvnb/hvnb-backup.git-autoupdate.conf</code> (nur für den Benutzer
-lesbar). Ändern, Entfernen und ein Ein/Aus-Schalter stehen auf derselben
-Seite. Auf dem Server direkt:</p>
+lesbar). Ändern und Entfernen stehen auf derselben Seite. Auf dem Server
+direkt:</p>
 <div class="code-block">
 <span class="code-label">Bash</span>
 <pre><code>hvnb-git-autoupdate --install --repo &lt;Git-Adresse&gt; --branch master --interval 5
+hvnb-git-autoupdate --check        # nachsehen, ob es einen neuen Commit gibt
+hvnb-git-autoupdate --update-now   # den neuesten Commit bauen und einspielen
 hvnb-git-autoupdate --status
 hvnb-git-autoupdate --uninstall</code></pre>
 </div>
-<p>Ein Commit, dessen Build oder Einspielen scheitert, wird nicht erneut
-versucht — erst der nächste Commit löst wieder aus. Arbeitsordner und
+<p>Im automatischen Betrieb wird ein Commit, dessen Build oder Einspielen
+scheitert, nicht von selbst erneut versucht — erst der nächste Commit oder
+ein „Jetzt einspielen&quot; löst wieder aus. Arbeitsordner und
 Protokoll: <code>~/.local/share/hvnb/hvnb-backup-git-autoupdate/</code> (<code>last-run.log</code>).</p>
 <div class="callout">
 <span class="callout-label">Nicht für Produktion</span>
-<p>zwischen Commit und Installation gibt es keine
-Freigabe, und wer in der App das Recht „Settings verwalten&quot; hat, bestimmt
+<p>gebaut wird ungeprüft der jeweils neueste
+Commit, und wer in der App das Recht „Settings verwalten&quot; hat, bestimmt
 damit, aus welchem Repository der Server Code baut. Fehlt <code>git</code> auf dem
 Server, bietet die GUI die Einrichtung gar nicht an.</p>
 </div>
@@ -2112,7 +2119,7 @@ hvnb-update --rollback --with-db   # zusaetzlich die Datenbank von vor dem letzt
 <p><code>--with-db</code> verwirft alles, was seit dem Update in der App passiert ist
 (Backup-Läufe, Einstellungen); der Stand unmittelbar vor dem Zurückspielen
 wird als <code>vor-rollback-…sqlite</code> daneben gesichert. Ist ein automatischer
-Weg eingeschaltet (Registry-Automatik oder Git), ihn <strong>vor</strong> dem Rollback
+Weg eingeschaltet (Schalter „automatisch einspielen&quot; bei Registry oder Git), ihn <strong>vor</strong> dem Rollback
 ausschalten — sonst spielt der Server die neuere Version beim nächsten Lauf
 wieder ein.</p>
 <p><strong>Ein Release erzeugen</strong> (Entwicklungsrechner): entweder lokal mit
@@ -2196,7 +2203,7 @@ fehlgeschlagen&quot; bei allen Clustern).</p>
 <pre><code>podman logs --tail 100 hvnb-backup           # supervisord-Gesamtausgabe
 podman exec hvnb-backup tail -f /var/log/hvnb/uvicorn.log
 journalctl --user -u hvnb-backup-update-agent.service -n 50   # Update-Dienst
-cat ~/.local/share/hvnb/hvnb-backup-git-autoupdate/last-run.log   # Auto-Update aus Git, falls eingerichtet</code></pre>
+cat ~/.local/share/hvnb/hvnb-backup-git-autoupdate/last-run.log   # Update aus Git, falls eingerichtet</code></pre>
 </div>
 <p>Innerhalb der Applikation zusätzlich das <strong>System Log</strong> (Menü &gt; Monitoring)
 für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.</p>
@@ -2260,8 +2267,8 @@ für Backup-/Restore-/Scheduler-Ereignisse mit wählbarem Zeitraum.</p>
 <td>6</td>
 </tr>
 <tr>
-<td>Auto-Update aus Git: Zustand „fehlgeschlagen&quot; in der GUI</td>
-<td>Build oder Einspielen des Commits gescheitert; Ursache in <code>~/.local/share/hvnb/hvnb-backup-git-autoupdate/last-run.log</code>. Erst der nächste Commit löst einen neuen Versuch aus</td>
+<td>Update aus Git: Zustand „fehlgeschlagen&quot; in der GUI</td>
+<td>Build oder Einspielen des Commits gescheitert; Ursache in <code>~/.local/share/hvnb/hvnb-backup-git-autoupdate/last-run.log</code>. Erneut versuchen mit „Jetzt einspielen&quot;</td>
 <td>13</td>
 </tr>
 <tr>
