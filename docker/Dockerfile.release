@@ -1,0 +1,77 @@
+# AU Storage Manager for Hyper-V - Release-Image
+#
+# Enthaelt die fertige Anwendung: Backend-Code, festgeschriebene Python-
+# Abhaengigkeiten (backend/requirements.lock, mit Pruefsummen) und das gebaute
+# Frontend. Anders als docker/Dockerfile (Laufzeit-Image, das den Code beim
+# Start per git holt) laedt dieses Image zur Laufzeit NICHTS nach: kein git,
+# kein pip, kein npm, kein Compiler, kein Updater im Container. Aktualisiert
+# wird von aussen, indem der Host ein neues Image startet (Registry oder
+# Paketdatei) -- siehe scripts/build-release.sh.
+#
+# Bauen nicht direkt, sondern ueber scripts/build-release.sh <version>: das
+# Skript erzeugt vorher release-build/VERSION.json und CHANGELOG.json aus git
+# (im Image gibt es kein .git).
+
+ARG BASE_IMAGE=quay.io/rockylinux/rockylinux:9
+
+# ---------- Frontend bauen ----------
+FROM ${BASE_IMAGE} AS frontend
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
+RUN dnf module -y reset nodejs && dnf module -y install nodejs:20 && dnf clean all
+WORKDIR /src
+COPY frontend/package.json frontend/package-lock.json frontend/
+RUN cd frontend && npm ci --no-audit --no-fund
+# docs/ wird vom prebuild-Schritt gebraucht (render-docs.mjs -> deployment.html)
+COPY docs/ docs/
+COPY frontend/ frontend/
+RUN cd frontend && npm run build
+
+# ---------- Python-Abhaengigkeiten ----------
+# gcc/python3.12-devel/krb5-devel nur hier: gssapi/pykerberos werden aus dem
+# Quellpaket gebaut. Das fertige venv wird ins Laufzeit-Image kopiert.
+FROM ${BASE_IMAGE} AS pydeps
+RUN dnf install -y --setopt=install_weak_deps=False python3.12 python3.12-pip python3.12-devel gcc krb5-devel \
+    && dnf clean all
+COPY backend/requirements.lock /tmp/requirements.lock
+RUN python3.12 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock
+
+# ---------- Laufzeit-Image ----------
+FROM ${BASE_IMAGE}
+
+ARG HVNB_VERSION=dev
+ARG HVNB_COMMIT=unknown
+LABEL org.opencontainers.image.title="AU Storage Manager for Hyper-V" \
+      org.opencontainers.image.version="${HVNB_VERSION}" \
+      org.opencontainers.image.revision="${HVNB_COMMIT}"
+
+ENV LANG=C.UTF-8 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    APP_DIR=/opt/app \
+    PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HVNB_TLS_CERT_PATH=/etc/hvnb/certs/server.crt \
+    HVNB_TLS_KEY_PATH=/etc/hvnb/certs/server.key
+
+# krb5-workstation liefert kinit/klist nur fuer manuelle Diagnose (wie im
+# bisherigen Image), krb5-libs braucht gssapi zur Laufzeit.
+RUN dnf install -y --setopt=install_weak_deps=False \
+        python3.12 nginx openssl gettext krb5-libs krb5-workstation \
+    && dnf clean all \
+    && mkdir -p /opt/app/backend /opt/app/frontend /etc/hvnb/certs /var/log/hvnb /data
+
+COPY --from=pydeps /opt/venv /opt/venv
+COPY backend/app /opt/app/backend/app
+COPY --from=frontend /src/frontend/dist /opt/app/frontend/dist
+COPY release-build/VERSION.json release-build/CHANGELOG.json /opt/app/
+
+COPY docker/entrypoint-release.sh /usr/local/bin/entrypoint.sh
+COPY docker/gen-selfsigned-cert.sh /usr/local/bin/gen-selfsigned-cert.sh
+COPY docker/nginx.conf.template /etc/nginx/templates/hvnb.conf.template
+COPY docker/supervisord-release.conf /etc/supervisord.conf
+COPY docker/openssl-legacy.cnf /etc/hvnb/openssl-legacy.cnf
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gen-selfsigned-cert.sh
+
+EXPOSE 443
+VOLUME ["/data", "/etc/hvnb/certs"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

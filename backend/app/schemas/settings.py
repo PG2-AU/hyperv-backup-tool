@@ -17,6 +17,8 @@ class VersionInfo(BaseModel):
     Fusszeile im Hauptmenue -- fuer alle angemeldeten Benutzer sichtbar
     (keine sensiblen Daten), daher separat von PublicSettings/SETTINGS_MANAGE."""
 
+    # Versionsnummer des Release-Images; None bei Auslieferung per git-Checkout
+    version: str | None = None
     commit: str | None = None
     commit_short: str | None = None
     commit_count: int | None = None

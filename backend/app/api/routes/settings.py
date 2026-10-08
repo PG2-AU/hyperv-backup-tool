@@ -5,9 +5,7 @@ die Konfiguration statt ENV/.env auch in der DB verwaltet werden kann.
 """
 
 import re
-import subprocess
 from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, Depends
 
@@ -16,14 +14,12 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_permission
 from app.core.config import get_settings
 from app.core.rbac import Permission
+from app.core.release import APP_DIR, changelog, current_commit, release_info
 from app.db.session import get_db
 from app.models.scheduler_status import SchedulerStatus
 from app.schemas.settings import CommitInfo, PublicSettings, VersionInfo
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-
-APP_DIR = Path("/opt/app")
-
 
 def _redact_git_url(url: str) -> str:
     """Entfernt in einer HTTPS-Git-URL eingebettete Zugangsdaten
@@ -47,7 +43,8 @@ def get_public_settings(user=Depends(require_permission(Permission.SETTINGS_MANA
 
 @router.get("/version", response_model=VersionInfo)
 def get_version(db: Session = Depends(get_db), user=Depends(get_current_user)) -> VersionInfo:
-    """Aktueller Git-Commit (entrypoint.sh/updater.sh checken den Branch per
+    """Version des Release-Images (None bei Auslieferung per git-Checkout) und
+    aktueller Git-Commit (entrypoint.sh/updater.sh checken den Branch per
     'git reset --hard' aus, siehe docker/) sowie Zeitpunkt des letzten
     Deploys -- abgeleitet aus dem Zeitstempel des zuletzt gebauten
     Frontend-Bundles, da dieses bei jedem entrypoint- oder Updater-Lauf frisch
@@ -58,21 +55,8 @@ def get_version(db: Session = Depends(get_db), user=Depends(get_current_user)) -
     Kennzahl ohne manuelle Pflege. Die drei last_*-Zeitstempel der
     Hintergrund-Jobs kommen aus der SchedulerStatus-Singleton-Zeile (siehe
     app.core.scheduler), die bei jedem Lauf aktualisiert wird."""
-    commit: str | None = None
-    commit_count: int | None = None
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(APP_DIR), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            commit = result.stdout.strip()
-        count_result = subprocess.run(
-            ["git", "-C", str(APP_DIR), "rev-list", "--count", "HEAD"], capture_output=True, text=True, timeout=5,
-        )
-        if count_result.returncode == 0:
-            commit_count = int(count_result.stdout.strip())
-    except Exception:
-        pass
+    commit, commit_count = current_commit()
+    release = release_info()
 
     last_deploy_at: str | None = None
     dist_marker = APP_DIR / "frontend" / "dist" / "index.html"
@@ -86,6 +70,7 @@ def get_version(db: Session = Depends(get_db), user=Depends(get_current_user)) -
     scheduler_status = db.query(SchedulerStatus).first()
 
     return VersionInfo(
+        version=str(release.get("version")) if release and release.get("version") else None,
         commit=commit,
         commit_short=commit[:7] if commit else None,
         commit_count=commit_count,
@@ -119,31 +104,6 @@ def get_version_history(limit: int = 100, user=Depends(get_current_user)) -> lis
     (Datensatztrenner) statt z.B. '|', da Commit-Nachrichten in diesem
     Projekt selbst laengere Freitext-Absaetze mit Sonderzeichen enthalten
     koennen, die sonst mit einem sichtbaren Trennzeichen kollidieren
-    wuerden."""
-    field_sep = "\x1f"
-    record_sep = "\x1e"
-    try:
-        result = subprocess.run(
-            [
-                "git", "-C", str(APP_DIR), "log", f"-n{limit}",
-                f"--pretty=format:%H{field_sep}%h{field_sep}%ad{field_sep}%s{field_sep}%b{record_sep}",
-                "--date=iso-strict",
-            ],
-            capture_output=True, text=True, timeout=10,
-        )
-    except Exception:
-        return []
-    if result.returncode != 0:
-        return []
-
-    commits: list[CommitInfo] = []
-    for record in result.stdout.split(record_sep):
-        record = record.strip("\n")
-        if not record:
-            continue
-        parts = record.split(field_sep)
-        if len(parts) < 4:
-            continue
-        body = parts[4].strip() if len(parts) > 4 and parts[4].strip() else None
-        commits.append(CommitInfo(hash=parts[0], short_hash=parts[1], date=parts[2], subject=parts[3], body=body))
-    return commits
+    wuerden. Im Release-Image stammt die Liste aus der mitgelieferten
+    CHANGELOG.json (siehe app.core.release)."""
+    return [CommitInfo(**entry) for entry in changelog(limit)]

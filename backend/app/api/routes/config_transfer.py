@@ -7,7 +7,6 @@ Kopie bleibt auf dem Server liegen. Import ist zustandslos: die Vorschau
 dieselbe Datei jeweils erneut hochgeladen."""
 
 import socket
-import subprocess
 from datetime import datetime, timezone
 
 from apscheduler.triggers.cron import CronTrigger
@@ -17,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.routes.settings import APP_DIR
+from app.core.release import current_commit
 from app.api.routes.winrm_certs import build_bundle
 from app.core.config_transfer import ConfigTransferError, apply_import, build_export, installation_blockers, plan_import
 from app.core.rbac import Permission
@@ -76,11 +75,8 @@ def _log(db: Session, message: str) -> None:
 
 
 def _app_commit() -> str | None:
-    try:
-        result = subprocess.run(["git", "-C", str(APP_DIR), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
-        return result.stdout.strip() or None if result.returncode == 0 else None
-    except Exception:  # noqa: BLE001
-        return None
+    commit, _ = current_commit()
+    return commit[:7] if commit else None
 
 
 async def _read_upload(file: UploadFile) -> bytes:

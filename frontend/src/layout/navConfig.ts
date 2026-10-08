@@ -140,7 +140,7 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Ansicht", path: "/settings?tab=display" },
       { label: "DB-Sicherung", path: "/settings?tab=db-backup", requiredPermission: "settings:manage" },
       { label: "System (Export/Import)", path: "/settings?tab=system", requiredPermission: "settings:manage" },
-      { label: "Updates (Git)", path: "/settings?tab=updates", requiredPermission: "settings:manage" },
+      { label: "Updates", path: "/settings?tab=updates", requiredPermission: "settings:manage" },
     ],
   },
 ];

@@ -50,6 +50,7 @@ import {
   useCreateUser,
   useDeleteUser,
   usePublicSettings,
+  useVersion,
   useRoles,
   useSearchAdUsers,
   useUpdateUserPassword,
@@ -75,7 +76,7 @@ import type { HyperVCluster, SnapMirrorLabel } from "@/api/types";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { buildHyperVClusterCreationSteps, buildHyperVClusterUpdateSteps } from "@/utils/hypervSteps";
-import { HEALTH_COLOR as HYPERV_HEALTH_COLOR } from "@/utils/format";
+import { HEALTH_COLOR as HYPERV_HEALTH_COLOR, formatDateTime } from "@/utils/format";
 import { useAuthStore } from "@/store/authStore";
 import { LOG_FONT_SIZE_OPTIONS, useDisplayStore, type ContentFontSize } from "@/store/displayStore";
 
@@ -394,6 +395,7 @@ export function SettingsPage() {
   const { data: users } = useUsers();
   const { data: roles } = useRoles();
   const { data: settings } = usePublicSettings();
+  const { data: version } = useVersion();
   const deleteUser = useDeleteUser();
   const currentUserId = useAuthStore((s) => s.user?.id);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -519,7 +521,7 @@ export function SettingsPage() {
           <Tabs.Tab value="display">Ansicht</Tabs.Tab>
           <Tabs.Tab value="db-backup">DB-Sicherung</Tabs.Tab>
           <Tabs.Tab value="system">System</Tabs.Tab>
-          <Tabs.Tab value="updates">Updates (Git)</Tabs.Tab>
+          <Tabs.Tab value="updates">Updates</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="users" pt="md">
@@ -948,12 +950,26 @@ export function SettingsPage() {
 
         <Tabs.Panel value="updates" pt="md">
           <Paper p="md" maw={860}>
-            <Stack gap="xs">
-              <ConfigRow label="Git-Repository" value={settings?.git_repo_url || "nicht konfiguriert"} />
-              <ConfigRow label="Branch" value={settings?.git_branch ?? "-"} />
-              <ConfigRow label="Auto-Update aktiv" value={settings?.auto_update_enabled ? "Ja" : "Nein"} />
-              <ConfigRow label="Intervall (Minuten)" value={settings?.auto_update_interval_minutes ?? "-"} />
-            </Stack>
+            {version?.version ? (
+              // Release-Image: die App holt selbst nichts nach, aktualisiert wird auf dem Host.
+              <Stack gap="xs">
+                <ConfigRow label="Auslieferung" value="Release-Image" />
+                <ConfigRow label="Version" value={version.version} />
+                <ConfigRow label="Commit" value={version.commit_short ?? "-"} />
+                <ConfigRow label="Gebaut am" value={formatDateTime(version.last_deploy_at, "unbekannt")} />
+                <Text size="xs" c="dimmed">
+                  Diese Installation lädt keinen Code aus dem Internet nach. Ein Update wird auf dem Server eingespielt (neues Image aus
+                  der Registry oder als Paketdatei), siehe Installationsdokumentation.
+                </Text>
+              </Stack>
+            ) : (
+              <Stack gap="xs">
+                <ConfigRow label="Git-Repository" value={settings?.git_repo_url || "nicht konfiguriert"} />
+                <ConfigRow label="Branch" value={settings?.git_branch ?? "-"} />
+                <ConfigRow label="Auto-Update aktiv" value={settings?.auto_update_enabled ? "Ja" : "Nein"} />
+                <ConfigRow label="Intervall (Minuten)" value={settings?.auto_update_interval_minutes ?? "-"} />
+              </Stack>
+            )}
           </Paper>
         </Tabs.Panel>
       </Tabs>
@@ -961,9 +977,7 @@ export function SettingsPage() {
       <ProcessModal opened={!!process} onClose={() => setProcess(null)} plan={process} />
 
       <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
-        Die Tabs "Active Directory" und "Updates (Git)" zeigen die aktuell aktive
-        Server-Konfiguration (aus Umgebungsvariablen/.env) nur an. Bearbeitung direkt aus der GUI folgt fuer diese
-        Bereiche in einer kommenden Iteration. Die globalen WinRM-Einstellungen unter "Hyper-V-Hosts" gelten ebenso
+        Der Tab "Updates" zeigt die Auslieferung dieser Installation nur an. Die globalen WinRM-Einstellungen unter "Hyper-V-Hosts" gelten ebenso
         nur zur Anzeige -- sie werden fuer alle registrierten Hyper-V-Cluster verwendet.
       </Alert>
     </Stack>

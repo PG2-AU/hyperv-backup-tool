@@ -40,6 +40,8 @@ export interface PublicSettings {
 
 export interface VersionInfo {
   commit?: string | null;
+  // Versionsnummer des Release-Images; leer bei Auslieferung per git-Checkout
+  version?: string | null;
   commit_short?: string | null;
   commit_count?: number | null;
   last_deploy_at?: string | null;

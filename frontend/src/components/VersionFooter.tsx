@@ -18,7 +18,9 @@ export function VersionFooter() {
     <Tooltip label={version.commit ?? "unbekannter Commit"} position="top-start" openDelay={300}>
       <Stack gap={0} px="xs" py={6}>
         <Text size="xs" c="dimmed">
-          Version {version.commit_short ?? "?"} (Iteration {version.commit_count ?? "?"})
+          {version.version
+            ? `Version ${version.version} (${version.commit_short ?? "?"})`
+            : `Version ${version.commit_short ?? "?"} (Iteration ${version.commit_count ?? "?"})`}
         </Text>
         <Text size="xs" c="dimmed">
           Deployed: {deployedLabel}

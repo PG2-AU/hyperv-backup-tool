@@ -18,8 +18,9 @@ frontend/   React + TypeScript + Mantine v7  -> Web-GUI (Sidebar-Layout, Kontext
   src/components/  Wiederverwendbare Komponenten (Formulare, Assistenten, Modals, Detail-
                     Kopfzeilen, Aktivitaeten-Fusszeile, globale Suche)
   src/api/         Typisierte API-Clients (hooks.ts, hooks.*.ts je Bereich, types.ts)
-  public/docs/     Statische Doku-Seiten der App (architecture.html, deployment.html --
-                    von Hand gepflegt, deployment.html inhaltsgleich zu docs/DEPLOYMENT.md)
+  public/docs/     Statische Doku-Seiten der App: architecture.html (von Hand gepflegt) und
+                    deployment.html (bei jedem Frontend-Build aus docs/DEPLOYMENT.md
+                    erzeugt, scripts/render-docs.mjs -- nie von Hand aendern)
 backend/    FastAPI (Python)                 -> REST-API, Auth/RBAC, Orchestrierung
   app/core/        Config, Security (JWT), RBAC-Modell (Permissions, feste Rollen),
                     Kerberos-Konfiguration, WinRM-Trust, Kapazitaetsverlauf und -prognose,
