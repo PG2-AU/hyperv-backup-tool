@@ -69,6 +69,7 @@ ROUTES: dict[tuple[str, str], tuple[str, str]] = {
     ("PUT", "/api/updates/package"): ("Update", "Paket hochgeladen"),
     ("DELETE", "/api/updates/package"): ("Update", "Paket verworfen"),
     ("POST", "/api/updates/install"): ("Update", "Einspielen angefordert"),
+    ("PUT", "/api/updates/auto-update"): ("Update", "Automatische Updates geschaltet"),
     ("PUT", "/api/email-config"): ("E-Mail", "Einstellungen geändert"),
     ("POST", "/api/file-restore/runs"): ("Datei-Restore", "gestartet"),
     ("POST", "/api/file-restore/runs/{run_id}/cleanup"): ("Datei-Restore", "beendet/aufgeräumt"),

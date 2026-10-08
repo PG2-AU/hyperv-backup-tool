@@ -44,6 +44,15 @@ KEEP_DB_BACKUPS=5
 
 log() { echo "[hvnb-update] $*"; }
 die() { echo "[hvnb-update] FEHLER: $*" >&2; exit 1; }
+# Exit 3 = "jetzt nicht, spaeter erneut versuchen" (laufende Backups, anderes Update) --
+# darauf verlaesst sich hvnb-git-autoupdate.
+die_busy() { echo "[hvnb-update] FEHLER: $*" >&2; exit 3; }
+
+take_lock() {
+  mkdir -p "${STATE_DIR}"
+  exec 9>"${STATE_DIR}/${UNIT}.update.lock"
+  flock -n 9 || die_busy "Fuer ${UNIT} laeuft bereits ein Update oder Rollback."
+}
 
 quadlet_value() { sed -n "s/^$1=//p" "${QUADLET}" | head -n1; }
 
@@ -190,6 +199,7 @@ verify_package() {
 cmd_install() {
   local package="$1" allow_unsigned="$2" force="$3"
   require_quadlet
+  take_lock
   verify_package "${package}" "${allow_unsigned}"
 
   if container_running; then
@@ -197,7 +207,7 @@ cmd_install() {
     busy="$(busy_runs)"
     if [ "${force}" != "1" ]; then
       [[ "${busy}" =~ ^[0-9]+$ ]] || die "Konnte nicht pruefen, ob noch Backups/Restores laufen. In der App nachsehen und dann bewusst --force angeben."
-      [ "${busy}" = "0" ] || die "In der App laufen noch ${busy} Backup-/Restore-Vorgaenge. Abwarten oder bewusst --force angeben."
+      [ "${busy}" = "0" ] || die_busy "In der App laufen noch ${busy} Backup-/Restore-Vorgaenge. Abwarten oder bewusst --force angeben."
     fi
   else
     log "Hinweis: Container laeuft nicht -- keine Pruefung auf laufende Vorgaenge, keine DB-Sicherung im Betrieb."
@@ -248,6 +258,7 @@ cmd_install() {
 cmd_rollback() {
   local with_db="$1"
   require_quadlet
+  take_lock
   local previous db_backup
   previous="$(state_value PREVIOUS_IMAGE)"
   db_backup="$(state_value DB_BACKUP)"
@@ -422,7 +433,7 @@ for arg in "$@"; do
   esac
 done
 
-for tool in podman systemctl curl openssl sha256sum; do
+for tool in podman systemctl curl openssl sha256sum flock; do
   command -v "${tool}" >/dev/null || die "Benoetigtes Programm fehlt: ${tool}"
 done
 

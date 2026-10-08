@@ -13,6 +13,8 @@ Rueckfall). Dateien im Ordner:
                           benennt ihn waehrend der Arbeit in request.processing um)
   agent.json              Lebenszeichen des Host-Dienstes
   result.json/result.log  Ergebnis des letzten Einspielens (vom Dienst)
+  autoupdate.json         Zustand des Auto-Updates aus Git (hvnb-git-autoupdate)
+  settings.json           Schalter "automatische Updates" (von der App)
 
 Nur im Release-Image verfuegbar (app.core.release.release_info). Ohne
 Signatur (Nutzer-Entscheidung 2026-10-08): geprueft wird die SHA-256-
@@ -65,6 +67,29 @@ def agent_state() -> dict:
     except ValueError:
         pass
     return {"active": active, "last_seen_at": seen}
+
+
+def auto_update_state() -> dict | None:
+    """Zustand des Auto-Updates aus Git (scripts/hvnb-git-autoupdate, nur
+    Entwicklungsumgebungen) -- None, wenn es auf dem Server nicht eingerichtet
+    ist bzw. sich nicht mehr meldet. 'enabled' ist der Schalter aus der GUI."""
+    data = _read_json("autoupdate.json")
+    if not data:
+        return None
+    try:
+        interval = max(1, int(data.get("interval_minutes") or 5))
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(str(data.get("seen_at")).replace("Z", "+00:00"))).total_seconds()
+    except (TypeError, ValueError):
+        return None
+    # Waehrend eines Builds meldet sich der Dienst laenger nicht.
+    if age > max(3 * interval, 30) * 60:
+        return None
+    settings = _read_json("settings.json") or {}
+    return {**data, "enabled": settings.get("auto_update") != "off"}
+
+
+def set_auto_update(enabled: bool) -> None:
+    write_json("settings.json", {"auto_update": "on" if enabled else "off"})
 
 
 def staged() -> dict | None:

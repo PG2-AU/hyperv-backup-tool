@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Badge, Button, Code, FileInput, Group, Paper, Progress, Stack, Text, Title } from "@mantine/core";
+import { Alert, Badge, Button, Code, FileInput, Group, Paper, Progress, Stack, Switch, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconAlertTriangle, IconCheck, IconInfoCircle, IconUpload } from "@tabler/icons-react";
 
 import { usePublicSettings, useVersion } from "@/api/hooks.settings";
-import { useDiscardUpdatePackage, useInstallUpdatePackage, useUpdateStatus, useUploadUpdatePackage } from "@/api/hooks.updates";
+import {
+  useDiscardUpdatePackage,
+  useInstallUpdatePackage,
+  useSetAutoUpdate,
+  useUpdateStatus,
+  useUploadUpdatePackage,
+} from "@/api/hooks.updates";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatDateTime } from "@/utils/format";
@@ -43,6 +49,7 @@ export function UpdatesTab() {
   const upload = useUploadUpdatePackage(setProgress);
   const discard = useDiscardUpdatePackage();
   const install = useInstallUpdatePackage();
+  const setAutoUpdate = useSetAutoUpdate();
   const versionBefore = useRef<string | null>(null);
 
   const fail = (err: unknown, fallback: string) =>
@@ -122,6 +129,14 @@ export function UpdatesTab() {
   const staged = status?.staged;
   const result = status?.last_result;
   const busy = installing || !!status?.pending;
+  const auto = status?.auto_update;
+  const autoColor: Record<string, string> = {
+    current: "green", building: "blue", installing: "blue", waiting: "yellow", failed: "red", error: "red", disabled: "gray",
+  };
+  const autoLabel: Record<string, string> = {
+    current: "aktuell", building: "baut", installing: "spielt ein", waiting: "wartet", failed: "fehlgeschlagen", error: "Fehler",
+    disabled: "ausgeschaltet",
+  };
 
   return (
     <Stack gap="md" maw={860}>
@@ -156,6 +171,45 @@ export function UpdatesTab() {
           </Text>
         </Stack>
       </Paper>
+
+      {auto && (
+        <Paper p="md">
+          <Group justify="space-between" mb="xs">
+            <Group gap="xs">
+              <Title order={5}>Automatische Updates aus Git</Title>
+              <Badge color="grape" variant="light">
+                Entwicklungsumgebung
+              </Badge>
+            </Group>
+            <Switch
+              label={auto.enabled ? "eingeschaltet" : "ausgeschaltet"}
+              checked={auto.enabled}
+              disabled={setAutoUpdate.isPending}
+              onChange={(e) => setAutoUpdate.mutate(e.currentTarget.checked, { onError: (err) => fail(err, "Umschalten fehlgeschlagen.") })}
+            />
+          </Group>
+          <Stack gap="xs">
+            <Row label="Repository" value={`${auto.repo ?? "-"} (${auto.branch ?? "-"}), Prüfung alle ${auto.interval_minutes ?? "?"} min`} />
+            <Row
+              label="Zustand"
+              value={
+                <Group gap="xs" wrap="nowrap" align="flex-start">
+                  <Badge color={auto.enabled ? autoColor[auto.state ?? ""] ?? "gray" : "gray"} variant="light" style={{ flexShrink: 0 }}>
+                    {auto.enabled ? autoLabel[auto.state ?? ""] ?? "unbekannt" : "ausgeschaltet"}
+                  </Badge>
+                  <Text size="sm">{auto.enabled ? auto.message : "Der Server prüft weiter, baut und installiert aber nichts."}</Text>
+                </Group>
+              }
+            />
+            <Row label="Zuletzt geprüft" value={formatDateTime(auto.last_check_at, "noch nie")} />
+            <Row label="Zuletzt aktualisiert" value={formatDateTime(auto.last_update_at, "noch nie")} />
+            <Text size="xs" c="dimmed">
+              Der Server baut bei jedem neuen Commit auf diesem Branch selbst ein Image und spielt es ein, sobald keine Backups oder
+              Restores laufen. Einrichten und Entfernen nur auf dem Server (<Code>hvnb-git-autoupdate</Code>).
+            </Text>
+          </Stack>
+        </Paper>
+      )}
 
       <Paper p="md">
         <Title order={5} mb="xs">

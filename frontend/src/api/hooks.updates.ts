@@ -23,6 +23,20 @@ export interface UpdateResult {
   log?: string | null;
 }
 
+// Auto-Update aus Git (scripts/hvnb-git-autoupdate, nur Entwicklungsumgebungen)
+export interface AutoUpdateState {
+  enabled: boolean;
+  branch?: string | null;
+  repo?: string | null;
+  interval_minutes?: string | null;
+  state?: "current" | "building" | "installing" | "waiting" | "failed" | "error" | "disabled" | null;
+  message?: string | null;
+  target_commit?: string | null;
+  installed_commit?: string | null;
+  last_check_at?: string | null;
+  last_update_at?: string | null;
+}
+
 export interface UpdateStatus {
   // release = Release-Image (Upload moeglich), git = bisherige Auslieferung
   delivery: "release" | "git";
@@ -32,6 +46,8 @@ export interface UpdateStatus {
   staged?: StagedUpdatePackage | null;
   pending?: "requested" | "running" | null;
   last_result?: UpdateResult | null;
+  // fehlt, wenn auf dem Server nicht eingerichtet
+  auto_update?: AutoUpdateState | null;
 }
 
 const KEY = ["update-status"];
@@ -73,6 +89,14 @@ export function useInstallUpdatePackage() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async () => (await apiClient.post<UpdateStatus>("/updates/install")).data,
+    onSuccess: (data) => queryClient.setQueryData(KEY, data),
+  });
+}
+
+export function useSetAutoUpdate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (enabled: boolean) => (await apiClient.put<UpdateStatus>("/updates/auto-update", { enabled })).data,
     onSuccess: (data) => queryClient.setQueryData(KEY, data),
   });
 }

@@ -41,6 +41,26 @@ class UpdateResult(BaseModel):
     log: str | None = None
 
 
+class AutoUpdate(BaseModel):
+    """Auto-Update aus Git (nur Entwicklungsumgebungen, auf dem Server eingerichtet)."""
+
+    enabled: bool
+    branch: str | None = None
+    repo: str | None = None
+    interval_minutes: str | None = None
+    # current | building | installing | waiting | failed | error | disabled
+    state: str | None = None
+    message: str | None = None
+    target_commit: str | None = None
+    installed_commit: str | None = None
+    last_check_at: str | None = None
+    last_update_at: str | None = None
+
+
+class AutoUpdateWrite(BaseModel):
+    enabled: bool
+
+
 class UpdateStatus(BaseModel):
     # release = Release-Image (Upload moeglich), git = bisherige Auslieferung
     delivery: str
@@ -51,6 +71,8 @@ class UpdateStatus(BaseModel):
     # requested | running | None
     pending: str | None = None
     last_result: UpdateResult | None = None
+    # None = auf dem Server nicht eingerichtet
+    auto_update: AutoUpdate | None = None
 
 
 def _user_name(user) -> str:
@@ -67,6 +89,7 @@ def _status() -> UpdateStatus:
     agent = app_update.agent_state()
     staged = app_update.staged()
     result = app_update.last_result()
+    auto = app_update.auto_update_state()
     return UpdateStatus(
         delivery="release" if release else "git",
         version=str(release.get("version")) if release and release.get("version") else None,
@@ -74,6 +97,7 @@ def _status() -> UpdateStatus:
         staged=StagedPackage(**{k: staged.get(k) for k in StagedPackage.model_fields}) if staged else None,
         pending=app_update.pending(),
         last_result=UpdateResult(**{k: result.get(k) for k in UpdateResult.model_fields}) if result else None,
+        auto_update=AutoUpdate(**{k: (auto.get(k) or None) if k != "enabled" else auto["enabled"] for k in AutoUpdate.model_fields}) if auto else None,
     )
 
 
@@ -179,4 +203,15 @@ def install_package(db: Session = Depends(get_db), user=Depends(_manage)) -> Upd
         "requested_by": _user_name(user), "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     })
     _log(db, f"Update auf Version {staged['version']} angefordert ({staged['package']}, durch {_user_name(user)})")
+    return _status()
+
+
+@router.put("/auto-update", response_model=UpdateStatus)
+def set_auto_update(payload: AutoUpdateWrite, db: Session = Depends(get_db), user=Depends(_manage)) -> UpdateStatus:
+    """Schaltet das Auto-Update aus Git ein oder aus. Der Dienst auf dem Server
+    liest den Schalter vor jedem Durchlauf; ausgeschaltet baut und installiert
+    er nichts."""
+    _require_release()
+    app_update.set_auto_update(payload.enabled)
+    _log(db, f"Automatische Updates aus Git {'eingeschaltet' if payload.enabled else 'ausgeschaltet'} (durch {_user_name(user)})")
     return _status()

@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+# hvnb-git-autoupdate -- haelt eine ENTWICKLUNGS-/Testumgebung automatisch auf
+# dem Stand eines Git-Branches: prueft regelmaessig das Repository, baut bei
+# einem neuen Commit auf diesem Server ein Release-Image und spielt es mit
+# hvnb-update ein. Der Container selbst bleibt ohne git und laedt nichts nach.
+#
+# Nicht fuer Produktion gedacht: jeder Push auf den Branch landet ungeprueft in
+# der Umgebung, und der Server braucht Internetzugang (Git, Paketquellen).
+#
+#   hvnb-git-autoupdate --install [--repo <url>] [--branch <name>] [--interval <min>]
+#        Einrichten (systemd-Timer). Ohne --repo/--branch werden
+#        HVNB_GIT_REPO_URL/HVNB_GIT_BRANCH aus der .env der Installation uebernommen.
+#   hvnb-git-autoupdate --run        ein Durchlauf (ruft der Timer auf)
+#   hvnb-git-autoupdate --status     Einstellungen und letzter Durchlauf
+#   hvnb-git-autoupdate --uninstall  Timer entfernen (Einstellungen bleiben)
+#
+# Ein-/Ausschalten ohne Shell: Settings > Updates in der GUI. Ausgeschaltet
+# prueft der Timer weiter, baut und installiert aber nichts.
+#
+# Versionsnummer der gebauten Images: <letzter Versions-Tag oder 0.0.0>-dev.<Anzahl
+# Commits>.<Commit>, z.B. 1.1.0-dev.480.3fa2c1d.
+set -euo pipefail
+
+UNIT="${HVNB_UNIT:-hvnb-backup}"
+QUADLET="${HVNB_QUADLET:-${HOME}/.config/containers/systemd/${UNIT}.container}"
+CONFIG_DIR="${HVNB_STATE_DIR:-${HOME}/.config/hvnb}"
+CONFIG="${CONFIG_DIR}/${UNIT}.git-autoupdate.conf"
+WORK_DIR="${HVNB_AUTOUPDATE_WORK_DIR:-${HOME}/.local/share/hvnb/${UNIT}-git-autoupdate}"
+SRC="${WORK_DIR}/src"
+STATE="${WORK_DIR}/state"
+LOG="${WORK_DIR}/last-run.log"
+BIN_DIR="${HOME}/.local/bin"
+SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
+TIMER="${UNIT}-git-autoupdate"
+ENGINE="${CONTAINER_ENGINE:-podman}"
+
+log() { echo "[hvnb-git-autoupdate] $*"; }
+die() { echo "[hvnb-git-autoupdate] FEHLER: $*" >&2; exit 1; }
+now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+quadlet_value() { sed -n "s/^$1=//p" "${QUADLET}" | head -n1; }
+conf_value() { [ -f "${CONFIG}" ] && sed -n "s/^$1=//p" "${CONFIG}" | head -n1 || true; }
+state_value() { [ -f "${STATE}" ] && sed -n "s/^$1=//p" "${STATE}" | head -n1 || true; }
+set_state() {
+  # set_state KEY VALUE [KEY VALUE ...] -- uebrige Schluessel bleiben erhalten
+  mkdir -p "${WORK_DIR}"
+  touch "${STATE}"
+  while [ "$#" -ge 2 ]; do
+    grep -v "^$1=" "${STATE}" > "${STATE}.tmp" || true
+    echo "$1=$2" >> "${STATE}.tmp"
+    mv "${STATE}.tmp" "${STATE}"
+    shift 2
+  done
+}
+
+redact() { printf '%s' "$1" | sed -E 's#(https?://)[^/@[:space:]]+@#\1***@#'; }
+
+hvnb_update() {
+  if [ -x "${BIN_DIR}/hvnb-update" ]; then "${BIN_DIR}/hvnb-update" "$@"; else "$(dirname "$(readlink -f "$0")")/hvnb-update" "$@"; fi
+}
+
+inbox_dir() {
+  local volume mount
+  volume="$(sed -n 's/^Volume=\([^:]*\):\/data$/\1/p' "${QUADLET}" | head -n1)"
+  [ -n "${volume}" ] || return 1
+  mount="$("${ENGINE}" volume inspect "${volume}" --format '{{.Mountpoint}}' 2>/dev/null)" || return 1
+  echo "${mount}/update-inbox"
+}
+
+# Meldet der App den Zustand (Settings > Updates) -- ein Schluessel je Zeile.
+report() {
+  # report <state> <message>
+  local inbox
+  inbox="$(inbox_dir)" || return 0
+  [ -d "$(dirname "${inbox}")" ] || return 0
+  mkdir -p "${inbox}"
+  local message="${2//\\/ }"
+  message="${message//\"/\'}"
+  printf '{\n"seen_at": "%s",\n"branch": "%s",\n"repo": "%s",\n"interval_minutes": "%s",\n"state": "%s",\n"message": "%s",\n"target_commit": "%s",\n"installed_commit": "%s",\n"last_check_at": "%s",\n"last_update_at": "%s"\n}\n' \
+    "$(now)" "$(conf_value BRANCH)" "$(redact "$(conf_value REPO)" | sed 's/"//g')" "$(conf_value INTERVAL_MINUTES)" "$1" "${message}" \
+    "$(state_value TARGET_COMMIT)" "$(state_value INSTALLED_COMMIT)" "$(state_value LAST_CHECK_AT)" "$(state_value LAST_UPDATE_AT)" \
+    > "${inbox}/.autoupdate.json.tmp"
+  mv "${inbox}/.autoupdate.json.tmp" "${inbox}/autoupdate.json"
+}
+
+# Schalter aus der GUI: /data/update-inbox/settings.json mit "auto_update": "off".
+gui_enabled() {
+  local inbox
+  inbox="$(inbox_dir)" || return 0
+  [ -f "${inbox}/settings.json" ] || return 0
+  ! grep -q '^"auto_update": "off"' "${inbox}/settings.json"
+}
+
+running_commit() {
+  local container
+  container="$(quadlet_value ContainerName)"
+  "${ENGINE}" exec "${container:-systemd-${UNIT}}" python3 -c \
+    "import json;print(json.load(open('/opt/app/VERSION.json')).get('commit',''))" 2>/dev/null || true
+}
+
+cmd_run() {
+  [ -f "${CONFIG}" ] || die "Nicht eingerichtet (${CONFIG} fehlt) -- zuerst --install."
+  [ -f "${QUADLET}" ] || die "Quadlet-Unit ${QUADLET} nicht gefunden."
+  local repo branch
+  repo="$(conf_value REPO)"; branch="$(conf_value BRANCH)"
+  [ -n "${repo}" ] && [ -n "${branch}" ] || die "REPO/BRANCH fehlen in ${CONFIG}."
+  mkdir -p "${WORK_DIR}"
+  exec 8>"${WORK_DIR}/lock"
+  flock -n 8 || { log "Ein Durchlauf laeuft bereits."; exit 0; }
+
+  if ! gui_enabled; then
+    report "disabled" "Automatische Updates sind in der GUI ausgeschaltet."
+    exit 0
+  fi
+
+  local remote
+  if ! remote="$(GIT_TERMINAL_PROMPT=0 git ls-remote "${repo}" "refs/heads/${branch}" 2>>"${LOG}" | awk '{print $1}' | head -n1)" || [ -z "${remote}" ]; then
+    set_state LAST_CHECK_AT "$(now)"
+    report "error" "Repository nicht erreichbar oder Branch ${branch} nicht gefunden."
+    exit 0
+  fi
+  set_state LAST_CHECK_AT "$(now)"
+
+  local installed
+  installed="$(running_commit)"
+  [ -n "${installed}" ] && set_state INSTALLED_COMMIT "${installed}"
+  if [ "${remote}" = "${installed}" ]; then
+    set_state TARGET_COMMIT "${remote}"
+    report "current" "Aktuell (Commit ${remote:0:7})."
+    exit 0
+  fi
+  # Ein Commit, dessen Build oder Einspielen gescheitert ist, wird nicht alle
+  # paar Minuten erneut versucht -- erst der naechste Commit loest wieder aus.
+  if [ "${remote}" = "$(state_value FAILED_COMMIT)" ]; then
+    report "failed" "Commit ${remote:0:7} konnte nicht eingespielt werden: $(state_value FAILED_REASON) Protokoll: ${LOG}"
+    exit 0
+  fi
+
+  set_state TARGET_COMMIT "${remote}"
+  : > "${LOG}"
+  log "Neuer Commit ${remote:0:7} auf ${branch} (laeuft: ${installed:0:7})." | tee -a "${LOG}"
+
+  local package version
+  package="$(state_value BUILT_PACKAGE)"
+  if [ "$(state_value BUILT_COMMIT)" = "${remote}" ] && [ -n "${package}" ] && [ -f "${package}" ]; then
+    log "Paket fuer diesen Commit ist bereits gebaut." | tee -a "${LOG}"
+  else
+    report "building" "Baue Commit ${remote:0:7} ..."
+    if [ ! -d "${SRC}/.git" ]; then
+      git clone --quiet --branch "${branch}" "${repo}" "${SRC}" >>"${LOG}" 2>&1 || { fail "${remote}" "git clone fehlgeschlagen."; exit 0; }
+    fi
+    {
+      git -C "${SRC}" remote set-url origin "${repo}" &&
+      GIT_TERMINAL_PROMPT=0 git -C "${SRC}" fetch --quiet --tags --prune origin "${branch}" &&
+      git -C "${SRC}" checkout --quiet --force --detach "${remote}" &&
+      git -C "${SRC}" clean -fdq -e dist
+    } >>"${LOG}" 2>&1 || { fail "${remote}" "git fetch/checkout fehlgeschlagen."; exit 0; }
+
+    local base count
+    base="$(git -C "${SRC}" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null | sed 's/^v//')"
+    [[ "${base}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || base="0.0.0"
+    count="$(git -C "${SRC}" rev-list --count HEAD)"
+    version="${base}-dev.${count}.${remote:0:7}"
+    # Alte Pakete dieses Arbeitsordners belegen je ~170 MB.
+    find "${SRC}/dist" -maxdepth 1 -name 'hvnb-*.tar.gz*' -delete 2>/dev/null || true
+    if ! ( cd "${SRC}" && scripts/build-release.sh "${version}" ) >>"${LOG}" 2>&1; then
+      fail "${remote}" "Build fehlgeschlagen."
+      exit 0
+    fi
+    package="${SRC}/dist/hvnb-${version}.tar.gz"
+    set_state BUILT_COMMIT "${remote}" BUILT_PACKAGE "${package}" BUILT_VERSION "${version}"
+  fi
+  version="$(state_value BUILT_VERSION)"
+
+  report "installing" "Spiele ${version} ein ..."
+  local rc=0
+  hvnb_update "${package}" >>"${LOG}" 2>&1 || rc=$?
+  if [ "${rc}" = "3" ]; then
+    # Backups/Restores laufen oder ein anderes Update ist dran: Paket behalten, spaeter erneut.
+    report "waiting" "Version ${version} ist gebaut; wartet, bis keine Backups/Restores mehr laufen."
+    exit 0
+  fi
+  if [ "${rc}" != "0" ]; then
+    fail "${remote}" "Einspielen fehlgeschlagen (vorherige Version laeuft weiter)."
+    exit 0
+  fi
+
+  # Aufraeumen: Paketdatei und Images aelterer Dev-Staende (aktuelles und vorheriges bleiben).
+  local previous_image current_image
+  previous_image="$(state_value CURRENT_IMAGE)"
+  current_image="localhost/hvnb-backup:${version}"
+  rm -f "${package}" "${package}.sha256" "${package}.sig"
+  "${ENGINE}" images --format '{{.Repository}}:{{.Tag}}' | grep -E '^localhost/hvnb-backup:.*-dev\.' | while read -r image; do
+    if [ "${image}" != "${current_image}" ] && [ "${image}" != "${previous_image}" ]; then
+      "${ENGINE}" rmi "${image}" >/dev/null 2>&1 || true
+    fi
+  done
+  "${ENGINE}" image prune -f >/dev/null 2>&1 || true
+
+  set_state INSTALLED_COMMIT "${remote}" CURRENT_IMAGE "${current_image}" LAST_UPDATE_AT "$(now)" \
+    BUILT_PACKAGE "" FAILED_COMMIT "" FAILED_REASON ""
+  log "Eingespielt: ${version}" | tee -a "${LOG}"
+  report "current" "Aktuell (Commit ${remote:0:7}, Version ${version})."
+}
+
+fail() {
+  set_state FAILED_COMMIT "$1" FAILED_REASON "$2"
+  log "FEHLER: $2 (Commit ${1:0:7})" | tee -a "${LOG}"
+  report "failed" "Commit ${1:0:7}: $2 Protokoll: ${LOG}"
+}
+
+cmd_install() {
+  local repo="$1" branch="$2" interval="$3"
+  [ -f "${QUADLET}" ] || die "Quadlet-Unit ${QUADLET} nicht gefunden."
+  local env_file
+  env_file="$(quadlet_value EnvironmentFile | sed "s|^%h|${HOME}|")"
+  if [ -z "${repo}" ] && [ -f "${env_file}" ]; then repo="$(sed -n 's/^HVNB_GIT_REPO_URL=//p' "${env_file}" | head -n1)"; fi
+  if [ -z "${branch}" ] && [ -f "${env_file}" ]; then branch="$(sed -n 's/^HVNB_GIT_BRANCH=//p' "${env_file}" | head -n1)"; fi
+  [ -n "${repo}" ] || die "Kein Repository angegeben (--repo <url>) und kein HVNB_GIT_REPO_URL in ${env_file:-der .env}."
+  branch="${branch:-master}"
+  [[ "${interval}" =~ ^[0-9]+$ ]] && [ "${interval}" -ge 1 ] || die "--interval erwartet Minuten (>= 1)."
+  for tool in git "${ENGINE}" python3 flock; do command -v "${tool}" >/dev/null || die "Benoetigtes Programm fehlt: ${tool}"; done
+  GIT_TERMINAL_PROMPT=0 git ls-remote "${repo}" "refs/heads/${branch}" >/dev/null 2>&1 \
+    || die "Repository $(redact "${repo}") nicht erreichbar oder Branch ${branch} fehlt."
+
+  mkdir -p "${CONFIG_DIR}" "${BIN_DIR}" "${SYSTEMD_USER_DIR}" "${WORK_DIR}"
+  umask 077
+  printf 'REPO=%s\nBRANCH=%s\nINTERVAL_MINUTES=%s\n' "${repo}" "${branch}" "${interval}" > "${CONFIG}"
+  umask 022
+  local self_dir
+  self_dir="$(dirname "$(readlink -f "$0")")"
+  [ "$(readlink -f "$0")" = "$(readlink -f "${BIN_DIR}/hvnb-git-autoupdate")" ] || install -m 0755 "$0" "${BIN_DIR}/hvnb-git-autoupdate"
+  if [ -f "${self_dir}/hvnb-update" ] && [ "$(readlink -f "${self_dir}/hvnb-update")" != "$(readlink -f "${BIN_DIR}/hvnb-update")" ]; then
+    install -m 0755 "${self_dir}/hvnb-update" "${BIN_DIR}/hvnb-update"
+  fi
+  [ -x "${BIN_DIR}/hvnb-update" ] || die "hvnb-update fehlt in ${BIN_DIR} (liegt es neben diesem Skript?)."
+
+  cat > "${SYSTEMD_USER_DIR}/${TIMER}.service" <<UNIT_EOF
+[Unit]
+Description=AU Storage Manager - Auto-Update aus Git, nur Entwicklungsumgebung (${UNIT})
+
+[Service]
+Type=oneshot
+Environment=HVNB_UNIT=${UNIT}
+Environment=HVNB_QUADLET=${QUADLET}
+Environment=HVNB_STATE_DIR=${CONFIG_DIR}
+Environment=HVNB_AUTOUPDATE_WORK_DIR=${WORK_DIR}
+ExecStart=${BIN_DIR}/hvnb-git-autoupdate --run
+TimeoutStartSec=3600
+LogLevelMax=notice
+UNIT_EOF
+  cat > "${SYSTEMD_USER_DIR}/${TIMER}.timer" <<UNIT_EOF
+[Unit]
+Description=AU Storage Manager - Git auf neue Commits pruefen (${UNIT})
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=${interval}min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
+UNIT_EOF
+  systemctl --user daemon-reload
+  systemctl --user enable --now "${TIMER}.timer" >/dev/null
+  log "Eingerichtet: prueft $(redact "${repo}") (${branch}) alle ${interval} min."
+  log "Erster Durchlauf startet jetzt im Hintergrund; Stand: hvnb-git-autoupdate --status"
+  systemctl --user start --no-block "${TIMER}.service" || true
+}
+
+cmd_uninstall() {
+  systemctl --user disable --now "${TIMER}.timer" >/dev/null 2>&1 || true
+  rm -f "${SYSTEMD_USER_DIR}/${TIMER}.timer" "${SYSTEMD_USER_DIR}/${TIMER}.service"
+  systemctl --user daemon-reload
+  local inbox
+  if inbox="$(inbox_dir)"; then rm -f "${inbox}/autoupdate.json"; fi
+  log "Auto-Update aus Git entfernt. Einstellungen (${CONFIG}) und Arbeitsordner (${WORK_DIR}) bleiben liegen."
+}
+
+cmd_status() {
+  if [ ! -f "${CONFIG}" ]; then log "Nicht eingerichtet."; exit 0; fi
+  log "Repository:        $(redact "$(conf_value REPO)") ($(conf_value BRANCH)), alle $(conf_value INTERVAL_MINUTES) min"
+  log "Timer:             $(systemctl --user is-active "${TIMER}.timer" 2>/dev/null || true)"
+  log "In der GUI:        $(gui_enabled && echo eingeschaltet || echo ausgeschaltet)"
+  log "Laeuft:            Commit $(running_commit | cut -c1-7)"
+  log "Zuletzt geprueft:  $(state_value LAST_CHECK_AT)"
+  log "Zuletzt aktualisiert: $(state_value LAST_UPDATE_AT)"
+  [ -n "$(state_value FAILED_COMMIT)" ] && log "Fehlgeschlagen:    Commit $(state_value FAILED_COMMIT | cut -c1-7) -- $(state_value FAILED_REASON)"
+  log "Protokoll:         ${LOG}"
+}
+
+MODE="" REPO="" BRANCH="" INTERVAL="5"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --install|--run|--status|--uninstall) MODE="${1#--}" ;;
+    --repo) REPO="${2:-}"; shift ;;
+    --branch) BRANCH="${2:-}"; shift ;;
+    --interval) INTERVAL="${2:-}"; shift ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "Unbekanntes Argument $1 (siehe --help)." ;;
+  esac
+  shift
+done
+
+case "${MODE}" in
+  install) cmd_install "${REPO}" "${BRANCH}" "${INTERVAL}" ;;
+  run) cmd_run ;;
+  status) cmd_status ;;
+  uninstall) cmd_uninstall ;;
+  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
