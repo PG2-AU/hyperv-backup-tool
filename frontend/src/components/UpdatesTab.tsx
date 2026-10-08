@@ -22,8 +22,10 @@ import { IconAlertTriangle, IconCheck, IconCloudDownload, IconInfoCircle, IconRe
 
 import { usePublicSettings, useVersion } from "@/api/hooks.settings";
 import {
+  useCheckGit,
   useCheckRegistry,
   useDiscardUpdatePackage,
+  useInstallFromGit,
   useInstallFromRegistry,
   useInstallUpdatePackage,
   useRemoveGitConfig,
@@ -76,6 +78,8 @@ export function UpdatesTab() {
   const checkRegistry = useCheckRegistry();
   const installFromRegistry = useInstallFromRegistry();
   const setRegistryAuto = useSetRegistryAuto();
+  const checkGit = useCheckGit();
+  const installFromGit = useInstallFromGit();
   const setGitConfig = useSetGitConfig();
   const removeGitConfig = useRemoveGitConfig();
   const [gitForm, setGitForm] = useState<{ repo: string; branch: string; interval: number } | null>(null);
@@ -107,7 +111,7 @@ export function UpdatesTab() {
   const registryCheckedAt = status?.registry?.checked_at;
   const checking = checkingSince !== undefined && checkingSince === (registryCheckedAt ?? null);
   const backgroundRequest =
-    !!status?.pending && ["registry-check", "git-configure", "git-remove"].includes(status.pending_action ?? "");
+    !!status?.pending && ["registry-check", "git-check", "git-configure", "git-remove"].includes(status.pending_action ?? "");
   useEffect(() => {
     if (checkingSince !== undefined && !checking) setCheckingSince(undefined);
     setFastPoll(checking || backgroundRequest);
@@ -190,17 +194,39 @@ export function UpdatesTab() {
   const staged = status?.staged;
   const result = status?.last_result;
   // Nur Paket- und Registry-Auftraege tauschen die App aus; Suchen und Git-Einrichtung laufen im Hintergrund.
-  const installPending = !!status?.pending && (status.pending_action === "package" || status.pending_action === "registry-install");
+  const installPending = !!status?.pending && ["package", "registry-install", "git-install"].includes(status.pending_action ?? "");
+  const gitChecking = !!status?.pending && status.pending_action === "git-check";
+  const gitBuilding = status?.pending_action === "git-install" || (installing && status?.auto_update?.state === "building");
   const gitPending = !!status?.pending && (status.pending_action === "git-configure" || status.pending_action === "git-remove");
   const busy = installing || installPending;
   const auto = status?.auto_update;
   const autoColor: Record<string, string> = {
-    current: "green", building: "blue", installing: "blue", waiting: "yellow", failed: "red", error: "red", disabled: "gray",
+    idle: "gray", current: "green", available: "blue", building: "blue", installing: "blue", waiting: "yellow", failed: "red", error: "red",
   };
   const autoLabel: Record<string, string> = {
-    current: "aktuell", building: "baut", installing: "spielt ein", waiting: "wartet", failed: "fehlgeschlagen", error: "Fehler",
-    disabled: "ausgeschaltet",
+    idle: "noch nicht geprüft", current: "aktuell", available: "Update verfügbar", building: "baut", installing: "spielt ein",
+    waiting: "wartet", failed: "fehlgeschlagen", error: "Fehler",
   };
+  // Einspielen anbieten, wenn ein neuer Commit bekannt ist oder ein frueherer Versuch gescheitert bzw. verschoben wurde.
+  const gitInstallable = ["available", "failed", "waiting"].includes(auto?.state ?? "");
+
+  function startGitInstall() {
+    confirmAction({
+      title: "Update aus Git einspielen",
+      message:
+        "Den neuesten Commit jetzt bauen und einspielen? Der Build dauert etwa fünf Minuten; die App läuft so lange weiter. " +
+        "Danach wird die Datenbank gesichert und die Oberfläche ist etwa eine Minute nicht erreichbar.",
+      confirmLabel: "Bauen und einspielen",
+      color: "blue",
+      onConfirm: () => {
+        versionBefore.current = status?.version ?? null;
+        installFromGit.mutate(undefined, {
+          onSuccess: () => setInstalling(true),
+          onError: (err) => fail(err, "Das Update konnte nicht gestartet werden."),
+        });
+      },
+    });
+  }
 
   return (
     <Stack gap="md" maw={860}>
@@ -239,7 +265,7 @@ export function UpdatesTab() {
       {(gitForm || (!auto && status?.git_available) || gitPending) && (
         <Paper p="md">
           <Group gap="xs" mb="xs">
-            <Title order={5}>{auto ? "Automatische Updates aus Git ändern" : "Automatische Updates aus Git einrichten"}</Title>
+            <Title order={5}>{auto ? "Update aus Git ändern" : "Update aus Git einrichten"}</Title>
             <Badge color="grape" variant="light">
               Entwicklungsumgebung
             </Badge>
@@ -252,9 +278,9 @@ export function UpdatesTab() {
           ) : (
             <Stack gap="xs">
               <Text size="sm" c="dimmed">
-                Der Server baut dann bei jedem neuen Commit auf dem Branch selbst ein Image und spielt es ein. Nur für Entwicklungs- und
-                Testumgebungen: es gibt keine Freigabe zwischen Commit und Installation, und der Server braucht Internetzugang (Git,
-                Paketquellen) sowie <Code>git</Code>.
+                Der Server kann dann den neuesten Commit des Branches selbst als Image bauen und einspielen – auf Knopfdruck, oder
+                automatisch, wenn der Schalter eingeschaltet wird. Nur für Entwicklungs- und Testumgebungen: der Server braucht
+                Internetzugang (Git, Paketquellen) sowie <Code>git</Code>.
               </Text>
               <TextInput
                 label="Git-Adresse"
@@ -323,36 +349,58 @@ export function UpdatesTab() {
         <Paper p="md">
           <Group justify="space-between" mb="xs">
             <Group gap="xs">
-              <Title order={5}>Automatische Updates aus Git</Title>
+              <Title order={5}>Update aus Git</Title>
               <Badge color="grape" variant="light">
                 Entwicklungsumgebung
               </Badge>
             </Group>
             <Switch
-              label={auto.enabled ? "eingeschaltet" : "ausgeschaltet"}
+              label={auto.enabled ? "automatisch einspielen" : "nur auf Knopfdruck"}
               checked={auto.enabled}
               disabled={setAutoUpdate.isPending}
               onChange={(e) => setAutoUpdate.mutate(e.currentTarget.checked, { onError: (err) => fail(err, "Umschalten fehlgeschlagen.") })}
             />
           </Group>
           <Stack gap="xs">
-            <Row label="Repository" value={`${auto.repo ?? "-"} (${auto.branch ?? "-"}), Prüfung alle ${auto.interval_minutes ?? "?"} min`} />
+            <Row label="Repository" value={`${auto.repo ?? "-"} (${auto.branch ?? "-"})`} />
             <Row
               label="Zustand"
               value={
                 <Group gap="xs" wrap="nowrap" align="flex-start">
-                  <Badge color={auto.enabled ? autoColor[auto.state ?? ""] ?? "gray" : "gray"} variant="light" style={{ flexShrink: 0 }}>
-                    {auto.enabled ? autoLabel[auto.state ?? ""] ?? "unbekannt" : "ausgeschaltet"}
+                  <Badge color={autoColor[auto.state ?? ""] ?? "gray"} variant="light" style={{ flexShrink: 0 }}>
+                    {autoLabel[auto.state ?? ""] ?? "unbekannt"}
                   </Badge>
-                  <Text size="sm">{auto.enabled ? auto.message : "Der Server prüft weiter, baut und installiert aber nichts."}</Text>
+                  <Text size="sm">{auto.message}</Text>
                 </Group>
               }
             />
             <Row label="Zuletzt geprüft" value={formatDateTime(auto.last_check_at, "noch nie")} />
             <Row label="Zuletzt aktualisiert" value={formatDateTime(auto.last_update_at, "noch nie")} />
+            <Group mt="xs">
+              <Button
+                variant="default"
+                leftSection={<IconRefresh size={16} />}
+                loading={checkGit.isPending || gitChecking}
+                disabled={busy || gitPending || !status?.agent_active}
+                onClick={() => checkGit.mutate(undefined, { onError: (err) => fail(err, "Die Prüfung konnte nicht gestartet werden.") })}
+              >
+                Nach Updates prüfen
+              </Button>
+              {gitInstallable && (
+                <Button
+                  leftSection={<IconCloudDownload size={16} />}
+                  loading={installFromGit.isPending}
+                  disabled={busy || gitPending || gitChecking || !status?.agent_active}
+                  onClick={startGitInstall}
+                >
+                  Jetzt einspielen
+                </Button>
+              )}
+            </Group>
             <Text size="xs" c="dimmed">
-              Der Server baut bei jedem neuen Commit auf diesem Branch selbst ein Image und spielt es ein, sobald keine Backups oder
-              Restores laufen.
+              {auto.enabled
+                ? `Automatisch: der Server prüft alle ${auto.interval_minutes ?? "?"} min, baut jeden neuen Commit selbst und spielt ihn ein, sobald keine Backups oder Restores laufen.`
+                : "Von selbst passiert nichts: der Server sieht nur auf „Nach Updates prüfen“ im Repository nach und baut erst auf „Jetzt einspielen“."}
             </Text>
             {status?.git_available && (
               <Group>
@@ -372,7 +420,7 @@ export function UpdatesTab() {
                   disabled={gitPending}
                   onClick={() =>
                     confirmAction({
-                      title: "Auto-Update aus Git entfernen",
+                      title: "Update aus Git entfernen",
                       message: "Der Server prüft das Repository dann nicht mehr. Die laufende Version bleibt, Updates kommen nur noch per Paket.",
                       confirmLabel: "Entfernen",
                       onConfirm: () => removeGitConfig.mutate(undefined, { onError: (err) => fail(err, "Entfernen fehlgeschlagen.") }),
@@ -434,7 +482,7 @@ export function UpdatesTab() {
                   });
                 }}
               >
-                Nach Update suchen
+                Nach Updates prüfen
               </Button>
               {newerAvailable && registry.latest_version && (
                 <Button
@@ -475,7 +523,9 @@ export function UpdatesTab() {
             <Text size="sm">
               {isError
                 ? "Die App startet gerade neu. Diese Seite meldet sich von selbst wieder."
-                : "Der Server prüft das Paket, sichert die Datenbank und startet die neue Version."}
+                : gitBuilding
+                  ? `Der Server baut den neuesten Git-Stand (etwa fünf Minuten); die App läuft so lange weiter. ${status?.auto_update?.message ?? ""}`
+                  : "Der Server prüft das Paket, sichert die Datenbank und startet die neue Version."}
             </Text>
             <Progress value={100} animated mt="xs" />
           </Alert>
@@ -615,7 +665,7 @@ export function UpdatesTab() {
                   Einmalig auf dem Server: bei privaten Images <Code>podman login ghcr.io</Code>, dann{" "}
                   <Code>hvnb-update --set-registry ghcr.io/&lt;konto&gt;/hvnb-backup</Code> und <Code>hvnb-update --install-agent</Code>.
                 </List.Item>
-                <List.Item>Danach hier „Nach Update suchen“ und die angebotene Version einspielen – oder automatisch per Schalter.</List.Item>
+                <List.Item>Danach hier „Nach Updates prüfen“ und die angebotene Version einspielen – oder automatisch per Schalter.</List.Item>
                 <List.Item>
                   Auf dem Server direkt: <Code>hvnb-update --check-registry</Code>, <Code>hvnb-update --from-registry</Code>.
                 </List.Item>
@@ -623,7 +673,7 @@ export function UpdatesTab() {
             </Accordion.Panel>
           </Accordion.Item>
           <Accordion.Item value="git">
-            <Accordion.Control>Automatisch aus Git (nur Entwicklungsumgebung)</Accordion.Control>
+            <Accordion.Control>Update aus Git (nur Entwicklungsumgebung)</Accordion.Control>
             <Accordion.Panel>
               <List size="sm" type="ordered" spacing={4}>
                 <List.Item>
@@ -631,12 +681,13 @@ export function UpdatesTab() {
                   SSH-Adresse muss der Server-Benutzer das Repository per Schlüssel erreichen.
                 </List.Item>
                 <List.Item>
-                  Dann oben unter „Automatische Updates aus Git einrichten“ Adresse und Branch eintragen – oder auf dem Server:{" "}
+                  Dann oben unter „Update aus Git einrichten“ Adresse und Branch eintragen – oder auf dem Server:{" "}
                   <Code>hvnb-git-autoupdate --install --repo &lt;Git-Adresse&gt; --branch master</Code>
                 </List.Item>
                 <List.Item>
-                  Der Server baut bei jedem neuen Commit selbst ein Image und spielt es ein; ein/aus per Schalter oben. Stand:{" "}
-                  <Code>hvnb-git-autoupdate --status</Code>
+                  Danach oben „Nach Updates prüfen“ und „Jetzt einspielen“: der Server baut den neuesten Commit selbst als Image und
+                  spielt es ein. Von selbst passiert nichts, solange der Schalter „automatisch einspielen“ aus ist. Auf dem Server:{" "}
+                  <Code>hvnb-git-autoupdate --check</Code>, <Code>--update-now</Code>, <Code>--status</Code>
                 </List.Item>
               </List>
             </Accordion.Panel>

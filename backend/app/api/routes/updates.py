@@ -49,7 +49,7 @@ class AutoUpdate(BaseModel):
     branch: str | None = None
     repo: str | None = None
     interval_minutes: str | None = None
-    # current | building | installing | waiting | failed | error | disabled
+    # idle | current | available | building | installing | waiting | failed | error
     state: str | None = None
     message: str | None = None
     target_commit: str | None = None
@@ -102,7 +102,7 @@ class UpdateStatus(BaseModel):
     staged: StagedPackage | None = None
     # requested | running | None
     pending: str | None = None
-    # package | registry-install | registry-check | git-configure | git-remove
+    # package | registry-install | registry-check | git-check | git-install | git-configure | git-remove
     pending_action: str | None = None
     last_result: UpdateResult | None = None
     # None = auf dem Server nicht eingerichtet
@@ -271,9 +271,9 @@ def install_package(db: Session = Depends(get_db), user=Depends(_manage)) -> Upd
 
 @router.put("/auto-update", response_model=UpdateStatus)
 def set_auto_update(payload: AutoUpdateWrite, db: Session = Depends(get_db), user=Depends(_manage)) -> UpdateStatus:
-    """Schaltet das Auto-Update aus Git ein oder aus. Der Dienst auf dem Server
-    liest den Schalter vor jedem Durchlauf; ausgeschaltet baut und installiert
-    er nichts."""
+    """Schalter "automatisch einspielen" fuer das Update aus Git. Aus
+    (Standard): der Server prueft und baut nur auf Knopfdruck. Ein: der Timer
+    auf dem Server spielt jeden neuen Commit von selbst ein."""
     _require_release()
     app_update.set_auto_update(payload.enabled)
     _log(db, f"Automatische Updates aus Git {'eingeschaltet' if payload.enabled else 'ausgeschaltet'} (durch {_user_name(user)})")
@@ -353,7 +353,6 @@ def set_git_config(payload: GitConfigWrite, db: Session = Depends(get_db), user=
         "action": "git-configure", "repo": repo, "branch": branch, "interval_minutes": str(payload.interval_minutes),
         "requested_by": _user_name(user), "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     })
-    app_update.update_settings(auto_update="on")
     shown = re.sub(r"(https?://)[^/@\s]+@", r"\1***@", repo)
     _log(db, f"Auto-Update aus Git eingerichtet: {shown} ({branch}), alle {payload.interval_minutes} min (durch {_user_name(user)})")
     return _status()
@@ -370,4 +369,42 @@ def remove_git_config(db: Session = Depends(get_db), user=Depends(_manage)) -> U
         "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     })
     _log(db, f"Auto-Update aus Git entfernt (durch {_user_name(user)})")
+    return _status()
+
+
+def _require_git_configured() -> None:
+    if app_update.auto_update_state() is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Das Update aus Git ist auf dem Server nicht eingerichtet.",
+        )
+
+
+@router.post("/git/check", response_model=UpdateStatus)
+def check_git(user=Depends(_manage)) -> UpdateStatus:
+    """Laesst den Server nachsehen, ob es auf dem Branch einen neuen Commit gibt.
+    Das Ergebnis erscheint kurz darauf im Status (auto_update.state/last_check_at)."""
+    _require_release()
+    _require_idle()
+    _require_git_configured()
+    _require_agent()
+    app_update.write_json("request.json", {
+        "action": "git-check", "requested_by": _user_name(user),
+        "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    })
+    return _status()
+
+
+@router.post("/git/install", response_model=UpdateStatus)
+def install_from_git(db: Session = Depends(get_db), user=Depends(_manage)) -> UpdateStatus:
+    """Erteilt dem Server den Auftrag, den neuesten Commit zu bauen und einzuspielen."""
+    _require_release()
+    _require_idle()
+    _require_git_configured()
+    _require_agent()
+    _require_no_backups(db)
+    app_update.write_json("request.json", {
+        "action": "git-install", "requested_by": _user_name(user),
+        "requested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    })
+    _log(db, f"Update aus Git angefordert (durch {_user_name(user)})")
     return _status()

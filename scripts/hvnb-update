@@ -475,11 +475,24 @@ cmd_agent_run() {
     exit 0
   fi
 
+  if [ "${action}" = "git-check" ]; then
+    # Nur nachsehen; das Ergebnis schreibt hvnb-git-autoupdate selbst nach autoupdate.json.
+    "${BIN_DIR_AGENT}/hvnb-git-autoupdate" --check >/dev/null 2>&1 || true
+    mv "${inbox}/request.processing" "${inbox}/request.done"
+    exit 0
+  fi
+
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   write_result "${inbox}" "running" "${package}" "${version}" "${started}" ""
   : > "${inbox}/result.log"
 
-  if [ "${action}" = "registry-install" ]; then
+  if [ "${action}" = "git-install" ]; then
+    package="Git-Stand"
+    log "Auftrag aus der GUI: neuesten Git-Stand bauen und einspielen"
+    "${BIN_DIR_AGENT}/hvnb-git-autoupdate" --update-now > "${inbox}/result.log" 2>&1 || rc=$?
+    # Das ausfuehrliche Protokoll (Build, Einspielen) liegt im Arbeitsordner: Ende anhaengen.
+    tail -n 40 "${HVNB_AUTOUPDATE_WORK_DIR:-${HOME}/.local/share/hvnb/${UNIT}-git-autoupdate}/last-run.log" >> "${inbox}/result.log" 2>/dev/null || true
+  elif [ "${action}" = "registry-install" ]; then
     package="$(registry_repo):${version}"
     log "Auftrag aus der GUI: Version ${version} aus der Registry"
     "$0" --from-registry "${version}" > "${inbox}/result.log" 2>&1 || rc=$?

@@ -113,9 +113,11 @@ def registry_state() -> dict | None:
 
 
 def auto_update_state() -> dict | None:
-    """Zustand des Auto-Updates aus Git (scripts/hvnb-git-autoupdate, nur
+    """Zustand des Updates aus Git (scripts/hvnb-git-autoupdate, nur
     Entwicklungsumgebungen) -- None, wenn es auf dem Server nicht eingerichtet
-    ist bzw. sich nicht mehr meldet. 'enabled' ist der Schalter aus der GUI."""
+    ist bzw. sich nicht mehr meldet. 'enabled' ist der Schalter "automatisch
+    einspielen" aus der GUI; Standard aus (Nutzer-Vorgabe 2026-10-08): dann
+    wird nur auf Knopfdruck geprueft und eingespielt."""
     data = _read_json("autoupdate.json")
     if not data:
         return None
@@ -127,7 +129,7 @@ def auto_update_state() -> dict | None:
     # Waehrend eines Builds meldet sich der Dienst laenger nicht.
     if age > max(3 * interval, 30) * 60:
         return None
-    return {**data, "enabled": settings().get("auto_update") != "off"}
+    return {**data, "enabled": settings().get("auto_update") == "on"}
 
 
 def set_auto_update(enabled: bool) -> None:

@@ -29,7 +29,7 @@ export interface AutoUpdateState {
   branch?: string | null;
   repo?: string | null;
   interval_minutes?: string | null;
-  state?: "current" | "building" | "installing" | "waiting" | "failed" | "error" | "disabled" | null;
+  state?: "idle" | "current" | "available" | "building" | "installing" | "waiting" | "failed" | "error" | null;
   message?: string | null;
   target_commit?: string | null;
   installed_commit?: string | null;
@@ -54,7 +54,15 @@ export interface UpdateStatus {
   agent_last_seen_at?: string | null;
   staged?: StagedUpdatePackage | null;
   pending?: "requested" | "running" | null;
-  pending_action?: "package" | "registry-install" | "registry-check" | "git-configure" | "git-remove" | null;
+  pending_action?:
+    | "package"
+    | "registry-install"
+    | "registry-check"
+    | "git-check"
+    | "git-install"
+    | "git-configure"
+    | "git-remove"
+    | null;
   last_result?: UpdateResult | null;
   // fehlt, wenn auf dem Server nicht eingerichtet
   auto_update?: AutoUpdateState | null;
@@ -158,6 +166,22 @@ export function useRemoveGitConfig() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async () => (await apiClient.delete<UpdateStatus>("/updates/git-config")).data,
+    onSuccess: (data) => queryClient.setQueryData(KEY, data),
+  });
+}
+
+export function useCheckGit() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await apiClient.post<UpdateStatus>("/updates/git/check")).data,
+    onSuccess: (data) => queryClient.setQueryData(KEY, data),
+  });
+}
+
+export function useInstallFromGit() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await apiClient.post<UpdateStatus>("/updates/git/install")).data,
     onSuccess: (data) => queryClient.setQueryData(KEY, data),
   });
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# hvnb-git-autoupdate -- haelt eine ENTWICKLUNGS-/Testumgebung automatisch auf
-# dem Stand eines Git-Branches: prueft regelmaessig das Repository, baut bei
-# einem neuen Commit auf diesem Server ein Release-Image und spielt es mit
-# hvnb-update ein. Der Container selbst bleibt ohne git und laedt nichts nach.
+# hvnb-git-autoupdate -- bringt eine ENTWICKLUNGS-/Testumgebung auf den Stand
+# eines Git-Branches: sieht im Repository nach, baut einen neuen Commit auf
+# diesem Server als Release-Image und spielt es mit hvnb-update ein -- auf
+# Knopfdruck oder, wenn eingeschaltet, automatisch. Der Container selbst bleibt ohne git und laedt nichts nach.
 #
 # Nicht fuer Produktion gedacht: jeder Push auf den Branch landet ungeprueft in
 # der Umgebung, und der Server braucht Internetzugang (Git, Paketquellen).
@@ -10,12 +10,17 @@
 #   hvnb-git-autoupdate --install [--repo <url>] [--branch <name>] [--interval <min>]
 #        Einrichten (systemd-Timer). Ohne --repo/--branch werden
 #        HVNB_GIT_REPO_URL/HVNB_GIT_BRANCH aus der .env der Installation uebernommen.
-#   hvnb-git-autoupdate --run        ein Durchlauf (ruft der Timer auf)
+#   hvnb-git-autoupdate --check      jetzt nachsehen, ob es einen neuen Commit gibt
+#   hvnb-git-autoupdate --update-now den neuesten Commit jetzt bauen und einspielen
+#   hvnb-git-autoupdate --run        Durchlauf des Timers (baut nur, wenn der
+#                                    Schalter "automatisch" in der GUI an ist)
 #   hvnb-git-autoupdate --status     Einstellungen und letzter Durchlauf
 #   hvnb-git-autoupdate --uninstall  Timer entfernen (Einstellungen bleiben)
 #
-# Ein-/Ausschalten ohne Shell: Settings > Updates in der GUI. Ausgeschaltet
-# prueft der Timer weiter, baut und installiert aber nichts.
+# Standard ist der manuelle Betrieb: nichts passiert von selbst. In der GUI
+# (Settings > Updates) gibt es "Nach Updates pruefen" und "Jetzt einspielen";
+# der Schalter "automatisch einspielen" dort laesst den Timer jeden neuen
+# Commit von selbst bauen und einspielen.
 #
 # Versionsnummer der gebauten Images: <letzter Versions-Tag oder 0.0.0>-dev.<Anzahl
 # Commits>.<Commit>, z.B. 1.1.0-dev.480.3fa2c1d.
@@ -82,6 +87,7 @@ report() {
   [ -w "${inbox}" ] || return 0
   local message="${2//\\/ }"
   message="${message//\"/\'}"
+  set_state LAST_STATE "$1" LAST_MESSAGE "${message}"
   printf '{\n"seen_at": "%s",\n"branch": "%s",\n"repo": "%s",\n"interval_minutes": "%s",\n"state": "%s",\n"message": "%s",\n"target_commit": "%s",\n"installed_commit": "%s",\n"last_check_at": "%s",\n"last_update_at": "%s"\n}\n' \
     "$(now)" "$(conf_value BRANCH)" "$(redact "$(conf_value REPO)" | sed 's/"//g')" "$(conf_value INTERVAL_MINUTES)" "$1" "${message}" \
     "$(state_value TARGET_COMMIT)" "$(state_value INSTALLED_COMMIT)" "$(state_value LAST_CHECK_AT)" "$(state_value LAST_UPDATE_AT)" \
@@ -89,12 +95,22 @@ report() {
   mv "${inbox}/.autoupdate.json.tmp" "${inbox}/autoupdate.json"
 }
 
-# Schalter aus der GUI: /data/update-inbox/settings.json mit "auto_update": "off".
-gui_enabled() {
+# Schalter aus der GUI: /data/update-inbox/settings.json mit "auto_update": "on".
+# Standard ist AUS (Nutzer-Vorgabe 2026-10-08): ohne den Schalter passiert
+# nichts von selbst -- geprueft und eingespielt wird nur auf Knopfdruck
+# (--check / --update-now, aus der GUI ueber den Update-Dienst).
+auto_enabled() {
   local inbox
-  inbox="$(inbox_dir)" || return 0
-  [ -f "${inbox}/settings.json" ] || return 0
-  ! grep -q '^"auto_update": "off"' "${inbox}/settings.json"
+  inbox="$(inbox_dir)" || return 1
+  [ -f "${inbox}/settings.json" ] || return 1
+  grep -q '^"auto_update": "on"' "${inbox}/settings.json"
+}
+
+# Beendet einen Durchlauf: nur der ausdrueckliche Auftrag (--update-now) meldet
+# Fehler per Exit-Code (1 = gescheitert, 3 = spaeter erneut), Timer und Pruefung nicht.
+finish() {
+  if [ "${RUN_MODE}" = "update" ]; then exit "$1"; fi
+  exit 0
 }
 
 running_commit() {
@@ -116,8 +132,19 @@ cmd_run() {
   # Kein stiller Abbruch: ein unerwarteter Fehler soll in der GUI und im Protokoll stehen.
   trap 'echo "Unerwarteter Abbruch in Zeile ${LINENO}" >> "${LOG}"; report "error" "Unerwarteter Abbruch des Update-Skripts (Zeile ${LINENO}). Protokoll: ${LOG}"' ERR
 
-  if ! gui_enabled; then
-    report "disabled" "Automatische Updates sind in der GUI ausgeschaltet."
+  if [ "${RUN_MODE}" = "timer" ] && ! auto_enabled; then
+    # Manueller Betrieb: der Timer liefert nur das Lebenszeichen fuer die GUI und
+    # laesst das Ergebnis der letzten Pruefung stehen.
+    local last_state last_message
+    last_state="$(state_value LAST_STATE)"; last_message="$(state_value LAST_MESSAGE)"
+    case "${last_state}" in
+      available|current|failed|error|waiting) ;;
+      *) last_state="idle"; last_message="Noch nicht geprueft." ;;
+    esac
+    if [ "${last_state}" = "available" ] && [ "$(state_value TARGET_COMMIT)" = "$(running_commit)" ]; then
+      last_state="current"; last_message="Aktuell (Commit $(state_value TARGET_COMMIT | cut -c1-7))."
+    fi
+    report "${last_state}" "${last_message}"
     exit 0
   fi
 
@@ -125,7 +152,7 @@ cmd_run() {
   if ! remote="$(GIT_TERMINAL_PROMPT=0 git ls-remote "${repo}" "refs/heads/${branch}" 2>>"${LOG}" | awk '{print $1}' | head -n1)" || [ -z "${remote}" ]; then
     set_state LAST_CHECK_AT "$(now)"
     report "error" "Repository nicht erreichbar oder Branch ${branch} nicht gefunden."
-    exit 0
+    finish 1
   fi
   set_state LAST_CHECK_AT "$(now)"
 
@@ -137,14 +164,19 @@ cmd_run() {
     report "current" "Aktuell (Commit ${remote:0:7})."
     exit 0
   fi
-  # Ein Commit, dessen Build oder Einspielen gescheitert ist, wird nicht alle
-  # paar Minuten erneut versucht -- erst der naechste Commit loest wieder aus.
-  if [ "${remote}" = "$(state_value FAILED_COMMIT)" ]; then
+  set_state TARGET_COMMIT "${remote}"
+  # Ein Commit, dessen Build oder Einspielen gescheitert ist, wird nicht von
+  # selbst erneut versucht -- erst der naechste Commit oder ein ausdruecklicher
+  # Auftrag (--update-now) loest wieder aus.
+  if [ "${RUN_MODE}" != "update" ] && [ "${remote}" = "$(state_value FAILED_COMMIT)" ]; then
     report "failed" "Commit ${remote:0:7} konnte nicht eingespielt werden: $(state_value FAILED_REASON) Protokoll: ${LOG}"
     exit 0
   fi
+  if [ "${RUN_MODE}" = "check" ]; then
+    report "available" "Neuer Commit ${remote:0:7} auf ${branch} verfuegbar (es laeuft ${installed:0:7})."
+    exit 0
+  fi
 
-  set_state TARGET_COMMIT "${remote}"
   : > "${LOG}"
   log "Neuer Commit ${remote:0:7} auf ${branch} (laeuft: ${installed:0:7})." | tee -a "${LOG}"
 
@@ -155,14 +187,14 @@ cmd_run() {
   else
     report "building" "Baue Commit ${remote:0:7} ..."
     if [ ! -d "${SRC}/.git" ]; then
-      git clone --quiet --branch "${branch}" "${repo}" "${SRC}" >>"${LOG}" 2>&1 || { fail "${remote}" "git clone fehlgeschlagen."; exit 0; }
+      git clone --quiet --branch "${branch}" "${repo}" "${SRC}" >>"${LOG}" 2>&1 || { fail "${remote}" "git clone fehlgeschlagen."; finish 1; }
     fi
     {
       git -C "${SRC}" remote set-url origin "${repo}" &&
       GIT_TERMINAL_PROMPT=0 git -C "${SRC}" fetch --quiet --tags --prune origin "${branch}" &&
       git -C "${SRC}" checkout --quiet --force --detach "${remote}" &&
       git -C "${SRC}" clean -fdq -e dist
-    } >>"${LOG}" 2>&1 || { fail "${remote}" "git fetch/checkout fehlgeschlagen."; exit 0; }
+    } >>"${LOG}" 2>&1 || { fail "${remote}" "git fetch/checkout fehlgeschlagen."; finish 1; }
 
     local base count
     base="$(git -C "${SRC}" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null | sed 's/^v//' || true)"
@@ -173,7 +205,7 @@ cmd_run() {
     find "${SRC}/dist" -maxdepth 1 -name 'hvnb-*.tar.gz*' -delete 2>/dev/null || true
     if ! ( cd "${SRC}" && scripts/build-release.sh "${version}" ) >>"${LOG}" 2>&1; then
       fail "${remote}" "Build fehlgeschlagen."
-      exit 0
+      finish 1
     fi
     package="${SRC}/dist/hvnb-${version}.tar.gz"
     set_state BUILT_COMMIT "${remote}" BUILT_PACKAGE "${package}" BUILT_VERSION "${version}"
@@ -186,11 +218,11 @@ cmd_run() {
   if [ "${rc}" = "3" ]; then
     # Backups/Restores laufen oder ein anderes Update ist dran: Paket behalten, spaeter erneut.
     report "waiting" "Version ${version} ist gebaut; wartet, bis keine Backups/Restores mehr laufen."
-    exit 0
+    finish 3
   fi
   if [ "${rc}" != "0" ]; then
     fail "${remote}" "Einspielen fehlgeschlagen (vorherige Version laeuft weiter)."
-    exit 0
+    finish 1
   fi
 
   # Aufraeumen: Paketdatei und Images aelterer Dev-Staende (aktuelles und vorheriges bleiben).
@@ -284,7 +316,7 @@ UNIT_EOF
   systemctl --user daemon-reload
   systemctl --user enable --now "${TIMER}.timer" >/dev/null
   log "Eingerichtet: prueft $(redact "${repo}") (${branch}) alle ${interval} min."
-  log "Erster Durchlauf startet jetzt im Hintergrund; Stand: hvnb-git-autoupdate --status"
+  log "Nichts passiert von selbst: pruefen und einspielen in der GUI (Settings > Updates) oder mit --check / --update-now."
   systemctl --user start --no-block "${TIMER}.service" || true
 }
 
@@ -301,7 +333,8 @@ cmd_status() {
   if [ ! -f "${CONFIG}" ]; then log "Nicht eingerichtet."; exit 0; fi
   log "Repository:        $(redact "$(conf_value REPO)") ($(conf_value BRANCH)), alle $(conf_value INTERVAL_MINUTES) min"
   log "Timer:             $(systemctl --user is-active "${TIMER}.timer" 2>/dev/null || true)"
-  log "In der GUI:        $(gui_enabled && echo eingeschaltet || echo ausgeschaltet)"
+  log "Automatik:         $(auto_enabled && echo "eingeschaltet (jeder Commit wird von selbst eingespielt)" || echo "aus (nur auf Knopfdruck)")"
+  log "Letzter Stand:     $(state_value LAST_MESSAGE)"
   log "Laeuft:            Commit $(running_commit | cut -c1-7)"
   log "Zuletzt geprueft:  $(state_value LAST_CHECK_AT)"
   log "Zuletzt aktualisiert: $(state_value LAST_UPDATE_AT)"
@@ -309,14 +342,16 @@ cmd_status() {
   log "Protokoll:         ${LOG}"
 }
 
-MODE="" REPO="" BRANCH="" INTERVAL="5"
+MODE="" REPO="" BRANCH="" INTERVAL="5" RUN_MODE="timer"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --install|--run|--status|--uninstall) MODE="${1#--}" ;;
+    --check) MODE="run"; RUN_MODE="check" ;;
+    --update-now) MODE="run"; RUN_MODE="update" ;;
     --repo) REPO="${2:-}"; shift ;;
     --branch) BRANCH="${2:-}"; shift ;;
     --interval) INTERVAL="${2:-}"; shift ;;
-    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "Unbekanntes Argument $1 (siehe --help)." ;;
   esac
   shift
@@ -327,5 +362,5 @@ case "${MODE}" in
   run) cmd_run ;;
   status) cmd_status ;;
   uninstall) cmd_uninstall ;;
-  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
