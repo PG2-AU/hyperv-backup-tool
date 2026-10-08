@@ -312,6 +312,18 @@ inbox_dir() {
   echo "${mount}/update-inbox"
 }
 
+# Legt den Uebergabe-Ordner an. Das Wurzelverzeichnis eines aelteren Daten-
+# Volumes gehoert u.U. einem Container-Benutzer (das fruehere Image hat /data
+# einem Benutzer 'hvnb' uebereignet) -- der Host-Benutzer darf dort dann nichts
+# anlegen. 'podman unshare' arbeitet als root des Benutzer-Namensraums und darf
+# es; der Ordner gehoert danach dem Host-Benutzer (= root im Container).
+ensure_inbox() {
+  [ -d "$1" ] && [ -w "$1" ] && return 0
+  mkdir -p "$1" 2>/dev/null && return 0
+  podman unshare mkdir -p "$1" && podman unshare chown 0:0 "$1" && [ -w "$1" ] \
+    || die "Kann den Uebergabe-Ordner $1 nicht anlegen (Rechte im Daten-Volume pruefen)."
+}
+
 # Feld aus einer von der App geschriebenen JSON-Datei (ein Schluessel je Zeile).
 json_field() { sed -n "s/^\"$2\": \"\(.*\)\",\{0,1\}$/\1/p" "$1" | head -n1; }
 
@@ -327,7 +339,7 @@ cmd_agent_run() {
   local inbox
   inbox="$(inbox_dir)" || exit 0   # Volume gibt es noch nicht (vor dem ersten Start)
   [ -d "$(dirname "${inbox}")" ] || exit 0
-  mkdir -p "${inbox}"
+  ensure_inbox "${inbox}"
   printf '{\n"seen_at": "%s",\n"unit": "%s"\n}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${UNIT}" > "${inbox}/.agent.json.tmp"
   mv "${inbox}/.agent.json.tmp" "${inbox}/agent.json"
 

@@ -19,7 +19,8 @@
 #
 # Versionsnummer der gebauten Images: <letzter Versions-Tag oder 0.0.0>-dev.<Anzahl
 # Commits>.<Commit>, z.B. 1.1.0-dev.480.3fa2c1d.
-set -euo pipefail
+# -E: der ERR-Trap in cmd_run soll auch Fehler innerhalb von Funktionen melden.
+set -Eeuo pipefail
 
 UNIT="${HVNB_UNIT:-hvnb-backup}"
 QUADLET="${HVNB_QUADLET:-${HOME}/.config/containers/systemd/${UNIT}.container}"
@@ -73,7 +74,12 @@ report() {
   local inbox
   inbox="$(inbox_dir)" || return 0
   [ -d "$(dirname "${inbox}")" ] || return 0
-  mkdir -p "${inbox}"
+  # Wurzel eines aelteren Daten-Volumes gehoert u.U. einem Container-Benutzer:
+  # dann ueber den Benutzer-Namensraum anlegen (siehe ensure_inbox in hvnb-update).
+  if [ ! -d "${inbox}" ] || [ ! -w "${inbox}" ]; then
+    mkdir -p "${inbox}" 2>/dev/null || { "${ENGINE}" unshare mkdir -p "${inbox}" && "${ENGINE}" unshare chown 0:0 "${inbox}"; } || return 0
+  fi
+  [ -w "${inbox}" ] || return 0
   local message="${2//\\/ }"
   message="${message//\"/\'}"
   printf '{\n"seen_at": "%s",\n"branch": "%s",\n"repo": "%s",\n"interval_minutes": "%s",\n"state": "%s",\n"message": "%s",\n"target_commit": "%s",\n"installed_commit": "%s",\n"last_check_at": "%s",\n"last_update_at": "%s"\n}\n' \

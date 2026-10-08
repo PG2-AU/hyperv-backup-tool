@@ -21,6 +21,11 @@ if [ ! -f "${HVNB_TLS_CERT_PATH}" ] || [ ! -f "${HVNB_TLS_KEY_PATH}" ]; then
   /usr/local/bin/gen-selfsigned-cert.sh
 fi
 
+# Uebergabe-Ordner fuer Updates (Paket-Upload, Update-Dienst des Hosts): hier
+# anlegen, damit er dem Host-Benutzer gehoert, auch wenn die Wurzel eines
+# aelteren Daten-Volumes einem anderen Benutzer uebereignet wurde.
+mkdir -p /data/update-inbox
+
 log "Rendere nginx-Konfiguration..."
 export FRONTEND_DIST="${APP_DIR}/frontend/dist"
 envsubst '${FRONTEND_DIST} ${HVNB_TLS_CERT_PATH} ${HVNB_TLS_KEY_PATH}' \
