@@ -374,7 +374,7 @@ export function JobsPage() {
                   <Table.Th>App-konsistent</Table.Th>
                   <Table.Th>SnapMirror</Table.Th>
                   <Table.Th>Retention</Table.Th>
-                  <Table.Th>Snapshot Locking</Table.Th>
+                  <Table.Th>Snapshot-Sperre</Table.Th>
                   <Table.Th>Status</Table.Th>
                   <Table.Th>Aktionen</Table.Th>
                 </Table.Tr>

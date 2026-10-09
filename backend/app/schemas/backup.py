@@ -85,6 +85,9 @@ class BackupRunSnapshotRead(BaseModel):
     snapshot_uuid: str | None = None
     success: bool
     error_message: str | None = None
+    # tamperproof | delete_protection | None
+    lock_level: str | None = None
+    locked_until: datetime | None = None
 
 
 class BackupSnapshotVhdRead(BaseModel):
@@ -167,6 +170,9 @@ class BackupSnapshotRead(BaseModel):
     vm_names: list[str] = []
     snapshot_name: str | None = None
     snapshot_uuid: str | None = None
+    # tamperproof | delete_protection | None
+    lock_level: str | None = None
+    locked_until: datetime | None = None
     vhds: list[BackupSnapshotVhdRead] = []
     checkpoints: list[BackupSnapshotCheckpointRead] = []
     destinations: list[BackupSnapshotDestinationRead] = []

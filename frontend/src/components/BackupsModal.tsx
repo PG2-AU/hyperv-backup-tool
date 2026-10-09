@@ -51,6 +51,19 @@ function SystemBadges({ backup }: { backup: BackupSnapshot }) {
           Primär
         </Badge>
       )}
+      {backup.restore_source === "primary" && backup.lock_level && backup.locked_until && new Date(backup.locked_until) > new Date() && (
+        <Tooltip
+          label={
+            backup.lock_level === "tamperproof"
+              ? `Manipulationssicher gesperrt bis ${new Date(backup.locked_until).toLocaleString("de-DE")} (SnapLock-Ablaufzeit) – bis dahin auch für Storage-Admins nicht löschbar`
+              : `Löschschutz bis ${new Date(backup.locked_until).toLocaleString("de-DE")} – nicht manipulationssicher: das Volume hat kein Snapshot-Locking, ein Storage-Admin kann die Frist aufheben`
+          }
+        >
+          <Badge color={backup.lock_level === "tamperproof" ? "indigo" : "gray"} variant="light">
+            {backup.lock_level === "tamperproof" ? "Gesperrt" : "Löschschutz"}
+          </Badge>
+        </Tooltip>
+      )}
       {present.map((d) => (
         <Tooltip
           key={`${d.svm_name}:${d.volume_name}`}

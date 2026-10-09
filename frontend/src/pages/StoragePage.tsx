@@ -1141,6 +1141,7 @@ export function StoragePage() {
                   { value: "autogrow", label: "Autogrow" },
                   { value: "snapshot_policy", label: "Snapshot Policy" },
                   { value: "encryption", label: "Verschlüsselung" },
+                  { value: "snapshot_locking", label: "Snapshot-Locking" },
                 ]}
                 value={extraVolCols}
                 onChange={setExtraVolCols}
@@ -1169,6 +1170,7 @@ export function StoragePage() {
                 {extraVolCols.includes("autogrow") && <Table.Th>Autogrow</Table.Th>}
                 {extraVolCols.includes("snapshot_policy") && <Table.Th>Snapshot Policy</Table.Th>}
                 {extraVolCols.includes("encryption") && <Table.Th>Verschlüsselung</Table.Th>}
+                {extraVolCols.includes("snapshot_locking") && <Table.Th>Snapshot-Locking</Table.Th>}
                 <Table.Th>Aktionen</Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -1221,6 +1223,25 @@ export function StoragePage() {
                         <Badge color={vol.encryption_enabled ? "green" : "gray"} variant="light">
                           {vol.encryption_enabled ? "Aktiv" : "Inaktiv"}
                         </Badge>
+                      )}
+                    </Table.Td>
+                  )}
+                  {extraVolCols.includes("snapshot_locking") && (
+                    <Table.Td>
+                      {vol.snapshot_locking_enabled == null ? (
+                        "-"
+                      ) : (
+                        <Tooltip
+                          label={
+                            vol.snapshot_locking_enabled
+                              ? "Backup-Snapshots mit Sperre werden hier manipulationssicher gesperrt (SnapLock-Ablaufzeit)"
+                              : "Backup-Snapshots mit Sperre bekommen hier nur einen Löschschutz, den ein Storage-Admin aufheben kann"
+                          }
+                        >
+                          <Badge color={vol.snapshot_locking_enabled ? "green" : "gray"} variant="light">
+                            {vol.snapshot_locking_enabled ? "Aktiv" : "Inaktiv"}
+                          </Badge>
+                        </Tooltip>
                       )}
                     </Table.Td>
                   )}

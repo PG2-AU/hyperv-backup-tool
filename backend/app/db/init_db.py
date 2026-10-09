@@ -463,6 +463,9 @@ def init_db(db: Session) -> None:
                 "CASE WHEN require_secondary THEN min_retention_days ELSE 0 END WHERE secondary_retention_days IS NULL"
             ))
             conn.commit()
+    # Snapshot-Sperre: Volume-Option und tatsaechlich gesetzte Stufe je Snapshot.
+    _add_missing_columns(engine, "netapp_volumes", {"snapshot_locking_enabled": "BOOLEAN"})
+    _add_missing_columns(engine, "backup_run_snapshots", {"lock_level": "VARCHAR(20)", "locked_until": "DATETIME"})
     # Schutzklassen: Aufbewahrung je Stufe (alte Tageswerte werden nicht ueberfuehrt).
     _add_missing_columns(engine, "protection_classes", {"retention_tiers": "JSON"})
     _add_missing_columns(engine, "netapp_luns", {"used_bytes": "INTEGER"})

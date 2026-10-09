@@ -125,6 +125,11 @@ class BackupRunSnapshot(Base):
     success: Mapped[bool] = mapped_column(Boolean, default=False)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    # Sperre des Snapshots zum Zeitpunkt der Erstellung (Policy-Option
+    # "Snapshots sperren"): 'tamperproof' = SnapLock-Ablaufzeit gesetzt,
+    # 'delete_protection' = nur expiry_time, None = keine Sperre.
+    lock_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     run = relationship("BackupRun", back_populates="snapshots")
     destinations = relationship("BackupRunSnapshotDestination", back_populates="snapshot", cascade="all, delete-orphan")

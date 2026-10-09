@@ -100,6 +100,12 @@ class SnapshotInfo:
     create_time: str
     snapmirror_label: str | None = None
     expiry_time: str | None = None
+    # Welche Sperre tatsaechlich gesetzt wurde: 'tamperproof' (SnapLock-Ablaufzeit
+    # auf einem Volume mit Snapshot-Locking), 'delete_protection' (nur
+    # expiry_time, von einem Storage-Admin aenderbar) oder None.
+    lock_level: str | None = None
+    # Warum trotz eingeschaltetem Snapshot-Locking nur der Loeschschutz gesetzt wurde
+    lock_note: str | None = None
 
 
 @dataclass
@@ -207,6 +213,8 @@ class DiscoveredVolume:
     snapshot_policy_name: str | None = None
     encryption_enabled: bool | None = None
     snapmirror_protected: bool | None = None
+    # Tamperproof Snapshots: Volume-Option snapshot-locking-enabled
+    snapshot_locking_enabled: bool | None = None
     # Snapshot-Belegung (Backlog #67): space.snapshot.used ist der
     # Platz, den ALLE Snapshots des Volumes gemeinsam belegen (inkl. eines
     # Ueberlaufs ueber die Snapshot-Reserve hinaus).
@@ -565,6 +573,7 @@ class NetAppOntapService:
                                 snapshot_policy_name=_get_nested(v, "snapshot_policy.name"),
                                 encryption_enabled=_get_nested(v, "encryption.enabled"),
                                 snapmirror_protected=_get_nested(v, "snapmirror.is_protected"),
+                                snapshot_locking_enabled=_get_nested(v, "snapshot_locking_enabled"),
                                 snapshot_used_bytes=_get_nested(v, "space.snapshot.used"),
                                 snapshot_reserve_bytes=_get_nested(v, "space.snapshot.reserve_size"),
                                 snapshot_reserve_percent=_get_nested(v, "space.snapshot.reserve_percent"),
@@ -1879,28 +1888,60 @@ class NetAppOntapService:
         self, volume_name: str, svm_name: str, snapshot_name: str,
         snapmirror_label: str | None = None, expiry_time: datetime | None = None,
     ) -> SnapshotInfo:
-        """expiry_time setzt ONTAPs eingebauten Snapshot-Schutz (REST-Feld
-        'expiry_time' auf der Snapshot-Ressource, seit ONTAP 9.x verfuegbar,
-        KEIN SnapLock-Lizenz noetig): vor diesem Zeitpunkt lehnt ONTAP jeden
-        Loeschversuch ab -- weder ueber diese App noch manuell per CLI/
-        System Manager. Erfuellt genau das, was die Policy-Option 'Snapshot
-        Locking' (snapshot_locking_enabled/-_days) verspricht; vorher wurde
-        dieser Wert zwar gespeichert und angezeigt, aber nie an NetApp
-        uebergeben -- die Sperre hatte also nie eine echte Wirkung."""
+        """Legt den Snapshot an und sperrt ihn bis expiry_time -- in zwei Stufen
+        (Nutzer-Meldung 2026-10-09: 'snaplock-expiry-time' blieb leer):
+
+        - Loeschschutz: REST-Feld 'expiry_time'. ONTAP lehnt das Loeschen vor
+          diesem Zeitpunkt ab, ohne SnapLock-Lizenz. Ein Storage-Admin kann den
+          Zeitpunkt aber nachtraeglich vorziehen -- kein Schutz gegen einen
+          Angreifer mit Admin-Zugang.
+        - Manipulationssicher (Tamperproof Snapshot): zusaetzlich die
+          SnapLock-Ablaufzeit. Wirkt nur auf Volumes mit
+          snapshot-locking-enabled (ONTAP 9.12.1+, SnapLock-Lizenz,
+          ComplianceClock); dann laesst sich der Snapshot bis zum Ablauf weder
+          loeschen noch umbenennen, die Frist nur verlaengern.
+
+        Die zweite Stufe wird gesetzt, wenn das Volume sie anbietet. Lehnt ONTAP
+        sie ab (z.B. ComplianceClock nicht initialisiert), wird der Snapshot
+        trotzdem mit Loeschschutz angelegt -- ein Backup soll daran nicht
+        scheitern; SnapshotInfo.lock_level/lock_note sagen, was gilt."""
         with self._connection():
-            volume = Volume.find(name=volume_name, **{"svm.name": svm_name})
+            volume = Volume.find(name=volume_name, fields="uuid,snapshot_locking_enabled", **{"svm.name": svm_name})
             if volume is None:
                 raise ValueError(f"Volume '{volume_name}' auf SVM '{svm_name}' nicht gefunden")
 
-            payload = {
+            plain = {
                 "name": snapshot_name,
                 "volume": {"uuid": volume.uuid},
                 "svm": {"name": svm_name},
                 **({"snapmirror_label": snapmirror_label} if snapmirror_label else {}),
-                **({"expiry_time": expiry_time.isoformat()} if expiry_time else {}),
             }
-            snapshot = Snapshot.from_dict(payload)
-            snapshot.post()
+            base = {**plain, **({"expiry_time": expiry_time.isoformat()} if expiry_time else {})}
+            lock_level: str | None = "delete_protection" if expiry_time else None
+            lock_note: str | None = None
+            snapshot = None
+            if expiry_time and bool(getattr(volume, "snapshot_locking_enabled", False)):
+                # 'snaplock.expiry_time' ab ONTAP 9.14.1, davor 'snaplock_expiry_time'.
+                # Bewusst ohne das allgemeine 'expiry_time': die SnapLock-Frist ist
+                # die staerkere Sperre, und beide Felder zusammen sind nicht noetig.
+                attempts = (
+                    {**plain, "snaplock": {"expiry_time": expiry_time.isoformat()}},
+                    {**plain, "snaplock_expiry_time": expiry_time.isoformat()},
+                )
+                for payload in attempts:
+                    candidate = Snapshot.from_dict(payload)
+                    try:
+                        candidate.post()
+                    except NetAppRestError as exc:
+                        lock_note = f"SnapLock-Sperre von ONTAP abgelehnt: {str(exc)[:300]}"
+                        continue
+                    snapshot, lock_level, lock_note = candidate, "tamperproof", None
+                    break
+            elif expiry_time:
+                lock_note = "Volume ohne Snapshot-Locking (snapshot-locking-enabled)"
+            if snapshot is None:
+                snapshot = Snapshot.from_dict(base)
+                snapshot.post()
             snapshot.get()
             return SnapshotInfo(
                 uuid=snapshot.uuid,
@@ -1909,7 +1950,32 @@ class NetAppOntapService:
                 create_time=str(getattr(snapshot, "create_time", "")),
                 snapmirror_label=snapmirror_label,
                 expiry_time=str(getattr(snapshot, "expiry_time", "")) or None,
+                lock_level=lock_level,
+                lock_note=lock_note,
             )
+
+    def snapshot_locking_prerequisites(self) -> dict:
+        """Voraussetzungen der manipulationssicheren Snapshot-Sperre auf diesem
+        System: SnapLock-Lizenz und ComplianceClock je Knoten. Nur lesend. Bei
+        einem an eine SVM gebundenen Login sind beide Abfragen nicht erlaubt --
+        dann None ('nicht pruefbar')."""
+        from netapp_ontap.resources import LicensePackage, SnaplockComplianceClock
+
+        result: dict = {"license": None, "compliance_clock": None, "nodes_without_clock": [], "error": None}
+        with self._connection():
+            try:
+                licenses = list(LicensePackage.get_collection(name="snaplock", fields="name,state"))
+                result["license"] = any(str(getattr(lic, "state", "")).lower() == "compliant" for lic in licenses)
+            except NetAppRestError as exc:
+                result["error"] = str(exc)[:200]
+            try:
+                clocks = list(SnaplockComplianceClock.get_collection(fields="node.name,time"))
+                missing = [str(_get_nested(c, "node.name") or "?") for c in clocks if not getattr(c, "time", None)]
+                result["nodes_without_clock"] = missing
+                result["compliance_clock"] = bool(clocks) and not missing
+            except NetAppRestError as exc:
+                result["error"] = result["error"] or str(exc)[:200]
+        return result
 
     def list_snapshot_names(self, volume_uuid: str) -> set[str]:
         """Fragt die tatsaechlich auf dem Volume vorhandenen Snapshot-Namen ab

@@ -136,6 +136,7 @@ class NetAppVolumeRead(BaseModel):
     snapshot_policy_name: str | None = None
     encryption_enabled: bool | None = None
     snapmirror_protected: bool | None = None
+    snapshot_locking_enabled: bool | None = None
     snapshot_used_bytes: int | None = None
     snapshot_reserve_bytes: int | None = None
     snapshot_reserve_percent: int | None = None

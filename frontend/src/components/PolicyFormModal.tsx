@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Button, Group, Modal, NumberInput, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { Alert, Button, Group, Modal, NumberInput, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 
 import {
   useCreatePolicy,
   useResourceGroups,
   useSnapMirrorLabels,
+  useSnapshotLockingStatus,
   useUpdatePolicy,
   type BackupPolicyWritePayload,
 } from "@/api/hooks";
@@ -26,6 +27,54 @@ interface PolicyFormModalProps {
    * wenn `policy` gesetzt ist (echtes Bearbeiten hat Vorrang). */
   duplicateFrom?: BackupPolicy | null;
   onSaved?: (policy: BackupPolicy) => void;
+}
+
+// Zeigt je NetApp-System, ob die manipulationssichere Sperre greift: Lizenz,
+// ComplianceClock und welche Backup-Volumes Snapshot-Locking eingeschaltet haben.
+function SnapshotLockingStatusPanel() {
+  const { data, isLoading, isError } = useSnapshotLockingStatus(true);
+  if (isLoading) {
+    return (
+      <Text size="xs" c="dimmed">
+        Prüfe die Voraussetzungen der manipulationssicheren Sperre …
+      </Text>
+    );
+  }
+  if (isError || !data) return null;
+  const yesNo = (value: boolean | null | undefined) => (value == null ? "nicht prüfbar" : value ? "ja" : "nein");
+  return (
+    <Stack gap={6}>
+      {data.map((system) => {
+        const locked = system.volumes.filter((v) => v.locking_enabled).length;
+        const total = system.volumes.length;
+        const ready = system.license !== false && system.compliance_clock !== false;
+        const allLocked = total > 0 && locked === total && ready;
+        const unlocked = system.volumes.filter((v) => !v.locking_enabled).map((v) => v.volume_name);
+        return (
+          <Alert key={system.cluster_id} color={allLocked ? "green" : locked > 0 && ready ? "yellow" : "gray"} variant="light" p="xs">
+            <Text size="xs" fw={600}>
+              {system.cluster_name}:{" "}
+              {total === 0
+                ? "noch keine Backup-Volumes bekannt"
+                : `${locked} von ${total} Backup-Volumes mit Snapshot-Locking (manipulationssicher)`}
+            </Text>
+            <Text size="xs">
+              SnapLock-Lizenz: {yesNo(system.license)} · ComplianceClock: {yesNo(system.compliance_clock)}
+              {system.nodes_without_clock.length > 0 ? ` (fehlt auf ${system.nodes_without_clock.join(", ")})` : ""}
+            </Text>
+            {unlocked.length > 0 && (
+              <Text size="xs" c="dimmed">
+                Nur Löschschutz auf: {unlocked.slice(0, 8).join(", ")}
+                {unlocked.length > 8 ? ` und ${unlocked.length - 8} weiteren` : ""}. Einschalten auf der NetApp mit{" "}
+                <code>volume modify -snapshot-locking-enabled true</code> (lässt sich erst wieder abschalten, wenn alle gesperrten
+                Snapshots abgelaufen sind).
+              </Text>
+            )}
+          </Alert>
+        );
+      })}
+    </Stack>
+  );
 }
 
 export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSaved }: PolicyFormModalProps) {
@@ -173,8 +222,20 @@ export function PolicyFormModal({ opened, onClose, policy, duplicateFrom, onSave
             <NumberInput label="Retention-Wert" min={1} value={retentionValue} onChange={setRetentionValue} />
           </Group>
 
-          <Switch label="Snapshot Locking (WORM)" checked={lockingEnabled} onChange={(e) => setLockingEnabled(e.currentTarget.checked)} />
-          {lockingEnabled && <NumberInput label="Snapshot Locking: Anzahl Tage" min={1} value={lockingDays} onChange={setLockingDays} />}
+          <Switch
+            label="Snapshots sperren"
+            description="Der primäre Snapshot lässt sich bis zum Ablauf der Frist nicht löschen. Manipulationssicher (auch gegenüber Storage-Admins) nur auf Volumes mit eingeschaltetem Snapshot-Locking; sonst gilt ein einfacher Löschschutz."
+            checked={lockingEnabled}
+            onChange={(e) => setLockingEnabled(e.currentTarget.checked)}
+          />
+          {lockingEnabled && <NumberInput label="Sperre: Anzahl Tage" min={1} value={lockingDays} onChange={setLockingDays} />}
+          {lockingEnabled && retentionType === "days" && Number(lockingDays) > Number(retentionValue) && (
+            <Alert color="yellow" variant="light">
+              Die Sperre ({Number(lockingDays)} Tage) ist länger als die Aufbewahrung ({Number(retentionValue)} Tage): Snapshots bleiben
+              dann bis zum Ende der Sperre liegen und belegen so lange Platz.
+            </Alert>
+          )}
+          {lockingEnabled && <SnapshotLockingStatusPanel />}
 
           <Switch
             label="Bei Fehlschlag per E-Mail benachrichtigen"

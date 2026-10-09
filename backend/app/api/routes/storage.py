@@ -88,7 +88,7 @@ def list_volumes(db: Session = Depends(get_db), user=Depends(require_permission(
             security_style=v.security_style, language=v.language,
             snapshot_autodelete_enabled=v.snapshot_autodelete_enabled, autosize_mode=v.autosize_mode,
             snapshot_policy_name=v.snapshot_policy_name, encryption_enabled=v.encryption_enabled,
-            snapmirror_protected=v.snapmirror_protected,
+            snapmirror_protected=v.snapmirror_protected, snapshot_locking_enabled=v.snapshot_locking_enabled,
             snapshot_used_bytes=v.snapshot_used_bytes, snapshot_reserve_bytes=v.snapshot_reserve_bytes,
             snapshot_reserve_percent=v.snapshot_reserve_percent, snapshot_count=v.snapshot_count,
             backup_snapshot_count=backup_counts.get((v.cluster_id, v.svm_name, v.name), 0),

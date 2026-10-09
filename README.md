@@ -82,7 +82,10 @@ scripts/    build-release.sh (Image + Paketdatei bauen), update-lock.sh
   Backups auf Ebene VM, CSV oder SMB3-Freigabe, orchestriert ueber Protection Groups
   (je verknuepfter Policy ein eigener Zeitplan) mit Retention; ein Lauf ist nur dann
   fehlgeschlagen, wenn ein Storage-Snapshot nicht erstellt werden konnte, sonst
-  "erfolgreich mit Fehlern"; Restore als Anhaengen oder Ersetzen inkl. automatischem AVHDX-Ketten-
+  "erfolgreich mit Fehlern"; optional Snapshot-Sperre je Policy (Tage): auf Volumes mit
+  ONTAP-Snapshot-Locking manipulationssicher (SnapLock-Ablaufzeit, Tamperproof Snapshot),
+  sonst als einfacher Loeschschutz (expiry_time) -- welche Stufe gilt, zeigen Policy-Formular,
+  Job-Verlauf und der Backups-Dialog; Restore als Anhaengen oder Ersetzen inkl. automatischem AVHDX-Ketten-
   Merge, VM-Neuerstellung, sowie dateibasierter Restore einzelner Dateien aus einem
   gemounteten Snapshot-Klon.
 - **Hintergrund-Scheduler** -- periodische Jobs fuer Health-Checks, Discovery,

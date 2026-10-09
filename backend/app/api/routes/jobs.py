@@ -33,6 +33,7 @@ from ntpath import basename as win_basename
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+from pydantic import BaseModel
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -835,6 +836,8 @@ def list_backups_for_object(
             vm_names=r.vm_names or [],
             snapshot_name=r.snapshot_name,
             snapshot_uuid=r.snapshot_uuid,
+            lock_level=r.lock_level,
+            locked_until=r.locked_until,
             vhds=vhds_by_run_id.get(r.run_id, []),
             checkpoints=checkpoints_by_run_id.get(r.run_id, []),
             restore_source="primary" if r.success else "secondary",
@@ -1850,7 +1853,16 @@ def _execute_job_run(run_id: str, initial_warnings: list[str]) -> None:
                     row.snapshot_name = snap.name
                     row.snapshot_uuid = snap.uuid
                     row.success = True
-                    lock_note = f", gesperrt bis {snapshot_expiry.strftime('%Y-%m-%d %H:%M UTC')}" if snapshot_expiry else ""
+                    row.lock_level = snap.lock_level
+                    row.locked_until = snapshot_expiry if snap.lock_level else None
+                    lock_note = ""
+                    if snapshot_expiry and snap.lock_level == "tamperproof":
+                        lock_note = f", manipulationssicher gesperrt bis {snapshot_expiry.strftime('%Y-%m-%d %H:%M UTC')}"
+                    elif snapshot_expiry:
+                        lock_note = (
+                            f", Löschschutz bis {snapshot_expiry.strftime('%Y-%m-%d %H:%M UTC')} "
+                            f"(nicht manipulationssicher: {snap.lock_note or 'SnapLock-Sperre nicht gesetzt'})"
+                        )
                     ctx.row.message = f"Snapshot '{snap.name}' auf Volume '{target.volume_name}' @ {target.svm_name} erstellt{lock_note}"
             except Exception as exc:
                 row.success = False
@@ -2259,3 +2271,59 @@ def trigger_job_run(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="; ".join(errors) or "Keine Läufe gestartet")
 
     return [_to_run_read(r) for r in created_runs]
+
+
+class SnapshotLockingVolume(BaseModel):
+    svm_name: str | None = None
+    volume_name: str
+    locking_enabled: bool | None = None
+
+
+class SnapshotLockingSystem(BaseModel):
+    """Stand der manipulationssicheren Snapshot-Sperre je NetApp-System."""
+
+    cluster_id: str
+    cluster_name: str
+    # None = nicht pruefbar (z.B. Login nur fuer eine SVM)
+    license: bool | None = None
+    compliance_clock: bool | None = None
+    nodes_without_clock: list[str] = []
+    error: str | None = None
+    # Volumes, auf denen in den letzten 30 Tagen Backups dieser App lagen
+    volumes: list[SnapshotLockingVolume] = []
+
+
+@router.get("/snapshot-locking-status", response_model=list[SnapshotLockingSystem])
+def snapshot_locking_status(
+    db: Session = Depends(get_db), user=Depends(require_permission(Permission.BACKUP_VIEW)),
+) -> list[SnapshotLockingSystem]:
+    """Fuer das Policy-Formular: auf welchen Backup-Volumes greift die
+    manipulationssichere Sperre (Volume-Option snapshot-locking-enabled, aus
+    der letzten Discovery), und sind SnapLock-Lizenz und ComplianceClock
+    vorhanden (live vom System abgefragt, nur lesend)."""
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    used: dict[str, set[tuple[str | None, str]]] = {}
+    for row in db.query(BackupRunSnapshot).filter(BackupRunSnapshot.created_at >= since, BackupRunSnapshot.success.is_(True)).all():
+        if row.netapp_cluster_id and row.volume_name:
+            used.setdefault(row.netapp_cluster_id, set()).add((row.svm_name, row.volume_name))
+    result = []
+    for cluster in db.query(NetAppCluster).order_by(NetAppCluster.name).all():
+        flags = {
+            (v.svm_name, v.name): v.snapshot_locking_enabled
+            for v in db.query(NetAppVolume).filter(NetAppVolume.cluster_id == cluster.id).all()
+        }
+        system = SnapshotLockingSystem(
+            cluster_id=cluster.id, cluster_name=cluster.name,
+            volumes=[
+                SnapshotLockingVolume(svm_name=svm, volume_name=name, locking_enabled=flags.get((svm, name)))
+                for svm, name in sorted(used.get(cluster.id, set()), key=lambda k: (k[0] or "", k[1]))
+            ],
+        )
+        try:
+            info = _netapp_service_for(cluster).snapshot_locking_prerequisites()
+            system.license, system.compliance_clock = info["license"], info["compliance_clock"]
+            system.nodes_without_clock, system.error = info["nodes_without_clock"], info["error"]
+        except Exception as exc:  # noqa: BLE001
+            system.error = str(exc)[:200]
+        result.append(system)
+    return result

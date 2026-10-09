@@ -205,6 +205,8 @@ export interface NetAppVolume extends NetAppDiscoveredBase {
   snapshot_policy_name?: string | null;
   encryption_enabled?: boolean | null;
   snapmirror_protected?: boolean | null;
+  // Volume-Option snapshot-locking-enabled (Tamperproof Snapshots)
+  snapshot_locking_enabled?: boolean | null;
   // Snapshot-Belegung (Backlog #67)
   snapshot_used_bytes?: number | null;
   snapshot_reserve_bytes?: number | null;
@@ -768,6 +770,8 @@ export interface BackupRunSnapshot {
   snapshot_uuid?: string | null;
   success: boolean;
   error_message?: string | null;
+  lock_level?: SnapshotLockLevel | null;
+  locked_until?: string | null;
 }
 
 export interface BackupSnapshotVhd {
@@ -807,6 +811,8 @@ export interface BackupSnapshot {
   vm_names: string[];
   snapshot_name?: string | null;
   snapshot_uuid?: string | null;
+  lock_level?: SnapshotLockLevel | null;
+  locked_until?: string | null;
   vhds: BackupSnapshotVhd[];
   checkpoints: BackupSnapshotCheckpoint[];
   destinations: BackupSnapshotDestination[];
@@ -1773,4 +1779,20 @@ export interface VmDeleteRun {
   started_at: string;
   finished_at?: string | null;
   steps: { step: string; label: string; status: "pending" | "running" | "success" | "error" | "skipped"; message?: string | null }[];
+}
+
+// Sperre eines Backup-Snapshots: tamperproof = SnapLock-Ablaufzeit (manipulationssicher),
+// delete_protection = nur Ablaufzeit (von einem Storage-Admin aenderbar).
+export type SnapshotLockLevel = "tamperproof" | "delete_protection";
+
+export interface SnapshotLockingSystem {
+  cluster_id: string;
+  cluster_name: string;
+  // null = nicht pruefbar (z.B. Login nur fuer eine SVM)
+  license?: boolean | null;
+  compliance_clock?: boolean | null;
+  nodes_without_clock: string[];
+  error?: string | null;
+  // Volumes, auf denen in den letzten 30 Tagen Backups dieser App lagen
+  volumes: { svm_name?: string | null; volume_name: string; locking_enabled?: boolean | null }[];
 }

@@ -62,6 +62,7 @@ import type {
   Schedule,
   ScheduleType,
   SnapMirrorLabel,
+  SnapshotLockingSystem,
   SnapMirrorRelationship,
   Alert,
   AlertConfig,
@@ -481,6 +482,17 @@ export function useDeletePolicy() {
       await apiClient.delete(`/jobs/${id}`);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+}
+
+// Stand der manipulationssicheren Snapshot-Sperre je NetApp-System (fuer das
+// Policy-Formular; fragt Lizenz und ComplianceClock live ab, daher nur bei Bedarf).
+export function useSnapshotLockingStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: ["snapshot-locking-status"],
+    queryFn: async () => (await apiClient.get<SnapshotLockingSystem[]>("/jobs/snapshot-locking-status")).data,
+    enabled,
+    staleTime: 60_000,
   });
 }
 
