@@ -98,7 +98,7 @@ import type {
 import { useAuthStore } from "@/store/authStore";
 import { confirmAction } from "@/utils/confirm";
 import { apiErrorMessage } from "@/utils/errors";
-import { formatBytes, formatLagTime, HEALTH_COLOR, lunShortName } from "@/utils/format";
+import { formatBytes, formatLagTime, formatLockPeriod, HEALTH_COLOR, lunShortName } from "@/utils/format";
 import { matchesAllColumns } from "@/utils/search";
 import {
   buildLunCreationSteps,
@@ -2002,7 +2002,20 @@ export function StoragePage() {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      {p.rules.length ? p.rules.map((r) => `${r.label}: ${r.count}`).join(", ") : "-"}
+                      {p.rules.length
+                        ? p.rules.map((r) => `${r.label}: ${r.count}${r.period ? ` (gesperrt ${formatLockPeriod(r.period)})` : ""}`).join(", ")
+                        : "-"}
+                      {(p.lock_ineffective_on ?? []).length > 0 && (
+                        <Tooltip
+                          multiline
+                          maw={420}
+                          label={`Sperrfrist wirkt nicht auf: ${(p.lock_ineffective_on ?? []).join(", ")} – dort ist Snapshot-Locking aus`}
+                        >
+                          <Badge color="yellow" variant="light" ml={6}>
+                            Sperre wirkt nicht überall
+                          </Badge>
+                        </Tooltip>
+                      )}
                     </Table.Td>
                     <Table.Td>
                       <Tooltip label="Bearbeiten">

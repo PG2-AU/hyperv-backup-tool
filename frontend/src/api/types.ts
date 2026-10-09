@@ -411,11 +411,16 @@ export interface VolumeEditPlan {
 export interface SnapMirrorPolicyRule {
   label: string;
   count: string;
+  // Sperrfrist am Ziel (ISO-8601-Dauer oder "infinite")
+  period?: string | null;
 }
 
 export interface SnapMirrorPolicyRuleWrite {
   label: string;
   count: number;
+  // Sperrfrist am Ziel (Tamperproof Snapshot): ISO-8601-Dauer mit einer Einheit
+  // (z.B. "P30D", "P6M", "PT12H") oder "infinite"; leer = keine Sperre
+  period?: string | null;
 }
 
 export interface NetAppSnapMirrorPolicy extends NetAppDiscoveredBase {
@@ -427,6 +432,8 @@ export interface NetAppSnapMirrorPolicy extends NetAppDiscoveredBase {
   create_snapshot_on_source?: boolean | null;
   comment?: string | null;
   rules: SnapMirrorPolicyRule[];
+  // Ziel-Volumes ("svm:volume"), auf denen die Sperrfrist nicht wirkt (Snapshot-Locking dort aus)
+  lock_ineffective_on?: string[];
 }
 
 export interface NetAppSchedule extends NetAppDiscoveredBase {

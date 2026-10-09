@@ -251,7 +251,10 @@ scripts/    build-release.sh (Image + Paketdatei bauen), update-lock.sh
   (Integritaet, HVNB_SECRET_KEY) und automatischer Sicherheitskopie.
 - **MetroCluster/SnapMirror** -- Status-Anzeige, Spiegelobjekte optional aus der
   gesamten Storage-Ansicht ausblendbar, SnapMirror-Beziehungen/-Policies/-Schedules
-  verwaltbar inkl. manuellem Update-Trigger.
+  verwaltbar inkl. manuellem Update-Trigger. Je Regel einer SnapMirror-Policy optional eine
+  Sperrfrist (Stunden/Tage/Monate/Jahre): die uebertragenen Snapshots sind am Ziel so lange
+  manipulationssicher gesperrt (Tamperproof Snapshot) -- wirkt nur auf Ziel-Volumes mit
+  Snapshot-Locking, die Policy-Liste markiert Ziele, auf denen die Frist nicht greift.
 
 ### Backup-Prinzip
 

@@ -7,6 +7,8 @@ from pydantic import BaseModel
 class SnapMirrorPolicyRuleInfo(BaseModel):
     label: str
     count: str
+    # Sperrfrist am Ziel (ISO-8601-Dauer, z.B. 'P30D', oder 'infinite'); None = keine
+    period: str | None = None
 
 
 def _derive_snapmirror_policy_display_type(
@@ -56,6 +58,11 @@ class NetAppSnapMirrorPolicyRead(BaseModel):
     create_snapshot_on_source: bool | None = None
     comment: str | None = None
     rules: list[SnapMirrorPolicyRuleInfo] = []
+    # Ziel-Volumes ('svm:volume') der Beziehungen mit dieser Policy, auf denen
+    # eine Sperrfrist NICHT wirkt, weil Snapshot-Locking dort aus ist -- nur
+    # gefuellt, wenn eine Regel eine Sperrfrist hat und das Zielsystem in der
+    # App registriert ist.
+    lock_ineffective_on: list[str] = []
     last_seen_at: datetime
 
     @classmethod

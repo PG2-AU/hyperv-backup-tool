@@ -122,3 +122,32 @@ export function formatLagTime(lagTime?: string | null): string {
   if (minutes && !days) parts.push(`${minutes}m`);
   return parts.length ? parts.join(" ") : "< 1m";
 }
+
+// Sperrfrist einer SnapMirror-Regel (ISO-8601-Dauer mit genau einer Einheit, wie ONTAP sie liefert).
+export type LockPeriodUnit = "hours" | "days" | "months" | "years";
+
+const LOCK_PERIOD_UNITS: Record<LockPeriodUnit, { iso: (n: number) => string; label: (n: number) => string }> = {
+  hours: { iso: (n) => `PT${n}H`, label: (n) => (n === 1 ? "Stunde" : "Stunden") },
+  days: { iso: (n) => `P${n}D`, label: (n) => (n === 1 ? "Tag" : "Tage") },
+  months: { iso: (n) => `P${n}M`, label: (n) => (n === 1 ? "Monat" : "Monate") },
+  years: { iso: (n) => `P${n}Y`, label: (n) => (n === 1 ? "Jahr" : "Jahre") },
+};
+
+export function parseLockPeriod(period?: string | null): { value: number; unit: LockPeriodUnit } | null {
+  if (!period) return null;
+  const date = period.match(/^P(\d+)([YMD])$/);
+  if (date) return { value: Number(date[1]), unit: date[2] === "Y" ? "years" : date[2] === "M" ? "months" : "days" };
+  const hours = period.match(/^PT(\d+)H$/);
+  return hours ? { value: Number(hours[1]), unit: "hours" } : null;
+}
+
+export function buildLockPeriod(value: number, unit: LockPeriodUnit): string {
+  return LOCK_PERIOD_UNITS[unit].iso(value);
+}
+
+export function formatLockPeriod(period?: string | null): string {
+  if (!period) return "";
+  if (period === "infinite") return "unbegrenzt";
+  const parsed = parseLockPeriod(period);
+  return parsed ? `${parsed.value} ${LOCK_PERIOD_UNITS[parsed.unit].label(parsed.value)}` : period;
+}

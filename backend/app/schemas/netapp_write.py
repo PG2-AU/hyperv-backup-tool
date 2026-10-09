@@ -1,6 +1,7 @@
+import re
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 IgroupOsType = Literal["aix", "hpux", "hyper_v", "linux", "netware", "openvms", "solaris", "vmware", "windows", "xen"]
 LunOsType = Literal[
@@ -55,6 +56,20 @@ class LunMapCreate(BaseModel):
 class SnapMirrorPolicyRuleWrite(BaseModel):
     label: str
     count: int
+    # Sperrfrist der uebertragenen Snapshots am Ziel (Tamperproof Snapshot):
+    # ISO-8601-Dauer mit genau einer Einheit (ONTAP erlaubt keine gemischten
+    # Angaben wie 'P1Y10M') oder 'infinite'. None/leer = keine Sperre.
+    period: str | None = None
+
+    @field_validator("period")
+    @classmethod
+    def _check_period(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        value = value.strip()
+        if value != "infinite" and not re.fullmatch(r"P[1-9]\d*[YMD]|PT[1-9]\d*[HMS]", value):
+            raise ValueError("Sperrfrist: erwartet wird z.B. P30D, P6M, P1Y, PT12H oder 'infinite'")
+        return value
 
 
 class SnapmirrorPolicyCreate(BaseModel):

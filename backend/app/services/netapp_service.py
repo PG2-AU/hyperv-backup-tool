@@ -92,6 +92,15 @@ def _get_nested(obj: object, path: str, default=None):
     return current
 
 
+def _retention_rule(rule: dict) -> dict:
+    """Regel einer SnapMirror-Policy fuer die REST-API: Label, Anzahl und
+    optional die Sperrfrist (period)."""
+    entry = {"label": rule["label"], "count": str(rule["count"])}
+    if rule.get("period"):
+        entry["period"] = rule["period"]
+    return entry
+
+
 @dataclass
 class SnapshotInfo:
     uuid: str
@@ -726,7 +735,13 @@ class NetAppOntapService:
                     policies = list(SnapmirrorPolicy.get_collection(fields="**"))
                     for pol in policies:
                         rules = _get_nested(pol, "retention") or []
-                        rules_list = [{"label": _get_nested(r, "label"), "count": _get_nested(r, "count")} for r in rules]
+                        # period = Sperrfrist der Regel (ISO-8601-Dauer wie 'P30D' oder 'infinite'):
+                        # so lange sind die uebertragenen Snapshots am Ziel manipulationssicher
+                        # gesperrt -- wirkt nur, wenn das Ziel-Volume Snapshot-Locking hat.
+                        rules_list = [
+                            {"label": _get_nested(r, "label"), "count": _get_nested(r, "count"), "period": _get_nested(r, "period")}
+                            for r in rules
+                        ]
                         data.snapmirror_policies.append(
                             DiscoveredSnapMirrorPolicy(
                                 uuid=_get_nested(pol, "uuid"),
@@ -1618,7 +1633,7 @@ class NetAppOntapService:
         payload: dict = {
             "name": name,
             "type": "async",
-            "retention": [{"label": r["label"], "count": str(r["count"])} for r in rules],
+            "retention": [_retention_rule(r) for r in rules],
             "comment": comment,
         }
         if vault_type == "vault":
@@ -1633,10 +1648,12 @@ class NetAppOntapService:
 
     def update_snapmirror_policy(self, uuid: str, rules: list[dict]) -> None:
         # Direkte Attribut-Zuweisung statt from_dict() (siehe update_volume) --
-        # ersetzt die komplette Regel-Liste der Policy.
+        # ersetzt die komplette Regel-Liste der Policy (live verifiziert: eine
+        # Regel ohne 'period' verliert dabei ihre Sperrfrist, bereits gesperrte
+        # Snapshots am Ziel bleiben bis zum Ablauf gesperrt).
         with self._connection():
             policy = SnapmirrorPolicy(uuid=uuid)
-            policy.retention = [{"label": r["label"], "count": str(r["count"])} for r in rules]
+            policy.retention = [_retention_rule(r) for r in rules]
             try:
                 policy.patch()
             except NetAppRestError as exc:

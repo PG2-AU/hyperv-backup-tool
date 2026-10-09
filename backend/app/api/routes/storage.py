@@ -242,10 +242,23 @@ def list_snapmirror_policies(
     db: Session = Depends(get_db), user=Depends(require_permission(Permission.STORAGE_VIEW))
 ) -> list[NetAppSnapMirrorPolicyRead]:
     names = _cluster_names(db)
-    return [
-        NetAppSnapMirrorPolicyRead.from_model(p, names.get(p.cluster_id, "?"))
-        for p in db.query(NetAppSnapMirrorPolicy).order_by(NetAppSnapMirrorPolicy.name).all()
-    ]
+    # Sperrfrist einer Regel wirkt nur auf Ziel-Volumes mit Snapshot-Locking:
+    # je Policy die Ziele der Beziehungen nachschlagen, deren Volume wir kennen.
+    locking = {(v.svm_name, v.name): v.snapshot_locking_enabled for v in db.query(NetAppVolume).all()}
+    destinations: dict[str, set[str]] = {}
+    for rel in db.query(NetAppSnapMirrorRelationship).all():
+        if rel.policy_name and rel.destination_path and ":" in rel.destination_path:
+            destinations.setdefault(rel.policy_name, set()).add(rel.destination_path)
+    result = []
+    for p in db.query(NetAppSnapMirrorPolicy).order_by(NetAppSnapMirrorPolicy.name).all():
+        item = NetAppSnapMirrorPolicyRead.from_model(p, names.get(p.cluster_id, "?"))
+        if any(r.period for r in item.rules):
+            item.lock_ineffective_on = sorted(
+                path for path in destinations.get(p.name, set())
+                if locking.get(tuple(path.split(":", 1))) is False
+            )
+        result.append(item)
+    return result
 
 
 @router.get("/schedules", response_model=list[NetAppScheduleRead])
